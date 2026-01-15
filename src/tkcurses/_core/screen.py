@@ -65,13 +65,23 @@ class CursesScreen:
     def __new__(cls) -> CursesScreen:
         """Create or return the singleton CursesScreen instance.
 
+        Thread-safe: All initialization is performed under the lock to prevent
+        race conditions when multiple threads call CursesScreen() simultaneously.
+
         Returns:
             The singleton CursesScreen instance.
         """
         with cls._lock:
             if cls._instance is None:
-                cls._instance = super().__new__(cls)
-                cls._instance._initialized = False
+                instance = super().__new__(cls)
+                # Initialize all attributes under the lock to ensure thread safety
+                instance._initialized = False
+                instance._stdscr = None
+                instance._has_colors = False
+                instance._can_change_colors = False
+                instance._max_colors = 0
+                instance._max_color_pairs = 0
+                cls._instance = instance
             return cls._instance
 
     def __init__(self) -> None:
@@ -80,15 +90,12 @@ class CursesScreen:
         Note:
             This does NOT initialize curses. Call initialize() or use
             the context manager to actually set up the terminal.
+
+            All attribute initialization is done in __new__ for thread safety.
+            This method is intentionally empty.
         """
-        # Only set attributes on first instantiation
-        if not hasattr(self, "_initialized"):
-            self._initialized: bool = False
-            self._stdscr: Optional[_CursesWindow] = None
-            self._has_colors: bool = False
-            self._can_change_colors: bool = False
-            self._max_colors: int = 0
-            self._max_color_pairs: int = 0
+        # All initialization done in __new__ for thread safety
+        pass
 
     def initialize(self) -> None:
         """Initialize the curses screen and terminal modes.

@@ -41,12 +41,14 @@ class CursesDispatcher:
 
     Attributes:
         _instance: Singleton instance of the dispatcher.
+        _instance_lock: Lock for thread-safe singleton creation.
         _lock: Threading lock for serializing curses calls.
         _queue: Thread-safe queue for calls from non-main threads.
         _main_thread_id: ID of the main thread where curses calls execute.
     """
 
     _instance: CursesDispatcher | None = None
+    _instance_lock: threading.Lock = threading.Lock()
 
     _lock: threading.Lock
     _queue: queue.Queue[tuple[Callable[..., Any], tuple[Any, ...], dict[str, Any], threading.Event, list[Any]]]
@@ -66,14 +68,21 @@ class CursesDispatcher:
     def get(cls) -> CursesDispatcher:
         """Get the singleton dispatcher instance.
 
+        Thread-safe: Uses double-checked locking to ensure only one instance
+        is created even when multiple threads call get() simultaneously.
+
         Creates the instance on first call. Subsequent calls return the
         same instance.
 
         Returns:
             The singleton CursesDispatcher instance.
         """
+        # Double-checked locking pattern for thread-safe singleton
         if cls._instance is None:
-            cls._instance = cls()
+            with cls._instance_lock:
+                # Check again inside lock in case another thread created it
+                if cls._instance is None:
+                    cls._instance = cls()
         return cls._instance
 
     def call(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
