@@ -7,7 +7,7 @@ name = "tkcurses"
 version = "0.1.0"
 description = "A tkinter-compatible API layer that renders to curses"
 readme = "README.md"
-license = "MIT"
+license = "PSF-2.0"
 requires-python = ">=3.10"
 authors = [
     { name = "Author Name", email = "author@example.com" }
@@ -23,6 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: User Interfaces",
     "Typing :: Typed",
 ]

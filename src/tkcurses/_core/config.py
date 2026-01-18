@@ -224,14 +224,26 @@ class TkCursesConfig:
             if path.exists():
                 try:
                     parser.read(path)
-                except configparser.Error:
-                    pass  # Skip malformed files
+                except configparser.Error as e:
+                    # Log config parsing failures
+                    import logging
+                    logging.getLogger('tkcurses').warning(
+                        f"Failed to parse config file {path}: {e}"
+                    )
 
         # Apply INI settings
         config._apply_parser(parser)
 
         # Apply environment variable overrides (highest priority)
         config._apply_env_overrides()
+
+        # Validate configuration and log any warnings
+        warnings = config.validate()
+        if warnings:
+            import logging
+            logger = logging.getLogger('tkcurses')
+            for warning in warnings:
+                logger.warning(f"Config validation: {warning}")
 
         return config
 
@@ -392,3 +404,79 @@ class TkCursesConfig:
             ))
 
         # Apply other settings as needed by the application...
+
+    # Valid values for validated settings
+    VALID_COLOR_MODES = frozenset({'auto', 'mono', '16', '256', 'truecolor'})
+    VALID_LOG_LEVELS = frozenset({'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'})
+
+    def validate(self) -> list[str]:
+        """Validate configuration values.
+
+        Checks that configuration values are within expected ranges and
+        sets. Invalid values are corrected to defaults and warnings are
+        returned.
+
+        Returns:
+            List of warning messages for invalid values that were corrected.
+
+        Example:
+            >>> config = TkCursesConfig()
+            >>> config.display.color_mode = 'invalid'
+            >>> warnings = config.validate()
+            >>> print(warnings)
+            ["Invalid color_mode 'invalid', using 'auto'"]
+        """
+        warnings: list[str] = []
+
+        # Validate color_mode
+        if self.display.color_mode not in self.VALID_COLOR_MODES:
+            warnings.append(
+                f"Invalid color_mode '{self.display.color_mode}', "
+                f"using 'auto'. Valid options: {', '.join(sorted(self.VALID_COLOR_MODES))}"
+            )
+            self.display.color_mode = 'auto'
+
+        # Validate log_level
+        log_level_upper = self.debug.log_level.upper()
+        if log_level_upper not in self.VALID_LOG_LEVELS:
+            warnings.append(
+                f"Invalid log_level '{self.debug.log_level}', "
+                f"using 'WARNING'. Valid options: {', '.join(sorted(self.VALID_LOG_LEVELS))}"
+            )
+            self.debug.log_level = 'WARNING'
+        else:
+            # Normalize to uppercase
+            self.debug.log_level = log_level_upper
+
+        # Validate click_interval range
+        if self.mouse.click_interval < 1:
+            warnings.append(
+                f"click_interval {self.mouse.click_interval} too low, using 1"
+            )
+            self.mouse.click_interval = 1
+        elif self.mouse.click_interval > 1000:
+            warnings.append(
+                f"click_interval {self.mouse.click_interval} too high, using 1000"
+            )
+            self.mouse.click_interval = 1000
+
+        # Validate poll_timeout range
+        if self.input.poll_timeout < 1:
+            warnings.append(
+                f"poll_timeout {self.input.poll_timeout} too low, using 1"
+            )
+            self.input.poll_timeout = 1
+        elif self.input.poll_timeout > 1000:
+            warnings.append(
+                f"poll_timeout {self.input.poll_timeout} too high, using 1000"
+            )
+            self.input.poll_timeout = 1000
+
+        # Validate refresh_interval
+        if self.display.refresh_interval < 1:
+            warnings.append(
+                f"refresh_interval {self.display.refresh_interval} too low, using 1"
+            )
+            self.display.refresh_interval = 1
+
+        return warnings

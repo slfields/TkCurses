@@ -338,6 +338,74 @@ Loading: [████████████░░░░░░░░] 60%
 
 ---
 
+## Window Content Areas
+
+When rendering content within curses windows, **borders occupy the outermost cells** on all four sides. All widget rendering code MUST account for this.
+
+### Border Cell Layout
+
+For a window of size `width × height`:
+
+```
+Column:   0        1 to width-2       width-1
+         ┌─────────────────────────────────┐  Row 0 (top border)
+         │                                 │
+         │     USABLE CONTENT AREA         │  Rows 1 to height-2
+         │     (width-2) × (height-2)      │
+         │                                 │
+         └─────────────────────────────────┘  Row height-1 (bottom border)
+         ^                                 ^
+    Col 0 (left)                    Col width-1 (right)
+```
+
+### Content Coordinate Rules
+
+| Window Type | Border | Content Origin | Usable Size |
+|-------------|--------|----------------|-------------|
+| Bordered window | Yes | `(1, 1)` | `(width-2) × (height-2)` |
+| Borderless window | No | `(0, 0)` | `width × height` |
+
+### Implementation Requirements
+
+1. **Draw border first**: Call `window.border()` or `window.box()` before writing content
+2. **Content at (1,1)**: All text/widget content starts at row 1, column 1
+3. **Respect right edge**: Content must not exceed column `width-2`
+4. **Respect bottom edge**: Content must not exceed row `height-2`
+5. **Subwindows**: Use `derwin(height-2, width-2, 1, 1)` for content subwindows
+
+### Example: Bordered Toplevel (30×8)
+
+```python
+# Window dimensions
+win_width, win_height = 30, 8
+
+# Border cells (DO NOT write here)
+# - Row 0: columns 0-29 (top border)
+# - Row 7: columns 0-29 (bottom border)
+# - Column 0: rows 0-7 (left border)
+# - Column 29: rows 0-7 (right border)
+
+# Usable content area: 28 columns × 6 rows
+# - Rows: 1, 2, 3, 4, 5, 6
+# - Columns: 1 through 28
+
+window.border()  # Draw border FIRST
+window.addstr(1, 1, "Content starts here")  # Inside border
+window.addstr(6, 1, "Last usable row")      # Row height-2
+```
+
+### Widget Rendering Implications
+
+All widgets that render borders MUST:
+- Calculate usable content area as `(width-2) × (height-2)`
+- Offset all content rendering by `(1, 1)`
+- Truncate text that would exceed `width-2` characters
+- Clip content that would exceed `height-2` rows
+
+This applies to: `Toplevel`, `Frame`, `LabelFrame`, `Listbox`, `Text`, `Canvas`, dialog boxes, menus, and any widget with `borderwidth > 0` or `relief != FLAT`.
+
+---
+
 ## Text-Based Dialogs
 
 ### MessageBox
@@ -1977,7 +2045,7 @@ Window manager interface for toplevel windows.
 | `wm_focusmodel(model=None)` | ○ | Focus behavior |
 | `wm_forget(window)` | ✓ | Remove from WM |
 | `wm_frame()` | ○ | Returns self |
-| `wm_geometry(newGeometry=None)` | ○ | Cell geometry "WxH+X+Y" |
+| `wm_geometry(newGeometry=None)` | ○ | Cell geometry "WxH+X+Y" (see below) |
 | `wm_grid(baseW, baseH, wInc, hInc)` | ○ | Cell grid sizing |
 | `wm_group(pathName=None)` | ✗ | N/A |
 | `wm_iconbitmap(bitmap, default)` | ✗ | N/A (no icons) |
@@ -2000,7 +2068,47 @@ Window manager interface for toplevel windows.
 | `wm_transient(master=None)` | ○ | Transient relationship |
 | `wm_withdraw()` | ○ | Hide window |
 
-Convenience aliases: `aspect`, `attributes`, `client`, `deiconify`, `focusmodel`, `frame`, `geometry`, `grid`, `group`, `iconbitmap`, `iconify`, `iconmask`, `iconname`, `iconphoto`, `iconposition`, `iconwindow`, `maxsize`, `minsize`, `overrideredirect`, `positionfrom`, `protocol`, `resizable`, `sizefrom`, `state`, `title`, `transient`, `withdraw`
+**Convenience Aliases:** In tkinter, `wm_*` methods have short aliases without the `wm_` prefix (e.g., `root.title()` instead of `root.wm_title()`). TkCurses provides these aliases for all implemented Wm methods:
+
+| Alias | Method | Alias | Method |
+|-------|--------|-------|--------|
+| `geometry` | `wm_geometry` | `protocol` | `wm_protocol` |
+| `minsize` | `wm_minsize` | `transient` | `wm_transient` |
+| `maxsize` | `wm_maxsize` | `focusmodel` | `wm_focusmodel` |
+| `resizable` | `wm_resizable` | `overrideredirect` | `wm_overrideredirect` |
+| `title` | `wm_title` | `positionfrom` | `wm_positionfrom` |
+| `iconname` | `wm_iconname` | `sizefrom` | `wm_sizefrom` |
+| `iconbitmap` | `wm_iconbitmap` | `client` | `wm_client` |
+| `state` | `wm_state` | `colormapwindows` | `wm_colormapwindows` |
+| `withdraw` | `wm_withdraw` | `command` | `wm_command` |
+| `deiconify` | `wm_deiconify` | `frame` | `wm_frame` |
+| `iconify` | `wm_iconify` | `group` | `wm_group` |
+
+> **Note:** Aliases are only provided for methods that are implemented in TkCurses. Methods marked ✗ (N/A) in the table above do not have aliases
+
+**Geometry Behavior:**
+
+The `wm_geometry()` method handles window size and position using cell coordinates:
+
+| Mode | Behavior |
+|------|----------|
+| Query (`geometry()`) | Returns current geometry as "WxH+X+Y" string |
+| Set (`geometry("WxH+X+Y")`) | Resizes and repositions the window |
+
+**Window Type Considerations:**
+
+| Window Type | Resize | Reposition | Notes |
+|-------------|--------|------------|-------|
+| `Tk` | No | No | Uses `stdscr`, size determined by terminal |
+| `Toplevel` | Yes | Yes | Uses `curses.newwin()`, supports `wresize()` and `mvwin()` |
+
+When setting geometry on a `Toplevel`:
+1. Parse the geometry string "WxH+X+Y"
+2. Resize the curses window using `wresize(height, width)`
+3. Move the window using `mvwin(y, x)`
+4. Update the panel stack to reflect changes
+
+> **Constraint:** Window cannot exceed terminal dimensions. Geometry is clamped to available screen size.
 
 ---
 

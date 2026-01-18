@@ -44,6 +44,7 @@ from .colors import (
     BASE_COLORS,
     EXTENDED_COLORS,
     ColorManager,
+    ColorPairLimitError,
     hex_to_curses,
 )
 from .config import (
@@ -54,7 +55,11 @@ from .config import (
     MouseConfig,
     TkCursesConfig,
 )
-from .dispatcher import CursesDispatcher
+from .dispatcher import (
+    CursesDispatcher,
+    DispatcherQueueFullError,
+    DispatcherTimeoutError,
+)
 from .events import (
     MOD_ALT,
     MOD_CTRL,
@@ -77,6 +82,7 @@ from .geometry import (
     distribute_space,
 )
 from .input import InputHandler
+from .panels import Panel, PanelError, PanelStack
 from .screen import CursesScreen
 
 __all__ = [
@@ -102,6 +108,7 @@ __all__ = [
     'BASE_COLORS',
     'EXTENDED_COLORS',
     'ColorManager',
+    'ColorPairLimitError',
     'hex_to_curses',
     # config
     'AccessibilityConfig',
@@ -112,6 +119,8 @@ __all__ = [
     'TkCursesConfig',
     # dispatcher
     'CursesDispatcher',
+    'DispatcherQueueFullError',
+    'DispatcherTimeoutError',
     # events
     'MOD_ALT',
     'MOD_CTRL',
@@ -133,6 +142,10 @@ __all__ = [
     'distribute_space',
     # input
     'InputHandler',
+    # panels
+    'Panel',
+    'PanelError',
+    'PanelStack',
     # screen
     'CursesScreen',
 ]
