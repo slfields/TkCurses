@@ -30,7 +30,9 @@ from ._core.colors import ColorManager
 from ._core.config import TkCursesConfig
 from ._core.dispatcher import CursesDispatcher
 from ._core.events import Event, KeyEvent, MouseEvent, ResizeEvent
+from ._core.geometry import Rect, Size
 from ._core.input import InputHandler
+from ._core.layout import GridLayoutCache, LayoutManager
 from ._core.panels import PanelStack
 from ._core.screen import CursesScreen
 
@@ -2034,6 +2036,12 @@ class BaseWidget:
         self._allocated_x: int = 0
         self._allocated_y: int = 0
 
+        # Layout management
+        self._layout_dirty: bool = True
+        self._has_border: bool = False
+        self._pack_propagate_flag: bool = True
+        self._grid_propagate_flag: bool = True
+
         # Get screen and dispatcher instances
         self._screen: CursesScreen = CursesScreen()
         self._dispatcher: CursesDispatcher = CursesDispatcher.get()
@@ -2423,6 +2431,242 @@ class BaseWidget:
             if self._panel is not None:
                 self._panel.move(y, x)
 
+    # =========================================================================
+    # Layout Methods
+    # =========================================================================
+
+    def _mark_layout_dirty(self) -> None:
+        """Mark this widget and ancestors as needing layout recalculation.
+
+        Called when a widget's geometry configuration changes. Propagates
+        the dirty flag up to the root to ensure the entire affected tree
+        is relaid out.
+
+        Example:
+            >>> widget._mark_layout_dirty()
+        """
+        LayoutManager.mark_dirty(self)
+
+    def _do_layout(self) -> None:
+        """Perform layout calculation for this widget and descendants.
+
+        Calculates positions and sizes for all child widgets based on
+        their geometry manager configurations (pack, grid, place).
+
+        Example:
+            >>> root._do_layout()
+        """
+        LayoutManager.do_layout(self)
+
+    def _get_natural_size(self) -> Size:
+        """Get the widget's natural/preferred size.
+
+        Returns the size the widget would prefer to be, based on its
+        content and configuration. This is used by geometry managers
+        to determine how much space to allocate.
+
+        Returns:
+            Size with preferred width and height in cell units.
+
+        Example:
+            >>> size = widget._get_natural_size()
+            >>> print(f"Preferred size: {size.width}x{size.height}")
+        """
+        # Use requested size if set
+        width = self._requested_width if self._requested_width > 0 else 10
+        height = self._requested_height if self._requested_height > 0 else 1
+
+        # If propagation is enabled, consider children
+        if self._pack_propagate_flag and hasattr(self, "pack_slaves"):
+            children = self.pack_slaves()
+            if children:
+                child_size = self._calculate_children_pack_size()
+                width = max(width, child_size.width)
+                height = max(height, child_size.height)
+
+        if self._grid_propagate_flag and hasattr(self, "grid_slaves"):
+            children = self.grid_slaves()
+            if children:
+                child_size = self._calculate_children_grid_size()
+                width = max(width, child_size.width)
+                height = max(height, child_size.height)
+
+        # Account for border
+        if self._has_border:
+            width += 2
+            height += 2
+
+        return Size(width, height)
+
+    def _calculate_children_pack_size(self) -> Size:
+        """Calculate total size needed for packed children.
+
+        Returns:
+            Size with total width and height needed.
+        """
+        if not hasattr(self, "pack_slaves"):
+            return Size(0, 0)
+
+        children = self.pack_slaves()
+        if not children:
+            return Size(0, 0)
+
+        total_width = 0
+        total_height = 0
+        max_width = 0
+        max_height = 0
+
+        for child in children:
+            info = getattr(child, "_pack_info", None)
+            if info is None:
+                continue
+
+            size = child._get_natural_size()
+            side = info.get("side", "top").lower()
+            padx = info.get("padx", 0)
+            pady = info.get("pady", 0)
+            if isinstance(padx, (list, tuple)):
+                padx = padx[0] if padx else 0
+            if isinstance(pady, (list, tuple)):
+                pady = pady[0] if pady else 0
+
+            if side in ("top", "bottom"):
+                total_height += size.height + 2 * pady
+                max_width = max(max_width, size.width + 2 * padx)
+            else:
+                total_width += size.width + 2 * padx
+                max_height = max(max_height, size.height + 2 * pady)
+
+        return Size(max(total_width, max_width), max(total_height, max_height))
+
+    def _calculate_children_grid_size(self) -> Size:
+        """Calculate total size needed for gridded children.
+
+        Returns:
+            Size with total width and height needed.
+        """
+        if not hasattr(self, "grid_slaves") or not hasattr(self, "grid_size"):
+            return Size(0, 0)
+
+        children = self.grid_slaves()
+        if not children:
+            return Size(0, 0)
+
+        num_cols, num_rows = self.grid_size()
+        if num_cols == 0 or num_rows == 0:
+            return Size(0, 0)
+
+        col_widths = [1] * num_cols
+        row_heights = [1] * num_rows
+
+        for child in children:
+            info = getattr(child, "_grid_info", None)
+            if info is None:
+                continue
+
+            col = info.get("column", 0)
+            row = info.get("row", 0)
+            colspan = info.get("columnspan", 1)
+            rowspan = info.get("rowspan", 1)
+
+            if colspan == 1 and col < num_cols:
+                size = child._get_natural_size()
+                padx = info.get("padx", 0)
+                if isinstance(padx, (list, tuple)):
+                    padx = padx[0] if padx else 0
+                col_widths[col] = max(col_widths[col], size.width + 2 * padx)
+
+            if rowspan == 1 and row < num_rows:
+                size = child._get_natural_size()
+                pady = info.get("pady", 0)
+                if isinstance(pady, (list, tuple)):
+                    pady = pady[0] if pady else 0
+                row_heights[row] = max(row_heights[row], size.height + 2 * pady)
+
+        return Size(sum(col_widths), sum(row_heights))
+
+    def _get_minimum_size(self) -> Size:
+        """Get the widget's minimum required size.
+
+        Returns the absolute minimum size the widget needs to be
+        functional, accounting for borders and essential content.
+
+        Returns:
+            Size with minimum width and height in cell units.
+
+        Example:
+            >>> min_size = widget._get_minimum_size()
+        """
+        # Minimum 1x1 for content, plus border if present
+        if self._has_border:
+            return Size(3, 3)  # 1 content + 2 border
+        return Size(1, 1)
+
+    def _get_content_bounds(self) -> Rect:
+        """Get the area available for child widgets.
+
+        Returns the rectangular region where children can be placed,
+        accounting for borders and other decorations.
+
+        Returns:
+            Rect representing the content area.
+
+        Example:
+            >>> bounds = widget._get_content_bounds()
+            >>> # Layout children within bounds
+        """
+        width = self._allocated_width or getattr(self, "_width", 80)
+        height = self._allocated_height or getattr(self, "_height", 24)
+        x = self._allocated_x
+        y = self._allocated_y
+
+        if self._has_border:
+            return Rect(x + 1, y + 1, max(1, width - 2), max(1, height - 2))
+        return Rect(x, y, width, height)
+
+    def _apply_layout(self, result: Any) -> None:
+        """Apply calculated layout result to this widget.
+
+        Called by layout engines to set the widget's position and size.
+        The result is a LayoutResult object with x, y, width, height.
+
+        Args:
+            result: LayoutResult from a layout engine.
+        """
+        from ._core.layout import LayoutResult
+
+        if isinstance(result, LayoutResult):
+            self._allocated_x = result.x
+            self._allocated_y = result.y
+            self._allocated_width = result.width
+            self._allocated_height = result.height
+
+            # Update curses window if it exists
+            if hasattr(self, '_window') and self._window is not None:
+                try:
+                    # Get dispatcher from master
+                    dispatcher = None
+                    if hasattr(self, 'master') and hasattr(self.master, '_dispatcher'):
+                        dispatcher = self.master._dispatcher
+                    elif hasattr(self, '_tk_root') and hasattr(self._tk_root, '_dispatcher'):
+                        dispatcher = self._tk_root._dispatcher
+
+                    if dispatcher:
+                        # Resize and move window
+                        dispatcher.call(
+                            self._window.resize,
+                            max(1, result.height),
+                            max(1, result.width),
+                        )
+                        dispatcher.call(
+                            self._window.mvwin,
+                            result.y,
+                            result.x,
+                        )
+                except curses.error:
+                    # Window operations may fail at boundaries
+                    pass
+
 
 class Pack:
     """Pack geometry manager stub for Widget class.
@@ -2503,6 +2747,11 @@ class Pack:
         # Update pack options
         self._pack_info.update(options)
 
+        # Mark parent as needing layout
+        if hasattr(self, "master") and self.master is not None:
+            if hasattr(self.master, "_mark_layout_dirty"):
+                self.master._mark_layout_dirty()
+
     def pack_configure(self, cnf: dict[str, Any] = {}, **kw: Any) -> None:
         """Alias for pack().
 
@@ -2521,7 +2770,11 @@ class Pack:
             >>> widget.pack()  # Show again with previous options
         """
         self._pack_info = None
-        # Mark widget as unmapped (will be implemented in Phase 3)
+
+        # Mark parent as needing layout
+        if hasattr(self, "master") and self.master is not None:
+            if hasattr(self.master, "_mark_layout_dirty"):
+                self.master._mark_layout_dirty()
 
     def pack_info(self) -> dict[str, Any]:
         """Return pack configuration options.
@@ -2554,9 +2807,12 @@ class Pack:
             >>> frame.pack_propagate(False)  # Fixed size frame
             >>> can_propagate = frame.pack_propagate()
         """
-        # Stub: propagation will be implemented in Phase 3
         if flag is None:
-            return True
+            return getattr(self, "_pack_propagate_flag", True)
+
+        self._pack_propagate_flag = bool(flag)
+        if hasattr(self, "_mark_layout_dirty"):
+            self._mark_layout_dirty()
         return None
 
     def pack_slaves(self) -> list[Any]:
@@ -2616,6 +2872,9 @@ class Grid:
         """
         self._grid_info: Optional[dict[str, Any]] = None
         self._grid_removed: bool = False
+        self._row_config: dict[int, dict[str, Any]] = {}
+        self._col_config: dict[int, dict[str, Any]] = {}
+        self._grid_layout_cache: Optional[Any] = None
 
     def grid(self, cnf: dict[str, Any] = {}, **kw: Any) -> None:
         """Grid widget with specified options.
@@ -2663,6 +2922,11 @@ class Grid:
         self._grid_info.update(options)
         self._grid_removed = False
 
+        # Mark parent as needing layout
+        if hasattr(self, "master") and self.master is not None:
+            if hasattr(self.master, "_mark_layout_dirty"):
+                self.master._mark_layout_dirty()
+
     def grid_configure(self, cnf: dict[str, Any] = {}, **kw: Any) -> None:
         """Alias for grid().
 
@@ -2682,7 +2946,11 @@ class Grid:
         """
         self._grid_info = None
         self._grid_removed = False
-        # Mark widget as unmapped (will be implemented in Phase 3)
+
+        # Mark parent as needing layout
+        if hasattr(self, "master") and self.master is not None:
+            if hasattr(self.master, "_mark_layout_dirty"):
+                self.master._mark_layout_dirty()
 
     def grid_remove(self) -> None:
         """Remove widget from grid but remember configuration.
@@ -2696,7 +2964,11 @@ class Grid:
             >>> widget.grid()  # Restore at row=5, column=3
         """
         self._grid_removed = True
-        # Mark widget as unmapped (will be implemented in Phase 3)
+
+        # Mark parent as needing layout
+        if hasattr(self, "master") and self.master is not None:
+            if hasattr(self.master, "_mark_layout_dirty"):
+                self.master._mark_layout_dirty()
 
     def grid_info(self) -> dict[str, Any]:
         """Return grid configuration options.
@@ -2729,9 +3001,12 @@ class Grid:
             >>> frame.grid_propagate(False)  # Fixed size frame
             >>> can_propagate = frame.grid_propagate()
         """
-        # Stub: propagation will be implemented in Phase 3
         if flag is None:
-            return True
+            return getattr(self, "_grid_propagate_flag", True)
+
+        self._grid_propagate_flag = bool(flag)
+        if hasattr(self, "_mark_layout_dirty"):
+            self._mark_layout_dirty()
         return None
 
     def grid_slaves(
@@ -2797,8 +3072,44 @@ class Grid:
             >>> bbox = frame.grid_bbox(0, 0)  # Cell at row=0, col=0
             >>> bbox = frame.grid_bbox(0, 0, 2, 1)  # Range of cells
         """
-        # Stub: will be implemented in Phase 3 with actual layout
-        return None
+        cache = getattr(self, "_grid_layout_cache", None)
+        if cache is None:
+            return None
+
+        if not cache.col_widths or not cache.row_heights:
+            return None
+
+        num_cols = len(cache.col_widths)
+        num_rows = len(cache.row_heights)
+
+        if column is None:
+            # Return entire grid bbox
+            total_w = sum(cache.col_widths)
+            total_h = sum(cache.row_heights)
+            x = cache.col_positions[0] if cache.col_positions else 0
+            y = cache.row_positions[0] if cache.row_positions else 0
+            return (x, y, total_w, total_h)
+
+        # Ensure valid indices
+        if column < 0 or column >= num_cols:
+            return None
+        if row is None:
+            row = 0
+        if row < 0 or row >= num_rows:
+            return None
+
+        col2 = col2 if col2 is not None else column
+        row2 = row2 if row2 is not None else row
+
+        col2 = min(col2, num_cols - 1)
+        row2 = min(row2, num_rows - 1)
+
+        x = cache.col_positions[column]
+        y = cache.row_positions[row]
+        w = sum(cache.col_widths[column : col2 + 1])
+        h = sum(cache.row_heights[row : row2 + 1])
+
+        return (x, y, w, h)
 
     def grid_columnconfigure(
         self,
@@ -2823,10 +3134,29 @@ class Grid:
             >>> frame.grid_columnconfigure(0, weight=1)  # Column 0 expands
             >>> frame.grid_columnconfigure(1, minsize=100)
         """
-        # Stub: will be implemented in Phase 3
+        # Ensure _col_config exists
+        if not hasattr(self, "_col_config"):
+            self._col_config = {}
+
         if not cnf and not kw:
-            # Query mode
-            return {"weight": 0, "minsize": 0, "pad": 0}
+            # Query mode - return current config or defaults
+            config = self._col_config.get(index, {})
+            return {
+                "weight": config.get("weight", 0),
+                "minsize": config.get("minsize", 0),
+                "pad": config.get("pad", 0),
+            }
+
+        # Set mode - merge options
+        options = dict(cnf, **kw)
+        if index not in self._col_config:
+            self._col_config[index] = {}
+        self._col_config[index].update(options)
+
+        # Mark layout dirty
+        if hasattr(self, "_mark_layout_dirty"):
+            self._mark_layout_dirty()
+
         return None
 
     def grid_rowconfigure(
@@ -2852,17 +3182,36 @@ class Grid:
             >>> frame.grid_rowconfigure(0, weight=1)  # Row 0 expands
             >>> frame.grid_rowconfigure(1, minsize=50)
         """
-        # Stub: will be implemented in Phase 3
+        # Ensure _row_config exists
+        if not hasattr(self, "_row_config"):
+            self._row_config = {}
+
         if not cnf and not kw:
-            # Query mode
-            return {"weight": 0, "minsize": 0, "pad": 0}
+            # Query mode - return current config or defaults
+            config = self._row_config.get(index, {})
+            return {
+                "weight": config.get("weight", 0),
+                "minsize": config.get("minsize", 0),
+                "pad": config.get("pad", 0),
+            }
+
+        # Set mode - merge options
+        options = dict(cnf, **kw)
+        if index not in self._row_config:
+            self._row_config[index] = {}
+        self._row_config[index].update(options)
+
+        # Mark layout dirty
+        if hasattr(self, "_mark_layout_dirty"):
+            self._mark_layout_dirty()
+
         return None
 
     def grid_location(self, x: int, y: int) -> tuple[int, int]:
         """Get grid cell at specified coordinates.
 
         Returns the (column, row) of the grid cell at the given
-        pixel coordinates.
+        coordinates.
 
         Args:
             x: X coordinate.
@@ -2870,12 +3219,35 @@ class Grid:
 
         Returns:
             Tuple (column, row) of grid cell at coordinates.
+            Returns (-1, -1) if coordinates are outside the grid.
 
         Example:
             >>> col, row = frame.grid_location(50, 30)
         """
-        # Stub: will be implemented in Phase 3
-        return (0, 0)
+        cache = getattr(self, "_grid_layout_cache", None)
+        if cache is None:
+            return (-1, -1)
+
+        if not cache.col_positions or not cache.row_positions:
+            return (-1, -1)
+
+        # Find column
+        col = -1
+        for i, pos in enumerate(cache.col_positions):
+            if i < len(cache.col_widths):
+                if pos <= x < pos + cache.col_widths[i]:
+                    col = i
+                    break
+
+        # Find row
+        row = -1
+        for i, pos in enumerate(cache.row_positions):
+            if i < len(cache.row_heights):
+                if pos <= y < pos + cache.row_heights[i]:
+                    row = i
+                    break
+
+        return (col, row)
 
     def grid_size(self) -> tuple[int, int]:
         """Get grid dimensions.
@@ -2990,6 +3362,11 @@ class Place:
         # Update place options
         self._place_info.update(options)
 
+        # Mark parent as needing layout
+        if hasattr(self, "master") and self.master is not None:
+            if hasattr(self.master, "_mark_layout_dirty"):
+                self.master._mark_layout_dirty()
+
     def place_configure(self, cnf: dict[str, Any] = {}, **kw: Any) -> None:
         """Alias for place().
 
@@ -3008,7 +3385,11 @@ class Place:
             >>> widget.place()  # Show again with previous options
         """
         self._place_info = None
-        # Mark widget as unmapped (will be implemented in Phase 3)
+
+        # Mark parent as needing layout
+        if hasattr(self, "master") and self.master is not None:
+            if hasattr(self.master, "_mark_layout_dirty"):
+                self.master._mark_layout_dirty()
 
     def place_info(self) -> dict[str, Any]:
         """Return place configuration options.
@@ -3241,6 +3622,16 @@ class Tk(Misc, Wm):
         self._quit_flag = False
         self._destroyed = False
 
+        # Layout management
+        self._children: list[Any] = []
+        self._layout_dirty: bool = True
+        self._has_border: bool = False
+        self._pack_propagate_flag: bool = True
+        self._grid_propagate_flag: bool = True
+        self._row_config: dict[int, dict[str, Any]] = {}
+        self._col_config: dict[int, dict[str, Any]] = {}
+        self._grid_layout_cache: Optional[Any] = None
+
         # Set up signal handlers for terminal resize
         self._setup_resize_handler()
 
@@ -3260,6 +3651,9 @@ class Tk(Misc, Wm):
 
                 # Resize the screen
                 self._screen.resize_term(curses.LINES, curses.COLS)
+
+                # Mark all widgets as needing layout recalculation
+                LayoutManager.mark_all_dirty(self)
 
                 # Generate a resize event for widgets to handle
                 resize_event = ResizeEvent(
@@ -3452,6 +3846,10 @@ class Tk(Misc, Wm):
                         if n > 0 and events_processed >= n:
                             break
 
+                # Perform layout calculation if needed
+                if getattr(self, "_layout_dirty", False):
+                    self._do_layout()
+
                 # Update display
                 try:
                     self._panel_stack.update()
@@ -3597,6 +3995,82 @@ class Tk(Misc, Wm):
         except curses.error:
             # Bell not available on this terminal
             pass
+
+    # =========================================================================
+    # Layout Methods
+    # =========================================================================
+
+    def _add_child(self, widget: Any) -> None:
+        """Add a child widget to this window's children list."""
+        if widget not in self._children:
+            self._children.append(widget)
+
+    def _remove_child(self, widget: Any) -> None:
+        """Remove a child widget from this window's children list."""
+        if widget in self._children:
+            self._children.remove(widget)
+
+    def _do_layout(self) -> None:
+        """Perform layout calculation for this window and descendants."""
+        LayoutManager.do_layout(self)
+
+    def _mark_layout_dirty(self) -> None:
+        """Mark this window as needing layout recalculation."""
+        self._layout_dirty = True
+
+    def _get_content_bounds(self) -> Rect:
+        """Get the area available for child widgets."""
+        return Rect(0, 0, self._width, self._height)
+
+    def _get_natural_size(self) -> Size:
+        """Get the window's natural size."""
+        return Size(self._width, self._height)
+
+    def pack_slaves(self) -> list[Any]:
+        """Return list of widgets packed in this window."""
+        return [
+            child
+            for child in self._children
+            if hasattr(child, "_pack_info") and child._pack_info is not None
+        ]
+
+    def grid_slaves(self, row: Optional[int] = None, column: Optional[int] = None) -> list[Any]:
+        """Return list of widgets gridded in this window."""
+        slaves = [
+            child
+            for child in self._children
+            if hasattr(child, "_grid_info")
+            and child._grid_info is not None
+            and not getattr(child, "_grid_removed", False)
+        ]
+        if row is not None:
+            slaves = [s for s in slaves if s._grid_info.get("row") == row]
+        if column is not None:
+            slaves = [s for s in slaves if s._grid_info.get("column") == column]
+        return slaves
+
+    def grid_size(self) -> tuple[int, int]:
+        """Get grid dimensions."""
+        slaves = self.grid_slaves()
+        if not slaves:
+            return (0, 0)
+        max_col = max(
+            (s._grid_info.get("column", 0) + s._grid_info.get("columnspan", 1) - 1)
+            for s in slaves
+        )
+        max_row = max(
+            (s._grid_info.get("row", 0) + s._grid_info.get("rowspan", 1) - 1)
+            for s in slaves
+        )
+        return (max_col + 1, max_row + 1)
+
+    def place_slaves(self) -> list[Any]:
+        """Return list of widgets placed in this window."""
+        return [
+            child
+            for child in self._children
+            if hasattr(child, "_place_info") and child._place_info is not None
+        ]
 
     @classmethod
     def _reset_singleton(cls) -> None:
@@ -3751,6 +4225,20 @@ class Toplevel(Misc, Wm):
         # Apply any keyword configuration
         if kw:
             self.configure(**kw)
+
+        # Layout management - child widgets
+        self._children: list[BaseWidget] = []
+
+        # Layout flags
+        self._layout_dirty: bool = True
+        self._has_border: bool = False
+        self._pack_propagate_flag: bool = True
+        self._grid_propagate_flag: bool = True
+
+        # Grid row/column configuration
+        self._row_config: dict[int, dict[str, Any]] = {}
+        self._col_config: dict[int, dict[str, Any]] = {}
+        self._grid_layout_cache: GridLayoutCache | None = None
 
     @property
     def tk(self) -> Tk:
@@ -4099,6 +4587,405 @@ class Toplevel(Misc, Wm):
         """
         # Stub: would require integration with mainloop for blocking
         pass
+
+    # -------------------------------------------------------------------------
+    # Layout Management Methods
+    # -------------------------------------------------------------------------
+
+    def _add_child(self, child: BaseWidget) -> None:
+        """Add a child widget to this Toplevel.
+
+        Called by widget creation to register child widgets.
+
+        Args:
+            child: The child widget to add.
+        """
+        if child not in self._children:
+            self._children.append(child)
+
+    def _remove_child(self, child: BaseWidget) -> None:
+        """Remove a child widget from this Toplevel.
+
+        Called when a widget is destroyed or forgotten.
+
+        Args:
+            child: The child widget to remove.
+        """
+        if child in self._children:
+            self._children.remove(child)
+
+    def _mark_layout_dirty(self) -> None:
+        """Mark this Toplevel as needing layout recalculation.
+
+        Called when children are added, removed, or their geometry options change.
+        """
+        self._layout_dirty = True
+
+    def _do_layout(self) -> None:
+        """Perform layout calculation for all children.
+
+        Calculates positions and sizes for all children based on their
+        geometry manager (pack, grid, or place) settings.
+        """
+        if not self._layout_dirty:
+            return
+
+        # Get content bounds for layout
+        content_bounds = self._get_content_bounds()
+
+        # Group children by geometry manager
+        pack_children: list[BaseWidget] = []
+        grid_children: list[BaseWidget] = []
+        place_children: list[BaseWidget] = []
+
+        for child in self._children:
+            manager = getattr(child, '_geometry_manager', None)
+            if manager == 'pack':
+                pack_children.append(child)
+            elif manager == 'grid':
+                grid_children.append(child)
+            elif manager == 'place':
+                place_children.append(child)
+
+        # Calculate layouts using engines
+        from ._core.layout import PackLayoutEngine, GridLayoutEngine, PlaceLayoutEngine
+
+        if pack_children:
+            pack_results = PackLayoutEngine.calculate(pack_children, content_bounds)
+            for child, result in pack_results.items():
+                child._apply_layout(result)
+
+        if grid_children:
+            grid_results, cache = GridLayoutEngine.calculate(
+                grid_children, content_bounds,
+                self._row_config, self._col_config
+            )
+            self._grid_layout_cache = cache
+            for child, result in grid_results.items():
+                child._apply_layout(result)
+
+        if place_children:
+            place_results = PlaceLayoutEngine.calculate(place_children, content_bounds)
+            for child, result in place_results.items():
+                child._apply_layout(result)
+
+        self._layout_dirty = False
+
+        # Recursively layout children
+        for child in self._children:
+            if hasattr(child, '_do_layout'):
+                child._do_layout()
+
+    def _get_content_bounds(self) -> Rect:
+        """Get the bounds available for child widgets.
+
+        Returns:
+            A Rect representing the content area (excluding borders if present).
+        """
+        x = 0
+        y = 0
+        width = self._width
+        height = self._height
+
+        # Adjust for border if present
+        if self._has_border:
+            x += 1
+            y += 1
+            width = max(0, width - 2)
+            height = max(0, height - 2)
+
+        return Rect(x=x, y=y, width=width, height=height)
+
+    def _get_natural_size(self) -> Size:
+        """Get the natural size of this Toplevel based on children.
+
+        Returns:
+            The size that would fit all children without clipping.
+        """
+        # If propagation is disabled, use configured size
+        if not self._pack_propagate_flag and not self._grid_propagate_flag:
+            return Size(self._width, self._height)
+
+        # Calculate based on children
+        max_width = 0
+        max_height = 0
+
+        for child in self._children:
+            manager = getattr(child, '_geometry_manager', None)
+
+            if manager == 'pack' and self._pack_propagate_flag:
+                child_size = child._get_natural_size()
+                options = getattr(child, '_pack_info', {})
+                padx = options.get('padx', 0)
+                pady = options.get('pady', 0)
+                ipadx = options.get('ipadx', 0)
+                ipady = options.get('ipady', 0)
+
+                req_w = child_size.width + 2 * (padx + ipadx)
+                req_h = child_size.height + 2 * (pady + ipady)
+
+                side = options.get('side', 'top')
+                if side in ('top', 'bottom'):
+                    max_width = max(max_width, req_w)
+                    max_height += req_h
+                else:
+                    max_width += req_w
+                    max_height = max(max_height, req_h)
+
+            elif manager == 'grid' and self._grid_propagate_flag:
+                child_size = child._get_natural_size()
+                options = getattr(child, '_grid_info', {})
+                padx = options.get('padx', 0)
+                pady = options.get('pady', 0)
+                ipadx = options.get('ipadx', 0)
+                ipady = options.get('ipady', 0)
+
+                max_width = max(max_width, child_size.width + 2 * (padx + ipadx))
+                max_height = max(max_height, child_size.height + 2 * (pady + ipady))
+
+            elif manager == 'place':
+                # Place children don't affect natural size
+                pass
+
+        # Add border if present
+        if self._has_border:
+            max_width += 2
+            max_height += 2
+
+        return Size(
+            max(max_width, self._width),
+            max(max_height, self._height)
+        )
+
+    def pack_slaves(self) -> list[BaseWidget]:
+        """Return a list of all children managed by pack geometry manager.
+
+        Returns:
+            List of widgets managed by pack in this Toplevel.
+        """
+        return [
+            child for child in self._children
+            if getattr(child, '_geometry_manager', None) == 'pack'
+        ]
+
+    def grid_slaves(self, row: int | None = None, column: int | None = None) -> list[BaseWidget]:
+        """Return a list of all children managed by grid geometry manager.
+
+        Args:
+            row: If specified, only return widgets in this row.
+            column: If specified, only return widgets in this column.
+
+        Returns:
+            List of widgets managed by grid, optionally filtered by row/column.
+        """
+        result = []
+        for child in self._children:
+            if getattr(child, '_geometry_manager', None) != 'grid':
+                continue
+            info = getattr(child, '_grid_info', {})
+            if row is not None and info.get('row') != row:
+                continue
+            if column is not None and info.get('column') != column:
+                continue
+            result.append(child)
+        return result
+
+    def place_slaves(self) -> list[BaseWidget]:
+        """Return a list of all children managed by place geometry manager.
+
+        Returns:
+            List of widgets managed by place in this Toplevel.
+        """
+        return [
+            child for child in self._children
+            if getattr(child, '_geometry_manager', None) == 'place'
+        ]
+
+    def grid_size(self) -> tuple[int, int]:
+        """Return the grid dimensions (columns, rows).
+
+        Returns:
+            Tuple of (max_column + 1, max_row + 1) for grid children.
+        """
+        max_col = 0
+        max_row = 0
+        for child in self._children:
+            if getattr(child, '_geometry_manager', None) != 'grid':
+                continue
+            info = getattr(child, '_grid_info', {})
+            col = info.get('column', 0) + info.get('columnspan', 1)
+            row = info.get('row', 0) + info.get('rowspan', 1)
+            max_col = max(max_col, col)
+            max_row = max(max_row, row)
+        return (max_col, max_row)
+
+    def grid_bbox(
+        self,
+        column: int | None = None,
+        row: int | None = None,
+        col2: int | None = None,
+        row2: int | None = None,
+    ) -> tuple[int, int, int, int] | None:
+        """Return the bounding box of a grid cell or range.
+
+        Args:
+            column: Starting column (or None for all).
+            row: Starting row (or None for all).
+            col2: Ending column (or None for single column).
+            row2: Ending row (or None for single row).
+
+        Returns:
+            Tuple (x, y, width, height) or None if no grid children.
+        """
+        if self._grid_layout_cache is None:
+            return None
+
+        cache = self._grid_layout_cache
+
+        if column is None:
+            column = 0
+        if row is None:
+            row = 0
+        if col2 is None:
+            col2 = column
+        if row2 is None:
+            row2 = row
+
+        # Calculate bounding box from cached positions
+        if column >= len(cache.col_positions) or row >= len(cache.row_positions):
+            return None
+
+        x = cache.col_positions[column]
+        y = cache.row_positions[row]
+
+        # Calculate width
+        if col2 + 1 < len(cache.col_positions):
+            width = cache.col_positions[col2 + 1] - x
+        else:
+            width = sum(cache.col_widths[column:col2 + 1])
+
+        # Calculate height
+        if row2 + 1 < len(cache.row_positions):
+            height = cache.row_positions[row2 + 1] - y
+        else:
+            height = sum(cache.row_heights[row:row2 + 1])
+
+        return (x, y, width, height)
+
+    def grid_columnconfigure(
+        self,
+        index: int | str,
+        cnf: dict[str, Any] | None = None,
+        **kw: Any,
+    ) -> dict[str, Any] | None:
+        """Configure column options for grid layout.
+
+        Args:
+            index: Column index or 'all'.
+            cnf: Configuration dict.
+            **kw: Configuration options (weight, minsize, pad, uniform).
+
+        Returns:
+            Current configuration if querying, None if setting.
+        """
+        options = cnf or {}
+        options.update(kw)
+
+        if not options:
+            # Query mode
+            if isinstance(index, int) and index in self._col_config:
+                return self._col_config[index].copy()
+            return {'weight': 0, 'minsize': 0, 'pad': 0, 'uniform': None}
+
+        # Set mode
+        if isinstance(index, str) and index == 'all':
+            max_col = self.grid_size()[0]
+            for col in range(max_col):
+                if col not in self._col_config:
+                    self._col_config[col] = {}
+                self._col_config[col].update(options)
+        else:
+            idx = int(index)
+            if idx not in self._col_config:
+                self._col_config[idx] = {}
+            self._col_config[idx].update(options)
+
+        self._mark_layout_dirty()
+        return None
+
+    def grid_rowconfigure(
+        self,
+        index: int | str,
+        cnf: dict[str, Any] | None = None,
+        **kw: Any,
+    ) -> dict[str, Any] | None:
+        """Configure row options for grid layout.
+
+        Args:
+            index: Row index or 'all'.
+            cnf: Configuration dict.
+            **kw: Configuration options (weight, minsize, pad, uniform).
+
+        Returns:
+            Current configuration if querying, None if setting.
+        """
+        options = cnf or {}
+        options.update(kw)
+
+        if not options:
+            # Query mode
+            if isinstance(index, int) and index in self._row_config:
+                return self._row_config[index].copy()
+            return {'weight': 0, 'minsize': 0, 'pad': 0, 'uniform': None}
+
+        # Set mode
+        if isinstance(index, str) and index == 'all':
+            max_row = self.grid_size()[1]
+            for r in range(max_row):
+                if r not in self._row_config:
+                    self._row_config[r] = {}
+                self._row_config[r].update(options)
+        else:
+            idx = int(index)
+            if idx not in self._row_config:
+                self._row_config[idx] = {}
+            self._row_config[idx].update(options)
+
+        self._mark_layout_dirty()
+        return None
+
+    def grid_location(self, x: int, y: int) -> tuple[int, int]:
+        """Return the grid cell containing a point.
+
+        Args:
+            x: X coordinate.
+            y: Y coordinate.
+
+        Returns:
+            Tuple (column, row) of the cell at that location.
+        """
+        if self._grid_layout_cache is None:
+            return (0, 0)
+
+        cache = self._grid_layout_cache
+
+        # Find column
+        col = 0
+        for i, pos in enumerate(cache.col_positions):
+            if x >= pos:
+                col = i
+            else:
+                break
+
+        # Find row
+        row = 0
+        for i, pos in enumerate(cache.row_positions):
+            if y >= pos:
+                row = i
+            else:
+                break
+
+        return (col, row)
 
 
 class Variable:

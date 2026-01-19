@@ -82,6 +82,14 @@ from .geometry import (
     distribute_space,
 )
 from .input import InputHandler
+from .layout import (
+    GridLayoutCache,
+    GridLayoutEngine,
+    LayoutManager,
+    LayoutResult,
+    PackLayoutEngine,
+    PlaceLayoutEngine,
+)
 from .panels import Panel, PanelError, PanelStack
 from .screen import CursesScreen
 
@@ -142,6 +150,13 @@ __all__ = [
     'distribute_space',
     # input
     'InputHandler',
+    # layout
+    'GridLayoutCache',
+    'GridLayoutEngine',
+    'LayoutManager',
+    'LayoutResult',
+    'PackLayoutEngine',
+    'PlaceLayoutEngine',
     # panels
     'Panel',
     'PanelError',
