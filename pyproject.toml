@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tkcurses"
-version = "0.1.0"
+version = "0.2.0"
 description = "A tkinter-compatible API layer that renders to curses"
 readme = "README.md"
 license = "PSF-2.0"
