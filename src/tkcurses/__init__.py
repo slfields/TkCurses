@@ -2875,6 +2875,7 @@ class Grid:
         self._row_config: dict[int, dict[str, Any]] = {}
         self._col_config: dict[int, dict[str, Any]] = {}
         self._grid_layout_cache: Optional[Any] = None
+        self._grid_anchor_value: str = "nw"
 
     def grid(self, cnf: dict[str, Any] = {}, **kw: Any) -> None:
         """Grid widget with specified options.
@@ -3110,6 +3111,35 @@ class Grid:
         h = sum(cache.row_heights[row : row2 + 1])
 
         return (x, y, w, h)
+
+    def grid_anchor(self, anchor: Optional[str] = None) -> Optional[str]:
+        """Set or get the anchor point for the grid.
+
+        When the grid is smaller than its allocated space, the anchor
+        determines where the grid is positioned within that space.
+
+        Args:
+            anchor: Anchor position (n, s, e, w, ne, nw, se, sw, center).
+                If None, returns the current anchor value.
+
+        Returns:
+            Current anchor value if querying, None if setting.
+
+        Example:
+            >>> frame.grid_anchor("center")  # Center grid in frame
+            >>> current = frame.grid_anchor()  # Get current anchor
+        """
+        if anchor is None:
+            return self._grid_anchor_value
+
+        valid_anchors = {"n", "s", "e", "w", "ne", "nw", "se", "sw", "center"}
+        anchor_lower = anchor.lower()
+        if anchor_lower not in valid_anchors:
+            raise ValueError(f"Invalid anchor: {anchor}")
+
+        self._grid_anchor_value = anchor_lower
+        self._mark_layout_dirty()
+        return None
 
     def grid_columnconfigure(
         self,
