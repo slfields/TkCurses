@@ -1,0 +1,513 @@
+"""Render TkCurses applications in a real pseudo-terminal and assert on output.
+
+Curses writes escape sequences to a terminal; it cannot be meaningfully checked
+by mocking. This harness runs application code in a child process attached to a
+real pty, feeds the resulting byte stream through a VT100 emulator (``pyte``),
+and exposes the emulated character grid for assertions. What the tests see is
+what a terminal would actually display.
+
+Usage::
+
+    with TerminalHarness(cols=40, rows=10) as term:
+        term.run_source(
+            '''
+            import curses
+            def main(stdscr):
+                stdscr.addstr(0, 0, "hello")
+                stdscr.refresh()
+                stdscr.getch()
+            curses.wrapper(main)
+            '''
+        )
+        term.wait_for_text("hello")
+        assert term.text_at(0, 0, 5) == "hello"
+        term.send_keys("q")
+
+Two environment details are load-bearing and were established empirically:
+
+* The pty window size must be set on the *slave* descriptor *before* forking.
+  A child that starts before the size is applied initialises curses against
+  the default 80x24 and never sees the intended dimensions.
+* ``NCURSES_NO_UTF8_ACS=1`` makes ncurses emit UTF-8 box-drawing characters
+  directly. Without it, borders arrive as VT100 alternate-charset letters and
+  a border assertion reads ``lqqqqqk`` instead of ``┌─────┐``.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import errno
+import fcntl
+import os
+import pty
+import select
+import signal
+import struct
+import sys
+import termios
+import textwrap
+import time
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import pyte
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Sequence
+
+__all__ = ["TerminalHarness", "TerminalTimeout"]
+
+#: Default time budget, in seconds, for waiting on the child to render.
+DEFAULT_TIMEOUT = 5.0
+
+#: Environment forced on the child so rendering is deterministic across hosts.
+_CHILD_ENV = {
+    "TERM": "xterm-256color",
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": "en_US.UTF-8",
+    # Emit real UTF-8 box glyphs rather than VT100 charset-switching.
+    "NCURSES_NO_UTF8_ACS": "1",
+    "PYTHONUNBUFFERED": "1",
+    # Keep tracebacks stable and free of colour escapes on 3.13+.
+    "PYTHONNODEBUGRANGES": "1",
+    "NO_COLOR": "1",
+}
+
+
+class TerminalTimeout(AssertionError):
+    """A wait expired before the terminal reached the expected state.
+
+    Subclasses :class:`AssertionError` so an expiry reads as a test failure
+    rather than an infrastructure error, and carries the rendered screen plus
+    any child stderr so the failure is diagnosable without a rerun.
+    """
+
+
+class TerminalHarness:
+    """Runs a program under a pty and exposes the rendered character grid.
+
+    Args:
+        cols: Terminal width in character cells.
+        rows: Terminal height in character cells.
+        timeout: Default seconds for :meth:`wait_for` and friends.
+        env: Extra environment variables for the child process.
+    """
+
+    def __init__(
+        self,
+        cols: int = 80,
+        rows: int = 24,
+        *,
+        timeout: float = DEFAULT_TIMEOUT,
+        env: dict[str, str] | None = None,
+    ) -> None:
+        self.cols = cols
+        self.rows = rows
+        self.timeout = timeout
+        self._extra_env = dict(env or {})
+
+        self._screen = pyte.Screen(cols, rows)
+        self._stream = pyte.ByteStream(self._screen)
+        # Set when the application enables keypad transmit mode (smkx). A real
+        # terminal then sends SS3-prefixed cursor keys, so the harness must too.
+        self._app_cursor_keys = False
+
+        self._master: int | None = None
+        self._err_read: int | None = None
+        self._pid: int | None = None
+        self._exit_status: int | None = None
+        self._stderr = bytearray()
+        self._workdir: Path | None = None
+
+    # ------------------------------------------------------------ lifecycle
+
+    def __enter__(self) -> TerminalHarness:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    def run_source(self, source: str, *, workdir: Path | None = None) -> None:
+        """Run Python ``source`` in a child process attached to the pty.
+
+        The source is dedented and written to a file so tracebacks carry real
+        line numbers instead of ``<string>``.
+        """
+        if self._pid is not None:
+            raise RuntimeError("harness is already running a program")
+        if workdir is None:
+            override = os.environ.get("PYTEST_CURRENT_TEST_TMPDIR", "")
+            workdir = Path(override) if override else Path.cwd() / ".pytest_cache"
+        workdir.mkdir(parents=True, exist_ok=True)
+        script = workdir / f"tkc_app_{os.getpid()}_{id(self)}.py"
+        script.write_text(textwrap.dedent(source), encoding="utf-8")
+        self._workdir = workdir
+        self.run([sys.executable, str(script)])
+
+    def run(self, argv: Sequence[str]) -> None:
+        """Fork a child attached to the pty and exec ``argv`` in it."""
+        if self._pid is not None:
+            raise RuntimeError("harness is already running a program")
+
+        master, slave = pty.openpty()
+        # Size the pty BEFORE forking so curses initialises at cols x rows.
+        self._set_winsize(slave)
+        # Keep the child's stderr off the rendered screen: a traceback written
+        # into the terminal would corrupt the very output under assertion.
+        err_r, err_w = os.pipe()
+
+        pid = os.fork()
+        if pid == 0:  # pragma: no cover - runs only in the forked child
+            self._child_exec(argv, slave, master, err_r, err_w)
+
+        os.close(slave)
+        os.close(err_w)
+        os.set_blocking(err_r, False)
+        self._master = master
+        self._err_read = err_r
+        self._pid = pid
+
+    def _child_exec(
+        self, argv: Sequence[str], slave: int, master: int, err_r: int, err_w: int
+    ) -> None:  # pragma: no cover - child process
+        try:
+            os.setsid()
+            fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+            os.dup2(slave, 0)
+            os.dup2(slave, 1)
+            os.dup2(err_w, 2)
+            for fd in (master, slave, err_r, err_w):
+                if fd > 2:
+                    os.close(fd)
+            env = {**os.environ, **_CHILD_ENV, **self._extra_env}
+            env["COLUMNS"] = str(self.cols)
+            env["LINES"] = str(self.rows)
+            os.execvpe(argv[0], list(argv), env)
+        except BaseException:
+            os._exit(127)
+
+    def close(self) -> None:
+        """Terminate the child if still running and release all descriptors."""
+        if self._pid is not None:
+            self._drain(0.05)
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(self._pid, signal.SIGTERM)
+            self._reap(timeout=1.0)
+        for fd in (self._master, self._err_read):
+            if fd is not None:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+        self._master = None
+        self._err_read = None
+        if self._workdir is not None:
+            for leftover in self._workdir.glob(f"tkc_app_{os.getpid()}_{id(self)}.py"):
+                leftover.unlink(missing_ok=True)
+
+    def _reap(self, timeout: float) -> None:
+        """Wait for the child, escalating to SIGKILL if it ignores SIGTERM."""
+        if self._pid is None:
+            return
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            pid, status = os.waitpid(self._pid, os.WNOHANG)
+            if pid:
+                self._exit_status = status
+                self._pid = None
+                return
+            time.sleep(0.01)
+        try:
+            os.kill(self._pid, signal.SIGKILL)
+            _, status = os.waitpid(self._pid, 0)
+            self._exit_status = status
+        except (ProcessLookupError, ChildProcessError):
+            pass
+        self._pid = None
+
+    @property
+    def exit_status(self) -> int | None:
+        """Child exit status, or ``None`` while it is still running."""
+        if self._pid is not None:
+            pid, status = os.waitpid(self._pid, os.WNOHANG)
+            if pid:
+                self._exit_status = status
+                self._pid = None
+        return self._exit_status
+
+    # ----------------------------------------------------------------- I/O
+
+    def _set_winsize(self, fd: int) -> None:
+        fcntl.ioctl(
+            fd, termios.TIOCSWINSZ, struct.pack("HHHH", self.rows, self.cols, 0, 0)
+        )
+
+    def _drain(self, budget: float) -> bool:
+        """Read whatever is available for up to ``budget`` seconds.
+
+        Returns True if any terminal output was consumed. Idle gaps are
+        tolerated: the child may pause between writes, and treating the first
+        quiet moment as end-of-output reads an empty screen, because process
+        startup is slower than the first poll.
+        """
+        got = False
+        deadline = time.monotonic() + budget
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return got
+            watch = [fd for fd in (self._master, self._err_read) if fd is not None]
+            if not watch:
+                return got
+            try:
+                ready, _, _ = select.select(watch, [], [], remaining)
+            except OSError as exc:
+                if exc.errno == errno.EINTR:
+                    continue
+                return got
+            if not ready:
+                return got
+            for fd in ready:
+                try:
+                    data = os.read(fd, 65536)
+                except OSError:
+                    # EIO on the master means the child closed the pty.
+                    continue
+                if not data:
+                    continue
+                if fd == self._master:
+                    self._note_modes(data)
+                    self._stream.feed(data)
+                    got = True
+                else:
+                    self._stderr.extend(data)
+
+    def _note_modes(self, data: bytes) -> None:
+        """Track terminal modes the child sets that change how keys encode.
+
+        ncurses' keypad(True) emits smkx (``ESC [ ? 1 h``), which switches
+        cursor keys from CSI to SS3 form. A terminal that ignored this would
+        send sequences the application cannot decode.
+        """
+        if _SMKX in data:
+            self._app_cursor_keys = True
+        if _RMKX in data:
+            self._app_cursor_keys = False
+
+    @property
+    def application_cursor_keys(self) -> bool:
+        """True while the child has keypad transmit mode enabled."""
+        self._drain(0.0)
+        return self._app_cursor_keys
+
+    def wait_for(
+        self,
+        predicate: Callable[[TerminalHarness], bool],
+        *,
+        timeout: float | None = None,
+        message: str = "condition",
+    ) -> None:
+        """Pump output until ``predicate`` holds, or fail with the screen shown.
+
+        Polling the emulated screen beats sleeping a fixed interval: it is both
+        faster when the app is quick and reliable when it is slow.
+        """
+        budget = self.timeout if timeout is None else timeout
+        deadline = time.monotonic() + budget
+        while True:
+            if predicate(self):
+                return
+            if time.monotonic() >= deadline:
+                raise TerminalTimeout(
+                    f"timed out after {budget:g}s waiting for {message}\n"
+                    f"{self.describe()}"
+                )
+            self._drain(min(0.05, max(0.0, deadline - time.monotonic())))
+
+    def wait_for_text(self, text: str, *, timeout: float | None = None) -> None:
+        """Wait until ``text`` appears anywhere on the screen."""
+        self.wait_for(
+            lambda t: t.contains(text), timeout=timeout, message=f"text {text!r}"
+        )
+
+    def wait_for_idle(
+        self, quiet: float = 0.15, *, timeout: float | None = None
+    ) -> None:
+        """Wait until the child stops producing output for ``quiet`` seconds."""
+        budget = self.timeout if timeout is None else timeout
+        deadline = time.monotonic() + budget
+        while time.monotonic() < deadline:
+            if not self._drain(quiet):
+                return
+        raise TerminalTimeout(
+            f"terminal never went idle within {budget:g}s\n{self.describe()}"
+        )
+
+    def send(self, data: bytes) -> None:
+        """Write raw bytes to the terminal as though typed."""
+        if self._master is None:
+            raise RuntimeError("no program is running")
+        os.write(self._master, data)
+
+    def send_keys(self, *keys: str) -> None:
+        """Send keystrokes. Accepts literal text and ``<Name>`` key symbols."""
+        self._drain(0.0)  # observe any mode change before encoding
+        for key in keys:
+            self.send(_encode_key(key, app_cursor=self._app_cursor_keys))
+
+    def resize(self, cols: int, rows: int) -> None:
+        """Resize the terminal and signal the child, as a real resize would."""
+        self.cols, self.rows = cols, rows
+        self._screen.resize(rows, cols)
+        if self._master is not None:
+            self._set_winsize(self._master)
+        if self._pid is not None:
+            os.killpg(os.getpgid(self._pid), signal.SIGWINCH)
+
+    # --------------------------------------------------------- assertions
+
+    @property
+    def display(self) -> list[str]:
+        """The screen as a list of row strings, padded to the full width."""
+        return list(self._screen.display)
+
+    @property
+    def stderr(self) -> str:
+        """Anything the child wrote to stderr, typically a traceback."""
+        self._drain(0.0)
+        return self._stderr.decode("utf-8", "replace")
+
+    @property
+    def cursor(self) -> tuple[int, int]:
+        """Cursor position as ``(row, col)``."""
+        return self._screen.cursor.y, self._screen.cursor.x
+
+    def text_at(self, row: int, col: int, length: int | None = None) -> str:
+        """Text on ``row`` starting at ``col``, defaulting to end of line."""
+        line = self.display[row]
+        return line[col:] if length is None else line[col : col + length]
+
+    def row(self, row: int) -> str:
+        """A whole row with trailing blanks stripped."""
+        return self.display[row].rstrip()
+
+    def contains(self, text: str) -> bool:
+        """True if ``text`` appears within any single row."""
+        return any(text in line for line in self.display)
+
+    def find_text(self, text: str) -> tuple[int, int] | None:
+        """Locate ``text``, returning ``(row, col)`` of its first occurrence."""
+        for y, line in enumerate(self.display):
+            x = line.find(text)
+            if x != -1:
+                return y, x
+        return None
+
+    def char_at(self, row: int, col: int) -> pyte.screens.Char:
+        """The full cell at ``(row, col)``, including colour and attributes."""
+        return self._screen.buffer[row][col]
+
+    def attrs_at(self, row: int, col: int) -> dict[str, object]:
+        """Rendering attributes of one cell, for style assertions."""
+        cell = self.char_at(row, col)
+        return {
+            "fg": cell.fg,
+            "bg": cell.bg,
+            "bold": cell.bold,
+            "reverse": cell.reverse,
+            "underscore": cell.underscore,
+        }
+
+    def region(self, top: int, left: int, height: int, width: int) -> list[str]:
+        """A rectangular block of the screen, as row strings."""
+        return [line[left : left + width] for line in self.display[top : top + height]]
+
+    def assert_box(self, top: int, left: int, height: int, width: int) -> None:
+        """Assert a box-drawn border occupies the given rectangle.
+
+        Checks corners and edges, which is what actually distinguishes a
+        correctly drawn border from an off-by-one one.
+        """
+        bottom, right = top + height - 1, left + width - 1
+        corners = {
+            (top, left): "┌",
+            (top, right): "┐",
+            (bottom, left): "└",
+            (bottom, right): "┘",
+        }
+        bad = [
+            f"  ({y},{x}) expected {want!r}, got {self.display[y][x]!r}"
+            for (y, x), want in corners.items()
+            if self.display[y][x] != want
+        ]
+        for x in range(left + 1, right):
+            for y in (top, bottom):
+                if self.display[y][x] != "─":
+                    bad.append(f"  ({y},{x}) expected '─', got {self.display[y][x]!r}")
+        for y in range(top + 1, bottom):
+            for x in (left, right):
+                if self.display[y][x] != "│":
+                    bad.append(f"  ({y},{x}) expected '│', got {self.display[y][x]!r}")
+        if bad:
+            raise AssertionError(
+                f"box at ({top},{left}) {width}x{height} is malformed:\n"
+                + "\n".join(bad[:12])
+                + f"\n{self.describe()}"
+            )
+
+    def describe(self) -> str:
+        """A framed rendering of the screen, plus child stderr, for failures."""
+        rule = "─" * self.cols
+        body = "\n".join(f"│{line}│" for line in self.display)
+        out = f"screen {self.cols}x{self.rows}:\n┌{rule}┐\n{body}\n└{rule}┘"
+        err = self.stderr.strip()
+        if err:
+            out += f"\nchild stderr:\n{textwrap.indent(err, '  ')}"
+        return out
+
+
+#: Sequences by which ncurses turns keypad transmit mode on and off.
+_SMKX = b"\x1b[?1h"
+_RMKX = b"\x1b[?1l"
+
+#: Cursor keys in normal (CSI) and application (SS3) mode. Which one a real
+#: terminal sends depends on whether the application enabled smkx.
+_CURSOR_KEYS: dict[str, tuple[bytes, bytes]] = {
+    "<Up>": (b"\x1b[A", b"\x1bOA"),
+    "<Down>": (b"\x1b[B", b"\x1bOB"),
+    "<Right>": (b"\x1b[C", b"\x1bOC"),
+    "<Left>": (b"\x1b[D", b"\x1bOD"),
+    "<Home>": (b"\x1b[H", b"\x1bOH"),
+    "<End>": (b"\x1b[F", b"\x1bOF"),
+}
+
+#: Key symbols to the bytes a terminal sends for them.
+_KEYS: dict[str, bytes] = {
+    "<Return>": b"\r",
+    "<Enter>": b"\r",
+    "<Tab>": b"\t",
+    "<BackSpace>": b"\x7f",
+    "<Escape>": b"\x1b",
+    "<Space>": b" ",
+    "<Prior>": b"\x1b[5~",
+    "<Next>": b"\x1b[6~",
+    "<Insert>": b"\x1b[2~",
+    "<Delete>": b"\x1b[3~",
+    **{f"<F{n}>": f"\x1b[{10 + n}~".encode() for n in range(1, 13)},
+    **{f"<Control-{c}>": bytes([ord(c) - 96]) for c in "abcdefghijklmnopqrstuvwxyz"},
+}
+
+
+def _encode_key(key: str, *, app_cursor: bool = False) -> bytes:
+    """Encode one key specification into the bytes a terminal would send."""
+    if key in _CURSOR_KEYS:
+        normal, application = _CURSOR_KEYS[key]
+        return application if app_cursor else normal
+    if key in _KEYS:
+        return _KEYS[key]
+    if key.startswith("<") and key.endswith(">") and len(key) > 2:
+        raise ValueError(f"unknown key symbol: {key}")
+    return key.encode("utf-8")
+
+
+def keys_for(spec: Iterable[str], *, app_cursor: bool = False) -> bytes:
+    """Encode several key specifications into one byte string."""
+    return b"".join(_encode_key(k, app_cursor=app_cursor) for k in spec)
