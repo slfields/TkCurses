@@ -420,19 +420,17 @@ class TerminalHarness:
         self.send(f"\x1b[<{code};{x + 1};{y + 1}{final}".encode())
 
     def click(self, x: int, y: int, *, button: int = 1) -> None:
-        """Press and release at ``(x, y)``."""
+        """Press and release at ``(x, y)``.
+
+        Both sequences go out together, which is what makes ncurses report a
+        single CLICKED rather than a press and a release. A test that wants
+        the individual events must send them one at a time and wait for each
+        to be reported: ncurses reads whatever has arrived and merges button
+        transitions inside the multi-click window, and how it resolves a burst
+        differs between builds.
+        """
         self.send_mouse(x, y, button=button, action="press")
         self.send_mouse(x, y, button=button, action="release")
-
-    def drag(self, path: Sequence[tuple[int, int]], *, button: int = 1) -> None:
-        """Press at the first point, move through the rest, release at the last."""
-        if len(path) < 2:
-            raise ValueError("a drag needs at least a start and an end")
-        start, *rest = path
-        self.send_mouse(*start, button=button, action="press")
-        for point in rest[:-1]:
-            self.send_mouse(*point, button=button, action="move")
-        self.send_mouse(*rest[-1], button=button, action="release")
 
     def resize(self, cols: int, rows: int) -> None:
         """Resize the terminal and signal the child, as a real resize would."""

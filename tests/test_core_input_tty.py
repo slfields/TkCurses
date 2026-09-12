@@ -366,6 +366,16 @@ def test_a_drag_reports_both_ends(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(MOUSE_LOOP, workdir=tmp_path)
     term.wait_for_text("ready")
-    term.drag([(2, 1), (8, 4), (15, 6)])
+    # One step at a time, each acknowledged on screen before the next is sent.
+    # Written as one burst the three sequences reach ncurses in a single read,
+    # and its parser merges them into a different set of events - which ones
+    # depends on the build. On the CI runners the press disappeared and the
+    # motion arrived with no button held; with mouseinterval(0) the release
+    # disappeared instead. None of that is what this test is about, so the
+    # steps are separated rather than timed around.
+    term.send_mouse(2, 1, action="press")
     term.wait_for_text("pressed b1 @2,1")
+    term.send_mouse(8, 4, action="move")
+    term.wait_for_text("drag b1 @8,4")
+    term.send_mouse(15, 6, action="release")
     term.wait_for_text("released b1 @15,6 end=15,6")
