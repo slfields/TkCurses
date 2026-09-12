@@ -19,7 +19,7 @@ import curses
 import os
 import sys
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from tkcurses._core.application import Application
 from tkcurses._core.bindings import (
@@ -33,6 +33,7 @@ from tkcurses._core.errors import TclError, TkCursesError
 from tkcurses._core.events import Event as CoreEvent
 from tkcurses._core.events import KeyEvent, MouseEvent, ResizeEvent
 from tkcurses._core.geometry import Rect, Size
+from tkcurses.constants import FLAT
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -40,10 +41,13 @@ if TYPE_CHECKING:
 __version__ = "0.1.0"
 
 __all__ = [
+    "BaseWidget",
     "Event",
     "Misc",
+    "NoDefaultRoot",
     "TclError",
     "TkCursesError",
+    "Widget",
     "__version__",
 ]
 
@@ -1170,3 +1174,203 @@ class Misc:
         if text in _FALSE:
             return False
         raise TclError(f'expected boolean value but got "{s}"')
+
+
+# ======================================================================
+# Default root
+# ======================================================================
+
+#: The root created implicitly when a widget is made with no master, as
+#: tkinter does. Set by ``Tk()``; nothing here creates one, because creating a
+#: root means taking over the terminal and that should never be a side effect
+#: of forgetting an argument.
+_default_root: Misc | None = None
+
+#: Whether an implicit root is allowed at all. ``NoDefaultRoot()`` clears it.
+_support_default_root = True
+
+
+def NoDefaultRoot() -> None:
+    """Require every widget to name its master explicitly.
+
+    Worth calling in a library: an implicit root is a process-wide singleton,
+    and code that relies on it cannot be used twice in one program.
+    """
+    global _support_default_root, _default_root
+    _support_default_root = False
+    _default_root = None
+
+
+def _get_default_root(what: str = "create a widget") -> Misc:
+    """The implicit root, or an error explaining what to do instead.
+
+    Raises:
+        TclError: If there is no root yet, or default roots are switched off.
+            tkinter creates one here; TkCurses refuses, because initialising
+            curses reconfigures the terminal and must be something the
+            application asked for.
+    """
+    if not _support_default_root:
+        raise TclError(
+            f"No master specified and tkcurses is configured to not "
+            f"support default root; cannot {what}"
+        )
+    if _default_root is None:
+        raise TclError(f"No root window; create a Tk() before trying to {what}")
+    return _default_root
+
+
+# ======================================================================
+# Widget base classes
+# ======================================================================
+
+#: Short spellings tkinter accepts for the options whose names are long.
+_OPTION_ALIASES: dict[str, str] = {
+    "bg": "background",
+    "fg": "foreground",
+    "bd": "borderwidth",
+}
+
+#: Merged option specifications, keyed by class. Walking the MRO on every
+#: ``configure`` call would be wasted work; the spec cannot change once the
+#: class exists.
+_SPEC_CACHE: dict[type, dict[str, Any]] = {}
+
+
+class BaseWidget(Misc):
+    """A widget: a named node in the tree with a set of options.
+
+    Subclasses declare what they accept in ``_widget_options``, a mapping of
+    option name to default. The sets are merged down the inheritance chain, so
+    a widget lists only what it adds to the standard set below.
+
+    An option not in the merged set is an error, at construction and at
+    ``configure`` time alike. tkinter gets that from Tcl's widget definitions;
+    without them the check has to be explicit, and it is worth having — a
+    misspelled option that silently does nothing is a long afternoon.
+    """
+
+    #: Options every widget accepts. The set is deliberately smaller than
+    #: tkinter's: X11 options with no cell equivalent (highlightthickness,
+    #: screen distances in pixels) are left out rather than accepted and
+    #: ignored, so that setting one fails loudly instead of quietly.
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "background": "",
+        "borderwidth": 0,
+        "cursor": "",
+        "foreground": "",
+        "padx": 0,
+        "pady": 0,
+        "relief": FLAT,
+        "takefocus": True,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget. Defaults to the implicit root, which must
+                already exist; see :func:`_get_default_root`.
+            cnf: Options as a dictionary, for names that are not identifiers.
+            name: Path component for this widget, generated when omitted.
+            **kw: Options as keywords.
+
+        Raises:
+            TclError: If an option is not one this widget accepts, or if no
+                master was given and there is no root window.
+        """
+        if master is None:
+            master = _get_default_root(f"create a {type(self).__name__}")
+        super().__init__(master, name)
+        self._options = self._initial_options({**(cnf or {}), **kw})
+        self._takefocus = bool(self._options.get("takefocus", True))
+
+    # ------------------------------------------------------------ options
+
+    @classmethod
+    def _option_spec(cls) -> dict[str, Any]:
+        """Every option this class accepts, with defaults, merged down the MRO."""
+        cached = _SPEC_CACHE.get(cls)
+        if cached is None:
+            spec: dict[str, Any] = {}
+            for klass in reversed(cls.__mro__):
+                spec.update(vars(klass).get("_widget_options", {}))
+            cached = _SPEC_CACHE[cls] = spec
+        return cached
+
+    def _initial_options(self, given: dict[str, Any]) -> dict[str, Any]:
+        """Resolve this widget's starting options.
+
+        Three sources, weakest first: the class's declared defaults, then the
+        option database, then whatever the caller passed. That ordering is
+        what makes ``option_add("*Button.relief", "raised")`` reach a button
+        that did not ask for a relief while leaving alone one that did.
+        """
+        spec = self._option_spec()
+        options = dict(spec)
+        for name in spec:
+            from_database = self.tk.options.get(self._w, self.winfo_class(), name)
+            if from_database is not None:
+                options[name] = from_database
+        options.update(self._checked(given))
+        return options
+
+    def _checked(self, given: dict[str, Any]) -> dict[str, Any]:
+        """Resolve aliases and reject anything this widget does not accept."""
+        spec = self._option_spec()
+        resolved: dict[str, Any] = {}
+        for name, value in given.items():
+            option = _OPTION_ALIASES.get(name, name)
+            if option not in spec:
+                raise TclError(f'unknown option "-{name}"')
+            resolved[option] = value
+        return resolved
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, or return them all when called with none.
+
+        Raises:
+            TclError: If an option is not one this widget accepts.
+        """
+        given = {**(cnf or {}), **kw}
+        if not given:
+            return dict(self._options)
+        self._options.update(self._checked(given))
+        if "takefocus" in self._options:
+            self._takefocus = bool(self._options["takefocus"])
+        return None
+
+    config = configure
+
+    def cget(self, key: str) -> Any:
+        """The value of one option, accepting the short spellings.
+
+        Raises:
+            TclError: If this widget has no such option.
+        """
+        option = _OPTION_ALIASES.get(key, key)
+        try:
+            return self._options[option]
+        except KeyError:
+            raise TclError(f'unknown option "-{key}"') from None
+
+    def keys(self) -> list[str]:
+        """The option names this widget accepts, sorted."""
+        return sorted(self._option_spec())
+
+
+class Widget(BaseWidget):
+    """The base class for every ordinary widget.
+
+    In tkinter this is where the three geometry managers are mixed in
+    (``Widget(BaseWidget, Pack, Place, Grid)``); those arrive with the
+    geometry manager epic, and this class is where they will attach. Until
+    then it is what separates a widget that a manager can place from a
+    toplevel that manages itself.
+    """
