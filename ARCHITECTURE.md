@@ -516,6 +516,134 @@ btn.pack()
 └──────────────────────────────────────────┘
 ```
 
+### Widget Window Lifecycle
+
+Each widget manages its own curses window wrapped in a panel. The lifecycle includes creation, resizing, and destruction. **Critical**: When a widget shrinks, special handling is required to clear vacated screen areas.
+
+#### Window States
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Widget Window Lifecycle                        │
+└─────────────────────────────────────────────────────────────────┘
+
+    ┌──────────┐     pack()/grid()/place()     ┌──────────┐
+    │  Created │ ──────────────────────────────▶│ Allocated │
+    │ (no win) │                                │ (has win) │
+    └──────────┘                                └──────────┘
+                                                     │
+                         ┌───────────────────────────┤
+                         │                           │
+                         ▼                           ▼
+                  ┌────────────┐              ┌────────────┐
+                  │   Resize   │              │  Destroy   │
+                  │ (grow/shrink)│              │ (cleanup)  │
+                  └────────────┘              └────────────┘
+```
+
+#### Window Creation (`_create_window`)
+
+Called when widget first receives allocation from geometry manager:
+
+1. Create curses subwindow via `parent_window.subwin(h, w, y, x)`
+2. Wrap window in panel via `PanelStack.create_panel(window)`
+3. Panel provides z-ordering and visibility management
+4. Widget is now ready to render content
+
+#### Window Resize - Growing
+
+When new allocation is **larger** than current:
+
+1. Call `curses_window.resize(new_height, new_width)`
+2. Window expands into available space
+3. New area is uninitialized (contains garbage)
+4. Widget `_draw()` fills the new area with content
+
+#### Window Resize - Shrinking (CRITICAL)
+
+When new allocation is **smaller** than current, the shrinking window leaves "ghost" pixels in the vacated area. The panel system does NOT automatically clear these.
+
+**Required Behavior:**
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                   SHRINK HANDLING STRATEGY                    │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Old allocation: 20x5    New allocation: 10x3                │
+│                                                              │
+│  ┌────────────────────┐   ┌──────────┐                       │
+│  │ Hello World!       │   │ Hello    │░░░░░░░░░░             │
+│  │ Line 2             │ → │ Line 2   │░░░░░░░░░░             │
+│  │ Line 3             │   │ Line 3   │░░░░░░░░░░             │
+│  │ Line 4             │   └──────────┘░░░░░░░░░░             │
+│  │ Line 5             │   ░░░░░░░░░░░░░░░░░░░░░░             │
+│  └────────────────────┘   ░ = vacated area (ghost pixels)    │
+│                                                              │
+│  Solution: Replace window instead of resizing                │
+│                                                              │
+│  1. Store old window dimensions                              │
+│  2. Create NEW window at new (smaller) size                  │
+│  3. Call panel.replace(new_window) to swap                   │
+│  4. Delete old window                                        │
+│  5. Parent must redraw its background in vacated area        │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Implementation in `_resize_window`:**
+
+```python
+def _resize_window(self, height: int, width: int) -> None:
+    if self._curses_window is None:
+        return
+
+    old_h, old_w = self._curses_window.getmaxyx()
+
+    # Growing: simple resize is sufficient
+    if height >= old_h and width >= old_w:
+        self._curses_window.resize(height, width)
+        return
+
+    # Shrinking: must replace window to avoid ghost pixels
+    # 1. Mark parent area as needing redraw
+    if self.master and hasattr(self.master, '_curses_window'):
+        parent_win = self.master._curses_window
+        if parent_win:
+            # Touch the area we're vacating
+            parent_win.touchwin()
+
+    # 2. Create new smaller window
+    new_window = self._create_subwindow(height, width, self._allocated_y, self._allocated_x)
+
+    # 3. Replace panel's window (handles z-order correctly)
+    if self._panel:
+        self._panel.replace(new_window)
+
+    # 4. Clean up old window
+    old_window = self._curses_window
+    self._curses_window = new_window
+    self._window = new_window
+    del old_window
+```
+
+#### Parent Responsibility
+
+When a child widget shrinks, the parent MUST redraw its background in the vacated area:
+
+1. **During layout recalculation**: Parent clears its entire content area
+2. **Before child resize**: Parent marks vacated region as dirty
+3. **After panel.update_panels()**: Exposed parent background becomes visible
+
+#### Window Destruction (`_destroy_window`)
+
+Called when widget is destroyed or unmapped:
+
+1. Hide panel via `panel.hide()`
+2. Remove panel from stack via `PanelStack.remove_panel(panel)`
+3. Delete curses window
+4. Parent redraws exposed area
+
 ### Event Handling Flow
 
 ```
