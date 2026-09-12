@@ -945,7 +945,7 @@ class Misc:
         if isinstance(number, (int, float)):
             return float(number)
         text = str(number).strip()
-        factor = _DISTANCE_UNITS.get(text[-1:], None)
+        factor = _DISTANCE_UNITS.get(text[-1:])
         try:
             value = float(text[:-1] if factor is not None else text)
         except ValueError:

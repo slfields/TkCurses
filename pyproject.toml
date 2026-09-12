@@ -40,8 +40,12 @@ test = [
 ]
 dev = [
     "tkcurses[test]",
-    "mypy>=1.0",
-    "ruff>=0.1.0",
+    # Pinned to a minor series, not a floor. Ruff and mypy both add rules in
+    # minor releases, so an open floor lets CI run a stricter checker than the
+    # developer did and fail on code that was clean locally - which is exactly
+    # how SIM910 reached master.
+    "mypy>=1.19,<2",
+    "ruff>=0.16,<0.17",
 ]
 
 [project.urls]
@@ -110,6 +114,10 @@ ignore_missing_imports = true
 target-version = "py310"
 line-length = 88
 src = ["src", "tests"]
+# Ruff 0.16 formats fenced Python inside Markdown. ARCHITECTURE.md's snippets
+# are specification sketches - some deliberately incomplete, some aligned for
+# reading rather than for Black - so they are not the formatter's business.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = [
