@@ -143,6 +143,10 @@ known-first-party = ["tkcurses"]
 source = ["src/tkcurses"]
 branch = true
 omit = ["*/__main__.py"]
+# The tty suite runs application code in forked child processes; without these
+# every line exercised only through the harness reads as uncovered.
+parallel = true
+sigterm = true
 
 [tool.coverage.report]
 show_missing = true
