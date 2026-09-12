@@ -1,0 +1,2 @@
+# TkCurses has no runtime dependencies: it uses only the Python standard
+# library (curses, curses.panel). Nothing to install here.

@@ -79,3 +79,6 @@ Thumbs.db
 .dolt/
 *.db
 .beads-credential-key
+
+# graphify knowledge-graph build output
+graphify-out/
