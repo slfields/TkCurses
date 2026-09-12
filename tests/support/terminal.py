@@ -61,6 +61,7 @@ __all__ = ["TerminalHarness", "TerminalTimeout"]
 #: Default time budget, in seconds, for waiting on the child to render.
 DEFAULT_TIMEOUT = 5.0
 
+
 def _utf8_locale() -> str:
     """Pick a UTF-8 locale this host actually provides.
 
