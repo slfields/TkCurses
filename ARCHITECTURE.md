@@ -1876,57 +1876,30 @@ tkcurses/
 
 #### Implementation
 
-```python
-class CursesDispatcher:
-    """Serializes all curses calls to the main thread."""
+See `src/tkcurses/_core/dispatcher.py` for the authoritative implementation.
+Its shape is as sketched above — direct execution on the owning thread, a
+queue for every other thread — with six corrections found while building it:
 
-    _instance: 'CursesDispatcher | None' = None
-    _lock: threading.Lock
-    _queue: queue.Queue[tuple[Callable, tuple, dict, threading.Event, list]]
-    _main_thread_id: int
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._queue = queue.Queue()
-        self._main_thread_id = threading.get_ident()
-
-    @classmethod
-    def get(cls) -> 'CursesDispatcher':
-        """Get singleton dispatcher instance."""
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-
-    def call(self, func: Callable[..., T], *args, **kwargs) -> T:
-        """Execute func with curses serialization."""
-        if threading.get_ident() == self._main_thread_id:
-            # Already on main thread - execute directly with lock
-            with self._lock:
-                return func(*args, **kwargs)
-        else:
-            # Queue for main thread execution
-            event = threading.Event()
-            result: list = []
-            self._queue.put((func, args, kwargs, event, result))
-            event.wait()  # Block until main thread processes
-            if isinstance(result[0], Exception):
-                raise result[0]
-            return result[0]
-
-    def process_queue(self) -> None:
-        """Process pending calls (called from main loop)."""
-        while not self._queue.empty():
-            try:
-                func, args, kwargs, event, result = self._queue.get_nowait()
-                with self._lock:
-                    try:
-                        result.append(func(*args, **kwargs))
-                    except Exception as e:
-                        result.append(e)
-                event.set()
-            except queue.Empty:
-                break
-```
+1. **Singleton creation is locked.** An unguarded `if cls._instance is None`
+   lets two threads each construct a dispatcher, after which half the
+   application serializes against the wrong lock. Creation is double-checked
+   under a class-level lock.
+2. **The owning thread is the interpreter's main thread**, taken from
+   `threading.main_thread()`, not whichever thread happened to call
+   `__init__`. Under lazy construction that could be a worker, which would
+   then be treated as the screen's owner permanently.
+3. **The lock is reentrant.** Compound operations may themselves dispatch; a
+   plain `Lock` deadlocks the owner against itself as soon as calls nest.
+4. **Outcomes are carried in separate value and error fields**, not inferred
+   with `isinstance(result[0], Exception)`. A function that legitimately
+   *returns* an exception object must get it back, not have it raised.
+5. **Waiting threads are released on shutdown.** `close()` fails every queued
+   and incoming call with `DispatcherClosed`. An unbounded `event.wait()`
+   would otherwise hang a worker forever once the main loop has stopped,
+   including in the window where a close races with a call being queued.
+6. **`process_queue()` accepts a batch limit**, so a thread queueing work in
+   a tight loop cannot starve input handling, and it rejects callers that do
+   not own the screen.
 
 #### Usage Pattern
 
