@@ -136,7 +136,7 @@ known-first-party = ["tkcurses"]
 [tool.ruff.lint.per-file-ignores]
 # The public API deliberately mirrors tkinter's names and re-export surface.
 "src/tkcurses/__init__.py" = ["F401", "F403"]
-"tests/*" = ["ARG001", "ARG002"]
+"tests/*" = ["ARG001", "ARG002", "ARG005"]
 
 # -------------------------------------------------------------- coverage ----
 [tool.coverage.run]

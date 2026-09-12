@@ -378,6 +378,62 @@ class TerminalHarness:
         for key in keys:
             self.send(_encode_key(key, app_cursor=self._app_cursor_keys))
 
+    def send_mouse(
+        self,
+        x: int,
+        y: int,
+        *,
+        button: int = 1,
+        action: str = "press",
+        shift: bool = False,
+        alt: bool = False,
+        ctrl: bool = False,
+    ) -> None:
+        """Report a mouse action at cell ``(x, y)``, as a terminal would.
+
+        Uses the SGR encoding (``ESC [ < b ; col ; row M``), which ncurses
+        enables for modern terminals and which, unlike the older X10 scheme,
+        is not limited to the first 223 columns. Coordinates are the same
+        0-based cells the rest of the harness uses; the escape sequence's
+        1-based numbering is applied here.
+
+        Args:
+            x: Column, 0-based.
+            y: Row, 0-based.
+            button: 1 left, 2 middle, 3 right, 4 wheel up, 5 wheel down.
+            action: "press", "release", or "move".
+        """
+        if button not in (1, 2, 3, 4, 5):
+            raise ValueError(f"unknown mouse button: {button}")
+        if action not in ("press", "release", "move"):
+            raise ValueError(f"unknown mouse action: {action}")
+        code = 64 + (button - 4) if button in (4, 5) else button - 1
+        if action == "move":
+            code += 32
+        if shift:
+            code += 4
+        if alt:
+            code += 8
+        if ctrl:
+            code += 16
+        final = "m" if action == "release" else "M"
+        self.send(f"\x1b[<{code};{x + 1};{y + 1}{final}".encode())
+
+    def click(self, x: int, y: int, *, button: int = 1) -> None:
+        """Press and release at ``(x, y)``."""
+        self.send_mouse(x, y, button=button, action="press")
+        self.send_mouse(x, y, button=button, action="release")
+
+    def drag(self, path: Sequence[tuple[int, int]], *, button: int = 1) -> None:
+        """Press at the first point, move through the rest, release at the last."""
+        if len(path) < 2:
+            raise ValueError("a drag needs at least a start and an end")
+        start, *rest = path
+        self.send_mouse(*start, button=button, action="press")
+        for point in rest[:-1]:
+            self.send_mouse(*point, button=button, action="move")
+        self.send_mouse(*rest[-1], button=button, action="release")
+
     def resize(self, cols: int, rows: int) -> None:
         """Resize the terminal and signal the child, as a real resize would."""
         self.cols, self.rows = cols, rows

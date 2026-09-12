@@ -1241,14 +1241,17 @@ If clicks are too far apart:
 
 ##### Querying Current Interval
 
-```python
-# Get current interval (returns previous value)
-current = curses.mouseinterval(0)  # 0 = query only, no change
-curses.mouseinterval(current)       # Restore the value
+**Not possible.** Python's `curses.mouseinterval()` returns `None`; unlike the
+C API it wraps, it discards the previous interval. Verified against ncurses on
+Python 3.14: `mouseinterval(300)`, `mouseinterval(-1)` and a second
+`mouseinterval(-1)` all return `None`.
 
-# Note: mouseinterval(0) disables multi-click detection entirely
-# Always restore after querying!
-```
+There is therefore no read-then-restore pattern to follow, and no way to
+recover the value curses is holding. TkCurses tracks the interval itself, in
+`InputHandler.click_interval`, which is the only readable source of truth.
+
+Note that `mouseinterval(0)` disables multi-click detection entirely, so it
+must not be used as a query.
 
 ---
 
