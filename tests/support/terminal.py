@@ -38,6 +38,7 @@ from __future__ import annotations
 import contextlib
 import errno
 import fcntl
+import locale
 import os
 import pty
 import select
@@ -60,11 +61,34 @@ __all__ = ["TerminalHarness", "TerminalTimeout"]
 #: Default time budget, in seconds, for waiting on the child to render.
 DEFAULT_TIMEOUT = 5.0
 
+def _utf8_locale() -> str:
+    """Pick a UTF-8 locale this host actually provides.
+
+    The locale must be real: ncurses falls back to ASCII line-drawing if it
+    cannot select a UTF-8 codeset, which quietly breaks border assertions.
+    C.UTF-8 exists on modern glibc, en_US.UTF-8 on macOS and most images.
+    """
+    previous = locale.setlocale(locale.LC_ALL)
+    try:
+        for candidate in ("C.UTF-8", "en_US.UTF-8", "C.utf8", "en_US.utf8"):
+            try:
+                locale.setlocale(locale.LC_ALL, candidate)
+            except locale.Error:
+                continue
+            return candidate
+        return "C.UTF-8"
+    finally:
+        locale.setlocale(locale.LC_ALL, previous)
+
+
+#: A UTF-8 locale that exists on this host.
+UTF8_LOCALE = _utf8_locale()
+
 #: Environment forced on the child so rendering is deterministic across hosts.
 _CHILD_ENV = {
     "TERM": "xterm-256color",
-    "LANG": "en_US.UTF-8",
-    "LC_ALL": "en_US.UTF-8",
+    "LANG": UTF8_LOCALE,
+    "LC_ALL": UTF8_LOCALE,
     # Emit real UTF-8 box glyphs rather than VT100 charset-switching.
     "NCURSES_NO_UTF8_ACS": "1",
     "PYTHONUNBUFFERED": "1",
