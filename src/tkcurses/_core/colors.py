@@ -26,7 +26,7 @@ from tkcurses._core.dispatcher import CursesDispatcher
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-__all__ = ["ColorManager", "ResolvedColor", "parse_color", "rgb_for"]
+__all__ = ["ColorManager", "ResolvedColor", "palette_rgb", "parse_color", "rgb_for"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +118,26 @@ def rgb_for(spec: str) -> tuple[int, int, int] | None:
     scale = 16**per - 1
     red, green, blue = (round(int(part, 16) * 255 / scale) for part in parts)
     return red, green, blue
+
+
+def palette_rgb(resolved: ResolvedColor) -> tuple[int, int, int]:
+    """The RGB a terminal actually renders for a resolved colour.
+
+    The inverse of nearest-match, and necessarily lossy: several names
+    collapse onto one palette entry, so this reports what will be seen rather
+    than what was asked for. ``winfo_rgb`` needs it, since tkinter answers
+    that question with real channel values.
+    """
+    for rgb, entry in _PALETTE_RGB:
+        if entry == resolved:
+            return rgb
+    # A_DIM has no palette entry of its own: it darkens the base colour, so
+    # report the base at half intensity rather than claiming no match.
+    base = ResolvedColor(resolved.color)
+    for rgb, entry in _PALETTE_RGB:
+        if entry == base:
+            return tuple(value // 2 for value in rgb)  # type: ignore[return-value]
+    return (0, 0, 0)
 
 
 def _nearest(rgb: tuple[int, int, int]) -> ResolvedColor:

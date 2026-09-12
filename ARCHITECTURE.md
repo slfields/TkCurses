@@ -1790,14 +1790,20 @@ tkcurses/
 │
 ├── _core/                   # Internal components
 │   ├── __init__.py
+│   ├── application.py       # Application (per-tree shared state)
+│   ├── attributes.py        # Attribute handling (A_BOLD, etc.)
+│   ├── bindings.py          # Sequence parsing, BindingTable, virtual events
+│   ├── clipboard.py         # Selections (clipboard, PRIMARY)
+│   ├── colors.py            # ColorManager (color pair mapping)
 │   ├── config.py            # TkCursesConfig (INI file loading)
 │   ├── dispatcher.py        # CursesDispatcher (thread serialization)
-│   ├── screen.py            # CursesScreen wrapper
-│   ├── colors.py            # ColorManager (color pair mapping)
-│   ├── attributes.py        # Attribute handling (A_BOLD, etc.)
+│   ├── errors.py            # TclError / TkCursesError
+│   ├── events.py            # Input event types, keysym translation
+│   ├── geometry.py          # Cell geometry calculations
 │   ├── input.py             # InputHandler (getch/getmouse)
 │   ├── panels.py            # PanelStack (curses.panel wrapper)
-│   └── geometry.py          # Cell geometry calculations
+│   ├── screen.py            # CursesScreen wrapper
+│   └── timers.py            # AfterQueue (after/after_idle)
 │
 └── py.typed                 # PEP 561 type hint marker
 ```
@@ -2131,6 +2137,36 @@ Base mixin providing common widget functionality.
 | `pack_slaves()` | ✓ | Packed widgets |
 | **Place Manager (from Misc)** | | |
 | `place_slaves()` | ✓ | Placed widgets |
+
+#### Implementation notes
+
+Where the table above and the implementation need reading together.
+
+- **Shared state.** tkinter keeps bindings, timers, the option database,
+  variables and the clipboard in the Tcl interpreter. TkCurses keeps them in an
+  `Application` object, one per widget tree, reached through `self.tk` — the
+  attribute tkinter code already expects to find a handle on.
+- **`bind(sequence)` with no callback** returns the bound callables. tkinter
+  returns the Tcl script it would evaluate, which has no meaning without Tcl.
+- **`configure()` with no arguments** returns the current option values.
+  tkinter returns a five-tuple per option carrying its resource name, class and
+  default; those come from Tcl's widget definitions.
+- **`update()`** runs pending idle and timer callbacks but does not read input.
+  Draining the keyboard from inside a callback is what makes tkinter's
+  `update()` reentrant and hazardous; the loop in `Tk` is the only place that
+  reads input. `mainloop()` and `quit()` likewise belong to `Tk`; `Misc`
+  delegates to the root.
+- **`winfo_pixels`/`winfo_fpixels`** measure in cells, at ten columns to the
+  inch — the classic teletype metric terminal emulators still approximate.
+- **`winfo_rgb`** reports the colour the terminal will actually render, not the
+  one that was asked for. With eight colours to choose from, echoing the
+  request back would hide the approximation.
+- **Clipboard contents do not leave the process.** A terminal has no clipboard;
+  `CLIPBOARD` and `PRIMARY` are strings held in the `Application`. Escape-
+  sequence clipboard access (OSC 52) is not attempted, because it is
+  unsupported by many terminals and fails silently on the rest.
+- **Multi-event sequences** (`<Control-x><Control-s>`) are rejected by the
+  sequence parser rather than silently mis-parsed.
 
 ---
 
