@@ -25,13 +25,14 @@ import traceback
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from tkcurses._core.application import Application
+from tkcurses._core.attributes import style_for_relief
 from tkcurses._core.bindings import (
     EventPattern,
     parse_sequence,
     pattern_for_event,
 )
 from tkcurses._core.clipboard import CLIPBOARD, PRIMARY
-from tkcurses._core.colors import palette_rgb, parse_color, rgb_for
+from tkcurses._core.colors import ColorManager, palette_rgb, parse_color, rgb_for
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.errors import TclError, TkCursesError
 from tkcurses._core.events import Event as CoreEvent
@@ -71,6 +72,7 @@ __all__ = [
     "BooleanVar",
     "DoubleVar",
     "Event",
+    "Frame",
     "Grid",
     "IntVar",
     "Misc",
@@ -2917,6 +2919,12 @@ class Tk(BaseWidget, Wm):
         buffer = self._screen.start()
         try:
             self._input = InputHandler(self._screen.stdscr)
+            colors = ColorManager()
+            if colors.start():
+                # Cells are painted through this; without colour support the
+                # screen keeps its attributes-only resolver.
+                self._screen.attribute_resolver = colors.attribute_for
+                self.tk.colors = colors
             self.tk.screen = self._screen
             self.tk.panels = PanelStack()
             self._rect = Rect(0, 0, buffer.width, buffer.height)
@@ -3121,6 +3129,7 @@ class Tk(BaseWidget, Wm):
                 self.tk.panels.clear()
         self.tk.panels = None
         self.tk.screen = None
+        self.tk.colors = None
         self._input = None
         with contextlib.suppress(Exception):
             self._screen.stop()
@@ -3588,3 +3597,155 @@ class BooleanVar(Variable):
         if text in _FALSE:
             return False
         raise TclError(f'expected boolean value but got "{value}"')
+
+
+# ======================================================================
+# Widgets
+# ======================================================================
+
+
+class Frame(Widget):
+    """A container, and the first widget that draws itself.
+
+    A frame is a rectangle of background with an optional border, and
+    somewhere to put other widgets. Everything interesting about it is
+    inherited - it is packed or gridded like anything else, and it lays its
+    own children out with a manager of their choosing - so what is added here
+    is only the painting.
+
+    Its size comes from its children unless ``width`` or ``height`` says
+    otherwise. Setting either fixes that dimension, which is how a frame is
+    made to hold a shape its contents would not produce on their own.
+    """
+
+    #: ``width`` and ``height`` are cells; zero means "ask the children".
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "height": 0,
+        "width": 0,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        class_: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            class_: The class this frame binds and reads options under, as
+                tkinter's ``class_`` does. Construction-time only.
+            **kw: Options as keywords.
+        """
+        self._class_name = class_
+        super().__init__(master, cnf, name=name, **kw)
+        self._apply_requested_size()
+
+    def winfo_class(self) -> str:
+        """The class this frame binds and reads options under."""
+        return self._class_name or type(self).__name__
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, repainting and resizing as the change requires."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if not given:
+            return result
+        if {"width", "height"} & set(given):
+            self._apply_requested_size()
+        self._invalidate_layout()
+        self._redraw()
+        return result
+
+    config = configure
+
+    def _apply_requested_size(self) -> None:
+        """Fix the size from the options, or hand the question to the children.
+
+        Setting only one fixes that axis and leaves the other to the children,
+        which is what makes a fixed-width sidebar of variable height
+        expressible.
+
+        The size is a *request*, not a guarantee: once the frame has children,
+        its geometry manager works out what they need and that wins. Tk
+        behaves the same way, and the way to keep an explicit size is
+        pack_propagate(False) - the gotcha every tkinter user meets once.
+        """
+        width = int(self._options["width"])
+        height = int(self._options["height"])
+        if width or height:
+            self._request_size(
+                width or self._requested.width, height or self._requested.height
+            )
+
+    def _redraw(self) -> None:
+        """Paint the frame: background first, then its border.
+
+        Silent without a window or a screen, which is every frame until it has
+        been laid out and the terminal is running.
+        """
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        width, height = self._rect.width, self._rect.height
+        dispatcher = CursesDispatcher.get()
+        attribute = self._background_attribute()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            if self._bordered and width >= 2 and height >= 2:
+                self._draw_border(dispatcher, window, width, height, attribute)
+
+    def _background_attribute(self) -> int:
+        """The curses attribute this frame's colours resolve to.
+
+        Falls back to plain when no colour manager is running, which is what a
+        terminal without colour gives anyway.
+        """
+        colors = self.tk.colors
+        if colors is None:
+            return curses.A_NORMAL
+        return colors.attribute_for(
+            str(self._options["foreground"] or "white"),
+            str(self._options["background"] or "black"),
+        )
+
+    def _draw_border(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        width: int,
+        height: int,
+        attribute: int,
+    ) -> None:
+        """Draw the box for this frame's relief.
+
+        Drawn character by character rather than with curses' own ``border``,
+        because a relief is a choice of line style - single, double, heavy -
+        and ``border`` only knows one.
+        """
+        style = style_for_relief(str(self._options["relief"]) or FLAT)
+        attribute |= style.attr
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.addstr, 0, 0, style.top(width), attribute)
+            for row in range(1, height - 1):
+                dispatcher.call(window.addstr, row, 0, style.vertical, attribute)
+                dispatcher.call(
+                    window.addstr, row, width - 1, style.vertical, attribute
+                )
+            # The last cell of the bottom row is inserted rather than added:
+            # writing it with addstr would scroll a window whose cursor has
+            # nowhere left to go, which curses refuses. insstr rather than
+            # insch because a box-drawing character is multibyte and does not
+            # fit in the single chtype insch takes.
+            dispatcher.call(
+                window.addstr, height - 1, 0, style.bottom(width)[:-1], attribute
+            )
+            dispatcher.call(
+                window.insstr, height - 1, width - 1, style.bottom_right, attribute
+            )
