@@ -280,11 +280,11 @@ def test_clicking_the_down_arrow_steps_down(root):
 
 def test_clicking_the_field_places_the_cursor_instead(root):
     spin = laid_out(Spinbox(root, name="s", values=SIZES, width=10))
-    # Column 2 is the second character: a sunken Entry's border takes the
-    # first column, so the text starts one cell in.
+    # One row tall, so there is no room for a border and none is drawn:
+    # the text starts at column 0 and column 2 is the third character.
     spin._handle(MouseEvent(button=1, state="pressed", x=2, y=0))
     assert spin.get() == "small"
-    assert spin.index("insert") == 1
+    assert spin.index("insert") == 2
 
 
 def test_identify_names_the_three_parts(root):

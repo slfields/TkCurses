@@ -902,7 +902,7 @@ class Misc:
         )
         return content_rect(
             rect,
-            bordered=self._bordered,
+            bordered=self._border_drawn,
             padding=Insets.symmetric(
                 horizontal=int(self._options.get("padx", 0)),
                 vertical=int(self._options.get("pady", 0)),
@@ -921,6 +921,19 @@ class Misc:
         return bool(self._options.get("borderwidth")) or (
             self._options.get("relief", FLAT) != FLAT
         )
+
+    @property
+    def _border_drawn(self) -> bool:
+        """True when there is a border *and* room on screen to draw it.
+
+        A bordered widget too small for its own border draws none, so
+        everything that measures the space left inside has to agree with the
+        painting. It did not: an Entry squeezed to a single row subtracted
+        an edge that was never drawn, came out with no content area at all,
+        and rendered nothing - a blank rectangle indistinguishable from a
+        widget that had failed to appear.
+        """
+        return self._bordered and self._rect.width >= 2 and self._rect.height >= 2
 
     def _restack_panels(self) -> None:
         """Put the panel stack back into tree order, parents behind children.
@@ -3887,7 +3900,7 @@ class Frame(_Drawable):
         with contextlib.suppress(curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
-            if self._bordered and width >= 2 and height >= 2:
+            if self._border_drawn:
                 self._draw_border(dispatcher, window, width, height, attribute)
 
 
@@ -4022,7 +4035,7 @@ class _TextWidget(_Drawable):
         with contextlib.suppress(curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
-            if self._bordered and self._rect.width >= 2 and self._rect.height >= 2:
+            if self._border_drawn:
                 self._draw_border(
                     dispatcher, window, self._rect.width, self._rect.height, attribute
                 )
@@ -4063,7 +4076,7 @@ class _TextWidget(_Drawable):
 
     def _text_area(self) -> Rect:
         """Where the text may go, in cells relative to this widget's window."""
-        edge = BORDER_WIDTH if self._bordered else 0
+        edge = BORDER_WIDTH if self._border_drawn else 0
         padx, pady = int(self._options["padx"]), int(self._options["pady"])
         return Rect(
             edge + padx,
@@ -5017,7 +5030,7 @@ class Entry(_Drawable):
 
     def _text_area(self) -> Rect:
         """Where the text goes, in cells relative to this widget's window."""
-        edge = BORDER_WIDTH if self._bordered else 0
+        edge = BORDER_WIDTH if self._border_drawn else 0
         padx, pady = int(self._options["padx"]), int(self._options["pady"])
         return Rect(
             edge + padx,
@@ -5049,7 +5062,7 @@ class Entry(_Drawable):
         with contextlib.suppress(curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
-            if self._bordered and self._rect.width >= 2 and self._rect.height >= 2:
+            if self._border_drawn:
                 self._draw_border(
                     dispatcher, window, self._rect.width, self._rect.height, attribute
                 )
@@ -5409,7 +5422,7 @@ class LabelFrame(Frame):
     def _draw_caption(self) -> None:
         """Write the caption into the border line the anchor names."""
         window = self._window
-        if window is None or self.tk.screen is None or not self._bordered:
+        if window is None or self.tk.screen is None or not self._border_drawn:
             return
         caption = self._caption()
         width, height = self._rect.width, self._rect.height
@@ -6070,7 +6083,7 @@ class Listbox(_Drawable):
 
     def _text_area(self) -> Rect:
         """Where the items go, in cells relative to this widget's window."""
-        edge = BORDER_WIDTH if self._bordered else 0
+        edge = BORDER_WIDTH if self._border_drawn else 0
         padx, pady = int(self._options["padx"]), int(self._options["pady"])
         return Rect(
             edge + padx,
@@ -6092,7 +6105,7 @@ class Listbox(_Drawable):
         with contextlib.suppress(curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
-            if self._bordered and self._rect.width >= 2 and self._rect.height >= 2:
+            if self._border_drawn:
                 self._draw_border(
                     dispatcher, window, self._rect.width, self._rect.height, attribute
                 )
@@ -6342,7 +6355,7 @@ class Scrollbar(_Drawable):
 
     def _trough_start(self) -> int:
         """Where the trough begins, after the first arrow."""
-        return (BORDER_WIDTH if self._bordered else 0) + 1
+        return (BORDER_WIDTH if self._border_drawn else 0) + 1
 
     def _trough_bounds(self) -> int:
         """Cells of trough, once the two arrows have taken theirs."""
@@ -6386,11 +6399,11 @@ class Scrollbar(_Drawable):
             )
         cells.append(last_arrow)
 
-        edge = BORDER_WIDTH if self._bordered else 0
+        edge = BORDER_WIDTH if self._border_drawn else 0
         with contextlib.suppress(curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
-            if self._bordered and self._rect.width >= 2 and self._rect.height >= 2:
+            if self._border_drawn:
                 self._draw_border(
                     dispatcher, window, self._rect.width, self._rect.height, attribute
                 )
@@ -6660,7 +6673,7 @@ class Scale(_Drawable):
 
     def _content_area(self) -> Rect:
         """What is left of the widget after its border and padding."""
-        edge = BORDER_WIDTH if self._bordered else 0
+        edge = BORDER_WIDTH if self._border_drawn else 0
         padx, pady = int(self._options["padx"]), int(self._options["pady"])
         return Rect(
             edge + padx,
@@ -6796,7 +6809,7 @@ class Scale(_Drawable):
         with contextlib.suppress(curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
-            if self._bordered and self._rect.width >= 2 and self._rect.height >= 2:
+            if self._border_drawn:
                 self._draw_border(
                     dispatcher, window, self._rect.width, self._rect.height, attribute
                 )

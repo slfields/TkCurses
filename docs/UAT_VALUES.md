@@ -8,7 +8,7 @@ the same thing when either end of them moves.
 
 ```bash
 cd /path/to/TkCurses
-python3 -m uat 20          # and 21
+python3 -m uat 20          # and 21, 22
 ```
 
 From anywhere else: `python3 /path/to/TkCurses/uat 20`. Every scenario exits
@@ -76,6 +76,34 @@ returns the read-only box to its third state, `r` resets everything
       shows the same number
 - [ ] Resizing the terminal keeps every scale inside its box
 
+## 22. Spinboxes, messages and captioned frames
+
+`python3 -m uat 22` · `Tab` · `Up`/`Down` and the arrows · `F2` changes the
+message aspect, `F3` moves the captions
+
+> **Function keys rather than letters**, because a focused entry consumes
+> every printable key before it can reach an application-wide binding. That
+> is correct, and it is the same rule the interactive round wrote down.
+
+- [ ] Every box's caption sits **on** its border, never over its contents
+- [ ] `F3` moves all six captions together: top-left, top-centre, then
+      bottom-right
+- [ ] A caption longer than its box is cut short rather than wrapped or
+      drawn over the corner
+- [ ] Each spinbox shows a value and a pair of arrows at its right-hand edge
+- [ ] `Up` and `Down` step the focused spinbox
+- [ ] Clicking the arrows steps it too
+- [ ] The arrows stay in the same column as the value changes width
+- [ ] The readonly spinbox refuses typing and still steps
+- [ ] `0 to 12, wraps` goes from 12 to 0 and back rather than stopping
+- [ ] `0.00 by 0.25` shows two decimals throughout, and can be typed into
+- [ ] Each message wraps itself, and `F2` re-wraps all three
+- [ ] Wider aspects give wider, shorter blocks
+- [ ] A message too tall for its box keeps its **first** line and loses its
+      last — text you cannot start reading is text you cannot read
+- [ ] Resizing the terminal re-wraps the messages and keeps every caption on
+      its border
+
 ---
 
 ## What this found
@@ -100,6 +128,22 @@ returns the read-only box to its third state, `r` resets everything
   lands a few cells off. It showed up as an unrelated focus test failing one
   run in three with `focus ontwo` on screen — a screen no terminal would ever
   have shown. **TkCurses-gcu**.
+- **An entry squeezed to one row rendered nothing at all.** A bordered widget
+  too small for its own border draws none — but everything measuring the space
+  left inside carried on subtracting an edge that was never there, came out
+  with no content area, and drew a blank rectangle. Indistinguishable from a
+  widget that had failed to appear, and it is what made a spinbox packed with
+  `pady` into a three-row frame simply not exist. Painting and measuring agree
+  now, through `_border_drawn`.
+- **Text taller than its widget lost its beginning.** A centred block that did
+  not fit was clipped at both ends, so a paragraph in a short box started
+  mid-sentence. Clamped to the top, the way the column was already clamped to
+  the left: losing the end of a paragraph is recoverable, losing its start is
+  not.
+- **A scenario key that a focused entry ate.** Scenario 22 first used `a` and
+  `c`; with the focus in a spinbox neither ever arrived. The interactive round
+  had already written this down, which is the argument for reading your own
+  checklists.
 - **The scale wrote floats into integer variables.** `set()` published the
   raw float, so an `IntVar` ended up holding `6.0` and raised when asked to
   read its own value back — which also silently broke two scales sharing one

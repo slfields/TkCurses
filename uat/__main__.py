@@ -50,7 +50,7 @@ def show() -> int:
     print("\nWhat to look for: docs/UAT_BASE_WIDGETS.md (1-9),")
     print("                 docs/UAT_GEOMETRY.md (10-14),")
     print("                 docs/UAT_INTERACTIVE.md (15-19),")
-    print("                 docs/UAT_VALUES.md (20-21)")
+    print("                 docs/UAT_VALUES.md (20-22)")
     return 0
 
 
