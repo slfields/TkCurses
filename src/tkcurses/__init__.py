@@ -53,6 +53,7 @@ from tkcurses.constants import FLAT
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
 
+    from tkcurses._core.layout import Layout
     from tkcurses._core.panels import Panel
 
 __version__ = "0.1.0"
@@ -236,6 +237,11 @@ class Misc:
     ``_requested`` (the size the widget asked for). This class only reads
     them; the geometry managers and the window lifecycle set them, and until
     they do every ``winfo`` query reports zeroes rather than failing.
+
+    ``_layout_manager`` is the manager laying out this widget's *children*,
+    which is a different thing from the manager that placed the widget itself
+    - that one is named by ``winfo_manager()``. A widget can be packed into
+    its parent while gridding its own children.
     """
 
     #: True for Tk and Toplevel. Bindings, focus history and coordinate
@@ -278,6 +284,10 @@ class Misc:
         self._rect = Rect(0, 0, 0, 0)
         self._requested = Size(0, 0)
         self._manager = ""
+        #: The geometry manager laying out this widget's children, and
+        #: whether this widget resizes itself to fit them.
+        self._layout_manager: Layout | None = None
+        self._layout_propagate = True
         self._mapped = False
         self._takefocus = True
         self._destroyed = False
@@ -801,6 +811,91 @@ class Misc:
             position = index + 1 if above else index
         order.insert(position, self._name)
         self.master.children = {name: siblings[name] for name in order}
+
+    # ------------------------------------------------------ negotiation
+
+    def _content_rect(self) -> Rect:
+        """The region this container offers its children, in screen cells.
+
+        The widget's own region less its border and padding, per
+        ARCHITECTURE.md "Content Coordinate Rules": a bordered 30x8 window
+        offers 28x6 starting one cell in.
+        """
+        rect = Rect(
+            self.winfo_rootx(), self.winfo_rooty(), self._rect.width, self._rect.height
+        )
+        return content_rect(
+            rect,
+            bordered=self._bordered,
+            padding=Insets.symmetric(
+                horizontal=int(self._options.get("padx", 0)),
+                vertical=int(self._options.get("pady", 0)),
+            ),
+        )
+
+    @property
+    def _bordered(self) -> bool:
+        """True if this widget draws a border, costing a cell on each edge.
+
+        overrideredirect asks for a window a window manager leaves alone,
+        which here means one that draws no decoration of its own.
+        """
+        if getattr(self, "_overrideredirect", False):
+            return False
+        return bool(self._options.get("borderwidth")) or (
+            self._options.get("relief", FLAT) != FLAT
+        )
+
+    def _request_size(self, width: int, height: int) -> None:
+        """Declare the size this widget would like to be.
+
+        A widget calls this when its content changes - a label given longer
+        text, a frame given another child. The request travels no further
+        than it changes anything: the container is queued, and the run that
+        follows stops at the first ancestor whose own size is unaffected.
+        """
+        requested = Size(max(0, width), max(0, height))
+        if requested == self._requested:
+            return
+        self._requested = requested
+        if self.master is not None:
+            self.tk.layout.invalidate(self.master)
+
+    def _invalidate_layout(self) -> None:
+        """Ask for this container's children to be laid out again."""
+        self.tk.layout.invalidate(self)
+
+    def update_layout(self) -> int:
+        """Lay out whatever is waiting, now. Returns containers laid out.
+
+        The main loop does this before drawing, so an application rarely
+        needs to. A test that wants to read geometry without running a loop
+        does.
+        """
+        return self.tk.layout.run()
+
+    def _propagate_flag(self, flag: bool | None) -> bool:
+        """Shared implementation of pack_propagate and grid_propagate."""
+        if flag is None:
+            return self._layout_propagate
+        self._layout_propagate = bool(flag)
+        if self._layout_propagate:
+            self._invalidate_layout()
+        return self._layout_propagate
+
+    def pack_propagate(self, flag: bool | None = None) -> bool:
+        """Get or set whether this container resizes to fit its children.
+
+        Switched off, the container keeps whatever size it was given and its
+        children are laid out inside that, however little room it leaves.
+        Tk offers one flag per manager name; there is one container and one
+        setting, so these are the same flag under three spellings, as they
+        effectively are in Tk.
+        """
+        return self._propagate_flag(flag)
+
+    grid_propagate = pack_propagate
+    propagate = pack_propagate
 
     # ==================================================================
     # Window information
@@ -2200,7 +2295,8 @@ class Tk(BaseWidget, Wm):
         first because it may schedule timers; idle work runs before timers
         because that is what "idle" means; input is read last, with a timeout
         derived from the next timer, so the loop sleeps exactly as long as it
-        can afford to.
+        can afford to. Layout comes after all of them and before drawing,
+        since any of them may have changed what there is to draw.
         """
         # Fetched rather than stored: shutdown resets the dispatcher, and a
         # held reference would outlive the one the rest of the process uses.
@@ -2208,6 +2304,9 @@ class Tk(BaseWidget, Wm):
         self._guard(self.tk.timers.run_idle)
         self._guard(self.tk.timers.run_due)
         self._read_input()
+        # Layout settles before anything is drawn, so a widget is never
+        # painted at a size it is about to stop having.
+        self._guard(self.tk.layout.run)
         self._update_display()
 
     def _read_input(self) -> None:
@@ -2341,6 +2440,7 @@ class Tk(BaseWidget, Wm):
         if not self._started:
             return
         self._started = False
+        self.tk.layout.clear()
         with contextlib.suppress(Exception):
             if self.tk.panels is not None:
                 self.tk.panels.clear()
@@ -2457,32 +2557,6 @@ class Toplevel(BaseWidget, Wm):
     def winfo_class(self) -> str:
         """The class this window binds and reads options under."""
         return self._class_name or type(self).__name__
-
-    @property
-    def _bordered(self) -> bool:
-        """True if this window draws a border, costing a cell on each edge.
-
-        overrideredirect asks for a window the window manager leaves alone,
-        which here means one that draws no decoration of its own.
-        """
-        if getattr(self, "_overrideredirect", False):
-            return False
-        return bool(self._options["borderwidth"]) or self._options["relief"] != FLAT
-
-    def _content_rect(self) -> Rect:
-        """Where this window's children may be placed, in screen cells.
-
-        Excludes the border and the padding, per ARCHITECTURE.md "Content
-        Coordinate Rules": a bordered 30x8 window offers 28x6.
-        """
-        return content_rect(
-            self._rect,
-            bordered=self._bordered,
-            padding=Insets.symmetric(
-                horizontal=int(self._options["padx"]),
-                vertical=int(self._options["pady"]),
-            ),
-        )
 
     def _default_rect(self) -> Rect:
         """Where the window goes when nothing has said.

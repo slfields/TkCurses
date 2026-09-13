@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from tkcurses._core.bindings import BindingTable, VirtualEvents
 from tkcurses._core.clipboard import Selections
+from tkcurses._core.layout import LayoutEngine
 from tkcurses._core.timers import AfterQueue
 
 if TYPE_CHECKING:
@@ -194,6 +195,7 @@ class Application:
         self.selections = Selections()
         self.options = OptionDatabase()
         self.widgets = WidgetRegistry()
+        self.layout = LayoutEngine()
 
         #: Values behind ``getvar``/``setvar`` and the Variable classes.
         self.variables: dict[str, Any] = {}

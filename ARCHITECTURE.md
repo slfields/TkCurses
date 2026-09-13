@@ -2254,6 +2254,37 @@ When setting geometry on a `Toplevel`:
 
 ### Geometry Managers
 
+#### Negotiation
+
+Layout is a conversation before it is a calculation. A widget says how big it
+would like to be (`winfo_reqwidth`/`winfo_reqheight`); its container's manager
+adds that up across siblings and asks for that much; the container asks its own
+manager, up to the toplevel. The agreed sizes then come back down and windows
+are moved.
+
+`_core/layout.py` owns that, and two properties of it are deliberate.
+
+**It is queued, not eager.** Packing ten children one at a time would lay the
+container out ten times. Containers are marked as needing work and the whole
+set is recomputed in one run, which the main loop does after input and before
+drawing, so nothing is painted at a size it is about to stop having.
+
+**It is guaranteed to terminate.** A container that resizes to fit its children
+changes its own requested size, which asks its parent to recompute, which can
+come back around; the previous attempt at this library looped here and
+exhausted memory. Three things prevent it now: the walk upward stops at the
+first ancestor whose requested size is unchanged, so a change travels only as
+far as it changes something; sizes are integers, so they cannot oscillate by
+ever-smaller amounts; and a run is bounded, raising `LayoutLoop` rather than
+continuing, because a diagnosable error beats a machine that has to be
+power-cycled. `LayoutEngine.ancestry()` refuses to walk a cycle for the same
+reason.
+
+`pack_propagate(False)` stops a container resizing to fit its children: it
+keeps the size it was given and its parent is never told. Tk spells the flag
+once per manager; there is one container and one setting, so `pack_propagate`,
+`grid_propagate` and `propagate` are the same flag.
+
 #### Pack Class
 
 | tkinter Method | TkCurses | Notes |
