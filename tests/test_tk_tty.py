@@ -463,3 +463,53 @@ root.destroy()
     term.wait_for_text("box 40x6+0+6 in 40x12")
     term.resize(60, 20)
     term.wait_for_text("box 60x10+0+10 in 60x20")
+
+
+def test_a_layout_recovers_from_a_terminal_too_small_to_hold_it(terminal, tmp_path):
+    """Shrink until the widget has nowhere to be, then grow back.
+
+    On the way down the widget loses its window entirely; on the way back up
+    it has to get one again, at the right place. Reported from UAT scenario
+    12, where a relatively placed box came back in the wrong position after a
+    shrink and restore.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        """
+import tkcurses
+
+root = tkcurses.Tk()
+buffer = root.tk.screen.buffer
+box = tkcurses.Widget(root, name="box")
+box._requested = tkcurses._core.geometry.Size(4, 1)
+box.place(x=2, y=6, relwidth=1.0, width=-4, height=3)
+
+def show(event=None):
+    root.update_layout()
+    # Two short lines rather than one long one: the screen gets narrow
+    # enough in this test that a single line would be truncated away.
+    buffer.write(0, 0, "%sx%s        " % (root.winfo_width(), root.winfo_height()))
+    buffer.write(1, 0, "%s            " % box.winfo_geometry())
+    root.tk.screen.refresh()
+
+root.bind("<Configure>", show)
+root.update_layout()
+show()
+root.after(8000, root.quit)
+root.mainloop()
+root.destroy()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("36x3+2+6")
+    # Too short for the widget's row to exist at all.
+    term.resize(12, 4)
+    term.wait_for_text("12x4")
+    # And back: the geometry must be what it was, not a remembered position
+    # from some intermediate size.
+    term.resize(40, 12)
+    term.wait_for(
+        lambda t: "36x3+2+6" in t.row(1) and "40x12" in t.row(0),
+        message="the restored geometry",
+    )
+    assert "Traceback" not in term.stderr
