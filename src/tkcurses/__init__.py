@@ -37,7 +37,13 @@ from tkcurses._core.colors import ColorManager, palette_rgb, parse_color, rgb_fo
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.editing import TextField
 from tkcurses._core.errors import TclError, TkCursesError
-from tkcurses._core.events import MOD_SHIFT, KeyEvent, MouseEvent, ResizeEvent
+from tkcurses._core.events import (
+    MOD_CTRL,
+    MOD_SHIFT,
+    KeyEvent,
+    MouseEvent,
+    ResizeEvent,
+)
 from tkcurses._core.events import Event as CoreEvent
 from tkcurses._core.geometry import (
     BORDER_WIDTH,
@@ -88,6 +94,7 @@ __all__ = [
     "Pack",
     "Place",
     "Radiobutton",
+    "Scale",
     "Scrollbar",
     "StringVar",
     "TclError",
@@ -1650,6 +1657,9 @@ _OPTION_ALIASES: dict[str, str] = {
     "bg": "background",
     "fg": "foreground",
     "bd": "borderwidth",
+    # tkinter spells Tk's -from as from_, because `from` is a keyword. Both
+    # reach the same option, so a dict of options copied out of Tcl works.
+    "from": "from_",
 }
 
 #: Merged option specifications, keyed by class. Walking the MRO on every
@@ -3712,6 +3722,16 @@ class BooleanVar(Variable):
 class _Drawable(Widget):
     """Painting shared by the widgets that draw a background and a border."""
 
+    @property
+    def _disabled(self) -> bool:
+        """True while the widget refuses to answer the user.
+
+        Here rather than on any one widget: every widget that takes a click
+        or a key asks the same question, and the ones that have no ``state``
+        at all - a Frame - answer no.
+        """
+        return str(self._options.get("state", "normal")) == "disabled"
+
     def _background_attribute(self) -> int:
         """The curses attribute this frame's colours resolve to.
 
@@ -3948,15 +3968,6 @@ class _TextWidget(_Drawable):
         self._apply_requested_size()
         self._invalidate_layout()
         self._redraw()
-
-    @property
-    def _disabled(self) -> bool:
-        """True while the widget refuses to be invoked.
-
-        Here rather than on Button because ``state`` is declared here, and
-        every widget that answers a click has the same question to ask.
-        """
-        return str(self._options["state"]) == "disabled"
 
     def _text(self) -> str:
         """The text to display.
@@ -5823,3 +5834,568 @@ def _scrollbar_click(event: Event) -> None:
         command("scroll", 1, "pages")
     else:
         command("moveto", bar.fraction(event.x_root, event.y_root))
+
+
+class Scale(_Drawable):
+    """A number chosen by sliding a handle along a trough.
+
+    The value is the widget's own, not the caller's, so ``get`` and ``set``
+    work with no variable at all; a ``variable`` makes it visible to other
+    widgets in the usual way, and the two are kept in step both directions.
+
+    ``from_`` sits at the left of a horizontal scale and at the *top* of a
+    vertical one, which is Tk's arrangement and the reason a vertical scale
+    counts downwards by default. Naming a ``to`` below ``from_`` reverses the
+    scale rather than failing - a volume control that runs 10 to 0 is a real
+    thing, and every conversion here works from the two ends rather than
+    assuming which is larger.
+
+    ``resolution`` is the step the value snaps to, measured from ``from_``.
+    Everything that moves the handle goes through that snap, so a scale with
+    a resolution of 5 cannot be left holding 7 by any route - including a
+    variable written from elsewhere.
+
+    Focus is shown by caps at the ends of the trough, ``[`` and ``]``. Room
+    for them is reserved whether or not they are showing, so nothing moves
+    when the focus arrives; it is the same bargain Button makes with its
+    markers, and for the same reason - a terminal cannot be relied on for
+    colour.
+    """
+
+    #: Trough and handle, the same two glyphs a Scrollbar uses, because they
+    #: are the same two things.
+    _TROUGH = "░"
+    _SLIDER = "█"
+
+    #: Drawn at the ends of the trough while the scale has the focus.
+    _FOCUS_CAPS = ("[", "]")
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "bigincrement": 0,
+        "command": None,
+        "digits": 0,
+        "from_": 0.0,
+        "label": "",
+        "length": 20,
+        "orient": "vertical",
+        "resolution": 1.0,
+        "showvalue": True,
+        "state": "normal",
+        "takefocus": True,
+        "tickinterval": 0,
+        "to": 100.0,
+        "variable": None,
+        "width": 1,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``from_``, ``to``, ``resolution``, ``orient``, ``length``,
+                ``width``, ``label``, ``showvalue``, ``tickinterval``,
+                ``variable``, ``command``, ``digits``, ``bigincrement``,
+                ``state``, and the standard options.
+        """
+        self._dragging = False
+        self._syncing = False
+        self._variable_trace: tuple[Variable, str] | None = None
+        super().__init__(master, cnf, name=name, **kw)
+        self._value = self._snap(self._range()[0])
+        self._follow_variable()
+        self._apply_requested_size()
+        self._install_class_bindings()
+
+    # ------------------------------------------------------------- bindings
+
+    def _install_class_bindings(self) -> None:
+        """Register the default behaviour for every Scale in this application."""
+        if "Scale" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("Scale")
+        bind = self.bind_class
+        bind("Scale", "<Button-1>", _scale_press)
+        # A drag arrives as Motion: curses reports motion-with-a-button, and
+        # there is no Button1 modifier to match a <B1-Motion> against. The
+        # press holds the implicit grab, so every one of these belongs to
+        # this scale however far the pointer has wandered.
+        bind("Scale", "<Motion>", _scale_motion)
+        bind("Scale", "<ButtonRelease-1>", _scale_release)
+        bind("Scale", "<Any-Key>", _scale_key)
+        bind("Scale", "<FocusIn>", _scale_refresh)
+        bind("Scale", "<FocusOut>", _scale_refresh)
+
+    # --------------------------------------------------------------- options
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, re-measuring and repainting as the change requires."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if not given:
+            return result
+        if "variable" in given:
+            self._follow_variable()
+        if {"from_", "to", "resolution"} & set(given):
+            # The value may no longer be reachable: a range that moved under
+            # it has to pull it back rather than leave the handle off the end.
+            self.set(self._value)
+        self._apply_requested_size()
+        self._invalidate_layout()
+        self._redraw()
+        return result
+
+    config = configure
+
+    @property
+    def _vertical(self) -> bool:
+        """True if this scale runs up and down."""
+        return str(self._options["orient"]) != "horizontal"
+
+    def _range(self) -> tuple[float, float]:
+        """The two ends, in the order the options name them."""
+        return float(self._options["from_"]), float(self._options["to"])
+
+    def _thickness(self) -> int:
+        """Cells across the trough, at right angles to its length."""
+        return max(1, int(self._options["width"]))
+
+    @property
+    def _showvalue(self) -> bool:
+        """True while the current value is drawn beside the handle."""
+        try:
+            return self.getboolean(self._options["showvalue"])
+        except TclError:
+            return True
+
+    # ----------------------------------------------------------- the variable
+
+    def _follow_variable(self) -> None:
+        """Track the ``variable``, dropping any previous one."""
+        if self._variable_trace is not None:
+            previous, handle = self._variable_trace
+            previous.trace_remove("write", handle)
+            self._variable_trace = None
+        variable = self._options["variable"]
+        if variable is None:
+            return
+        handle = variable.trace_add("write", lambda *_: self._variable_changed())
+        self._variable_trace = (variable, handle)
+        self._variable_changed()
+
+    def _variable_changed(self) -> None:
+        """Take the variable's value, unless this scale is what changed it.
+
+        Without the guard the two chase each other: the scale writes the
+        variable, whose trace writes the scale, which snaps and writes back.
+        """
+        if self._syncing:
+            return
+        variable = self._options["variable"]
+        if variable is None:
+            return
+        with contextlib.suppress(TclError, TypeError, ValueError):
+            self.set(float(variable.get()))
+
+    def _publish(self) -> None:
+        """Write the value back to the variable, if there is one."""
+        variable = self._options["variable"]
+        if variable is None:
+            return
+        self._syncing = True
+        try:
+            # As text, which is how Tcl holds it: writing the float 6.0 into
+            # an IntVar leaves it holding something it cannot read back.
+            variable.set(self._format(self._value))
+        finally:
+            self._syncing = False
+
+    # ---------------------------------------------------------------- value
+
+    def get(self) -> float:
+        """The value the handle is on."""
+        return self._value
+
+    def set(self, value: float) -> None:
+        """Move the handle to ``value``, snapped to the resolution and clamped.
+
+        Calls the ``command`` only when the value actually changes, which is
+        what Tk does and what keeps a drag along one cell from firing it on
+        every motion event.
+        """
+        snapped = self._snap(float(value))
+        changed = snapped != self._value
+        self._value = snapped
+        self._publish()
+        self._redraw()
+        if changed:
+            command = self._options["command"]
+            if command is not None:
+                command(self._format(snapped))
+
+    def _snap(self, value: float) -> float:
+        """Round to the nearest step and pull inside the two ends.
+
+        Steps are measured from ``from_``, as Tk measures them, so a scale
+        from 1 to 10 by 2 offers 1, 3, 5 and not 2, 4, 6.
+        """
+        low, high = self._range()
+        resolution = float(self._options["resolution"])
+        if resolution > 0:
+            value = low + round((value - low) / resolution) * resolution
+            # round() leaves floating-point dust on anything but integers;
+            # a scale showing 0.30000000000000004 is a scale nobody trusts.
+            value = round(value, 10)
+        return min(max(value, min(low, high)), max(low, high))
+
+    def _format(self, value: float) -> str:
+        """The value as text, with as many decimals as it actually has.
+
+        ``digits`` wins when it is set, as it does in Tk; otherwise the
+        resolution says how precise the value can be, and showing more than
+        that is noise.
+        """
+        digits = int(self._options["digits"])
+        if digits > 0:
+            return f"{value:.{digits}g}"
+        resolution = abs(float(self._options["resolution"]))
+        if resolution == 0 or resolution != int(resolution):
+            text = f"{value:.4f}".rstrip("0").rstrip(".")
+            return text or "0"
+        return str(round(value))
+
+    # -------------------------------------------------------------- geometry
+
+    def _content_area(self) -> Rect:
+        """What is left of the widget after its border and padding."""
+        edge = BORDER_WIDTH if self._bordered else 0
+        padx, pady = int(self._options["padx"]), int(self._options["pady"])
+        return Rect(
+            edge + padx,
+            edge + pady,
+            max(0, self._rect.width - 2 * (edge + padx)),
+            max(0, self._rect.height - 2 * (edge + pady)),
+        )
+
+    def _value_width(self) -> int:
+        """Cells the widest value this scale can show would need."""
+        low, high = self._range()
+        return max(len(self._format(low)), len(self._format(high)))
+
+    def _head_rows(self) -> int:
+        """Rows above the trough, for the label and - horizontally - the value."""
+        if self._vertical:
+            return 1 if str(self._options["label"]) else 0
+        return 1 if str(self._options["label"]) or self._showvalue else 0
+
+    def _tick_span(self) -> int:
+        """Room the tick numbers need: a row below, or a column to the left."""
+        if not float(self._options["tickinterval"]):
+            return 0
+        return 1 if not self._vertical else self._value_width() + 1
+
+    def _trough_span(self) -> int:
+        """Cells of trough available, after the caps have taken theirs."""
+        area = self._content_area()
+        if self._vertical:
+            return max(0, area.height - self._head_rows() - 2)
+        return max(0, area.width - 2)
+
+    def _apply_requested_size(self) -> None:
+        """Ask for the trough plus whatever is drawn around it."""
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        padx, pady = int(self._options["padx"]), int(self._options["pady"])
+        length = max(1, int(self._options["length"]))
+        label = len(str(self._options["label"]))
+        if self._vertical:
+            across = self._thickness() + self._tick_span()
+            if self._showvalue:
+                across += self._value_width() + 1
+            width = max(across, label)
+            height = length + 2 + self._head_rows()
+        else:
+            width = max(length + 2, label + self._value_width() + 1)
+            height = self._thickness() + self._head_rows() + self._tick_span()
+        self._request_size(width + 2 * padx + edge, height + 2 * pady + edge)
+
+    def _trough_origin(self) -> tuple[int, int]:
+        """Where the first cell of the trough sits within the widget."""
+        area = self._content_area()
+        if self._vertical:
+            across = self._tick_span()
+            if self._showvalue:
+                across += self._value_width() + 1
+            return (area.x + across, area.y + self._head_rows() + 1)
+        return (area.x + 1, area.y + self._head_rows())
+
+    def _offset_for(self, value: float) -> int:
+        """Which trough cell a value falls on."""
+        span = self._trough_span()
+        if span <= 1:
+            return 0
+        low, high = self._range()
+        if high == low:
+            return 0
+        fraction = (value - low) / (high - low)
+        return min(max(round(fraction * (span - 1)), 0), span - 1)
+
+    def _value_at(self, offset: int) -> float:
+        """The value a trough cell stands for."""
+        span = self._trough_span()
+        low, high = self._range()
+        if span <= 1:
+            return self._snap(low)
+        fraction = min(max(offset, 0), span - 1) / (span - 1)
+        return self._snap(low + fraction * (high - low))
+
+    def coords(self, value: float | None = None) -> tuple[int, int]:
+        """Where the handle for a value sits, relative to this widget.
+
+        Args:
+            value: The value to locate. The current one when omitted.
+        """
+        if value is None:
+            value = self._value
+        x, y = self._trough_origin()
+        offset = self._offset_for(self._snap(float(value)))
+        return (x, y + offset) if self._vertical else (x + offset, y)
+
+    def identify(self, x: int, y: int) -> str:
+        """Which part of the scale is at a screen position.
+
+        Returns ``"slider"``, ``"trough1"`` for the side towards ``from_``,
+        ``"trough2"`` for the side towards ``to``, or ``""`` for anywhere
+        else on the widget - the label, the ticks, or the caps.
+        """
+        origin_x, origin_y = self._trough_origin()
+        if self._vertical:
+            offset = y - self.winfo_rooty() - origin_y
+        else:
+            offset = x - self.winfo_rootx() - origin_x
+        if not 0 <= offset < self._trough_span():
+            return ""
+        handle = self._offset_for(self._value)
+        if offset == handle:
+            return "slider"
+        return "trough1" if offset < handle else "trough2"
+
+    # -------------------------------------------------------------- painting
+
+    def _redraw(self) -> None:
+        """Paint the label, the value, the trough and its handle, and the ticks."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        dispatcher = CursesDispatcher.get()
+        attribute = self._background_attribute()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            if self._bordered and self._rect.width >= 2 and self._rect.height >= 2:
+                self._draw_border(
+                    dispatcher, window, self._rect.width, self._rect.height, attribute
+                )
+            self._draw_head(dispatcher, window, attribute)
+            self._draw_trough(dispatcher, window, attribute)
+            self._draw_ticks(dispatcher, window, attribute)
+
+    def _draw_head(
+        self, dispatcher: CursesDispatcher, window: Any, attribute: int
+    ) -> None:
+        """The label, and the value where the orientation puts it.
+
+        Horizontally the value rides above the handle, as Tk's does, so it
+        reads as belonging to the handle rather than to the widget. There is
+        no room for that vertically, so it goes in its own column beside the
+        handle's row instead.
+        """
+        area = self._content_area()
+        label = str(self._options["label"])
+        if label and area.width > 0:
+            dispatcher.call(
+                window.addstr, area.y, area.x, clip_text(label, area.width), attribute
+            )
+        if not self._showvalue:
+            return
+        text = self._format(self._value)
+        origin_x, origin_y = self._trough_origin()
+        if self._vertical:
+            column = origin_x - len(text) - 1
+            row = origin_y + self._offset_for(self._value)
+        else:
+            column = origin_x + self._offset_for(self._value)
+            row = origin_y - 1
+            column = min(column, area.x + area.width - len(text))
+            # The label shares this row, so the value is pushed clear of it
+            # rather than written through it - "V0lume" is not a label.
+            if label:
+                column = max(column, area.x + len(label) + 1)
+        if row < area.y or column < area.x:
+            return
+        dispatcher.call(
+            window.addstr, row, column, clip_text(text, area.width), attribute
+        )
+
+    def _draw_trough(
+        self, dispatcher: CursesDispatcher, window: Any, attribute: int
+    ) -> None:
+        """The trough, the handle on it, and the focus caps at its ends."""
+        span = self._trough_span()
+        if span <= 0:
+            return
+        origin_x, origin_y = self._trough_origin()
+        handle = self._offset_for(self._value)
+        cells = [
+            self._SLIDER if offset == handle else self._TROUGH for offset in range(span)
+        ]
+        focused = self.focus_get() is self
+        left, right = self._FOCUS_CAPS if focused else (" ", " ")
+        if self._vertical:
+            dispatcher.call(window.addstr, origin_y - 1, origin_x, left, attribute)
+            for thick in range(self._thickness()):
+                for offset, cell in enumerate(cells):
+                    dispatcher.call(
+                        window.addstr,
+                        origin_y + offset,
+                        origin_x + thick,
+                        cell,
+                        attribute,
+                    )
+            dispatcher.call(window.addstr, origin_y + span, origin_x, right, attribute)
+        else:
+            for thick in range(self._thickness()):
+                dispatcher.call(
+                    window.addstr, origin_y + thick, origin_x - 1, left, attribute
+                )
+                dispatcher.call(
+                    window.addstr, origin_y + thick, origin_x, "".join(cells), attribute
+                )
+                dispatcher.call(
+                    window.addstr, origin_y + thick, origin_x + span, right, attribute
+                )
+
+    def _draw_ticks(
+        self, dispatcher: CursesDispatcher, window: Any, attribute: int
+    ) -> None:
+        """Numbers at every ``tickinterval`` along the trough.
+
+        Drawn only where they fit without overwriting the tick before them,
+        so a long range on a short trough thins out rather than turning into
+        a row of collided digits.
+        """
+        interval = abs(float(self._options["tickinterval"]))
+        if not interval:
+            return
+        span = self._trough_span()
+        if span <= 0:
+            return
+        area = self._content_area()
+        origin_x, origin_y = self._trough_origin()
+        low, high = self._range()
+        step = interval if high >= low else -interval
+        taken = -1
+        value = low
+        for _ in range(1000):
+            if (step > 0 and value > high) or (step < 0 and value < high):
+                break
+            text = self._format(value)
+            offset = self._offset_for(value)
+            if self._vertical:
+                row, column = origin_y + offset, area.x
+                if row > taken:
+                    dispatcher.call(
+                        window.addstr,
+                        row,
+                        column + self._value_width() - len(text),
+                        text,
+                        attribute,
+                    )
+                    taken = row
+            else:
+                row = origin_y + self._thickness()
+                column = min(origin_x + offset, area.x + area.width - len(text))
+                if column > taken:
+                    dispatcher.call(window.addstr, row, column, text, attribute)
+                    taken = column + len(text)
+            value += step
+
+
+def _scale_press(event: Event) -> None:
+    """Take the focus and jump the handle to where the trough was clicked."""
+    scale = event.widget
+    if scale._disabled:
+        return
+    scale.focus_set()
+    scale._dragging = True
+    _scale_move_to(scale, event)
+
+
+def _scale_motion(event: Event) -> None:
+    """Follow the pointer while the handle is being dragged."""
+    scale = event.widget
+    if scale._dragging and not scale._disabled:
+        _scale_move_to(scale, event)
+
+
+def _scale_release(event: Event) -> None:
+    """Stop dragging, wherever the pointer ended up."""
+    event.widget._dragging = False
+
+
+def _scale_move_to(scale: Scale, event: Event) -> None:
+    """Set the value from a pointer position on the trough."""
+    origin_x, origin_y = scale._trough_origin()
+    if scale._vertical:
+        offset = event.y_root - scale.winfo_rooty() - origin_y
+    else:
+        offset = event.x_root - scale.winfo_rootx() - origin_x
+    scale.set(scale._value_at(offset))
+
+
+def _scale_key(event: Event) -> str | None:
+    """Move the handle by the keyboard.
+
+    The arrows along the scale's own direction step by the resolution, with
+    Control stepping by ``bigincrement``; Home and End go to the two ends.
+    Anything else is left alone so that Tab still leaves the widget.
+    """
+    scale = event.widget
+    if scale._disabled:
+        return None
+    low, high = scale._range()
+    step = abs(float(scale._options["resolution"])) or 1.0
+    big = abs(float(scale._options["bigincrement"])) or abs(high - low) / 10 or step
+    if event.state & MOD_CTRL:
+        step = big
+    if high < low:
+        step = -step
+    back, forward = ("Up", "Down") if scale._vertical else ("Left", "Right")
+    keysym = event.keysym
+    if keysym == back:
+        scale.set(scale._value - step)
+    elif keysym == forward:
+        scale.set(scale._value + step)
+    elif keysym == "Prior":
+        scale.set(scale._value - (big if high >= low else -big))
+    elif keysym == "Next":
+        scale.set(scale._value + (big if high >= low else -big))
+    elif keysym == "Home":
+        scale.set(low)
+    elif keysym == "End":
+        scale.set(high)
+    else:
+        return None
+    return "break"
+
+
+def _scale_refresh(event: Event) -> None:
+    """Repaint after the focus moved in or out."""
+    event.widget._redraw()
