@@ -66,7 +66,15 @@ from tkcurses._core.panels import PanelStack
 from tkcurses._core.place import BORDERMODES, PlaceLayout, PlaceOptions
 from tkcurses._core.screen import CursesScreen
 from tkcurses._core.text import align_offset, measure, wrap
-from tkcurses.constants import ANCHOR, END, FLAT, INSERT, SEL_FIRST, SEL_LAST
+from tkcurses.constants import (
+    ANCHOR,
+    END,
+    FLAT,
+    GROOVE,
+    INSERT,
+    SEL_FIRST,
+    SEL_LAST,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -88,7 +96,9 @@ __all__ = [
     "Grid",
     "IntVar",
     "Label",
+    "LabelFrame",
     "Listbox",
+    "Message",
     "Misc",
     "NoDefaultRoot",
     "Pack",
@@ -4029,7 +4039,10 @@ class _TextWidget(_Drawable):
         attribute |= self._text_attribute()
         across, down = parse_anchor(str(self._options["anchor"]))
         block_width, block_height = measure(lines)
-        top = area.y + int((area.height - block_height) * down)
+        # Clamped to the top, the way the column below is clamped to the
+        # left: text taller than the widget has to lose its end rather than
+        # its beginning, or it cannot be read at all.
+        top = max(area.y, area.y + int((area.height - block_height) * down))
         justify = str(self._options["justify"])
         for index, line in enumerate(lines):
             row = top + index
@@ -4100,7 +4113,8 @@ class _TextWidget(_Drawable):
             return
         block_width, block_height = measure(lines)
         across, down = parse_anchor(str(self._options["anchor"]))
-        row = area.y + int((area.height - block_height) * down) + line_number
+        top = max(area.y, area.y + int((area.height - block_height) * down))
+        row = top + line_number
         column = area.x + int((area.width - block_width) * across)
         column += align_offset(
             len(lines[line_number]), block_width, str(self._options["justify"])
@@ -5178,6 +5192,259 @@ def _entry_click(event: Event) -> None:
 def _entry_refresh(event: Event) -> None:
     """Repaint after the focus moved, so the cursor appears or goes."""
     event.widget._redraw()
+
+
+class Message(_TextWidget):
+    """A run of text that chooses its own line length.
+
+    A Label wraps where it is told and is otherwise as wide as its longest
+    line. A Message is the other way round: given no width at all it picks
+    one, aiming for a block of text whose width is ``aspect`` percent of its
+    height. The default of 150 gives a block half again as wide as it is
+    tall, which is roughly the shape of a paragraph.
+
+    ``width`` overrides the aspect, and ``wraplength`` overrides both - the
+    first because Tk says so, the second because a caller who has named an
+    exact wrap point has answered the question the aspect exists to guess at.
+
+    Everything else - justification, anchoring, padding, the border - is a
+    Label's, because a Message is a Label that has made its mind up about one
+    thing.
+    """
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "aspect": 150,
+        # Tk's Message justifies left rather than centre, which is what makes
+        # it read as a paragraph instead of a banner.
+        "justify": "left",
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``aspect``, plus everything a Label takes.
+        """
+        self._aspect_cache: tuple[tuple[str, int], int] | None = None
+        super().__init__(master, cnf, name=name, **kw)
+
+    def _lines(self) -> list[str]:
+        """The text as display lines, wrapped to whatever width was settled on."""
+        return wrap(self._text(), self._wrap_width())
+
+    def _wrap_width(self) -> int:
+        """Where the text breaks: the option that says so, or the aspect."""
+        for option in ("wraplength", "width"):
+            value = int(self._options[option])
+            if value > 0:
+                return value
+        return self._aspect_width()
+
+    def _aspect_width(self) -> int:
+        """The line length whose block comes closest to the aspect ratio.
+
+        Searched rather than solved: wrapping is a step function of the width
+        - nothing changes until a word moves - so there is no formula that
+        gives the answer, and the candidates are few enough to try. The
+        result is cached, because it is wanted on every repaint and only the
+        text and the aspect can change it.
+        """
+        text = self._text()
+        words = text.split()
+        if not words:
+            return 0
+        aspect = max(1, int(self._options["aspect"]))
+        key = (text, aspect)
+        if self._aspect_cache is not None and self._aspect_cache[0] == key:
+            return self._aspect_cache[1]
+        # No narrower than the longest word - narrower than that changes
+        # nothing except where the word overflows - and no wider than the
+        # whole text on one line.
+        narrowest = max(len(word) for word in words)
+        best, closest = narrowest, None
+        for width in range(narrowest, len(text) + 1):
+            block_width, block_height = measure(wrap(text, width))
+            if not block_height:
+                continue
+            error = abs(100 * block_width / block_height - aspect)
+            if closest is None or error < closest:
+                best, closest = width, error
+            if error == 0:
+                break
+        self._aspect_cache = (key, best)
+        return best
+
+
+class LabelFrame(Frame):
+    """A frame with a caption written into its border.
+
+    Everything a Frame is, with a name on it. The caption sits on the border
+    line rather than inside the frame, so it costs no room: the children get
+    exactly what they would have got from a plain frame of the same size.
+
+    ``labelanchor`` says where on the border the caption goes. Tk allows the
+    left and right edges too, with the text turned on its side; a terminal
+    cannot turn text on its side, so those anchors put the caption at the
+    nearest end of the top or bottom edge instead of pretending otherwise.
+    """
+
+    #: Where each of Tk's twelve labelanchor values puts the caption here,
+    #: as (edge, alignment). The six that name a vertical edge in Tk are
+    #: folded onto the horizontal one nearest them.
+    _CAPTION_PLACES: ClassVar[dict[str, tuple[str, str]]] = {
+        "nw": ("top", "left"),
+        "n": ("top", "centre"),
+        "ne": ("top", "right"),
+        "wn": ("top", "left"),
+        "en": ("top", "right"),
+        "w": ("top", "left"),
+        "e": ("top", "right"),
+        "ws": ("bottom", "left"),
+        "es": ("bottom", "right"),
+        "sw": ("bottom", "left"),
+        "s": ("bottom", "centre"),
+        "se": ("bottom", "right"),
+    }
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "labelanchor": "nw",
+        "relief": GROOVE,
+        "text": "",
+        "textvariable": None,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        class_: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            class_: The class this frame binds and reads options under.
+            **kw: ``text``, ``textvariable``, ``labelanchor``, plus
+                everything a Frame takes.
+        """
+        self._caption_trace: tuple[Variable, str] | None = None
+        super().__init__(master, cnf, name=name, class_=class_, **kw)
+        self._follow_caption()
+        self._apply_requested_size()
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, following a new variable if one was named."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if "textvariable" in given:
+            self._follow_caption()
+        if given:
+            self._apply_requested_size()
+            self._invalidate_layout()
+            self._redraw()
+        return result
+
+    config = configure
+
+    def _follow_caption(self) -> None:
+        """Track the ``textvariable``, dropping any previous one."""
+        if self._caption_trace is not None:
+            previous, handle = self._caption_trace
+            previous.trace_remove("write", handle)
+            self._caption_trace = None
+        variable = self._options["textvariable"]
+        if variable is None:
+            return
+        handle = variable.trace_add("write", lambda *_: self._caption_changed())
+        self._caption_trace = (variable, handle)
+        self._caption_changed()
+
+    def _caption_changed(self) -> None:
+        """Re-measure and repaint after the caption's variable moved."""
+        self._apply_requested_size()
+        self._invalidate_layout()
+        self._redraw()
+
+    def _caption(self) -> str:
+        """The caption as it is drawn, spaced away from the border corners."""
+        variable = self._options["textvariable"]
+        text = (
+            str(variable.get()) if variable is not None else str(self._options["text"])
+        )
+        return f" {text} " if text else ""
+
+    def _apply_requested_size(self) -> None:
+        """Never narrower than the caption, whatever the children want.
+
+        A frame that asks for less than its own name leaves the name cut in
+        half, which reads as a rendering fault rather than as a small frame.
+        """
+        super()._apply_requested_size()
+        caption = self._caption()
+        if not caption:
+            return
+        self._request_size(
+            max(self._requested.width, len(caption) + 2 * BORDER_WIDTH),
+            max(self._requested.height, 2),
+        )
+
+    def _redraw(self) -> None:
+        """Paint the frame, then write the caption over its border."""
+        super()._redraw()
+        self._draw_caption()
+
+    def _draw_caption(self) -> None:
+        """Write the caption into the border line the anchor names."""
+        window = self._window
+        if window is None or self.tk.screen is None or not self._bordered:
+            return
+        caption = self._caption()
+        width, height = self._rect.width, self._rect.height
+        if not caption or width < 3 or height < 2:
+            return
+        edge, alignment = self._CAPTION_PLACES.get(
+            str(self._options["labelanchor"]).lower(), ("top", "left")
+        )
+        room = width - 2 * BORDER_WIDTH
+        text = clip_text(caption, room)
+        if alignment == "centre":
+            column = BORDER_WIDTH + (room - len(text)) // 2
+        elif alignment == "right":
+            column = width - BORDER_WIDTH - len(text)
+        else:
+            column = BORDER_WIDTH
+        row = 0 if edge == "top" else height - 1
+        attribute = self._background_attribute() | self._caption_attribute()
+        dispatcher = CursesDispatcher.get()
+        with contextlib.suppress(curses.error):
+            if row == height - 1 and column + len(text) >= width:
+                # The bottom-right cell cannot be written with addstr: curses
+                # scrolls a window whose cursor has nowhere left to go.
+                dispatcher.call(window.insstr, row, column, text, attribute)
+            else:
+                dispatcher.call(window.addstr, row, column, text, attribute)
+
+    def _caption_attribute(self) -> int:
+        """Attributes the font option puts on the caption."""
+        font = str(self._options.get("font", "")).lower()
+        return from_font(
+            bold="bold" in font,
+            italic="italic" in font,
+            underline="underline" in font,
+        )
 
 
 class Spinbox(Entry):
