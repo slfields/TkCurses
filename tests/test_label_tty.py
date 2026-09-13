@@ -137,3 +137,44 @@ def test_labels_pack_alongside_frames(terminal, tmp_path):
     term.wait_for_text("third")
     rows = [i for i, line in enumerate(term.display) if "first" in line]
     assert rows, "the first label should be on screen"
+
+
+def test_text_too_wide_keeps_its_beginning(terminal, tmp_path):
+    """Clipping must cut the end, not the start.
+
+    Justification is measured from the line's real length and applied before
+    clipping. Measuring the clipped line instead pushes it right, so a label
+    too narrow for its text shows the end of it hard against the far edge with
+    the beginning cut off - which reads as text in the wrong place rather than
+    text that does not fit.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "f = tkcurses.Frame(root, relief='solid', width=12, height=3)\n"
+            "f.place(x=0, y=0)\n"
+            "f.pack_propagate(False)\n"
+            "tkcurses.Label(f, text='far too wide to fit', anchor='w')"
+            ".pack(fill='both', expand=True)"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda t: "far" in "\n".join(t.display), message="the text")
+    term.wait_for_idle()
+    assert term.display[1][1:11] == "far too wi"
+
+
+def test_a_centred_label_narrower_than_its_text_starts_at_the_left(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "f = tkcurses.Frame(root, width=10, height=1)\n"
+            "f.place(x=0, y=0)\n"
+            "f.pack_propagate(False)\n"
+            "tkcurses.Label(f, text='abcdefghijklmnop', justify='center')"
+            ".pack(fill='both', expand=True)"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda t: "abc" in "\n".join(t.display), message="the text")
+    assert term.display[0].startswith("abcdefghij")

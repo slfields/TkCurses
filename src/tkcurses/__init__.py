@@ -3906,15 +3906,20 @@ class Label(_Drawable):
         across, down = parse_anchor(str(self._options["anchor"]))
         block_width, block_height = measure(lines)
         top = area.y + int((area.height - block_height) * down)
+        justify = str(self._options["justify"])
         for index, line in enumerate(lines):
             row = top + index
             if not (area.y <= row < area.y + area.height):
                 continue
-            text = clip_text(line, area.width)
+            # Justify from the line's real length, then clip. Clipping first
+            # measures the wrong thing: a line wider than the area comes back
+            # shortened, and centring the shortened version pushes it right,
+            # so text too long to fit ends up hard against the far edge with
+            # its beginning cut off.
             column = area.x + int((area.width - block_width) * across)
-            column += align_offset(
-                len(text), block_width, str(self._options["justify"])
-            )
+            column += align_offset(len(line), block_width, justify)
+            column = max(column, area.x)
+            text = clip_text(line, area.x + area.width - column)
             with contextlib.suppress(curses.error):
                 dispatcher.call(window.addstr, row, column, text, attribute)
         self._draw_underline(dispatcher, window, area, lines, attribute)

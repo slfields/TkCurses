@@ -106,6 +106,9 @@ class PackLayout:
     order parcels are cut, and is what ``before`` and ``after`` reorder.
     """
 
+    #: Packed children decide how much room their container needs.
+    propagates = True
+
     def __init__(self) -> None:
         self._order: list[Any] = []
         self._options: dict[int, PackOptions] = {}

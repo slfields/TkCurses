@@ -63,6 +63,9 @@ class PlaceOptions:
 class PlaceLayout:
     """Places one container's children."""
 
+    #: Placed children make no claim on their container's size.
+    propagates = False
+
     def __init__(self) -> None:
         self._order: list[Any] = []
         self._options: dict[int, PlaceOptions] = {}

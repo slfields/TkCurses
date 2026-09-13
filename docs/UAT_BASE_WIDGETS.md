@@ -174,6 +174,7 @@ appearance. Two things deliberately left out until the widget set exists:
   nothing draws which widget has focus, so there is nothing for a person to
   accept.
 - **Instructions are drawn through internal API.** The scenarios write to the
-  screen buffer directly because there is no public way to put a character on
-  screen yet. When `Label` lands they should be rewritten to use it, which
-  would make them exercise the real thing.
+  screen buffer directly. Now that `Label` exists this is a choice rather than
+  a limitation: instruction text has to stay put while the scenario rearranges
+  everything else around it, and a widget would have to be laid out. The
+  geometry scenarios (10-14) build what they demonstrate from real widgets.

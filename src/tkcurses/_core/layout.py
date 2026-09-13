@@ -58,6 +58,13 @@ class Layout(Protocol):
     parent uses another.
     """
 
+    #: Whether this manager's children decide their container's size. True
+    #: for pack and grid, which arrange a container's contents and therefore
+    #: know how much room those contents need. False for place, whose
+    #: children state where they go and make no claim on the container - a
+    #: frame full of placed children keeps the size it was configured with.
+    propagates: bool
+
     def requested(self, container: Any) -> Size:
         """The size this manager needs to lay out the container's children."""
         ...
@@ -161,8 +168,8 @@ class LayoutEngine:
         manager = container._layout_manager
         if manager is None:
             return
-        requested = manager.requested(container)
-        self._propagate(container, requested)
+        if getattr(manager, "propagates", True):
+            self._propagate(container, manager.requested(container))
         manager.apply(container, container._content_rect())
 
     def _propagate(self, container: Any, requested: Size) -> None:
@@ -175,7 +182,8 @@ class LayoutEngine:
 
         A container with propagation switched off absorbs the change instead:
         it keeps the size it was given and its parent is never told, which is
-        exactly what ``pack_propagate(False)`` is for.
+        exactly what ``pack_propagate(False)`` is for. A manager that does not
+        size its container at all - place - never gets here.
         """
         if not container._layout_propagate:
             return
