@@ -34,7 +34,7 @@ from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.errors import TclError, TkCursesError
 from tkcurses._core.events import Event as CoreEvent
 from tkcurses._core.events import KeyEvent, MouseEvent, ResizeEvent
-from tkcurses._core.geometry import Rect, Size
+from tkcurses._core.geometry import Insets, Rect, Size, clamp, content_rect
 from tkcurses._core.input import InputHandler
 from tkcurses._core.panels import PanelStack
 from tkcurses._core.screen import CursesScreen
@@ -55,6 +55,7 @@ __all__ = [
     "TclError",
     "Tk",
     "TkCursesError",
+    "Toplevel",
     "Widget",
     "__version__",
 ]
@@ -72,6 +73,12 @@ _DISTANCE_UNITS: dict[str, float] = {
     "m": 1 / 25.4,
     "p": 1 / 72.0,
 }
+
+#: Size a Toplevel takes when neither the application nor Wm has asked for
+#: one. Tk's default is 200x200 pixels, which is about this many cells at
+#: a usual font size, and small enough to fit an 80x24 terminal with room
+#: to spare.
+_DEFAULT_TOPLEVEL_SIZE = Size(30, 10)
 
 #: Strings ``getboolean`` accepts, exactly as Tcl does.
 _TRUE = frozenset({"1", "yes", "true", "on", "y", "t"})
@@ -865,11 +872,27 @@ class Misc:
 
     def winfo_rootx(self) -> int:
         """Column on the screen, in cells."""
-        return sum(widget._rect.x for widget in self._ancestry())
+        return self._root_offset()[0]
 
     def winfo_rooty(self) -> int:
         """Row on the screen, in cells."""
-        return sum(widget._rect.y for widget in self._ancestry())
+        return self._root_offset()[1]
+
+    def _root_offset(self) -> tuple[int, int]:
+        """Screen position, summing offsets up to the enclosing toplevel.
+
+        The walk stops there rather than continuing to the root, because a
+        toplevel's position is where it sits on the screen, not an offset from
+        the widget it happened to be created under. Summing past it would move
+        every dialog by its owner's position.
+        """
+        x = y = 0
+        for widget in self._ancestry():
+            x += widget._rect.x
+            y += widget._rect.y
+            if widget._is_toplevel:
+                break
+        return x, y
 
     def winfo_geometry(self) -> str:
         """Size and position as ``WxH+X+Y``, in cells."""
@@ -1464,6 +1487,28 @@ class BaseWidget(Misc):
             stack.destroy(self._panel)
         self._panel = None
 
+    def _restack(self, other: Misc | None, above: bool) -> None:
+        """Reorder among siblings, and move the window with it.
+
+        Sibling order is the model; the panel stack is what the terminal
+        shows. Changing one without the other leaves a widget that claims to
+        be in front while drawing behind.
+        """
+        super()._restack(other, above)
+        stack = self.tk.panels
+        if stack is None or self._panel is None:
+            return
+        target = getattr(other, "_panel", None) if other is not None else None
+        if target is None:
+            if above:
+                stack.raise_to_top(self._panel)
+            else:
+                stack.lower_to_bottom(self._panel)
+        elif above:
+            stack.raise_above(self._panel, target)
+        else:
+            stack.lower_below(self._panel, target)
+
     def destroy(self) -> None:
         """Destroy the widget, its children, and their windows.
 
@@ -1825,3 +1870,148 @@ class Tk(BaseWidget):
         the report somewhere the application can show.
         """
         traceback.print_exception(exc, val, tb)
+
+
+class Toplevel(BaseWidget):
+    """A window of its own, floating above the root.
+
+    tkinter leaves a toplevel's frame, title bar and placement to the window
+    manager. A terminal has none, so a toplevel here draws its own border and
+    chooses its own position, and both are its business rather than a
+    manager's: it is mapped the moment it is created and no geometry manager
+    ever places it.
+
+    tkinter's hierarchy is ``Toplevel(BaseWidget, Wm)``. The window manager
+    methods - title, geometry, protocol - arrive with the Wm class.
+    """
+
+    _is_toplevel = True
+
+    #: ``width`` and ``height`` are cells, and zero means "not asked for",
+    #: which is what sends the window to its default size. borderwidth is 1
+    #: rather than tkinter's 0: there is no window manager to draw a frame,
+    #: so without one a toplevel is indistinguishable from what is behind it.
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "borderwidth": 1,
+        "height": 0,
+        "menu": None,
+        "width": 0,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        class_: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: The window this one belongs to. Defaults to the root.
+            cnf: Options as a dictionary.
+            name: Path component, generated when omitted.
+            class_: The class this window binds and reads options under, as
+                tkinter's ``class_`` does. Construction-time only, because
+                bindings and option lookups are resolved against it.
+            **kw: Options as keywords.
+        """
+        self._class_name = class_
+        super().__init__(master, cnf, name=name, **kw)
+        self._allocate(self._default_rect())
+        self._map()
+
+    def winfo_class(self) -> str:
+        """The class this window binds and reads options under."""
+        return self._class_name or type(self).__name__
+
+    @property
+    def _bordered(self) -> bool:
+        """True if this window draws a border, costing a cell on each edge."""
+        return bool(self._options["borderwidth"]) or self._options["relief"] != FLAT
+
+    def _content_rect(self) -> Rect:
+        """Where this window's children may be placed, in screen cells.
+
+        Excludes the border and the padding, per ARCHITECTURE.md "Content
+        Coordinate Rules": a bordered 30x8 window offers 28x6.
+        """
+        return content_rect(
+            self._rect,
+            bordered=self._bordered,
+            padding=Insets.symmetric(
+                horizontal=int(self._options["padx"]),
+                vertical=int(self._options["pady"]),
+            ),
+        )
+
+    def _default_rect(self) -> Rect:
+        """Where the window goes when nothing has said.
+
+        Centred, and clamped to the screen. Tk would hand this to the window
+        manager, which typically cascades or centres; centring is the choice
+        that keeps a dialog visible on a terminal of any size, and Wm's
+        geometry() will override it.
+        """
+        screen_width, screen_height = self._screen_size()
+        width = int(self._options["width"]) or min(
+            _DEFAULT_TOPLEVEL_SIZE.width, screen_width
+        )
+        height = int(self._options["height"]) or min(
+            _DEFAULT_TOPLEVEL_SIZE.height, screen_height
+        )
+        width = clamp(width, 1, screen_width)
+        height = clamp(height, 1, screen_height)
+        return Rect(
+            clamp((screen_width - width) // 2, 0, max(0, screen_width - width)),
+            clamp((screen_height - height) // 2, 0, max(0, screen_height - height)),
+            width,
+            height,
+        )
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, resizing the window if its size options changed."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if given and {"width", "height"} & set(given):
+            self._allocate(self._default_rect())
+        elif given:
+            self._draw()
+        return result
+
+    config = configure
+
+    def _allocate(self, rect: Rect) -> None:
+        """Take the new region and repaint, since a resize replaces the window."""
+        super()._allocate(rect)
+        self._draw()
+
+    def _create_window(self) -> None:
+        """Allocate the window and paint it.
+
+        Drawing has to happen here as well as in _allocate: on the way up, a
+        toplevel is allocated before it is mapped, so the first _allocate
+        finds no window to paint and the window only appears when _map()
+        creates one.
+        """
+        super()._create_window()
+        self._draw()
+
+    def _draw(self) -> None:
+        """Paint the border into this window's curses window.
+
+        The only rendering in the library so far: a toplevel without a border
+        is indistinguishable from whatever it covers, and there is no window
+        manager to draw one. Widget rendering proper arrives with the widget
+        set, and will draw the interior before this is pushed to the terminal.
+
+        Silent without a screen, which is what lets the geometry above be
+        tested with no terminal in the loop.
+        """
+        window = self._window
+        if window is None or self.tk.screen is None or not self._bordered:
+            return
+        dispatcher = CursesDispatcher.get()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.border)
