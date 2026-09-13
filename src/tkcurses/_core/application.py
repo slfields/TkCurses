@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from tkcurses import Misc
+    from tkcurses._core.panels import PanelStack
     from tkcurses._core.screen import CursesScreen
 
 __all__ = ["Application", "OptionDatabase", "WidgetRegistry"]
@@ -216,6 +217,14 @@ class Application:
         #: and friends ask it for the terminal size and fall back to the
         #: environment when no screen is up, so they work before mainloop().
         self.screen: CursesScreen | None = None
+
+        #: The z-ordered windows, once Tk() has started curses. None until
+        #: then: a panel is a curses window, and there are none before
+        #: initscr(). Widgets track where they would be laid out regardless,
+        #: so the tree is fully formed by the time a stack exists to build it
+        #: on - and a test can install one with stub factories to exercise the
+        #: lifecycle without a terminal.
+        self.panels: PanelStack | None = None
 
         #: Widget holding the input grab, and whether it is global. A grab
         #: diverts events away from the rest of the application, which is how

@@ -38,6 +38,8 @@ from tkcurses.constants import FLAT
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
 
+    from tkcurses._core.panels import Panel
+
 __version__ = "0.1.0"
 
 __all__ = [
@@ -1290,6 +1292,7 @@ class BaseWidget(Misc):
         super().__init__(master, name)
         self._options = self._initial_options({**(cnf or {}), **kw})
         self._takefocus = bool(self._options.get("takefocus", True))
+        self._panel: Panel | None = None
 
     # ------------------------------------------------------------ options
 
@@ -1363,6 +1366,109 @@ class BaseWidget(Misc):
     def keys(self) -> list[str]:
         """The option names this widget accepts, sorted."""
         return sorted(self._option_spec())
+
+    # ---------------------------------------------------------- lifecycle
+
+    @property
+    def _window(self) -> Any:
+        """The curses window behind this widget, or None if it has no panel."""
+        return None if self._panel is None else self._panel.window
+
+    def _allocate(self, rect: Rect) -> None:
+        """Give the widget the region a geometry manager decided on.
+
+        Called by pack, grid and place, and by a resize that moves things
+        around. The widget records the region whether or not there is a panel
+        stack to build on: layout is decided before curses exists, and the
+        window follows once it does.
+
+        An empty region is how a manager says "no room for this" - it drops
+        the window rather than asking curses for a zero-sized one, which
+        curses refuses.
+        """
+        previous, self._rect = self._rect, rect
+        stack = self.tk.panels
+        if stack is None:
+            return
+        if rect.is_empty:
+            self._destroy_window()
+            return
+        if self._panel is None:
+            if self._mapped:
+                self._create_window()
+            return
+        if (rect.width, rect.height) != (previous.width, previous.height):
+            # Curses cannot resize a window in place, and replacing it is also
+            # what keeps a shrink from leaving the vacated cells behind.
+            stack.replace_window(self._panel, rect)
+        elif (rect.x, rect.y) != (previous.x, previous.y):
+            stack.move(self._panel, rect.x, rect.y)
+
+    def _map(self) -> None:
+        """Put the widget on screen, creating its window if it has none.
+
+        Idempotent: a geometry manager may re-map a widget it has already
+        placed, and mapping twice should not raise ``<Map>`` twice.
+        """
+        if self._mapped:
+            return
+        self._mapped = True
+        self._create_window()
+        self.event_generate("<Map>")
+
+    def _unmap(self) -> None:
+        """Take the widget off screen, keeping its window for a later map.
+
+        The window is hidden rather than destroyed, because an unmapped
+        widget is usually on its way back - a notebook tab, a hidden frame -
+        and rebuilding the window each time would throw away its contents.
+        """
+        if not self._mapped:
+            return
+        self._mapped = False
+        if self._panel is not None:
+            self.tk.panels.hide(self._panel)  # type: ignore[union-attr]
+        self.event_generate("<Unmap>")
+
+    def _create_window(self) -> None:
+        """Allocate this widget's panel, if it can have one yet.
+
+        Silent when there is no stack or no region: both mean "not yet", and
+        the widget will get its window when :meth:`_allocate` or :meth:`_map`
+        next finds the other half in place.
+        """
+        stack = self.tk.panels
+        if stack is None or self._rect.is_empty:
+            return
+        if self._panel is None:
+            self._panel = stack.new_panel(self._rect, userptr=self)
+        else:
+            stack.show(self._panel)
+
+    def _destroy_window(self) -> None:
+        """Release this widget's panel.
+
+        Safe to call on a widget that never had one, which is what makes
+        destroy() able to call it unconditionally.
+        """
+        if self._panel is None:
+            return
+        stack = self.tk.panels
+        if stack is not None:
+            stack.destroy(self._panel)
+        self._panel = None
+
+    def destroy(self) -> None:
+        """Destroy the widget, its children, and their windows.
+
+        Children go first - Misc sees to that - so a panel is never left
+        pointing at a destroyed parent, and this widget's own window is
+        released last.
+        """
+        if self._destroyed:
+            return
+        super().destroy()
+        self._destroy_window()
 
 
 class Widget(BaseWidget):
