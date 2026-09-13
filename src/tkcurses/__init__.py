@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import curses
+import itertools
 import os
 import re
 import sys
@@ -58,13 +59,18 @@ __version__ = "0.1.0"
 
 __all__ = [
     "BaseWidget",
+    "BooleanVar",
+    "DoubleVar",
     "Event",
+    "IntVar",
     "Misc",
     "NoDefaultRoot",
+    "StringVar",
     "TclError",
     "Tk",
     "TkCursesError",
     "Toplevel",
+    "Variable",
     "Widget",
     "Wm",
     "__version__",
@@ -1060,6 +1066,49 @@ class Misc:
         """
         self.tk.timers.run_idle()
         self.tk.timers.run_due()
+
+    def wait_variable(self, name: Variable) -> None:
+        """Run the event loop until ``name`` is written to.
+
+        A modal wait: it returns when something sets the variable, and hangs
+        if nothing ever does - which is Tk's behaviour too, and why the usual
+        caller is a dialog that has already arranged for a button to set it.
+        """
+        written: list[bool] = []
+        handle = name.trace_add("write", lambda *_: written.append(True))
+        try:
+            self._wait_until(lambda: bool(written))
+        finally:
+            name.trace_remove("write", handle)
+
+    waitvar = wait_variable
+
+    def wait_window(self, window: Misc | None = None) -> None:
+        """Run the event loop until ``window`` is destroyed.
+
+        Returns at once if it is already gone, so a caller need not race the
+        window it is waiting for.
+        """
+        target = window if window is not None else self
+        self._wait_until(lambda: not target.winfo_exists())
+
+    def wait_visibility(self, window: Misc | None = None) -> None:
+        """Run the event loop until ``window`` is on the screen."""
+        target = window if window is not None else self
+        self._wait_until(lambda: target.winfo_viewable())
+
+    def _wait_until(self, ready: Callable[[], bool]) -> None:
+        """Pump the event loop until ``ready`` holds.
+
+        Stops early if the root is destroyed: without that, closing the
+        application during a wait would leave the loop spinning on a tree
+        that no longer exists.
+        """
+        root = self._root()
+        while not ready():
+            if not root.winfo_exists():
+                return
+            root.update()
 
     def quit(self) -> None:
         """Ask the main loop to stop.
@@ -2516,3 +2565,276 @@ class Toplevel(BaseWidget, Wm):
     def _redraw_decoration(self) -> None:
         """Repaint the border and title after the window manager changed them."""
         self._draw()
+
+
+# ======================================================================
+# Variables
+# ======================================================================
+
+
+class Variable:
+    """A value widgets can share and watch.
+
+    tkinter's variables live in the Tcl interpreter, which is what lets two
+    widgets bound to the same one stay in step and what makes a trace fire.
+    Here they live in the :class:`~tkcurses._core.application.Application`,
+    reached through the master, so the same sharing holds and two
+    applications in one process keep separate variables.
+
+    Attributes:
+        _default: The value a variable of this class starts with.
+    """
+
+    _default: Any = ""
+
+    #: Names automatic variables PY_VAR0, PY_VAR1, as tkinter does, so a
+    #: printed variable name reads the same under either library.
+    _counter = itertools.count()
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        value: Any = None,
+        name: str | None = None,
+    ) -> None:
+        """
+        Args:
+            master: Any widget of the application the variable belongs to.
+                Defaults to the implicit root.
+            value: Initial value. Without one the variable takes its class's
+                default, unless a variable of that name already holds
+                something, which is how two Variables can share one name.
+            name: The variable's name, generated when omitted.
+
+        Raises:
+            TclError: If no master was given and there is no root window.
+        """
+        if master is None:
+            master = _get_default_root("create a variable")
+        self._master = master
+        self._tk = master.tk
+        self._name = name or f"PY_VAR{next(Variable._counter)}"
+        self._traces: dict[str, tuple[tuple[str, ...], Callable[..., Any]]] = {}
+        self._trace_ids = itertools.count(1)
+        if value is not None:
+            self.initialize(value)
+        elif self._name not in self._tk.variables:
+            self.initialize(self._default)
+
+    def __str__(self) -> str:
+        """The variable's name, which is how Tk refers to one."""
+        return self._name
+
+    def __repr__(self) -> str:
+        """Name and current value, for a traceback or a debugger."""
+        return f"<{type(self).__name__} {self._name}={self._raw()!r}>"
+
+    def __eq__(self, other: object) -> bool:
+        """Equal to another variable of the same class with the same name.
+
+        Not by value: two variables are the same variable or they are not,
+        and comparing the values would make an IntVar equal to a StringVar
+        that happened to hold the same digits.
+        """
+        if not isinstance(other, Variable):
+            return NotImplemented
+        return type(other) is type(self) and other._name == self._name
+
+    def __hash__(self) -> int:
+        """Hash by name, to match :meth:`__eq__`."""
+        return hash((type(self).__name__, self._name))
+
+    def __del__(self) -> None:
+        """Forget the value when the last reference goes.
+
+        Guarded to the point of silence: this runs during garbage collection
+        and at interpreter shutdown, where the application may already be
+        half torn down and an exception here would be reported out of any
+        useful context.
+        """
+        with contextlib.suppress(Exception):
+            self._tk.variables.pop(self._name, None)
+
+    # --------------------------------------------------------------- value
+
+    def get(self) -> Any:
+        """The variable's value, converted to this class's type."""
+        self._fire("read")
+        return self._convert(self._raw())
+
+    def set(self, value: Any) -> None:
+        """Set the value, firing any write traces."""
+        self._tk.variables[self._name] = value
+        self._fire("write")
+
+    initialize = set
+
+    def _raw(self) -> Any:
+        """The stored value, unconverted, defaulting if it was never set."""
+        return self._tk.variables.get(self._name, self._default)
+
+    def _convert(self, value: Any) -> Any:
+        """Coerce a stored value to this class's type. Identity by default."""
+        return value
+
+    # -------------------------------------------------------------- traces
+
+    def trace_add(self, mode: str | Sequence[str], callback: Callable[..., Any]) -> str:
+        """Call ``callback`` when the variable is read, written, or unset.
+
+        Args:
+            mode: One of ``read``, ``write``, ``unset``, or several.
+            callback: Invoked as ``callback(name, index, mode)``, the
+                arguments Tcl passes and tkinter hands on unchanged.
+
+        Returns:
+            A handle for :meth:`trace_remove`.
+
+        Raises:
+            TclError: If a mode is not one Tk recognises.
+        """
+        modes = (mode,) if isinstance(mode, str) else tuple(mode)
+        for one in modes:
+            if one not in _TRACE_MODES:
+                raise TclError(f'bad operation "{one}"')
+        handle = f"{self._name}_trace{next(self._trace_ids)}"
+        self._traces[handle] = (modes, callback)
+        return handle
+
+    def trace_remove(
+        self,
+        mode: str | Sequence[str],  # noqa: ARG002 - tkinter signature
+        cbname: str,
+    ) -> None:
+        """Remove a trace by the handle :meth:`trace_add` returned.
+
+        The mode is accepted for tkinter's signature and not consulted: the
+        handle already identifies one registration.
+        """
+        self._traces.pop(cbname, None)
+
+    def trace_info(self) -> list[tuple[tuple[str, ...], str]]:
+        """Every trace on this variable, as ``(modes, handle)`` pairs."""
+        return [(modes, handle) for handle, (modes, _) in self._traces.items()]
+
+    def trace_variable(self, mode: str, callback: Callable[..., Any]) -> str:
+        """Add a trace using the old single-letter modes.
+
+        ``r``, ``w`` and ``u`` are what Tk called read, write and unset
+        before ``trace_add``. Kept because tkinter code written before 3.6
+        still uses them.
+
+        Raises:
+            TclError: If the mode letter is not one of the three.
+        """
+        return self.trace_add(self._legacy_modes(mode), callback)
+
+    def trace_vdelete(self, mode: str, cbname: str) -> None:
+        """Remove a trace added with :meth:`trace_variable`."""
+        self.trace_remove(self._legacy_modes(mode), cbname)
+
+    def trace_vinfo(self) -> list[tuple[str, str]]:
+        """Traces in the old format: single-letter modes and handles."""
+        return [
+            ("".join(_LEGACY_LETTERS[one] for one in modes), handle)
+            for modes, handle in self.trace_info()
+        ]
+
+    @staticmethod
+    def _legacy_modes(mode: str) -> tuple[str, ...]:
+        """Translate ``rwu`` letters into the modern mode names."""
+        try:
+            return tuple(_LEGACY_MODES[letter] for letter in mode)
+        except KeyError:
+            raise TclError(f'bad operation "{mode}"') from None
+
+    def _fire(self, mode: str) -> None:
+        """Run the traces registered for ``mode``.
+
+        The list is copied first, so a callback may add or remove a trace -
+        including its own - without disturbing the pass it is in.
+        """
+        for modes, callback in list(self._traces.values()):
+            if mode in modes:
+                callback(self._name, "", mode)
+
+
+#: Trace modes Tk recognises. "array" is accepted for compatibility; nothing
+#: here is an array, so it never fires.
+_TRACE_MODES = ("read", "write", "unset", "array")
+
+#: The single letters Tk used for trace modes before trace_add existed.
+_LEGACY_MODES = {"r": "read", "w": "write", "u": "unset"}
+_LEGACY_LETTERS = {name: letter for letter, name in _LEGACY_MODES.items()}
+
+
+class StringVar(Variable):
+    """A variable holding text."""
+
+    _default = ""
+
+    def _convert(self, value: Any) -> str:
+        """Render the value as text, as Tcl would."""
+        return "" if value is None else str(value)
+
+
+class IntVar(Variable):
+    """A variable holding a whole number."""
+
+    _default = 0
+
+    def _convert(self, value: Any) -> int:
+        """Parse the value as an integer.
+
+        Raises:
+            TclError: If it is not one, matching tkinter, which reports the
+                Tcl conversion failure.
+        """
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        try:
+            return int(str(value), 0)
+        except (TypeError, ValueError):
+            raise TclError(f'expected integer but got "{value}"') from None
+
+
+class DoubleVar(Variable):
+    """A variable holding a number with a fractional part."""
+
+    _default = 0.0
+
+    def _convert(self, value: Any) -> float:
+        """Parse the value as a float.
+
+        Raises:
+            TclError: If it is not one.
+        """
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            raise TclError(
+                f'expected floating-point number but got "{value}"'
+            ) from None
+
+
+class BooleanVar(Variable):
+    """A variable holding a truth value."""
+
+    _default = False
+
+    def _convert(self, value: Any) -> bool:
+        """Parse the value the way Tcl reads a boolean.
+
+        Raises:
+            TclError: If it is none of the spellings Tcl accepts.
+        """
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        text = str(value).strip().lower()
+        if text in _TRUE:
+            return True
+        if text in _FALSE:
+            return False
+        raise TclError(f'expected boolean value but got "{value}"')
