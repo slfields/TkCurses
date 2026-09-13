@@ -72,6 +72,13 @@ from tkcurses._core.grid import (
     parse_sticky,
 )
 from tkcurses._core.input import InputHandler
+from tkcurses._core.menus import (
+    CASCADE,
+    MenuEntry,
+    measure_entries,
+    place_popup,
+    visible_window,
+)
 from tkcurses._core.pack import FILLS, SIDES, PackLayout, PackOptions, parse_anchor
 from tkcurses._core.panels import PanelStack
 from tkcurses._core.place import BORDERMODES, PlaceLayout, PlaceOptions
@@ -111,6 +118,7 @@ __all__ = [
     "Label",
     "LabelFrame",
     "Listbox",
+    "Menu",
     "Message",
     "Misc",
     "NoDefaultRoot",
@@ -914,6 +922,12 @@ class Misc:
         rect = Rect(
             self.winfo_rootx(), self.winfo_rooty(), self._rect.width, self._rect.height
         )
+        if self._options.get("menu") is not None:
+            # A menubar sits inside the window's border and above everything
+            # else in it, so the row it occupies is not the children's to
+            # use. Taken off here rather than in each window class, because
+            # this is the one place that decides what a container offers.
+            rect = Rect(rect.x, rect.y + 1, rect.width, max(0, rect.height - 1))
         return content_rect(
             rect,
             bordered=self._border_drawn,
@@ -1796,6 +1810,16 @@ class BaseWidget(Misc):
         options.update(self._checked(given))
         return options
 
+    def _configured_menubar(self, given: dict[str, Any]) -> None:
+        """Attach a menubar when one is set through the ``menu`` option.
+
+        Only Tk and Toplevel have that option, and only they have the method
+        - so the check is for both rather than for the class, which keeps
+        BaseWidget from having to know about windows.
+        """
+        if "menu" in given and hasattr(self, "_attach_menubar"):
+            self._attach_menubar()
+
     def _checked(self, given: dict[str, Any]) -> dict[str, Any]:
         """Resolve aliases and reject anything this widget does not accept."""
         spec = self._option_spec()
@@ -1819,6 +1843,7 @@ class BaseWidget(Misc):
         self._options.update(self._checked(given))
         if "takefocus" in self._options:
             self._takefocus = bool(self._options["takefocus"])
+        self._configured_menubar(given)
         return None
 
     config = configure
@@ -2498,12 +2523,52 @@ class Wm:
         _options: dict[str, Any]
         _is_toplevel: bool
 
+        _menubar_bound: bool
+
+        @property
+        def _border_drawn(self) -> bool: ...
+
+        def bind(
+            self,
+            sequence: str | None = None,
+            func: Callable[[Event], Any] | None = None,
+            add: bool | str | None = None,
+        ) -> Any: ...
         def _allocate(self, rect: Rect) -> None: ...
         def _map(self) -> None: ...
         def _unmap(self) -> None: ...
         def _screen_size(self) -> tuple[int, int]: ...
         def winfo_exists(self) -> bool: ...
         def tkraise(self, aboveThis: Misc | None = None) -> None: ...
+
+    def _attach_menubar(self) -> None:
+        """Lay the window's ``menu`` across its top row, and keep it there.
+
+        The menubar is a Menu like any other, drawn in a row instead of a
+        box. It is positioned here rather than by a geometry manager because
+        it is not part of the layout: the window takes its row away from the
+        children first, and what is left is what they are offered. A
+        ``<Configure>`` binding re-places it, so the bar follows the window
+        when the terminal is resized.
+        """
+        if self._options.get("menu") is None:
+            return
+        if not self._menubar_bound:
+            self._menubar_bound = True
+            self.bind("<Configure>", lambda _event: self._place_menubar(), add=True)
+        self._place_menubar()
+
+    def _place_menubar(self) -> None:
+        """Put the menubar across the top of this window's border."""
+        bar = self._options.get("menu")
+        if bar is None or not bar.winfo_exists():
+            return
+        bar._as_menubar = True
+        bar._apply_requested_size()
+        edge = BORDER_WIDTH if self._border_drawn else 0
+        bar._allocate(Rect(edge, edge, max(0, self._rect.width - 2 * edge), 1))
+        bar._map()
+        bar._redraw()
 
     def _setup_wm(self) -> None:
         """Initialise the window manager state.
@@ -2512,6 +2577,7 @@ class Wm:
         ``__init__`` here: the mixin has no say in the order a widget builds
         itself, and these defaults have to be in place before geometry is.
         """
+        self._menubar_bound = False
         self._title = ""
         self._protocols: dict[str, Callable[[], Any]] = {}
         self._min_size: tuple[int, int] = (1, 1)
@@ -2958,7 +3024,9 @@ class Tk(BaseWidget, Wm):
 
     #: The root accepts the standard options; the rest of its configuration
     #: is window manager business.
-    _widget_options: ClassVar[dict[str, Any]] = {}
+    #: The menubar this window shows, if any. Declared here as well as on
+    #: Toplevel because a menubar on the root window is the common case.
+    _widget_options: ClassVar[dict[str, Any]] = {"menu": None}
 
     def __init__(
         self,
@@ -7502,6 +7570,797 @@ def _canvas_mouse(event: Event) -> None:
     }.get(event.type, "")
     if sequence:
         canvas._deliver(canvas._current, sequence, event)
+
+
+class Menu(_Drawable):
+    """A list of things to choose, posted over everything else.
+
+    A menu is the one widget here that is placed against the *screen* rather
+    than inside its parent. It is not packed or gridded: it is **posted** at a
+    point - by :meth:`post`, by :meth:`tk_popup`, or by a menubar - and
+    :mod:`tkcurses._core.menus` works out where it actually fits. A menu with
+    no room below its point is drawn above it, one that would run off the
+    right is pulled left, and one taller than the screen scrolls rather than
+    being cut off.
+
+    While a menu is posted it holds the grab and the focus, so every key and
+    every click reaches it - including a click somewhere else, which is how it
+    knows to dismiss itself. Escape dismisses it too, and so does invoking
+    anything on it.
+
+    The same widget is also a **menubar** when a toplevel is given one
+    through its ``menu`` option. It then draws in a row across the top of
+    that window, its cascades post beneath their labels, and the toplevel
+    lays its children out in what is left.
+    """
+
+    #: Entry kinds, and what each one accepts on top of the common options.
+    _ENTRY_OPTIONS: ClassVar[dict[str, dict[str, Any]]] = {
+        "command": {},
+        "cascade": {"menu": None},
+        "checkbutton": {"onvalue": 1, "offvalue": 0, "variable": None},
+        "radiobutton": {"value": "", "variable": None},
+        "separator": {},
+    }
+    _COMMON_ENTRY_OPTIONS: ClassVar[dict[str, Any]] = {
+        "accelerator": "",
+        "command": None,
+        "label": "",
+        "state": "normal",
+        "underline": -1,
+    }
+
+    #: What a ticked checkbutton and a chosen radiobutton look like.
+    _INDICATORS: ClassVar[dict[str, tuple[str, str]]] = {
+        "checkbutton": ("[x] ", "[ ] "),
+        "radiobutton": ("(•) ", "( ) "),
+    }
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "postcommand": None,
+        "relief": "raised",
+        "takefocus": False,
+        "tearoff": False,
+        "title": "",
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``postcommand``, ``title``, and the standard options.
+        """
+        self._entries: list[MenuEntry] = []
+        self._active: int | None = None
+        self._posted = False
+        self._first = 0
+        self._as_menubar = False
+        self._open_cascade: Menu | None = None
+        self._parent_menu: Menu | None = None
+        self._focus_before: Misc | None = None
+        super().__init__(master, cnf, name=name, **kw)
+        self._apply_requested_size()
+        self._install_class_bindings()
+
+    def _install_class_bindings(self) -> None:
+        """Register the keys and clicks every Menu answers."""
+        if "Menu" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("Menu")
+        bind = self.bind_class
+        bind("Menu", "<Any-Key>", _menu_key)
+        bind("Menu", "<Button-1>", _menu_click)
+        bind("Menu", "<Motion>", _menu_motion)
+
+    # ---------------------------------------------------------- making entries
+
+    def add(self, kind: str, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
+        """Append an entry of one kind.
+
+        Raises:
+            TclError: If the kind is not one Tk defines, or an option is not
+                one that kind takes.
+        """
+        self.insert(len(self._entries), kind, cnf, **kw)
+
+    def insert(
+        self, index: Any, kind: str, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> None:
+        """Put an entry of one kind at a position.
+
+        Raises:
+            TclError: If the kind or an option is not one Tk defines.
+        """
+        if kind not in self._ENTRY_OPTIONS:
+            raise TclError(f'bad menu entry type "{kind}"')
+        entry = MenuEntry(kind, self._checked_entry(kind, {**(cnf or {}), **kw}))
+        self._entries.insert(self._insert_at(index), entry)
+        self._apply_requested_size()
+        self._refresh()
+
+    def add_command(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
+        """Append an entry that runs something."""
+        self.add("command", cnf, **kw)
+
+    def add_cascade(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
+        """Append an entry that opens a submenu."""
+        self.add("cascade", cnf, **kw)
+
+    def add_checkbutton(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
+        """Append an entry that toggles a variable."""
+        self.add("checkbutton", cnf, **kw)
+
+    def add_radiobutton(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
+        """Append an entry that sets a variable to its own value."""
+        self.add("radiobutton", cnf, **kw)
+
+    def add_separator(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
+        """Append a dividing line."""
+        self.add("separator", cnf, **kw)
+
+    def insert_command(
+        self, index: Any, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> None:
+        """Insert an entry that runs something."""
+        self.insert(index, "command", cnf, **kw)
+
+    def insert_cascade(
+        self, index: Any, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> None:
+        """Insert an entry that opens a submenu."""
+        self.insert(index, "cascade", cnf, **kw)
+
+    def insert_checkbutton(
+        self, index: Any, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> None:
+        """Insert an entry that toggles a variable."""
+        self.insert(index, "checkbutton", cnf, **kw)
+
+    def insert_radiobutton(
+        self, index: Any, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> None:
+        """Insert an entry that sets a variable."""
+        self.insert(index, "radiobutton", cnf, **kw)
+
+    def insert_separator(
+        self, index: Any, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> None:
+        """Insert a dividing line."""
+        self.insert(index, "separator", cnf, **kw)
+
+    def _checked_entry(self, kind: str, given: dict[str, Any]) -> dict[str, Any]:
+        """Resolve an entry's options against what its kind accepts.
+
+        Raises:
+            TclError: If an option is not one the kind takes.
+        """
+        spec = {**self._COMMON_ENTRY_OPTIONS, **self._ENTRY_OPTIONS[kind]}
+        options = dict(spec)
+        for name, value in given.items():
+            option = _OPTION_ALIASES.get(name, name)
+            if option not in spec:
+                raise TclError(f'unknown option "-{name}"')
+            options[option] = value
+        return options
+
+    # -------------------------------------------------------------- indices
+
+    def index(self, spec: Any) -> int | None:
+        """Resolve one of Tk's entry indices.
+
+        Takes a number, ``end`` or ``last``, ``active``, ``none``, ``@y`` for
+        a row within the menu, or the label of an entry. Returns None for
+        ``none`` and for a label that matches nothing, which is what Tk does.
+        """
+        if spec is None:
+            return None
+        if isinstance(spec, int):
+            return spec if 0 <= spec < len(self._entries) else None
+        text = str(spec).strip()
+        if text in ("end", "last"):
+            return len(self._entries) - 1 if self._entries else None
+        if text == "active":
+            return self._active
+        if text == "none":
+            return None
+        if text.startswith("@"):
+            return self._entry_at_row(int(text[1:]))
+        if text.lstrip("-").isdigit():
+            number = int(text)
+            return number if 0 <= number < len(self._entries) else None
+        return next(
+            (n for n, entry in enumerate(self._entries) if entry.label == text), None
+        )
+
+    def _insert_at(self, spec: Any) -> int:
+        """Where an insertion goes, clamped into the list."""
+        if isinstance(spec, int):
+            return max(0, min(spec, len(self._entries)))
+        resolved = self.index(spec)
+        return len(self._entries) if resolved is None else resolved
+
+    def _entry_at_row(self, row: int) -> int | None:
+        """Which entry a row within the widget falls on."""
+        area = self._text_area()
+        if self._as_menubar:
+            return self._entry_at_column(row)
+        offset = row - area.y + self._first
+        return offset if 0 <= offset < len(self._entries) else None
+
+    def _entry_at_column(self, column: int) -> int | None:
+        """Which menubar entry a column falls on."""
+        at = self._text_area().x
+        for number, entry in enumerate(self._entries):
+            width = len(entry.label) + 2
+            if at <= column < at + width:
+                return number
+            at += width
+        return None
+
+    def type(self, spec: Any) -> str | None:
+        """What kind of entry an index names."""
+        at = self.index(spec)
+        return None if at is None else self._entries[at].kind
+
+    def yposition(self, spec: Any) -> int:
+        """The row an entry occupies within the menu, as Tk reports it."""
+        at = self.index(spec)
+        return 0 if at is None else at - self._first
+
+    # ------------------------------------------------------ changing entries
+
+    def delete(self, first: Any, last: Any = None) -> None:
+        """Remove entries from ``first`` up to and including ``last``."""
+        start = self.index(first)
+        if start is None:
+            return
+        stop = start if last is None else self.index(last)
+        if stop is None:
+            stop = len(self._entries) - 1
+        del self._entries[start : stop + 1]
+        if self._active is not None and self._active >= len(self._entries):
+            self._active = None
+        self._apply_requested_size()
+        self._refresh()
+
+    def entryconfigure(
+        self, spec: Any, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> Any:
+        """Set options on one entry, or read them all.
+
+        Raises:
+            TclError: If the index names nothing, or an option is not one the
+                entry's kind takes.
+        """
+        at = self.index(spec)
+        if at is None:
+            raise TclError(f'bad menu entry index "{spec}"')
+        entry = self._entries[at]
+        given = {**(cnf or {}), **kw}
+        if not given:
+            return dict(entry.options)
+        spec_for_kind = {
+            **self._COMMON_ENTRY_OPTIONS,
+            **self._ENTRY_OPTIONS[entry.kind],
+        }
+        for name, value in given.items():
+            option = _OPTION_ALIASES.get(name, name)
+            if option not in spec_for_kind:
+                raise TclError(f'unknown option "-{name}"')
+            entry.options[option] = value
+        self._apply_requested_size()
+        self._refresh()
+        return None
+
+    entryconfig = entryconfigure
+
+    def entrycget(self, spec: Any, option: str) -> Any:
+        """One option of one entry.
+
+        Raises:
+            TclError: If the index or the option names nothing.
+        """
+        at = self.index(spec)
+        if at is None:
+            raise TclError(f'bad menu entry index "{spec}"')
+        name = _OPTION_ALIASES.get(option, option)
+        if name not in self._entries[at].options:
+            raise TclError(f'unknown option "-{option}"')
+        return self._entries[at].options[name]
+
+    # ------------------------------------------------------------ behaviour
+
+    def activate(self, spec: Any) -> None:
+        """Make an entry the active one, or ``none`` to make none of them."""
+        at = self.index(spec)
+        if at is not None and not self._entries[at].selectable:
+            return
+        self._active = at
+        if at is not None and not self._as_menubar:
+            self._first = visible_window(len(self._entries), at, self._rows())
+        self._refresh()
+
+    def invoke(self, spec: Any) -> Any:
+        """Do what choosing an entry does, and return what its command did.
+
+        A cascade opens its submenu rather than running anything; a
+        checkbutton or radiobutton writes its variable first; everything else
+        dismisses the menu before running, so that a command which posts
+        another window does not fight with this one.
+        """
+        at = self.index(spec)
+        if at is None:
+            return None
+        entry = self._entries[at]
+        if not entry.selectable:
+            return None
+        if entry.kind == "cascade":
+            self._open(at)
+            return None
+        self._write_variable(entry)
+        self._dismiss_all()
+        command = entry.options.get("command")
+        return None if command is None else command()
+
+    def _write_variable(self, entry: MenuEntry) -> None:
+        """Put the entry's value in its variable, for the two kinds that have one."""
+        variable = entry.options.get("variable")
+        if variable is None:
+            return
+        if entry.kind == "checkbutton":
+            on, off = entry.options["onvalue"], entry.options["offvalue"]
+            variable.set(off if _same_value(variable.get(), on) else on)
+        elif entry.kind == "radiobutton":
+            variable.set(entry.options["value"])
+
+    def _indicator_for(self, entry: MenuEntry) -> str:
+        """The tick or bullet an entry shows, or spaces to line up with one."""
+        if entry.kind not in self._INDICATORS:
+            return "    " if self._has_indicators() else ""
+        on, off = self._INDICATORS[entry.kind]
+        variable = entry.options.get("variable")
+        if variable is None:
+            return off
+        wanted = (
+            entry.options["onvalue"]
+            if entry.kind == "checkbutton"
+            else entry.options["value"]
+        )
+        return on if _same_value(variable.get(), wanted) else off
+
+    def _has_indicators(self) -> bool:
+        """True if any entry needs room on the left for a tick."""
+        return any(entry.kind in self._INDICATORS for entry in self._entries)
+
+    # -------------------------------------------------------------- posting
+
+    def post(self, x: int, y: int) -> None:
+        """Put the menu on screen at a point, moving it to fit.
+
+        Args:
+            x: Screen column to post at.
+            y: Screen row.
+        """
+        command = self._options["postcommand"]
+        if command is not None:
+            command()
+        width, height = self._posted_size()
+        screen_width, screen_height = self._screen_size()
+        x, y, height = place_popup(x, y, width, height, screen_width, screen_height)
+        self._posted = True
+        self._allocate(Rect(x, y, width, height))
+        self._map()
+        self._restack_panels()
+        self._focus_before = self.tk.focus
+        self.grab_set()
+        self.focus_set()
+        self._first = visible_window(
+            len(self._entries), self._active or 0, self._rows()
+        )
+        self._refresh()
+
+    def unpost(self) -> None:
+        """Take the menu off screen, and any submenu with it."""
+        if self._open_cascade is not None:
+            self._open_cascade.unpost()
+            self._open_cascade = None
+        if not self._posted:
+            return
+        self._posted = False
+        self._active = None
+        self.grab_release()
+        self._unmap()
+        parent = self._parent_menu
+        self._parent_menu = None
+        if parent is not None and parent._posted:
+            parent._open_cascade = None
+            parent.grab_set()
+            parent.focus_set()
+        elif self._focus_before is not None and self._focus_before.winfo_exists():
+            self._focus_before.focus_set()
+        self._focus_before = None
+
+    def tk_popup(self, x: int, y: int, entry: Any = None) -> None:
+        """Post the menu at a point, optionally with one entry active."""
+        self.post(x, y)
+        if entry is not None:
+            self.activate(entry)
+
+    def _open(self, at: int) -> None:
+        """Post the submenu of a cascade entry, beside its own row."""
+        entry = self._entries[at]
+        submenu = entry.options.get("menu")
+        if submenu is None:
+            return
+        if self._open_cascade is submenu and submenu._posted:
+            return
+        if self._open_cascade is not None:
+            self._open_cascade.unpost()
+        self._active = at
+        submenu._parent_menu = self
+        self._open_cascade = submenu
+        if self._as_menubar:
+            submenu.post(
+                self.winfo_rootx() + self._label_column(at), self.winfo_rooty() + 1
+            )
+        else:
+            submenu.post(
+                self.winfo_rootx() + self._rect.width,
+                self.winfo_rooty() + (at - self._first),
+            )
+        self._refresh()
+
+    def _label_column(self, at: int) -> int:
+        """Where one menubar label starts, relative to the bar."""
+        column = self._text_area().x
+        for entry in self._entries[:at]:
+            column += len(entry.label) + 2
+        return column
+
+    def _dismiss_all(self) -> None:
+        """Unpost this menu and every one above it, back to the menubar.
+
+        Each one in turn, rather than walking to the root and unposting that:
+        a menubar is never itself posted, so doing it that way dismissed
+        nothing at all and left the dropdown on screen. The parent is taken
+        before unposting, because unposting forgets it.
+        """
+        menu: Menu | None = self
+        while menu is not None:
+            parent = menu._parent_menu
+            if menu._posted:
+                menu.unpost()
+            else:
+                menu._open_cascade = None
+                menu._active = None
+                menu._refresh()
+            menu = parent
+
+    # -------------------------------------------------------------- geometry
+
+    def _posted_size(self) -> tuple[int, int]:
+        """The size a posted menu wants, border included."""
+        width, height = measure_entries(
+            self._entries, indicators=self._has_indicators()
+        )
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        return (width + edge + 2, height + edge)
+
+    def _apply_requested_size(self) -> None:
+        """Ask for a bar's row, or for what the entries need when posted."""
+        if self._as_menubar:
+            self._request_size(
+                sum(len(entry.label) + 2 for entry in self._entries) or 1, 1
+            )
+            return
+        width, height = self._posted_size()
+        self._request_size(width, height)
+
+    def _rows(self) -> int:
+        """How many entries are visible at once."""
+        return max(1, self._text_area().height)
+
+    def _text_area(self) -> Rect:
+        """Where the entries go, in cells relative to this widget's window."""
+        edge = BORDER_WIDTH if self._border_drawn and not self._as_menubar else 0
+        return Rect(
+            edge + 1 if not self._as_menubar else 0,
+            edge,
+            max(0, self._rect.width - 2 * edge - (2 if not self._as_menubar else 0)),
+            max(0, self._rect.height - 2 * edge),
+        )
+
+    def _refresh(self) -> None:
+        """Repaint, and push it to the terminal if one is running."""
+        self._redraw()
+        screen = self.tk.screen
+        if screen is not None and self._mapped:
+            with contextlib.suppress(curses.error):
+                screen.refresh()
+
+    # -------------------------------------------------------------- painting
+
+    def _redraw(self) -> None:
+        """Paint the menu, as a bar across the top or as a posted box."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        dispatcher = CursesDispatcher.get()
+        attribute = self._background_attribute() | self._font_attribute()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            if self._as_menubar:
+                self._draw_bar(dispatcher, window, attribute)
+                return
+            if self._border_drawn:
+                self._draw_border(
+                    dispatcher, window, self._rect.width, self._rect.height, attribute
+                )
+            self._draw_entries(dispatcher, window, attribute)
+
+    def _draw_bar(
+        self, dispatcher: CursesDispatcher, window: Any, attribute: int
+    ) -> None:
+        """Draw the labels in a row, the open one picked out."""
+        column = 0
+        for number, entry in enumerate(self._entries):
+            text = f" {entry.label} "
+            style = attribute
+            if number == self._active:
+                style |= curses.A_REVERSE
+            if str(entry.options.get("state")) == "disabled":
+                style = for_state("disabled", style)
+            dispatcher.call(
+                window.addstr,
+                0,
+                column,
+                clip_text(text, self._rect.width - column),
+                style,
+            )
+            column += len(text)
+            if column >= self._rect.width:
+                break
+
+    def _draw_entries(
+        self, dispatcher: CursesDispatcher, window: Any, attribute: int
+    ) -> None:
+        """Draw the visible entries, the active one picked out."""
+        area = self._text_area()
+        if area.is_empty:
+            return
+        cascades = any(entry.kind == "cascade" for entry in self._entries)
+        for row in range(area.height):
+            number = self._first + row
+            if number >= len(self._entries):
+                break
+            entry = self._entries[number]
+            style = attribute
+            if str(entry.options.get("state")) == "disabled":
+                with contextlib.suppress(ValueError):
+                    style = for_state("disabled", style)
+            if number == self._active:
+                style |= curses.A_REVERSE
+            if entry.kind == "separator":
+                dispatcher.call(
+                    window.addstr,
+                    area.y + row,
+                    area.x - 1,
+                    "─" * (area.width + 2),
+                    attribute,
+                )
+                continue
+            text = self._indicator_for(entry) + entry.label
+            line = text.ljust(area.width)
+            accelerator = entry.accelerator
+            if accelerator:
+                line = line[: area.width - len(accelerator)] + accelerator
+            if entry.kind == "cascade" and cascades:
+                line = line[: area.width - 1] + CASCADE
+            dispatcher.call(
+                window.addstr, area.y + row, area.x, clip_text(line, area.width), style
+            )
+            self._draw_underline(dispatcher, window, area, row, entry, style)
+
+    def _draw_underline(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        area: Rect,
+        row: int,
+        entry: MenuEntry,
+        style: int,
+    ) -> None:
+        """Underline the mnemonic character, as tkinter's ``underline`` does."""
+        index = int(entry.options.get("underline", -1))
+        if not 0 <= index < len(entry.label):
+            return
+        column = area.x + len(self._indicator_for(entry)) + index
+        if column >= area.x + area.width:
+            return
+        with contextlib.suppress(curses.error):
+            dispatcher.call(
+                window.addstr,
+                area.y + row,
+                column,
+                entry.label[index],
+                style | curses.A_UNDERLINE,
+            )
+
+    # --------------------------------------------------------------- moving
+
+    def _step(self, direction: int) -> None:
+        """Move the active entry, skipping what cannot be chosen."""
+        if not self._entries:
+            return
+        count = len(self._entries)
+        at = (
+            self._active if self._active is not None else -1 if direction > 0 else count
+        )
+        for _ in range(count):
+            at = (at + direction) % count
+            if self._entries[at].selectable:
+                self.activate(at)
+                return
+
+    def _within(self, x: int, y: int) -> bool:
+        """True if a screen cell is inside this menu."""
+        left, top = self.winfo_rootx(), self.winfo_rooty()
+        return (
+            left <= x < left + self._rect.width and top <= y < top + self._rect.height
+        )
+
+
+def _menu_key(event: Event) -> str | None:
+    """Move about a posted menu, choose an entry, or dismiss it.
+
+    Returns ``"break"`` for everything the menu consumed. A posted menu holds
+    the grab, so it sees every key; letting one through would send it to a
+    widget the user cannot currently see.
+    """
+    menu = event.widget
+    keysym = event.keysym
+    if keysym == "Escape":
+        menu.unpost()
+        return "break"
+    if menu._as_menubar:
+        return _menubar_key(menu, keysym)
+    if keysym == "Up":
+        menu._step(-1)
+    elif keysym == "Down":
+        menu._step(1)
+    elif keysym == "Home":
+        menu.activate(_first_selectable(menu, 1))
+    elif keysym == "End":
+        menu.activate(_first_selectable(menu, -1))
+    elif keysym in ("Return", "space"):
+        menu.invoke("active")
+    elif keysym == "Right":
+        if menu.type("active") == "cascade":
+            menu.invoke("active")
+        else:
+            _to_parent_bar(menu, 1)
+    elif keysym == "Left":
+        if menu._parent_menu is not None:
+            menu.unpost()
+        else:
+            _to_parent_bar(menu, -1)
+    else:
+        return _by_mnemonic(menu, event.char)
+    return "break"
+
+
+def _menubar_key(menu: Menu, keysym: str) -> str | None:
+    """Move along a menubar, and open what is under the cursor."""
+    if keysym == "Left":
+        menu._step(-1)
+        _reopen(menu)
+    elif keysym == "Right":
+        menu._step(1)
+        _reopen(menu)
+    elif keysym in ("Down", "Return", "space"):
+        menu.invoke("active")
+    else:
+        return None
+    return "break"
+
+
+def _reopen(menu: Menu) -> None:
+    """Follow the active menubar entry with its dropdown, if one is open."""
+    if menu._open_cascade is not None and menu._active is not None:
+        menu._open(menu._active)
+
+
+def _to_parent_bar(menu: Menu, direction: int) -> None:
+    """Step along the menubar a dropdown belongs to, opening the next one."""
+    root_menu: Menu | None = menu
+    while root_menu is not None and root_menu._parent_menu is not None:
+        root_menu = root_menu._parent_menu
+    if root_menu is None or not root_menu._as_menubar:
+        return
+    root_menu._step(direction)
+    if root_menu._active is not None:
+        root_menu._open(root_menu._active)
+
+
+def _first_selectable(menu: Menu, direction: int) -> int:
+    """The first or last entry that can be chosen."""
+    numbers = list(range(len(menu._entries)))
+    if direction < 0:
+        numbers.reverse()
+    return next((n for n in numbers if menu._entries[n].selectable), menu._active or 0)
+
+
+def _by_mnemonic(menu: Menu, char: str) -> str | None:
+    """Choose the entry whose underlined letter was typed.
+
+    Returns None when nothing matches, so an unrelated key is not silently
+    swallowed by a menu that had no use for it.
+    """
+    if not char or not char.isprintable():
+        return None
+    for number, entry in enumerate(menu._entries):
+        index = int(entry.options.get("underline", -1))
+        if not entry.selectable or not 0 <= index < len(entry.label):
+            continue
+        if entry.label[index].lower() == char.lower():
+            menu.activate(number)
+            menu.invoke(number)
+            return "break"
+    return None
+
+
+def _menu_click(event: Event) -> None:
+    """Choose what was clicked, or dismiss the menu if the click was elsewhere.
+
+    A posted menu holds the grab, so a click anywhere on the screen arrives
+    here - which is exactly what makes clicking away from a menu close it.
+    """
+    menu = event.widget
+    if not menu._within(event.x_root, event.y_root):
+        if menu._as_menubar:
+            menu._open_cascade = None
+            menu._active = None
+            menu._refresh()
+        else:
+            menu._dismiss_all()
+        return
+    at = (
+        menu._entry_at_column(event.x_root - menu.winfo_rootx())
+        if menu._as_menubar
+        else menu._entry_at_row(event.y_root - menu.winfo_rooty())
+    )
+    if at is not None:
+        menu.activate(at)
+        menu.invoke(at)
+
+
+def _menu_motion(event: Event) -> None:
+    """Follow the pointer, as a menu does while it is open."""
+    menu = event.widget
+    if not menu._within(event.x_root, event.y_root):
+        return
+    at = (
+        menu._entry_at_column(event.x_root - menu.winfo_rootx())
+        if menu._as_menubar
+        else menu._entry_at_row(event.y_root - menu.winfo_rooty())
+    )
+    if at is None or at == menu._active:
+        return
+    menu.activate(at)
+    # A cascade already open follows the pointer to the next one, which is
+    # what makes running down a menubar with the button held work.
+    if menu._open_cascade is not None and menu._entries[at].kind == "cascade":
+        menu._open(at)
 
 
 class Listbox(_Drawable):
