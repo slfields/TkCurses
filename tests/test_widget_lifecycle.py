@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from tkcurses import Misc, Widget
-from tkcurses._core.geometry import Rect
+from tkcurses._core.geometry import Rect, Size
 from tkcurses._core.panels import PanelStack
 
 
@@ -266,3 +266,83 @@ def test_a_widget_without_a_panel_stack_can_be_destroyed():
     widget._map()
     widget.destroy()
     assert not widget.winfo_exists()
+
+
+# ------------------------------------------------------ nested containers
+
+# Three bugs found by rendering a layout on a real terminal rather than
+# reading coordinates back. Every winfo_* query was already correct in each
+# case, which is why the geometry tests passed throughout.
+
+
+def test_a_panel_is_positioned_in_screen_coordinates(root, stack):
+    """A rect is an offset from the master; a panel is placed absolutely."""
+    parent = Frame(root, name="parent")
+    parent._allocate(Rect(4, 3, 20, 6))
+    parent._map()
+    child = Frame(parent, name="child")
+    child._allocate(Rect(2, 1, 6, 2))
+    child._map()
+    assert child._panel.rect == Rect(6, 4, 6, 2)
+
+
+def test_moving_a_parent_moves_its_childs_panel(root):
+    parent = Frame(root, name="parent")
+    parent._allocate(Rect(0, 0, 20, 6))
+    parent._map()
+    child = Frame(parent, name="child")
+    child._allocate(Rect(1, 1, 6, 2))
+    child._map()
+
+    parent._allocate(Rect(10, 5, 20, 6))
+    # The child's own rect is unchanged; only the screen position moved.
+    child._allocate(child._rect)
+    assert child._panel.rect == Rect(11, 6, 6, 2)
+
+
+def test_a_child_panel_is_always_above_its_container(root, stack):
+    """Panels are created in layout order, which is not tree order."""
+    parent = Frame(root, name="parent")
+    child = Frame(parent, name="child")
+    # Child first, as a container laid out before its own parent would do.
+    child._allocate(Rect(1, 1, 6, 2))
+    child._map()
+    parent._allocate(Rect(0, 0, 20, 6))
+    parent._map()
+    assert stack.top() is child._panel
+
+
+def test_a_widget_is_redrawn_when_its_window_is_replaced(root):
+    widget = Frame(root, name="w")
+    widget._allocate(Rect(0, 0, 6, 2))
+    widget._map()
+    redraws = []
+    widget._redraw = lambda: redraws.append(widget._window)
+    widget._allocate(Rect(0, 0, 10, 4))
+    assert redraws, "a resize builds a new window and must repaint it"
+
+
+def test_a_widget_is_redrawn_when_it_is_moved(root):
+    widget = Frame(root, name="w")
+    widget._allocate(Rect(0, 0, 6, 2))
+    widget._map()
+    redraws = []
+    widget._redraw = lambda: redraws.append(1)
+    widget._allocate(Rect(3, 2, 6, 2))
+    assert redraws
+
+
+def test_resizing_a_container_relays_out_its_children(root):
+    """Propagation travels up; allocation has to travel back down."""
+    from tkcurses._core.pack import PackLayout
+
+    parent = Frame(root, name="parent")
+    parent._layout_manager = PackLayout()
+    child = Frame(parent, name="child")
+    child._requested = Size(4, 1)
+    child.pack(fill="both")
+    root.update_layout()
+
+    parent._allocate(Rect(0, 0, 30, 8))
+    root.update_layout()
+    assert child.winfo_width() == 30

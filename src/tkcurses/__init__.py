@@ -299,6 +299,8 @@ class Misc:
         #: whether this widget resizes itself to fit them.
         self._layout_manager: Layout | None = None
         self._layout_propagate = True
+        #: The stacked window this widget draws into, once it has one.
+        self._panel: Panel | None = None
         self._mapped = False
         self._takefocus = True
         self._destroyed = False
@@ -856,6 +858,40 @@ class Misc:
         return bool(self._options.get("borderwidth")) or (
             self._options.get("relief", FLAT) != FLAT
         )
+
+    def _restack_panels(self) -> None:
+        """Put the panel stack back into tree order, parents behind children.
+
+        ``_subtree`` yields a widget before its children, so raising each in
+        turn leaves every child in front of its container and siblings in
+        their own stacking order.
+        """
+        stack = self.tk.panels
+        if stack is None:
+            return
+        for widget in self._subtree():
+            panel = widget._panel
+            if panel is not None and not panel.hidden:
+                stack.raise_to_top(panel)
+
+    def _redraw(self) -> None:
+        """Repaint after this widget's window changed.
+
+        Called whenever the window is created, replaced or moved - a resize
+        builds a new curses window, so anything drawn into the old one is
+        gone. Widgets that draw override this; the default does nothing,
+        which is every widget until the widget set lands.
+        """
+
+    def _screen_rect(self) -> Rect:
+        """Where this widget is on the screen, in absolute cells.
+
+        ``_rect`` is an offset from the master; a curses panel is positioned
+        absolutely. Confusing the two is invisible for a toplevel, whose
+        master sits at the origin, and wrong for everything inside one.
+        """
+        x, y = self._root_offset()
+        return Rect(x, y, self._rect.width, self._rect.height)
 
     def _request_size(self, width: int, height: int) -> None:
         """Declare the size this widget would like to be.
@@ -1617,7 +1653,6 @@ class BaseWidget(Misc):
         super().__init__(master, name)
         self._options = self._initial_options({**(cnf or {}), **kw})
         self._takefocus = bool(self._options.get("takefocus", True))
-        self._panel: Panel | None = None
 
     # ------------------------------------------------------------ options
 
@@ -1712,6 +1747,15 @@ class BaseWidget(Misc):
         curses refuses.
         """
         previous, self._rect = self._rect, rect
+        if (rect.width, rect.height) != (previous.width, previous.height) and (
+            self._layout_manager is not None
+        ):
+            # A container given a new size has to place its children again.
+            # Propagation travels upward - what a widget needs - and this is
+            # the other direction: what it was actually given. Without it a
+            # container laid out before its own parent keeps children sized
+            # against a region it no longer has.
+            self.tk.layout.invalidate(self)
         stack = self.tk.panels
         if stack is None:
             return
@@ -1722,12 +1766,19 @@ class BaseWidget(Misc):
             if self._mapped:
                 self._create_window()
             return
-        if (rect.width, rect.height) != (previous.width, previous.height):
+        # Compared against where the panel actually is, not against the
+        # widget's previous rect: a rect is an offset from the master, so an
+        # ancestor moving relocates the panel without changing it.
+        target = self._screen_rect()
+        current = self._panel.rect
+        if (target.width, target.height) != (current.width, current.height):
             # Curses cannot resize a window in place, and replacing it is also
             # what keeps a shrink from leaving the vacated cells behind.
-            stack.replace_window(self._panel, rect)
-        elif (rect.x, rect.y) != (previous.x, previous.y):
-            stack.move(self._panel, rect.x, rect.y)
+            stack.replace_window(self._panel, target)
+            self._redraw()
+        elif (target.x, target.y) != (current.x, current.y):
+            stack.move(self._panel, target.x, target.y)
+            self._redraw()
 
     def _map(self) -> None:
         """Put the widget on screen, creating its window if it has none.
@@ -1766,9 +1817,17 @@ class BaseWidget(Misc):
         if stack is None or self._rect.is_empty:
             return
         if self._panel is None:
-            self._panel = stack.new_panel(self._rect, userptr=self)
+            self._panel = stack.new_panel(self._screen_rect(), userptr=self)
+            # A panel goes on top of the stack when it is made, and windows
+            # are made in layout order, which is not tree order: a container
+            # laid out after its own children would sit in front of them and
+            # hide them behind an empty window. Tree order is re-imposed each
+            # time rather than relying on the order things happened to be
+            # created in.
+            self._root()._restack_panels()
         else:
             stack.show(self._panel)
+        self._redraw()
 
     def _destroy_window(self) -> None:
         """Release this widget's panel.
@@ -2810,7 +2869,6 @@ class Tk(BaseWidget, Wm):
         self._setup_wm()
         self.className = className
         self._options = dict(self._option_spec())
-        self._panel = None
         self._takefocus = True
 
         self._screen = CursesScreen()
@@ -3185,20 +3243,8 @@ class Toplevel(BaseWidget, Wm):
 
     config = configure
 
-    def _allocate(self, rect: Rect) -> None:
-        """Take the new region and repaint, since a resize replaces the window."""
-        super()._allocate(rect)
-        self._draw()
-
-    def _create_window(self) -> None:
-        """Allocate the window and paint it.
-
-        Drawing has to happen here as well as in _allocate: on the way up, a
-        toplevel is allocated before it is mapped, so the first _allocate
-        finds no window to paint and the window only appears when _map()
-        creates one.
-        """
-        super()._create_window()
+    def _redraw(self) -> None:
+        """Repaint the border and title whenever the window changes."""
         self._draw()
 
     def _draw(self) -> None:

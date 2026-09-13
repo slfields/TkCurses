@@ -13,10 +13,13 @@ thing rather than this.
 
 from __future__ import annotations
 
+import contextlib
+import curses
 import traceback
 from typing import TYPE_CHECKING, Any
 
 import tkcurses
+from tkcurses._core.dispatcher import CursesDispatcher
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -58,9 +61,64 @@ class Screen:
         """Write the last line, where the instructions live."""
         self.line(self.height - 1, text)
 
+    def outline(self, widget, label: str = "") -> None:
+        """Draw a box around where a widget has been laid out.
+
+        Drawn into the widget's *own* curses window rather than onto the
+        screen behind it. A managed widget owns a panel, and that panel is
+        opaque: anything drawn on the screen underneath is covered the moment
+        the panels are pushed. Drawing here is also what Frame will do when it
+        exists, so the scenario is a stand-in rather than a trick.
+        """
+        window = widget._window
+        width, height = widget.winfo_width(), widget.winfo_height()
+        if window is None or width <= 0 or height <= 0:
+            return
+        dispatcher = CursesDispatcher.get()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.erase)
+            if width >= 2 and height >= 2:
+                dispatcher.call(window.border)
+                if label:
+                    dispatcher.call(window.addstr, 0, 1, label[: width - 2])
+            else:
+                for row in range(height):
+                    dispatcher.call(window.addstr, row, 0, "\u2588" * (width - 1))
+
+    def outline_all(self, widgets, labels: str = "ABCDEFGH") -> None:
+        """Outline several widgets, lettering them in order."""
+        for index, widget in enumerate(widgets):
+            self.outline(widget, labels[index % len(labels)])
+
+    def outline_on_redraw(self, widgets, labels: str = "ABCDEFGH") -> None:
+        """Repaint each widget's outline whenever its window changes.
+
+        A resize builds the widget a new curses window, so drawing once is not
+        enough: anything painted into the old one goes with it. Hooking
+        _redraw is what a real widget does, and what Frame will do.
+        """
+        for index, widget in enumerate(widgets):
+            label = labels[index % len(labels)]
+            widget._redraw = lambda widget=widget, label=label: self.outline(
+                widget, label
+            )
+            widget._redraw()
+
     def refresh(self) -> None:
         """Push everything written since the last call."""
         self._root.tk.screen.refresh()
+
+
+def content_area(root: tkcurses.Tk, *, top: int = 3, bottom: int = 1):
+    """A container filling the screen except the instruction lines.
+
+    Scenarios lay out inside this rather than in the root, because a managed
+    widget's panel would otherwise cover the very text telling you what to
+    look at.
+    """
+    area = tkcurses.Widget(root, name="area")
+    area.place(x=0, y=top, relwidth=1.0, relheight=1.0, height=-(top + bottom))
+    return area
 
 
 def run(title: str, build: Callable[[tkcurses.Tk, Screen], Any]) -> int:

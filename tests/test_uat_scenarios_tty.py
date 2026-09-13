@@ -57,7 +57,7 @@ def test_a_scenario_starts_renders_and_exits_cleanly(uat_terminal, scenario):
 
 
 def test_the_runner_lists_every_scenario(uat_terminal):
-    term = uat_terminal(cols=80, rows=30)
+    term = uat_terminal(cols=80, rows=60)
     term.run([sys.executable, "-m", "uat"])
     assert term.wait_for_exit(timeout=10) == 0
     for scenario in scenarios():
@@ -96,7 +96,9 @@ raise SystemExit(_support.run("broken", build))
 
 
 def test_the_runner_works_when_given_its_path(terminal):
-    term = terminal(cols=80, rows=30, env={"PYTHONSAFEPATH": "1"})
+    # Tall enough to hold the whole listing: two lines per scenario, and the
+    # header scrolls off a short screen as scenarios are added.
+    term = terminal(cols=80, rows=60, env={"PYTHONSAFEPATH": "1"})
     term.run([sys.executable, str(PROJECT_ROOT / "uat")])
     assert term.wait_for_exit(timeout=10) == 0
     assert "Acceptance scenarios" in "\n".join(term.display)

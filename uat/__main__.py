@@ -47,7 +47,8 @@ def show() -> int:
     for index, name in enumerate(scenarios(), start=1):
         print(f"  {index:>2}. {summary(name)}")
         print(f"      python3 -m uat.{name}")
-    print("\nWhat to look for in each: docs/UAT_BASE_WIDGETS.md")
+    print("\nWhat to look for: docs/UAT_BASE_WIDGETS.md (1-9),")
+    print("                 docs/UAT_GEOMETRY.md (10-13)")
     return 0
 
 
