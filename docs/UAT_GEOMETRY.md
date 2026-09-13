@@ -47,14 +47,20 @@ on **Escape**.
 
 `python3 -m uat 11` · `w` weight, `n` none, `s` sticky, `p` span
 
+A and B sit side by side, C and D beneath them, E under those in the left
+column.
+
+- [ ] The four boxes form a tidy two-by-two; rows and columns line up
 - [ ] With `n` (no weight) the boxes stay their natural size **whatever
       sticky says** — this is correct, not a bug
 - [ ] With `w` the cells grow to fill the screen
 - [ ] With weight, `ew` stretches a box across its cell and `e` pushes it to
       the right-hand edge without stretching
 - [ ] `nsew` fills the cell in both directions
-- [ ] `p` makes box C span two columns and it visibly widens
-- [ ] Boxes in the same row line up; the grid has no gaps or overlaps
+- [ ] `p` gives E two columns. With no sticky it **centres** across them
+      rather than widening — also correct, for the same reason. Press `s`
+      until sticky is `ew` and it stretches across both
+- [ ] Nothing overlaps at any combination
 
 ## 12. Place — absolute, relative, anchor
 
