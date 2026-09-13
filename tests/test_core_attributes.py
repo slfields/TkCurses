@@ -14,6 +14,7 @@ from tkcurses._core.attributes import (
     from_font,
     parse_attributes,
     style_for_relief,
+    with_colors,
     without,
 )
 from tkcurses.constants import FLAT, GROOVE, RAISED, RIDGE, SOLID, SUNKEN
@@ -187,3 +188,30 @@ def test_degenerate_widths():
     assert style.top(0) == ""
     assert style.top(1) == "┌"
     assert style.top(2) == "┌┐"
+
+
+# --------------------------------------------------------------- with_colors
+
+
+def test_with_colors_replaces_rather_than_adds():
+    """Colour is a packed field, not a flag.
+
+    OR-ing a second pair onto an attribute that already carries one gives
+    the number of neither - pair 2 and pair 5 together are pair 7 - and the
+    cell comes out in some third colour entirely.
+    """
+    base = 2 << 8  # an attribute already wearing colour pair 2
+    assert (base | (5 << 8)) >> 8 == 7  # the bug, shown
+    assert with_colors(base, 5 << 8) >> 8 == 5
+
+
+def test_with_colors_keeps_everything_that_is_not_colour():
+    base = curses.A_BOLD | curses.A_UNDERLINE | (3 << 8)
+    result = with_colors(base, 6 << 8)
+    assert result & curses.A_BOLD
+    assert result & curses.A_UNDERLINE
+    assert result >> 8 & 0xFF == 6
+
+
+def test_with_colors_can_clear_the_colour():
+    assert with_colors(curses.A_BOLD | (4 << 8), 0) == curses.A_BOLD

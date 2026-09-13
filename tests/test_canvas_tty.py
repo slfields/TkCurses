@@ -320,3 +320,45 @@ def test_a_canvas_survives_the_terminal_shrinking(terminal, tmp_path):
     term.resize(cols=24, rows=8)
     term.wait_for(lambda t: len(inked(t)) > 5, message="the oval after resize")
     assert "Traceback" not in term.stderr
+
+
+def test_a_filled_shape_is_the_colour_it_was_given(terminal, tmp_path):
+    """Reported from UAT 24: a magenta triangle came out white.
+
+    The canvas laid each cell's colour pair *over* a base attribute that
+    already carried one. Colour is a packed field, not a flag, so the two
+    pair numbers OR'd into the number of a third - and the fill was drawn in
+    whatever colour that pair happened to be.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "c.create_polygon(2, 2, 30, 10, 2, 18, fill='magenta', outline='white')"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda t: len(inked(t)) > 20, message="the triangle")
+    term.wait_for_idle()
+    solid = [
+        term.attrs_at(row, column)
+        for row, column in inked(term)
+        if term.display[row][column] == "█"
+    ]
+    assert solid, "no filled cells at all"
+    assert any(cell["fg"] == "magenta" and cell["bg"] == "black" for cell in solid), (
+        f"no cell was filled magenta: {solid[:4]}"
+    )
+
+
+def test_a_shape_does_not_take_the_canvas_background_as_its_colour(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "c.configure(background='blue')\n"
+            "c.create_rectangle(2, 2, 20, 12, fill='red', outline='')"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda t: len(inked(t)) > 10, message="the rectangle")
+    row, column = next(iter(sorted(inked(term))))
+    assert term.attrs_at(row, column)["fg"] == "red"

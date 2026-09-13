@@ -26,7 +26,12 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from tkcurses._core.application import Application
-from tkcurses._core.attributes import for_state, from_font, style_for_relief
+from tkcurses._core.attributes import (
+    for_state,
+    from_font,
+    style_for_relief,
+    with_colors,
+)
 from tkcurses._core.bindings import (
     EventPattern,
     parse_sequence,
@@ -6574,7 +6579,8 @@ class Text(_Drawable):
                 area.y + offset,
                 area.x + column,
                 character,
-                attribute | tagged,
+                with_colors(attribute, tagged & curses.A_COLOR)
+                | (tagged & ~curses.A_COLOR),
             )
 
     def _tag_attribute(self, name: str) -> int | None:
@@ -7526,9 +7532,12 @@ class Canvas(_Drawable):
         colors = self.tk.colors
         if colors is None:
             return base
-        return base | colors.attribute_for(
-            foreground or str(self._options["foreground"] or "white"),
-            background or str(self._options["background"] or "black"),
+        return with_colors(
+            base,
+            colors.attribute_for(
+                foreground or str(self._options["foreground"] or "white"),
+                background or str(self._options["background"] or "black"),
+            ),
         )
 
 

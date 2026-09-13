@@ -24,6 +24,7 @@ __all__ = [
     "from_font",
     "parse_attributes",
     "style_for_relief",
+    "with_colors",
     "without",
 ]
 
@@ -83,6 +84,20 @@ def without(mask: int, *attributes: int) -> int:
     for attribute in attributes:
         mask &= ~attribute
     return mask
+
+
+def with_colors(base: int, pair: int) -> int:
+    """Return ``base`` wearing ``pair``'s colours instead of its own.
+
+    Colour is a packed *field* in a curses attribute - ``A_COLOR`` is
+    ``0xff00``, holding the pair's number - and not a flag. OR-ing a second
+    pair onto an attribute that already carries one therefore produces the
+    number of neither: pair 2 and pair 5 together are pair 7, and the cell
+    comes out in some third colour entirely. Anything layering colour over
+    an attribute that may already have some has to replace the field rather
+    than add to it.
+    """
+    return (base & ~curses.A_COLOR) | pair
 
 
 def for_state(state: str, base: int = curses.A_NORMAL) -> int:

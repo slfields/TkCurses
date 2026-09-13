@@ -104,6 +104,16 @@ anywhere · `F3` for a menu taller than the terminal
 
 ## What this found
 
+- **A magenta triangle rendered white.** Colour in a curses attribute is a
+  packed field — `A_COLOR` is `0xff00`, holding the pair's *number* — not a
+  flag. Two places OR'd a second pair onto an attribute that already carried
+  one, so the two numbers combined into the number of a third, unrelated pair.
+  The canvas polygon's 46 solid interior cells came out as a full white block
+  with the magenta hidden behind it, which is why only the few cells at its
+  edges looked purple. Text tags had the same fault. Every colour test until
+  then had used a widget whose base attribute carried no colour of its own,
+  so nothing caught it. **TkCurses-ia5**.
+
 - **A dropdown opened from a menubar never closed.** Dismissal walked up to the
   root menu and unposted that — and the root was the bar, which is never itself
   posted, so nothing was dismissed and the menu stayed on screen. Every unit

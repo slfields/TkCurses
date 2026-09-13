@@ -324,3 +324,23 @@ def test_texts_pack_and_nest(terminal, tmp_path):
     )
     term.wait_for_text("Notes")
     term.wait_for_text("packed")
+
+
+def test_a_tag_colour_replaces_the_widget_colour(terminal, tmp_path):
+    """Two colour pairs OR'd together give the number of a third."""
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "t = tkcurses.Text(root, width=20, height=4, foreground='green')\n"
+            "t.place(x=2, y=2)\n"
+            "t.insert('1.0', 'plain red plain')\n"
+            "t.tag_configure('hot', foreground='red')\n"
+            "t.tag_add('hot', '1.6', '1.9')"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("plain red plain")
+    row = next(i for i, line in enumerate(term.display) if "plain red" in line)
+    start = term.display[row].index("red")
+    assert term.attrs_at(row, start)["fg"] == "red"
+    assert term.attrs_at(row, start - 2)["fg"] == "green"
