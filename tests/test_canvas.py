@@ -308,7 +308,7 @@ def test_a_click_elsewhere_reaches_nothing(canvas):
 
 def test_a_binding_can_be_made_on_an_item_id(canvas):
     seen = []
-    item = canvas.create_rectangle(0, 0, 8, 8)
+    item = canvas.create_rectangle(0, 0, 8, 8, fill="white")
     canvas.tag_bind(item, "<Button-1>", lambda event: seen.append(1))
     click(canvas, 2, 2)
     assert seen == [1]
@@ -316,8 +316,8 @@ def test_a_binding_can_be_made_on_an_item_id(canvas):
 
 def test_the_topmost_item_gets_the_click(canvas):
     seen = []
-    canvas.create_rectangle(0, 0, 8, 8, tags="under")
-    canvas.create_rectangle(0, 0, 8, 8, tags="over")
+    canvas.create_rectangle(0, 0, 8, 8, fill="white", tags="under")
+    canvas.create_rectangle(0, 0, 8, 8, fill="white", tags="over")
     canvas.tag_bind("under", "<Button-1>", lambda event: seen.append("under"))
     canvas.tag_bind("over", "<Button-1>", lambda event: seen.append("over"))
     click(canvas, 2, 2)
@@ -326,7 +326,7 @@ def test_the_topmost_item_gets_the_click(canvas):
 
 def test_a_binding_on_all_reaches_every_item(canvas):
     seen = []
-    canvas.create_rectangle(0, 0, 8, 8)
+    canvas.create_rectangle(0, 0, 8, 8, fill="white")
     canvas.tag_bind("all", "<Button-1>", lambda event: seen.append(1))
     click(canvas, 2, 2)
     assert seen == [1]
@@ -335,7 +335,7 @@ def test_a_binding_on_all_reaches_every_item(canvas):
 def test_enter_and_leave_are_worked_out_from_movement(canvas):
     """A terminal never reports a pointer crossing an item; the canvas does."""
     seen = []
-    canvas.create_rectangle(0, 0, 8, 8, tags="hot")
+    canvas.create_rectangle(0, 0, 8, 8, fill="white", tags="hot")
     canvas.tag_bind("hot", "<Enter>", lambda event: seen.append("enter"))
     canvas.tag_bind("hot", "<Leave>", lambda event: seen.append("leave"))
     click(canvas, 2, 2, state="motion", button=0)
@@ -344,14 +344,14 @@ def test_enter_and_leave_are_worked_out_from_movement(canvas):
 
 
 def test_the_current_item_is_the_one_under_the_pointer(canvas):
-    item = canvas.create_rectangle(0, 0, 8, 8)
+    item = canvas.create_rectangle(0, 0, 8, 8, fill="white")
     click(canvas, 2, 2, state="motion", button=0)
     assert canvas._current == item
 
 
 def test_a_release_reaches_the_item(canvas):
     seen = []
-    canvas.create_rectangle(0, 0, 8, 8, tags="hot")
+    canvas.create_rectangle(0, 0, 8, 8, fill="white", tags="hot")
     canvas.tag_bind("hot", "<ButtonRelease-1>", lambda event: seen.append(1))
     click(canvas, 2, 2, state="released")
     assert seen == [1]
@@ -359,7 +359,7 @@ def test_a_release_reaches_the_item(canvas):
 
 def test_two_bindings_can_be_added_to_one_event(canvas):
     seen = []
-    canvas.create_rectangle(0, 0, 8, 8, tags="hot")
+    canvas.create_rectangle(0, 0, 8, 8, fill="white", tags="hot")
     canvas.tag_bind("hot", "<Button-1>", lambda event: seen.append(1))
     canvas.tag_bind("hot", "<Button-1>", lambda event: seen.append(2), add=True)
     click(canvas, 2, 2)
@@ -368,7 +368,7 @@ def test_two_bindings_can_be_added_to_one_event(canvas):
 
 def test_a_binding_can_be_removed(canvas):
     seen = []
-    canvas.create_rectangle(0, 0, 8, 8, tags="hot")
+    canvas.create_rectangle(0, 0, 8, 8, fill="white", tags="hot")
     canvas.tag_bind("hot", "<Button-1>", lambda event: seen.append(1))
     canvas.tag_unbind("hot", "<Button-1>")
     click(canvas, 2, 2)
@@ -377,14 +377,14 @@ def test_a_binding_can_be_removed(canvas):
 
 def test_a_hidden_item_takes_no_clicks(canvas):
     seen = []
-    canvas.create_rectangle(0, 0, 8, 8, tags="hot", state="hidden")
+    canvas.create_rectangle(0, 0, 8, 8, fill="white", tags="hot", state="hidden")
     canvas.tag_bind("hot", "<Button-1>", lambda event: seen.append(1))
     click(canvas, 2, 2)
     assert seen == []
 
 
 def test_a_deleted_item_stops_being_current(canvas):
-    canvas.create_rectangle(0, 0, 8, 8, tags="hot")
+    canvas.create_rectangle(0, 0, 8, 8, fill="white", tags="hot")
     click(canvas, 2, 2, state="motion", button=0)
     canvas.delete("hot")
     assert canvas._current is None
@@ -474,7 +474,7 @@ def test_a_canvas_asks_for_its_cells(root):
 
 def test_the_current_tag_names_what_the_pointer_is_over(canvas):
     """Tk's dynamic tag, which tag_bind's contract depends on."""
-    item = canvas.create_rectangle(0, 0, 8, 8)
+    item = canvas.create_rectangle(0, 0, 8, 8, fill="white")
     assert canvas.find_withtag("current") == ()
     click(canvas, 2, 2, state="motion", button=0)
     assert canvas.find_withtag("current") == (item,)
@@ -484,8 +484,8 @@ def test_the_current_tag_names_what_the_pointer_is_over(canvas):
 
 def test_a_binding_on_current_follows_the_pointer(canvas):
     seen = []
-    first = canvas.create_rectangle(0, 0, 6, 6)
-    second = canvas.create_rectangle(20, 0, 26, 6)
+    first = canvas.create_rectangle(0, 0, 6, 6, fill="white")
+    second = canvas.create_rectangle(20, 0, 26, 6, fill="white")
     canvas.tag_bind("current", "<Button-1>", lambda event: seen.append("hit"))
     click(canvas, 2, 2)
     click(canvas, 22, 2)
@@ -506,3 +506,82 @@ def test_a_block_of_text_centres_by_whole_rows(canvas):
     _, top, _, bottom = canvas.bbox(item)
     assert top // 2 == 10 // 2 - 1
     assert (bottom - top + 1) // 2 == 2
+
+
+# ------------------------------------------------------- what counts as a hit
+
+
+def test_clicking_inside_an_unfilled_shape_hits_nothing(canvas):
+    """Tk tests an item's real shape, not its bounding box.
+
+    An unfilled rectangle has nothing in its middle, so nothing is there to
+    click - which is also what stops a thin diagonal claiming the whole
+    rectangle its bounding box covers.
+    """
+    seen = []
+    canvas.create_rectangle(0, 0, 12, 12, outline="white", tags="hot")
+    canvas.tag_bind("hot", "<Button-1>", lambda event: seen.append(1))
+    click(canvas, 6, 6)
+    assert seen == []
+
+
+def test_clicking_the_outline_of_an_unfilled_shape_hits_it(canvas):
+    seen = []
+    canvas.create_rectangle(0, 0, 12, 12, outline="white", tags="hot")
+    canvas.tag_bind("hot", "<Button-1>", lambda event: seen.append(1))
+    click(canvas, 0, 0)
+    assert seen == [1]
+
+
+def test_a_diagonal_does_not_claim_the_box_it_crosses(canvas):
+    """Reported from UAT 24: clicking a square picked out the line across it.
+
+    The line's bounding box is the whole square, so testing by extent gave
+    it everything - including the exception that followed, because a line
+    has no outline option to set.
+    """
+    box = canvas.create_rectangle(0, 0, 20, 20, fill="white", tags="box")
+    line = canvas.create_line(0, 0, 20, 20, fill="red", tags="cross")
+    # On the diagonal: the line, which is on top.
+    assert canvas._item_at(10, 10) == line
+    # Off it, but well inside the square: the square.
+    assert canvas._item_at(3, 16) == box
+
+
+def test_either_half_of_the_clicked_cell_counts(canvas):
+    """A click names a cell; either of its two pixels may hold the ink."""
+    line = canvas.create_line(0, 1, 10, 1, fill="white")
+    assert canvas._item_at(4, 1) == line
+    assert canvas._item_at(4, 0) == line
+
+
+def test_a_click_just_off_a_thin_line_still_hits_it(canvas):
+    """Tk's closeenough, which a terminal needs more than Tk does.
+
+    An outline is one pixel wide and a click only names a whole cell, so
+    demanding an exact hit makes thin shapes practically unclickable.
+    """
+    line = canvas.create_line(0, 4, 20, 4, fill="white")
+    assert canvas._item_at(10, 4) == line
+    assert canvas._item_at(10, 5) == line
+    assert canvas._item_at(10, 9) is None
+
+
+def test_closeenough_can_be_turned_off(canvas):
+    canvas.configure(closeenough=0)
+    line = canvas.create_line(0, 4, 20, 4, fill="white")
+    assert canvas._item_at(10, 4) == line
+    # Row 6 is a different cell entirely, and no longer within reach.
+    assert canvas._item_at(10, 6) is None
+
+
+def test_closeenough_can_be_widened(canvas):
+    canvas.configure(closeenough=3)
+    line = canvas.create_line(0, 4, 20, 4, fill="white")
+    assert canvas._item_at(10, 7) == line  # three pixels away
+    assert canvas._item_at(10, 12) is None  # eight, which is not
+
+
+def test_the_tolerance_does_not_reach_across_the_canvas(canvas):
+    canvas.create_line(0, 0, 4, 0, fill="white", tags="hot")
+    assert canvas._item_at(30, 16) is None

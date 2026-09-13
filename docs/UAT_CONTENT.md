@@ -69,6 +69,11 @@ box, `F4` raise or lower the ring
       different colours at once
 - [ ] Clicking a shape reports its type and tags, and only the topmost one
       under the pointer answers
+- [ ] The one clicked before it goes back to its own colour
+- [ ] Clicking a diagonal inside the square reports the **line**; clicking
+      the square's own edge reports the rectangle
+- [ ] Clicking between the diagonals, inside the unfilled square, reports
+      nothing — there is nothing drawn there, which is what Tk does too
 - [ ] Clicking empty canvas reports nothing
 - [ ] `F2` moves the ring and leaves nothing behind where it was
 - [ ] `F3` hides the box completely, and shows it again unchanged
@@ -103,6 +108,15 @@ anywhere · `F3` for a menu taller than the terminal
 ---
 
 ## What this found
+
+- **Clicking a square raised an exception, and selections never cleared.**
+  Two faults from one cause. Hit-testing went by an item's *bounding box*, so
+  the diagonals drawn across the square — whose box is the whole square —
+  claimed every click inside it; the scenario then asked a line for its
+  `outline`, which a line has not got. Items are hit-tested against their real
+  ink now, with Tk's `closeenough` tolerance so a one-pixel outline is still
+  clickable in a terminal. The scenario picks the right option per item type
+  and puts the previous selection back.
 
 - **A magenta triangle rendered white.** Colour in a curses attribute is a
   packed field — `A_COLOR` is `0xff00`, holding the pair's *number* — not a

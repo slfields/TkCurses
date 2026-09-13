@@ -1,6 +1,8 @@
 """Canvas: drawing on half-cells, where a circle is actually round.
 
-What to do: click the shapes - each one reports itself and changes colour.
+What to do: click the shapes - each one reports itself and turns yellow, and
+the one before it goes back to its own colour. Click the diagonals inside the
+square, and the square itself between them.
 Press F2 to move the ring, F3 to hide and show the box, F4 to put the ring
 behind or in front of the block. Resize the terminal so shapes fall outside
 the view and come back.
@@ -11,6 +13,12 @@ strip is one row of cells, each holding two different colours at once - the
 thing a denser character set could not do. Text sits on whole cells, so a
 label snaps to a row; a shape drawn after a label covers it, and one drawn
 before it does not.
+
+Clicking goes by what is actually drawn, not by the rectangle a shape
+occupies: the diagonals' bounding box is the whole square, so going by extent
+would have let them claim all of it. The square is unfilled, so clicking
+between the diagonals selects nothing - there is nothing there, which is what
+Tk does too.
 """
 
 from __future__ import annotations
@@ -23,7 +31,7 @@ TITLE = "24 - canvas: half-cells, colour and items"
 
 def build(root, screen):
     area = _support.content_area(root, top=4)
-    state = {"hidden": False, "raised": False, "last": "-"}
+    state = {"hidden": False, "raised": False, "last": "-", "selected": None}
 
     canvas = tkcurses.Canvas(area, width=60, height=16, relief="solid")
     canvas.pack(fill="both", expand=True, padx=1)
@@ -31,8 +39,11 @@ def build(root, screen):
     # 22 pixels across and 22 down: 22 cells wide, 11 cells tall, and round.
     canvas.create_oval(1, 1, 23, 23, outline="cyan", tags=("ring", "shape"))
     canvas.create_rectangle(28, 2, 48, 22, outline="green", tags=("box", "shape"))
-    canvas.create_line(28, 2, 48, 22, fill="green", tags=("box", "shape"))
-    canvas.create_line(48, 2, 28, 22, fill="green", tags=("box", "shape"))
+    # Their own tag, so the report names what was actually clicked. Their
+    # bounding box is the whole square, which is why hit-testing goes by the
+    # ink rather than the extent.
+    canvas.create_line(28, 2, 48, 22, fill="green", tags=("cross", "shape"))
+    canvas.create_line(48, 2, 28, 22, fill="green", tags=("cross", "shape"))
     canvas.create_polygon(
         52, 4, 68, 12, 52, 20, fill="magenta", outline="white", tags=("block", "shape")
     )
@@ -61,12 +72,29 @@ def build(root, screen):
         screen.footer(" Escape quits ")
         screen.refresh()
 
+    def colour_option(ident):
+        """Which option shows a highlight, for the kind of item this is.
+
+        A line has no outline - it is all edge - so asking one for an
+        outline raises, which is what happened the first time this scenario
+        met the diagonals inside the square.
+        """
+        return "fill" if canvas.type(ident) in ("line", "text") else "outline"
+
     def clicked(event):
         found = canvas.find_withtag("current")
-        if found:
-            tags = canvas.gettags(found[0])
-            state["last"] = f"{canvas.type(found[0])} {tags}"
-            canvas.itemconfigure(found[0], outline="yellow")
+        if not found:
+            return
+        previous = state["selected"]
+        if previous is not None:
+            ident, option, original = previous
+            if ident in canvas.find_all():
+                canvas.itemconfigure(ident, **{option: original})
+        ident = found[0]
+        option = colour_option(ident)
+        state["selected"] = (ident, option, canvas.itemcget(ident, option))
+        canvas.itemconfigure(ident, **{option: "yellow"})
+        state["last"] = f"{canvas.type(ident)} {canvas.gettags(ident)}"
         report()
 
     canvas.tag_bind("shape", "<Button-1>", clicked)

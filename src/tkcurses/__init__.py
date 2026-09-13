@@ -6813,6 +6813,10 @@ class Canvas(_Drawable):
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        # How far from an item's ink still counts as being on it. Tk's
+        # default is 1, and a terminal needs it more than Tk does: a thin
+        # outline is one pixel wide and a click only names a whole cell.
+        "closeenough": 1,
         "height": 10,
         "relief": "sunken",
         "scrollregion": None,
@@ -7246,12 +7250,42 @@ class Canvas(_Drawable):
         self._item_bindings.get(str(spec), {}).pop(sequence, None)
 
     def _item_at(self, x: int, y: int) -> int | None:
-        """The topmost item whose extent covers a pixel."""
+        """The topmost item whose ink covers a pixel.
+
+        Ink, not extent. A diagonal line's bounding box is the whole
+        rectangle it crosses, so testing by extent let a thin line claim
+        everything around it - clicking inside a square picked out the
+        diagonal drawn across it rather than the square. Tk tests the item's
+        real shape too, which also means that clicking the middle of an
+        *unfilled* rectangle selects nothing: there is nothing there.
+
+        Both halves of the clicked cell count. A click names a cell, and
+        either of the two pixels stacked in it may be the one with ink.
+        """
+        slack = max(0, int(self._options["closeenough"]))
+        reach = range(-slack, slack + 1)
         for item in reversed(self._items):
             if str(item.options.get("state")) == "hidden":
                 continue
             box = self._item_bbox(item)
-            if box is not None and box[0] <= x <= box[2] and box[1] <= y <= box[3]:
+            # The extent is only a cheap filter before the ink is looked at,
+            # and it has to admit both halves of the cell for the same reason
+            # the ink test does.
+            if box is None or not (
+                box[0] - slack <= x <= box[2] + slack
+                and any(box[1] - slack <= row <= box[3] + slack for row in (y, y ^ 1))
+            ):
+                continue
+            # Text fills the cells it occupies, so its extent is its ink.
+            if item.kind == "text":
+                return item.ident
+            pixels = self._item_pixels(item)
+            if any(
+                (x + across, row + down) in pixels
+                for row in (y, y ^ 1)
+                for across in reach
+                for down in reach
+            ):
                 return item.ident
         return None
 
