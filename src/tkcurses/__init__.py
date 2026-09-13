@@ -96,6 +96,7 @@ __all__ = [
     "Radiobutton",
     "Scale",
     "Scrollbar",
+    "Spinbox",
     "StringVar",
     "TclError",
     "Tk",
@@ -5179,6 +5180,311 @@ def _entry_refresh(event: Event) -> None:
     event.widget._redraw()
 
 
+class Spinbox(Entry):
+    """An entry with a pair of arrows that step through a set of values.
+
+    Everything an Entry does, a Spinbox does: it is a text field, it can be
+    typed into, and its contents are text whatever the arrows put there. What
+    it adds is a way to arrive at a value without typing it - which in a
+    terminal, where there is often no mouse, is what the Up and Down keys are
+    for.
+
+    There are two kinds. Given ``values``, it steps through that list and the
+    numeric options are ignored. Given ``from_`` and ``to``, it counts by
+    ``increment`` between them. ``wrap`` decides what happens at the end:
+    stop, or come round to the other side.
+
+    ``readonly`` is the state that makes a spinbox a chooser rather than a
+    field - the arrows still work, the keyboard cannot put anything else in.
+    That is the common use for the ``values`` form, and it is why stepping
+    checks for ``disabled`` rather than going through the editing path.
+    """
+
+    #: The two arrows, drawn at the right-hand end of the field. Tk stacks
+    #: them; a terminal row is one cell tall, so they sit side by side.
+    _ARROWS = ("▲", "▼")
+
+    #: Cells the arrows take. Taken out of the text area rather than added to
+    #: the widget, so a Spinbox and an Entry of the same ``width`` are the
+    #: same size on screen - which is what makes a column of them line up.
+    _ARROW_WIDTH = 2
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "command": None,
+        "format": "",
+        "from_": 0.0,
+        "increment": 1.0,
+        "to": 0.0,
+        "values": None,
+        "wrap": False,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``values``, ``from_``, ``to``, ``increment``, ``wrap``,
+                ``format``, ``command``, plus everything an Entry takes.
+        """
+        super().__init__(master, cnf, name=name, **kw)
+        if not self._field.text:
+            # Straight into the field, not through _replace: that refuses a
+            # disabled widget, and a disabled spinbox showing nothing at all
+            # is worse than one showing a value it will not let you change.
+            self._field.text = self._first_value()
+            self._changed()
+
+    # ------------------------------------------------------------- bindings
+
+    def _install_class_bindings(self) -> None:
+        """Register the editing keys and the arrows for every Spinbox.
+
+        Binding tags name one class, not a chain of them, so a Spinbox does
+        not inherit Entry's class bindings and has to say the same things
+        again - which is also the chance to put Up and Down in front of them.
+        """
+        if "Spinbox" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("Spinbox")
+        bind = self.bind_class
+        bind("Spinbox", "<Any-Key>", _spinbox_key)
+        bind("Spinbox", "<Button-1>", _spinbox_click)
+        bind("Spinbox", "<FocusIn>", _entry_refresh)
+        bind("Spinbox", "<FocusOut>", _entry_refresh)
+
+    # --------------------------------------------------------------- values
+
+    def _value_list(self) -> list[str]:
+        """The ``values`` option as a list, or empty if there is none.
+
+        A string is split on whitespace, because that is what a Tcl list
+        looks like arriving through the option database.
+        """
+        values = self._options["values"]
+        if not values:
+            return []
+        if isinstance(values, str):
+            return values.split()
+        return [str(value) for value in values]
+
+    def _first_value(self) -> str:
+        """What an empty spinbox starts holding."""
+        values = self._value_list()
+        if values:
+            return values[0]
+        return self._number_text(float(self._options["from_"]))
+
+    def _number_text(self, value: float) -> str:
+        """One number as text, honouring ``format`` if it was given.
+
+        Without a format the increment decides: a spinbox counting by 1 has
+        no business showing ``3.0``, and one counting by 0.5 has no business
+        showing ``3``.
+        """
+        template = str(self._options["format"])
+        if template:
+            with contextlib.suppress(TypeError, ValueError):
+                return template % value
+        increment = abs(float(self._options["increment"]))
+        if increment and increment != int(increment):
+            return f"{value:.4f}".rstrip("0").rstrip(".") or "0"
+        return str(round(value))
+
+    def _replace(self, text: str) -> None:
+        """Put ``text`` in the field, as the arrows do.
+
+        Not through :meth:`Entry._edit`: that refuses anything but the normal
+        state, and a readonly spinbox's arrows are the whole point of the
+        readonly state. The validator still gets its say.
+        """
+        if self._disabled or not self._validated(text):
+            return
+        self._field.text = text
+        self._field.select_clear()
+        self._changed()
+
+    # ------------------------------------------------------------- stepping
+
+    def _step(self, direction: int) -> None:
+        """Move one place up or down the values, or the range."""
+        values = self._value_list()
+        text = (
+            self._list_step(values, direction)
+            if values
+            else self._number_step(direction)
+        )
+        if text is None:
+            return
+        self._replace(text)
+        command = self._options["command"]
+        if command is not None:
+            command()
+
+    def _list_step(self, values: list[str], direction: int) -> str | None:
+        """The next entry in ``values``, or None at an end that does not wrap.
+
+        Contents that are not in the list at all - typed in, or left over
+        from a previous ``values`` - step to whichever end the arrow points
+        away from, so that either arrow gets a spinbox out of that state.
+        """
+        try:
+            index = values.index(self._field.text) + direction
+        except ValueError:
+            return values[0] if direction > 0 else values[-1]
+        if 0 <= index < len(values):
+            return values[index]
+        if not self._wraps:
+            return None
+        return values[index % len(values)]
+
+    def _number_step(self, direction: int) -> str | None:
+        """The next number in the range, or None at an end that does not wrap."""
+        low, high = float(self._options["from_"]), float(self._options["to"])
+        if low == high:
+            return None
+        increment = abs(float(self._options["increment"])) or 1.0
+        try:
+            current = float(self._field.text)
+        except ValueError:
+            # Something that is not a number at all: the arrows put the
+            # spinbox back on the scale rather than refusing to move.
+            return self._number_text(low)
+        step = increment if high > low else -increment
+        value = round(current + step * direction, 10)
+        lo, hi = min(low, high), max(low, high)
+        if lo <= value <= hi:
+            return self._number_text(value)
+        if not self._wraps:
+            return None
+        return self._number_text(high if value < lo else low)
+
+    @property
+    def _wraps(self) -> bool:
+        """True while stepping past an end comes round to the other."""
+        try:
+            return self.getboolean(self._options["wrap"])
+        except TclError:
+            return False
+
+    # ------------------------------------------------------------ public API
+
+    def invoke(self, element: str) -> None:
+        """Press one of the arrows from code.
+
+        Args:
+            element: ``"buttonup"`` or ``"buttondown"``.
+
+        Raises:
+            TclError: If it is neither.
+        """
+        if element == "buttonup":
+            self._step(1)
+        elif element == "buttondown":
+            self._step(-1)
+        else:
+            raise TclError(f'bad element "{element}": must be buttondown or buttonup')
+
+    def identify(self, x: int, y: int) -> str:
+        """Which part of the spinbox is at a position within this widget.
+
+        Args:
+            x: Column within this widget, as an Event reports it.
+            y: Row within this widget.
+
+        Returns:
+            ``"buttonup"``, ``"buttondown"``, ``"entry"``, or ``"none"``
+            for anywhere outside the widget.
+        """
+        if not (0 <= x < self._rect.width and 0 <= y < self._rect.height):
+            return "none"
+        up, down = self._arrow_columns()
+        if up is None or down is None:
+            return "entry"
+        if x == up:
+            return "buttonup"
+        if x == down:
+            return "buttondown"
+        return "entry"
+
+    # -------------------------------------------------------------- painting
+
+    def _apply_requested_size(self) -> None:
+        """Ask for the field's width plus room for the two arrows."""
+        super()._apply_requested_size()
+        self._request_size(
+            self._requested.width + self._ARROW_WIDTH, self._requested.height
+        )
+
+    def _text_area(self) -> Rect:
+        """Where the text goes: the field, less the arrows at its right end."""
+        area = super()._text_area()
+        return Rect(area.x, area.y, max(0, area.width - self._ARROW_WIDTH), area.height)
+
+    def _arrow_columns(self) -> tuple[int | None, int | None]:
+        """Which columns the two arrows occupy, or None if there is no room."""
+        area = super()._text_area()
+        if area.width < self._ARROW_WIDTH:
+            return (None, None)
+        return (area.x + area.width - 2, area.x + area.width - 1)
+
+    def _redraw(self) -> None:
+        """Paint the field, then the arrows at its right-hand end."""
+        super()._redraw()
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        up_column, down_column = self._arrow_columns()
+        if up_column is None or down_column is None:
+            return
+        area = super()._text_area()
+        attribute = self._background_attribute()
+        with contextlib.suppress(ValueError):
+            attribute = for_state(str(self._options["state"]), attribute)
+        dispatcher = CursesDispatcher.get()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(
+                window.addstr, area.y, up_column, self._ARROWS[0], attribute
+            )
+            dispatcher.call(
+                window.insstr, area.y, down_column, self._ARROWS[1], attribute
+            )
+
+
+def _spinbox_key(event: Event) -> str | None:
+    """Step on Up and Down, and otherwise behave exactly like an Entry."""
+    spinbox = event.widget
+    if event.keysym == "Up":
+        spinbox._step(1)
+        return "break"
+    if event.keysym == "Down":
+        spinbox._step(-1)
+        return "break"
+    return _entry_key(event)
+
+
+def _spinbox_click(event: Event) -> None:
+    """Step when an arrow is clicked, and place the cursor otherwise."""
+    spinbox = event.widget
+    part = spinbox.identify(event.x, event.y)
+    if part == "buttonup":
+        spinbox.focus_set()
+        spinbox._step(1)
+    elif part == "buttondown":
+        spinbox.focus_set()
+        spinbox._step(-1)
+    else:
+        _entry_click(event)
+
+
 class Listbox(_Drawable):
     """A scrollable list of strings, one of which is selected.
 
@@ -5728,16 +6034,27 @@ class Scrollbar(_Drawable):
         return self._first, self._last
 
     def fraction(self, x: int, y: int) -> float:
-        """The fraction of the way along a screen position lies."""
+        """The fraction of the way along that a position within this widget is.
+
+        Args:
+            x: Column within this widget, as an Event reports it.
+            y: Row within this widget.
+        """
         area = self._trough_bounds()
         if area <= 0:
             return 0.0
-        offset = y - self.winfo_rooty() if self._vertical else x - self.winfo_rootx()
+        offset = y if self._vertical else x
         return min(max((offset - self._trough_start()) / area, 0.0), 1.0)
 
     def identify(self, x: int, y: int) -> str:
-        """Which part of the scrollbar is at a screen position."""
-        offset = y - self.winfo_rooty() if self._vertical else x - self.winfo_rootx()
+        """Which part of the scrollbar is at a position within this widget.
+
+        Args:
+            x: Column within this widget, as an Event reports it - not a
+                screen column. That is the coordinate Tk's identify takes.
+            y: Row within this widget.
+        """
+        offset = y if self._vertical else x
         start = self._trough_start()
         if offset < start:
             return "arrow1"
@@ -5823,7 +6140,7 @@ def _scrollbar_click(event: Event) -> None:
     command = bar._options["command"]
     if command is None:
         return
-    part = bar.identify(event.x_root, event.y_root)
+    part = bar.identify(event.x, event.y)
     if part == "arrow1":
         command("scroll", -1, "units")
     elif part == "arrow2":
@@ -5833,7 +6150,7 @@ def _scrollbar_click(event: Event) -> None:
     elif part == "trough2":
         command("scroll", 1, "pages")
     else:
-        command("moveto", bar.fraction(event.x_root, event.y_root))
+        command("moveto", bar.fraction(event.x, event.y))
 
 
 class Scale(_Drawable):
@@ -6181,15 +6498,18 @@ class Scale(_Drawable):
     def identify(self, x: int, y: int) -> str:
         """Which part of the scale is at a screen position.
 
-        Returns ``"slider"``, ``"trough1"`` for the side towards ``from_``,
-        ``"trough2"`` for the side towards ``to``, or ``""`` for anywhere
-        else on the widget - the label, the ticks, or the caps.
+        Args:
+            x: Column within this widget, as an Event reports it - not a
+                screen column. That is the coordinate Tk's identify takes.
+            y: Row within this widget.
+
+        Returns:
+            ``"slider"``, ``"trough1"`` for the side towards ``from_``,
+            ``"trough2"`` for the side towards ``to``, or ``""`` for anywhere
+            else on the widget - the label, the ticks, or the caps.
         """
         origin_x, origin_y = self._trough_origin()
-        if self._vertical:
-            offset = y - self.winfo_rooty() - origin_y
-        else:
-            offset = x - self.winfo_rootx() - origin_x
+        offset = (y - origin_y) if self._vertical else (x - origin_x)
         if not 0 <= offset < self._trough_span():
             return ""
         handle = self._offset_for(self._value)

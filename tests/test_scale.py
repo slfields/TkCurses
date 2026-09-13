@@ -389,3 +389,16 @@ def test_a_vertical_scale_draws_its_value_at_every_step(root):
         scale.set(step / 10)
         text = scale._format(scale.get())
         assert origin_x - len(text) - 1 >= scale._content_area().x
+
+
+def test_identify_takes_coordinates_within_the_widget(root):
+    """Tk's identify takes widget-relative coordinates, not screen ones."""
+    scale = Scale(root, name="s", orient="horizontal", from_=0, to=10, showvalue=False)
+    scale._allocate(Rect(6, 3, 14, 1))
+    scale._map()
+    assert scale.winfo_rootx() == 6
+    scale.set(5)
+    handle = scale.coords()[0]
+    assert scale.identify(handle, 0) == "slider"
+    assert scale.identify(handle - 2, 0) == "trough1"
+    assert scale.identify(handle + 2, 0) == "trough2"
