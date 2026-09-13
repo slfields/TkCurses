@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import curses
 import os
+import re
 import sys
 import time
 import traceback
@@ -34,7 +35,15 @@ from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.errors import TclError, TkCursesError
 from tkcurses._core.events import Event as CoreEvent
 from tkcurses._core.events import KeyEvent, MouseEvent, ResizeEvent
-from tkcurses._core.geometry import Insets, Rect, Size, clamp, content_rect
+from tkcurses._core.geometry import (
+    BORDER_WIDTH,
+    Insets,
+    Rect,
+    Size,
+    clamp,
+    clip_text,
+    content_rect,
+)
 from tkcurses._core.input import InputHandler
 from tkcurses._core.panels import PanelStack
 from tkcurses._core.screen import CursesScreen
@@ -57,6 +66,7 @@ __all__ = [
     "TkCursesError",
     "Toplevel",
     "Widget",
+    "Wm",
     "__version__",
 ]
 
@@ -1534,6 +1544,464 @@ class Widget(BaseWidget):
 
 
 # ======================================================================
+# Window manager
+# ======================================================================
+
+#: A geometry string: ``WxH``, ``+X+Y``, or both. A leading ``-`` on an offset
+#: measures from the right or bottom edge, as in Tk.
+_GEOMETRY_RE = re.compile(
+    r"^(?:(?P<width>\d+)x(?P<height>\d+))?"
+    r"(?:(?P<x>[+-]-?\d+)(?P<y>[+-]-?\d+))?$"
+)
+
+#: Window states Tk recognises.
+_WM_STATES = ("normal", "iconic", "withdrawn")
+
+#: Attributes wm_attributes understands. Tk's list is mostly X11 compositing
+#: and has no meaning for a character cell window; these two do.
+_WM_ATTRIBUTES = ("-topmost", "-fullscreen")
+
+
+class Wm:
+    """Window manager methods for a toplevel.
+
+    There is no window manager. A terminal has one surface, no title bars, no
+    close buttons and no stacking policy beyond what this library imposes, so
+    every method here is the library doing for itself what an X11 window
+    manager would otherwise do.
+
+    Two consequences run through the whole class. Geometry is clamped to the
+    terminal, because there is nowhere for a window to overflow to. And
+    nothing raises ``WM_DELETE_WINDOW`` on its own: no user gesture closes a
+    window here, so an application that wants the protocol must invoke it.
+    """
+
+    if TYPE_CHECKING:
+        # Supplied by the widget this is mixed into. Declared so the contract
+        # is visible and so a mixin referring to them still type-checks.
+        tk: Application
+        _rect: Rect
+        _options: dict[str, Any]
+        _is_toplevel: bool
+
+        def _allocate(self, rect: Rect) -> None: ...
+        def _map(self) -> None: ...
+        def _unmap(self) -> None: ...
+        def _screen_size(self) -> tuple[int, int]: ...
+        def winfo_exists(self) -> bool: ...
+        def tkraise(self, aboveThis: Misc | None = None) -> None: ...
+
+    def _setup_wm(self) -> None:
+        """Initialise the window manager state.
+
+        Called from the constructor of each window class rather than from an
+        ``__init__`` here: the mixin has no say in the order a widget builds
+        itself, and these defaults have to be in place before geometry is.
+        """
+        self._title = ""
+        self._protocols: dict[str, Callable[[], Any]] = {}
+        self._min_size: tuple[int, int] = (1, 1)
+        self._max_size: tuple[int, int] | None = None
+        self._resizable: tuple[bool, bool] = (True, True)
+        self._wm_state = "normal"
+        self._transient_for: Misc | None = None
+        self._overrideredirect = False
+        self._focus_model = "passive"
+        self._grid_spec: tuple[int, int, int, int] | None = None
+        self._topmost = False
+        self._fullscreen = False
+
+    # ------------------------------------------------------------- titling
+
+    def wm_title(self, string: str | None = None) -> str:
+        """Get or set the window's title.
+
+        A toplevel draws it centred on its top border, which is the only
+        title bar available. The root has nowhere to put one and keeps it as
+        a label only.
+        """
+        if string is not None:
+            self._title = str(string)
+            self._redraw_decoration()
+        return self._title
+
+    title = wm_title
+
+    # ------------------------------------------------------------ geometry
+
+    def wm_geometry(self, newGeometry: str | None = None) -> str:
+        """Get or set size and position as ``WxH+X+Y``, in cells.
+
+        Accepts the partial forms Tk does - ``80x24`` alone, ``+4+2`` alone -
+        and a ``-`` offset measuring from the right or bottom edge. The result
+        is clamped to the terminal, which a window cannot exceed and outside
+        which it cannot be placed.
+
+        Setting has no effect on the root: its size is the terminal's, and
+        nothing here can resize that. The call is accepted rather than
+        refused, because ``root.geometry("400x300")`` appears in most tkinter
+        programs and failing on it would break them for no gain.
+
+        Raises:
+            TclError: If the geometry string cannot be parsed.
+        """
+        if newGeometry is not None and self._is_resizable_window():
+            self._apply_geometry(newGeometry)
+        rect = self._rect
+        return f"{rect.width}x{rect.height}+{rect.x}+{rect.y}"
+
+    geometry = wm_geometry
+
+    def _is_resizable_window(self) -> bool:
+        """False for the root, whose geometry the terminal decides."""
+        return not isinstance(self, Tk)
+
+    def _apply_geometry(self, spec: str) -> None:
+        """Parse a geometry string and move or resize the window to match."""
+        match = _GEOMETRY_RE.match(spec.strip())
+        if match is None or not any(match.groupdict().values()):
+            raise TclError(f'bad geometry specifier "{spec}"')
+        screen_width, screen_height = self._screen_size()
+        rect = self._rect
+
+        width, height = rect.width, rect.height
+        if match["width"] is not None:
+            if self._resizable[0]:
+                width = int(match["width"])
+            if self._resizable[1]:
+                height = int(match["height"])
+        width, height = self._clamp_size(width, height)
+
+        x, y = rect.x, rect.y
+        if match["x"] is not None:
+            x = self._edge_offset(match["x"], screen_width, width)
+            y = self._edge_offset(match["y"], screen_height, height)
+        x = clamp(x, 0, max(0, screen_width - width))
+        y = clamp(y, 0, max(0, screen_height - height))
+        self._allocate(Rect(x, y, width, height))
+
+    @staticmethod
+    def _edge_offset(token: str, screen: int, extent: int) -> int:
+        """Resolve one ``+n`` or ``-n`` offset into a left or top position.
+
+        ``-n`` measures from the far edge, so ``-0`` is flush right and
+        ``-10`` leaves ten cells beyond the window.
+        """
+        value = int(token[1:])
+        if token[0] == "-":
+            return screen - extent - value
+        return value
+
+    def _clamp_size(self, width: int, height: int) -> tuple[int, int]:
+        """Hold a size within the window's own limits and the terminal's."""
+        screen_width, screen_height = self._screen_size()
+        min_width, min_height = self._min_size
+        max_width, max_height = self._max_size or (screen_width, screen_height)
+        return (
+            clamp(width, min_width, min(max_width, screen_width)),
+            clamp(height, min_height, min(max_height, screen_height)),
+        )
+
+    def wm_minsize(self, width: int | None = None, height: int | None = None) -> Any:
+        """Get or set the smallest size this window may be given."""
+        if width is None:
+            return self._min_size
+        self._min_size = (max(1, int(width)), max(1, int(height or 1)))
+        self._reapply_size()
+        return None
+
+    minsize = wm_minsize
+
+    def wm_maxsize(self, width: int | None = None, height: int | None = None) -> Any:
+        """Get or set the largest size this window may be given."""
+        if width is None:
+            return self._max_size or self._screen_size()
+        self._max_size = (int(width), int(height or 1))
+        self._reapply_size()
+        return None
+
+    maxsize = wm_maxsize
+
+    def wm_resizable(
+        self, width: bool | None = None, height: bool | None = None
+    ) -> Any:
+        """Get or set whether each axis may be resized.
+
+        A locked axis is left alone by :meth:`wm_geometry` rather than making
+        the call fail, which is how Tk behaves when a window manager refuses
+        a resize.
+        """
+        if width is None:
+            return self._resizable
+        self._resizable = (bool(width), bool(height))
+        return None
+
+    resizable = wm_resizable
+
+    def _reapply_size(self) -> None:
+        """Re-clamp the current size after the limits changed."""
+        if not self._is_resizable_window():
+            return
+        width, height = self._clamp_size(self._rect.width, self._rect.height)
+        if (width, height) != (self._rect.width, self._rect.height):
+            self._allocate(Rect(self._rect.x, self._rect.y, width, height))
+
+    def wm_grid(
+        self,
+        baseWidth: int | None = None,
+        baseHeight: int | None = None,
+        widthInc: int | None = None,
+        heightInc: int | None = None,
+    ) -> Any:
+        """Get or set the window's size increments.
+
+        Tk uses this to make a window resize in units of a text cell. Here
+        every window already does, so this records the request and reports it
+        back rather than changing anything.
+        """
+        if baseWidth is None:
+            return self._grid_spec
+        self._grid_spec = (
+            int(baseWidth),
+            int(baseHeight or 0),
+            int(widthInc or 1),
+            int(heightInc or 1),
+        )
+        return None
+
+    grid = wm_grid
+
+    # --------------------------------------------------------------- state
+
+    def wm_state(self, newstate: str | None = None) -> str:
+        """Get or set the window state: normal, iconic, or withdrawn.
+
+        Iconic and withdrawn both take the window off the screen; they differ
+        in intent, and a window manager would show an icon for the first.
+        There is nowhere to put an icon, so the two look the same here and
+        remain distinct only in what :meth:`wm_state` reports.
+
+        Raises:
+            TclError: If the state is not one Tk recognises.
+        """
+        if newstate is None:
+            return self._wm_state
+        if newstate not in _WM_STATES:
+            raise TclError(f'bad window state "{newstate}"')
+        if newstate == "normal":
+            self.wm_deiconify()
+        elif newstate == "iconic":
+            self.wm_iconify()
+        else:
+            self.wm_withdraw()
+        return self._wm_state
+
+    state = wm_state
+
+    def wm_withdraw(self) -> None:
+        """Take the window off the screen, forgetting it was ever placed."""
+        self._wm_state = "withdrawn"
+        self._unmap()
+
+    withdraw = wm_withdraw
+
+    def wm_iconify(self) -> None:
+        """Take the window off the screen, as minimising would."""
+        self._wm_state = "iconic"
+        self._unmap()
+
+    iconify = wm_iconify
+
+    def wm_deiconify(self) -> None:
+        """Put the window back on the screen."""
+        self._wm_state = "normal"
+        self._map()
+        self._redraw_decoration()
+
+    deiconify = wm_deiconify
+
+    # ----------------------------------------------------------- protocols
+
+    def wm_protocol(
+        self, name: str | None = None, func: Callable[[], Any] | None = None
+    ) -> Any:
+        """Register, query, or list window manager protocol handlers.
+
+        ``WM_DELETE_WINDOW`` is the one worth having, and nothing raises it:
+        a terminal offers no close button and no user gesture that means
+        "close this window". An application that wants it must call
+        :meth:`_invoke_protocol`, typically from a key binding, and the
+        dialogs will do the same once they exist.
+        """
+        if name is None:
+            return tuple(self._protocols)
+        if func is None:
+            return self._protocols.get(name)
+        self._protocols[name] = func
+        return None
+
+    protocol = wm_protocol
+
+    def _invoke_protocol(self, name: str) -> bool:
+        """Run a registered protocol handler. True if there was one."""
+        handler = self._protocols.get(name)
+        if handler is None:
+            return False
+        handler()
+        return True
+
+    # -------------------------------------------------------- relationships
+
+    def wm_transient(self, master: Misc | None = None) -> Misc | None:
+        """Get or set the window this one is a transient of.
+
+        A transient window belongs to another - a dialog to the window that
+        opened it - and follows it: it stays in front of its owner, and goes
+        off the screen when the owner does.
+        """
+        if master is None:
+            return self._transient_for
+        self._transient_for = master
+        self.tkraise(master)
+        return None
+
+    transient = wm_transient
+
+    def wm_frame(self) -> str:
+        """The window's identifier.
+
+        Tk returns the window manager's frame id, which is a different window
+        wrapped around this one. There is no frame, so this is the window's
+        own id.
+        """
+        return str(self.winfo_id())  # type: ignore[attr-defined]
+
+    frame = wm_frame
+
+    def wm_focusmodel(self, model: str | None = None) -> str:
+        """Get or set the focus model.
+
+        Recorded rather than acted on: both models describe how a window
+        manager hands focus to a window, and focus here never leaves the
+        application.
+
+        Raises:
+            TclError: If the model is neither "active" nor "passive".
+        """
+        if model is None:
+            return self._focus_model
+        if model not in ("active", "passive"):
+            raise TclError(f'bad focus model "{model}"')
+        self._focus_model = model
+        return self._focus_model
+
+    focusmodel = wm_focusmodel
+
+    # ---------------------------------------------------------- decoration
+
+    def wm_overrideredirect(self, boolean: bool | None = None) -> bool:
+        """Get or set whether the window manager should ignore this window.
+
+        In Tk this strips the title bar and border a window manager would
+        add. The equivalent here is the border the window draws for itself,
+        since that is the only decoration there is.
+        """
+        if boolean is None:
+            return self._overrideredirect
+        self._overrideredirect = bool(boolean)
+        self._redraw_decoration()
+        return self._overrideredirect
+
+    overrideredirect = wm_overrideredirect
+
+    def wm_attributes(self, *args: Any) -> Any:
+        """Get or set window attributes.
+
+        Two are supported. ``-topmost`` keeps the window in front of the
+        others; ``-fullscreen`` makes it the size of the terminal. The rest of
+        Tk's list describes X11 compositing - transparency, window type hints -
+        and has no meaning for a grid of characters.
+
+        Raises:
+            TclError: If an attribute is not one of the supported two.
+        """
+        if not args:
+            return (
+                "-topmost",
+                self._topmost,
+                "-fullscreen",
+                self._fullscreen,
+            )
+        if len(args) == 1:
+            return self._attribute(self._checked_attribute(args[0]))
+        for name, value in zip(args[::2], args[1::2], strict=False):
+            self._set_attribute(self._checked_attribute(name), value)
+        return None
+
+    attributes = wm_attributes
+
+    @staticmethod
+    def _checked_attribute(name: str) -> str:
+        """Validate an attribute name, which Tk spells with a leading dash."""
+        if name not in _WM_ATTRIBUTES:
+            raise TclError(f'bad attribute "{name}"')
+        return str(name)
+
+    def _attribute(self, name: str) -> Any:
+        """Read one attribute."""
+        return self._topmost if name == "-topmost" else self._fullscreen
+
+    def _set_attribute(self, name: str, value: Any) -> None:
+        """Write one attribute, applying what it means."""
+        if name == "-topmost":
+            self._topmost = bool(value)
+            if self._topmost:
+                self.tkraise()
+            return
+        self._fullscreen = bool(value)
+        if self._fullscreen and self._is_resizable_window():
+            width, height = self._screen_size()
+            self._allocate(Rect(0, 0, width, height))
+
+    def _redraw_decoration(self) -> None:
+        """Repaint whatever decoration this window draws.
+
+        The root draws none; Toplevel overrides this.
+        """
+
+    # ------------------------------------------------------------ reparenting
+
+    def wm_manage(self, widget: Misc) -> None:  # noqa: ARG002 - tkinter signature
+        """Turn a managed widget into a toplevel.
+
+        Raises:
+            TclError: Always, for now. It means taking a widget away from its
+                geometry manager and giving it a window of its own, and there
+                are no geometry managers yet to take it from. Tracked as
+                TkCurses-113.
+        """
+        raise TclError(
+            "wm_manage needs the geometry managers, which are not implemented "
+            "yet (TkCurses-113)"
+        )
+
+    manage = wm_manage
+
+    def wm_forget(self, window: Misc) -> None:  # noqa: ARG002 - tkinter signature
+        """Turn a toplevel back into a managed widget.
+
+        Raises:
+            TclError: Always, for the same reason as :meth:`wm_manage`.
+        """
+        raise TclError(
+            "wm_forget needs the geometry managers, which are not implemented "
+            "yet (TkCurses-113)"
+        )
+
+    forget = wm_forget
+
+
+# ======================================================================
 # The root window
 # ======================================================================
 
@@ -1554,7 +2022,7 @@ _DISPATCH_BATCH = 64
 _active_root: Tk | None = None
 
 
-class Tk(BaseWidget):
+class Tk(BaseWidget, Wm):
     """The root window, and the event loop that drives everything.
 
     Creating one initialises curses and takes over the terminal; destroying
@@ -1604,6 +2072,7 @@ class Tk(BaseWidget):
             )
 
         Misc.__init__(self, None, ".")
+        self._setup_wm()
         self.className = className
         self._options = dict(self._option_spec())
         self._panel = None
@@ -1872,7 +2341,7 @@ class Tk(BaseWidget):
         traceback.print_exception(exc, val, tb)
 
 
-class Toplevel(BaseWidget):
+class Toplevel(BaseWidget, Wm):
     """A window of its own, floating above the root.
 
     tkinter leaves a toplevel's frame, title bar and placement to the window
@@ -1919,6 +2388,7 @@ class Toplevel(BaseWidget):
         """
         self._class_name = class_
         super().__init__(master, cnf, name=name, **kw)
+        self._setup_wm()
         self._allocate(self._default_rect())
         self._map()
 
@@ -1928,7 +2398,13 @@ class Toplevel(BaseWidget):
 
     @property
     def _bordered(self) -> bool:
-        """True if this window draws a border, costing a cell on each edge."""
+        """True if this window draws a border, costing a cell on each edge.
+
+        overrideredirect asks for a window the window manager leaves alone,
+        which here means one that draws no decoration of its own.
+        """
+        if getattr(self, "_overrideredirect", False):
+            return False
         return bool(self._options["borderwidth"]) or self._options["relief"] != FLAT
 
     def _content_rect(self) -> Rect:
@@ -2010,8 +2486,33 @@ class Toplevel(BaseWidget):
         tested with no terminal in the loop.
         """
         window = self._window
-        if window is None or self.tk.screen is None or not self._bordered:
+        if window is None or self.tk.screen is None:
             return
         dispatcher = CursesDispatcher.get()
         with contextlib.suppress(curses.error):
-            dispatcher.call(window.border)
+            dispatcher.call(window.erase)
+            if self._bordered:
+                dispatcher.call(window.border)
+                self._draw_title(dispatcher, window)
+
+    def _draw_title(self, dispatcher: CursesDispatcher, window: Any) -> None:
+        """Write the title into the top border, centred and truncated.
+
+        The top border is the only title bar a terminal window has. A title
+        longer than the border can hold is cut rather than allowed to run
+        over the corners.
+        """
+        title = getattr(self, "_title", "")
+        if not title:
+            return
+        room = self._rect.width - 2 * BORDER_WIDTH - 2
+        text = clip_text(f" {title} ", max(0, room + 2))
+        if len(text) < 3:
+            return
+        column = max(BORDER_WIDTH, (self._rect.width - len(text)) // 2)
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.addstr, 0, column, text)
+
+    def _redraw_decoration(self) -> None:
+        """Repaint the border and title after the window manager changed them."""
+        self._draw()
