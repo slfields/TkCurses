@@ -152,3 +152,56 @@ def test_buttons_pack_into_a_frame(terminal, tmp_path):
     )
     term.wait_for_text("Yes")
     term.wait_for_text("No")
+
+
+def test_a_click_whose_pointer_drifts_still_invokes(terminal, tmp_path):
+    """Reported from UAT 19: dialog buttons sometimes needed two clicks.
+
+    A real mouse can move a cell between press and release. Routing each
+    mouse event by position delivers that release to whatever is now under
+    the pointer, so the button never hears the release, stays held down, and
+    the *next* click is the one that appears to work. A pressed widget holds
+    an implicit grab instead, as it does under X11.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "def pressed():\n"
+            "    buffer.write(11, 0, 'invoked')\n"
+            "    root.tk.screen.refresh()\n"
+            "b = tkcurses.Button(root, text='Press', command=pressed)\n"
+            "b.place(x=2, y=2)\n"
+            "buffer.write(10, 0, 'ready')"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("ready")
+    # Down on the button, up one cell over - still inside it. The pause is
+    # what a hand does: sent back to back, both escape sequences land in one
+    # read and ncurses holds the release until something else arrives, which
+    # is a property of the harness rather than of any real mouse.
+    term.send_mouse(4, 3, action="press")
+    term._drain(0.08)
+    term.send_mouse(5, 3, action="release")
+    term.wait_for_text("invoked")
+
+
+def test_a_click_that_leaves_the_button_is_cancelled(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "def pressed():\n"
+            "    buffer.write(11, 0, 'should not happen')\n"
+            "    root.tk.screen.refresh()\n"
+            "b = tkcurses.Button(root, text='Press', command=pressed)\n"
+            "b.place(x=2, y=2)\n"
+            "buffer.write(10, 0, 'ready')"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("ready")
+    term.send_mouse(4, 3, action="press")
+    term._drain(0.08)
+    term.send_mouse(30, 9, action="release")
+    term.wait_for_idle()
+    assert "should not happen" not in "\n".join(term.display)

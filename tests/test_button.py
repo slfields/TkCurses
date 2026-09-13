@@ -41,10 +41,19 @@ def root(stack):
     return root
 
 
-def click(widget):
+def laid_out(widget, width=12, height=3):
+    """Give a widget a size, so a click can land inside it."""
+    widget._allocate(Rect(0, 0, width, height))
+    widget._map()
+    return widget
+
+
+def click(widget, x=1, y=1):
     """Press and release button 1 over a widget, as the loop would deliver it."""
-    widget._handle(MouseEvent(button=1, state="pressed"))
-    widget._handle(MouseEvent(button=1, state="released"))
+    if widget.winfo_width() == 0:
+        laid_out(widget)
+    widget._handle(MouseEvent(button=1, state="pressed", x=x, y=y))
+    widget._handle(MouseEvent(button=1, state="released", x=x, y=y))
 
 
 # ----------------------------------------------------------------- invoking
@@ -231,7 +240,30 @@ def test_a_coalesced_click_still_invokes(root):
     for ever and never invoke - which is what a fast click actually produces.
     """
     calls = []
-    button = Button(root, name="b", command=lambda: calls.append(1))
-    button._handle(MouseEvent(button=1, state="clicked"))
+    button = laid_out(Button(root, name="b", command=lambda: calls.append(1)))
+    button._handle(MouseEvent(button=1, state="clicked", x=1, y=1))
     assert calls == [1]
     assert button._pressed is False
+
+
+def test_releasing_outside_the_button_does_not_invoke_it(root):
+    """Press, change your mind, move away, release - the way out of a click.
+
+    The release reaches the button wherever the pointer ended up, because a
+    pressed widget holds an implicit grab on the mouse, so whether it counts
+    has to be decided by where the release actually landed.
+    """
+    calls = []
+    button = laid_out(Button(root, name="b", command=lambda: calls.append(1)))
+    button._handle(MouseEvent(button=1, state="pressed", x=1, y=1))
+    button._handle(MouseEvent(button=1, state="released", x=40, y=20))
+    assert calls == []
+    assert button._pressed is False
+
+
+def test_releasing_back_inside_still_invokes(root):
+    calls = []
+    button = laid_out(Button(root, name="b", command=lambda: calls.append(1)))
+    button._handle(MouseEvent(button=1, state="pressed", x=1, y=1))
+    button._handle(MouseEvent(button=1, state="released", x=3, y=2))
+    assert calls == [1]

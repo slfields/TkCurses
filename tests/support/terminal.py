@@ -453,17 +453,18 @@ class TerminalHarness:
         final = "m" if action == "release" else "M"
         self.send(f"\x1b[<{code};{x + 1};{y + 1}{final}".encode())
 
-    def click(self, x: int, y: int, *, button: int = 1) -> None:
-        """Press and release at ``(x, y)``.
+    def click(self, x: int, y: int, *, button: int = 1, settle: float = 0.05) -> None:
+        """Press and release at ``(x, y)``, with a pause between, as a hand does.
 
-        Both sequences go out together, which is what makes ncurses report a
-        single CLICKED rather than a press and a release. A test that wants
-        the individual events must send them one at a time and wait for each
-        to be reported: ncurses reads whatever has arrived and merges button
-        transitions inside the multi-click window, and how it resolves a burst
-        differs between builds.
+        The pause is not decoration. Sent back to back the two escape
+        sequences arrive in one read, and ncurses holds the release until
+        something else turns up - so an application sees a button pressed and
+        never released. No real mouse produces that; a click takes tens of
+        milliseconds, which is what ``settle`` stands in for.
         """
         self.send_mouse(x, y, button=button, action="press")
+        if settle:
+            self._drain(settle)
         self.send_mouse(x, y, button=button, action="release")
 
     def resize(self, cols: int, rows: int) -> None:

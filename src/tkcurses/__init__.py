@@ -2947,6 +2947,7 @@ class Tk(BaseWidget, Wm):
         self._takefocus = True
 
         self._screen = CursesScreen()
+        self._mouse_owner: Misc | None = None
         self._input: InputHandler | None = None
         self._started = False
         self._running = False
@@ -3091,11 +3092,34 @@ class Tk(BaseWidget, Wm):
             self._handle_resize()
             return
         if isinstance(event, MouseEvent):
-            target = self._widget_at(event.x, event.y)
+            target = self._mouse_target(event)
         else:
             target = self.tk.focus or self
         target = self._through_grab(target)
         target._handle(event)
+
+    def _mouse_target(self, event: MouseEvent) -> Misc:
+        """The widget a mouse event belongs to, honouring the implicit grab.
+
+        Everything between a press and its release goes to the widget that
+        was pressed, wherever the pointer has since wandered. X11 gives a
+        widget this grab automatically and Tk relies on it; routing each
+        event by position instead means a pointer that drifts a single cell
+        between press and release delivers the release somewhere else. The
+        pressed widget then never hears that the button came up and stays
+        held down, so the *next* click appears to be the one that works -
+        intermittently, depending on whether the hand moved.
+        """
+        if event.state in ("pressed", "clicked"):
+            self._mouse_owner = self._widget_at(event.x, event.y)
+            return self._mouse_owner
+        owner = self._mouse_owner
+        if owner is not None and owner.winfo_exists():
+            if event.state == "released":
+                self._mouse_owner = None
+            return owner
+        self._mouse_owner = None
+        return self._widget_at(event.x, event.y)
 
     def _widget_at(self, x: int, y: int) -> Misc:
         """The widget under a screen cell, falling back to the root.
@@ -4234,18 +4258,29 @@ def _button_press(event: Event) -> None:
 
 
 def _button_release(event: Event) -> None:
-    """Invoke the button, unless the press was cancelled.
+    """Invoke the button, unless the pointer left it first.
 
     Tk invokes on release rather than press so that pressing and moving away
     is a way to change your mind, which is what every other toolkit does too.
+    The release reaches this widget wherever the pointer ended up, because of
+    the implicit grab, so whether it counts has to be decided here.
     """
     button = event.widget
     if not button._pressed:
         return
     button._pressed = False
     button._redraw()
-    if not button._disabled:
+    if not button._disabled and _within(button, event):
         button.invoke()
+
+
+def _within(widget: Misc, event: Event) -> bool:
+    """True if an event's position lies inside a widget."""
+    left, top = widget.winfo_rootx(), widget.winfo_rooty()
+    return (
+        left <= event.x_root < left + widget.winfo_width()
+        and top <= event.y_root < top + widget.winfo_height()
+    )
 
 
 def _button_key(event: Event) -> str:
