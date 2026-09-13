@@ -87,6 +87,7 @@ __all__ = [
     "NoDefaultRoot",
     "Pack",
     "Place",
+    "Radiobutton",
     "Scrollbar",
     "StringVar",
     "TclError",
@@ -4313,45 +4314,31 @@ def _button_refresh(event: Event) -> None:
     event.widget._redraw()
 
 
-class Checkbutton(_TextWidget):
-    """A box that is ticked or not, and a variable that says which.
+class _ChoiceWidget(_TextWidget):
+    """Shared by the two widgets whose state lives in a variable.
 
-    The widget keeps no state of its own: the tick comes from comparing its
-    ``variable`` against ``onvalue`` every time it paints. That is what makes
-    two checkbuttons over one variable show the same tick, and what makes
-    setting the variable from code move both of them. A checkbutton made
-    without a variable is given one, as tkinter's is - it works out of the
-    box at the cost of the caller having nothing to read.
-
-    Tk's third state is drawn too. A variable holding neither value - the
-    "some of the selected files are read-only" case - shows ``[-]`` rather
-    than guessing, and a click from there turns the button on.
-
-    With ``indicatoron`` false there is no box at all: the text reverses
-    while the button is on, which is how a checkbutton is used as a toggle
-    in a toolbar.
+    Checkbutton and Radiobutton draw the same way - a small indicator, a
+    space, then a label - and keep the same relationship with their
+    variable: neither holds any state of its own, both repaint when the
+    variable is written, and both let two widgets over one variable agree
+    without either knowing the other exists. What separates them is what the
+    indicator means and what pressing one does, which is all a subclass has
+    to say.
     """
 
-    #: The box in each state, unfocused and focused. Focus changes the
-    #: brackets rather than the colour: it is the same width, so nothing
-    #: moves when the focus arrives, and it survives a terminal with no
-    #: colour - which is the same reason Button draws markers.
-    _INDICATORS: ClassVar[dict[str, tuple[str, str]]] = {
-        "on": ("[x]", "<x>"),
-        "off": ("[ ]", "< >"),
-        "tristate": ("[-]", "<->"),
-    }
+    #: The indicator in each state, unfocused and focused. Focus changes the
+    #: brackets rather than the colour: the width is the same either way, so
+    #: nothing moves under the hand when the focus arrives, and it survives a
+    #: terminal with no colour - the same reason Button draws markers.
+    _INDICATORS: ClassVar[dict[str, tuple[str, str]]] = {}
 
-    #: Cells the box and the space after it take from the text.
+    #: Cells the indicator and the space after it take from the text.
     _INDICATOR_WIDTH = 4
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "command": None,
         "indicatoron": True,
-        "offvalue": 0,
-        "onvalue": 1,
         "takefocus": True,
-        "tristatevalue": "",
         "variable": None,
     }
 
@@ -4368,41 +4355,40 @@ class Checkbutton(_TextWidget):
             master: Parent widget; the implicit root when omitted.
             cnf: Options as a dictionary, merged with the keywords.
             name: Path component, generated when omitted.
-            **kw: ``variable``, ``onvalue``, ``offvalue``, ``tristatevalue``,
-                ``command``, ``indicatoron``, plus everything a Label takes.
+            **kw: ``variable``, ``command``, ``indicatoron``, whatever else
+                the subclass declares, plus everything a Label takes.
         """
         self._pressed = False
         self._value_trace: tuple[Variable, str] | None = None
         super().__init__(master, cnf, name=name, **kw)
         if self._options["variable"] is None:
-            # A variable of its own, so that a checkbutton created with no
-            # arguments still ticks. Plain Variable rather than IntVar: the
-            # values it has to hold are whatever onvalue and offvalue are,
-            # and those are only integers by default.
-            self._options["variable"] = Variable(
-                master=self, value=self._options["offvalue"]
-            )
+            self._options["variable"] = self._make_variable()
         self._follow_value()
         self._install_class_bindings()
+
+    def _make_variable(self) -> Variable:
+        """The variable to use when the caller named none."""
+        raise NotImplementedError
 
     # ------------------------------------------------------------- bindings
 
     def _install_class_bindings(self) -> None:
-        """Register the default behaviour for every Checkbutton here.
+        """Register the default behaviour for every widget of this class.
 
-        The same handlers Button uses, less Return: Tk's checkbutton answers
-        the space bar and not Return, so that Return still reaches a dialog's
-        default button from wherever the focus happens to be.
+        The same handlers Button uses, less Return: Tk's checkbutton and
+        radiobutton answer the space bar and not Return, so that Return
+        still reaches a dialog's default button from wherever the focus is.
         """
-        if "Checkbutton" in self.tk.bound_classes:
+        name = self.winfo_class()
+        if name in self.tk.bound_classes:
             return
-        self.tk.bound_classes.add("Checkbutton")
+        self.tk.bound_classes.add(name)
         bind = self.bind_class
-        bind("Checkbutton", "<Button-1>", _button_press)
-        bind("Checkbutton", "<ButtonRelease-1>", _button_release)
-        bind("Checkbutton", "<Key-space>", _button_key)
-        bind("Checkbutton", "<FocusIn>", _button_refresh)
-        bind("Checkbutton", "<FocusOut>", _button_refresh)
+        bind(name, "<Button-1>", _button_press)
+        bind(name, "<ButtonRelease-1>", _button_release)
+        bind(name, "<Key-space>", _button_key)
+        bind(name, "<FocusIn>", _button_refresh)
+        bind(name, "<FocusOut>", _button_refresh)
 
     # --------------------------------------------------------------- options
 
@@ -4421,7 +4407,7 @@ class Checkbutton(_TextWidget):
         """Track the ``variable``, dropping any previous one.
 
         The old trace has to go for the same reason a Label's does: a widget
-        still answering to the variable it used to show would repaint itself
+        still answering the variable it used to show would repaint itself
         whenever something unrelated wrote to it.
         """
         if self._value_trace is not None:
@@ -4436,13 +4422,173 @@ class Checkbutton(_TextWidget):
 
     @property
     def _indicator_on(self) -> bool:
-        """True while the box is drawn, false while the widget is a toggle."""
+        """True while the indicator is drawn, false while it is not."""
         try:
             return self.getboolean(self._options["indicatoron"])
         except TclError:
             return True
 
     # ----------------------------------------------------------------- value
+
+    @property
+    def _indicator_state(self) -> str:
+        """Which state the variable puts this widget in. Subclasses decide."""
+        raise NotImplementedError
+
+    def _value(self) -> Any:
+        """What the variable holds, or None if there is no variable left."""
+        variable = self._options["variable"]
+        return None if variable is None else variable.get()
+
+    def _write(self, value: Any) -> None:
+        """Put a value in the variable, if there still is one."""
+        variable = self._options["variable"]
+        if variable is not None:
+            variable.set(value)
+
+    # ------------------------------------------------------------ behaviour
+
+    def _activate(self) -> None:
+        """What pressing this widget does to its variable."""
+        raise NotImplementedError
+
+    def invoke(self) -> Any:
+        """Do what a click does, and run the command.
+
+        Returns whatever the command returns. Does nothing while disabled -
+        the guard belongs here rather than in every caller, and ``invoke`` is
+        how a key binding, a test and a click all reach one path.
+        """
+        if self._disabled:
+            return None
+        self._activate()
+        command = self._options["command"]
+        return None if command is None else command()
+
+    def flash(self) -> None:
+        """Blink the indicator, as tkinter's does.
+
+        Drawn twice through the after-queue rather than with a sleep: a
+        widget that stopped the event loop to flash would also stop whatever
+        it was flashing about.
+        """
+        if self._disabled:
+            return
+        self._pressed = not self._pressed
+        self._redraw()
+        self.after(80, self._end_flash)
+
+    def _end_flash(self) -> None:
+        """Put the indicator back the way it was after a flash."""
+        self._pressed = False
+        self._redraw()
+
+    # ------------------------------------------------------------- painting
+
+    def _apply_requested_size(self) -> None:
+        """Ask for the text's room plus the indicator to the left of it."""
+        super()._apply_requested_size()
+        if self._indicator_on:
+            self._request_size(
+                self._requested.width + self._INDICATOR_WIDTH,
+                self._requested.height,
+            )
+
+    def _text_area(self) -> Rect:
+        """Where the text goes: what is left once the indicator has its cells."""
+        area = super()._text_area()
+        if not self._indicator_on:
+            return area
+        return Rect(
+            area.x + self._INDICATOR_WIDTH,
+            area.y,
+            max(0, area.width - self._INDICATOR_WIDTH),
+            area.height,
+        )
+
+    def _text_attribute(self) -> int:
+        """Attributes on the text, including the state of an indicatorless one.
+
+        Without an indicator there is nothing else to show it with, so the
+        text carries both: reversed while the widget is on, underlined while
+        it has the focus.
+        """
+        attribute = super()._text_attribute()
+        if self._indicator_on:
+            return attribute
+        if self._indicator_state == "on":
+            attribute |= curses.A_REVERSE
+        if self.focus_get() is self:
+            attribute |= curses.A_UNDERLINE
+        return attribute
+
+    def _redraw(self) -> None:
+        """Paint the widget, then the indicator to the left of the text."""
+        super()._redraw()
+        self._draw_indicator()
+
+    def _draw_indicator(self) -> None:
+        """Draw the indicator, on the row the text's first line sits on."""
+        window = self._window
+        if window is None or self.tk.screen is None or not self._indicator_on:
+            return
+        # The whole area, not the text's - _text_area() has already handed
+        # the indicator's cells away and would put it on top of the text.
+        area = super()._text_area()
+        if area.is_empty or area.width < self._INDICATOR_WIDTH:
+            return
+        focused = self.focus_get() is self
+        mark = self._INDICATORS[self._indicator_state][1 if focused else 0]
+        attribute = self._background_attribute() | self._text_attribute()
+        if self._pressed:
+            attribute |= curses.A_REVERSE
+        _, block_height = measure(self._lines())
+        _, down = parse_anchor(str(self._options["anchor"]))
+        row = area.y + int((area.height - block_height) * down)
+        with contextlib.suppress(curses.error):
+            CursesDispatcher.get().call(window.addstr, row, area.x, mark, attribute)
+
+
+class Checkbutton(_ChoiceWidget):
+    """A box that is ticked or not, and a variable that says which.
+
+    The widget keeps no state of its own: the tick comes from comparing its
+    ``variable`` against ``onvalue`` every time it paints. That is what makes
+    two checkbuttons over one variable show the same tick, and what makes
+    setting the variable from code move both of them. A checkbutton made
+    without a variable is given one, as tkinter's is - it works out of the
+    box at the cost of the caller having nothing to read.
+
+    Tk's third state is drawn too. A variable holding neither value - the
+    "some of the selected files are read-only" case - shows ``[-]`` rather
+    than guessing, and a click from there turns the button on.
+
+    With ``indicatoron`` false there is no box at all: the text reverses
+    while the button is on, which is how a checkbutton is used as a toggle
+    in a toolbar.
+    """
+
+    _INDICATORS: ClassVar[dict[str, tuple[str, str]]] = {
+        "on": ("[x]", "<x>"),
+        "off": ("[ ]", "< >"),
+        "tristate": ("[-]", "<->"),
+    }
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "offvalue": 0,
+        "onvalue": 1,
+        "tristatevalue": "",
+    }
+
+    def _make_variable(self) -> Variable:
+        """A variable of this checkbutton's own, starting at ``offvalue``.
+
+        Plain Variable rather than IntVar: what it has to hold is whatever
+        ``onvalue`` and ``offvalue`` are, and those are only integers by
+        default. Each checkbutton gets its own, because two unrelated boxes
+        that happened to be made without variables must not move together.
+        """
+        return Variable(master=self, value=self._options["offvalue"])
 
     @property
     def _indicator_state(self) -> str:
@@ -4453,8 +4599,7 @@ class Checkbutton(_TextWidget):
         ``""`` shows ``[-]`` rather than ``[ ]``, exactly as Tk's does - a
         surprise worth keeping, because code that means "off" should say so.
         """
-        variable = self._options["variable"]
-        value = None if variable is None else variable.get()
+        value = self._value()
         if _same_value(value, self._options["onvalue"]):
             return "on"
         if _same_value(value, self._options["tristatevalue"]):
@@ -4476,109 +4621,77 @@ class Checkbutton(_TextWidget):
         else:
             self.select()
 
-    def _write(self, value: Any) -> None:
-        """Put a value in the variable, if there still is one."""
-        variable = self._options["variable"]
-        if variable is not None:
-            variable.set(value)
+    _activate = toggle
 
-    # ------------------------------------------------------------ behaviour
 
-    def invoke(self) -> Any:
-        """Toggle the button and run its command, as a click does.
+class Radiobutton(_ChoiceWidget):
+    """One of a set of choices, of which the variable names the one in force.
 
-        Returns whatever the command returns. Does nothing while disabled -
-        the guard belongs here rather than in every caller, and ``invoke`` is
-        how a key binding, a test and a click all reach one path.
+    A radiobutton is on when its ``variable`` equals its ``value``, so a
+    group is not a container or a list - it is however many radiobuttons
+    happen to share a variable. Nothing has to be told which buttons belong
+    together, and nothing has to turn the others off: they all repaint from
+    the same variable and only one of them can match it.
+
+    Pressing one always selects it. There is no way to turn a radiobutton
+    off by clicking it, which is the difference from a checkbutton and the
+    reason the two are separate widgets; ``deselect`` exists for code that
+    wants a group with nothing chosen.
+
+    A radiobutton made without a variable joins Tk's default group, named
+    ``selectedButton``, along with every other one in the same application
+    that did the same. That is Tk's behaviour and it is worth keeping, but
+    it means two unrelated sets of choices both left without variables will
+    fight over one value.
+    """
+
+    _INDICATORS: ClassVar[dict[str, tuple[str, str]]] = {
+        "on": ("(•)", "<•>"),
+        "off": ("( )", "< >"),
+    }
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "value": "",
+    }
+
+    #: The group a radiobutton joins when the caller named no variable.
+    _DEFAULT_GROUP = "selectedButton"
+
+    def _make_variable(self) -> Variable:
+        """Tk's shared default group, one Variable per application.
+
+        Owned by the application rather than made fresh for each button. A
+        Variable forgets its value when its last reference goes, and a group
+        whose only owners are its own buttons would be at the mercy of which
+        of them outlived the others.
         """
-        if self._disabled:
-            return None
-        self.toggle()
-        command = self._options["command"]
-        return None if command is None else command()
+        shared = self.tk.shared_variables.get(self._DEFAULT_GROUP)
+        if shared is None:
+            shared = Variable(master=self, name=self._DEFAULT_GROUP)
+            self.tk.shared_variables[self._DEFAULT_GROUP] = shared
+        return shared
 
-    def flash(self) -> None:
-        """Blink the box, as tkinter's does.
+    @property
+    def _indicator_state(self) -> str:
+        """On when the variable holds this button's ``value``."""
+        if _same_value(self._value(), self._options["value"]):
+            return "on"
+        return "off"
 
-        Drawn twice through the after-queue rather than with a sleep: a
-        widget that stopped the event loop to flash would also stop whatever
-        it was flashing about.
+    def select(self) -> None:
+        """Choose this button by writing its ``value`` to the variable."""
+        self._write(self._options["value"])
+
+    def deselect(self) -> None:
+        """Leave the group with nothing chosen.
+
+        Writes an empty value rather than this button's, which is what Tk
+        does: there is no other way to say "none of them" through a variable
+        that names the choice in force.
         """
-        if self._disabled:
-            return
-        self._pressed = not self._pressed
-        self._redraw()
-        self.after(80, self._end_flash)
+        self._write("")
 
-    def _end_flash(self) -> None:
-        """Put the box back the way it was after a flash."""
-        self._pressed = False
-        self._redraw()
-
-    # ------------------------------------------------------------- painting
-
-    def _apply_requested_size(self) -> None:
-        """Ask for the text's room plus the box to the left of it."""
-        super()._apply_requested_size()
-        if self._indicator_on:
-            self._request_size(
-                self._requested.width + self._INDICATOR_WIDTH,
-                self._requested.height,
-            )
-
-    def _text_area(self) -> Rect:
-        """Where the text goes: what is left once the box has its cells."""
-        area = super()._text_area()
-        if not self._indicator_on:
-            return area
-        return Rect(
-            area.x + self._INDICATOR_WIDTH,
-            area.y,
-            max(0, area.width - self._INDICATOR_WIDTH),
-            area.height,
-        )
-
-    def _text_attribute(self) -> int:
-        """Attributes on the text, including a boxless button's own state.
-
-        Without a box there is nothing else to show it with, so the text
-        itself carries both: reversed while the button is on, underlined
-        while it has the focus.
-        """
-        attribute = super()._text_attribute()
-        if self._indicator_on:
-            return attribute
-        if self._indicator_state == "on":
-            attribute |= curses.A_REVERSE
-        if self.focus_get() is self:
-            attribute |= curses.A_UNDERLINE
-        return attribute
-
-    def _redraw(self) -> None:
-        """Paint the widget, then the box to the left of the text."""
-        super()._redraw()
-        self._draw_indicator()
-
-    def _draw_indicator(self) -> None:
-        """Draw the box, on the row the text's first line sits on."""
-        window = self._window
-        if window is None or self.tk.screen is None or not self._indicator_on:
-            return
-        # The whole area, not the text's - _text_area() has already handed
-        # the box's cells away and would put it on top of the text.
-        area = super()._text_area()
-        if area.is_empty or area.width < self._INDICATOR_WIDTH:
-            return
-        focused = self.focus_get() is self
-        box = self._INDICATORS[self._indicator_state][1 if focused else 0]
-        attribute = self._background_attribute() | self._text_attribute()
-        if self._pressed:
-            attribute |= curses.A_REVERSE
-        _, block_height = measure(self._lines())
-        _, down = parse_anchor(str(self._options["anchor"]))
-        row = area.y + int((area.height - block_height) * down)
-        with contextlib.suppress(curses.error):
-            CursesDispatcher.get().call(window.addstr, row, area.x, box, attribute)
+    _activate = select
 
 
 def _same_value(left: Any, right: Any) -> bool:
