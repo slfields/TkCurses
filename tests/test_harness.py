@@ -255,3 +255,27 @@ def test_unknown_key_symbol_is_rejected(terminal):
     term = terminal()
     with pytest.raises(ValueError, match="unknown key symbol"):
         term.send_keys("<Nonexistent>")
+
+
+def test_back_tab_moves_the_cursor_back_a_tab_stop(terminal):
+    """ncurses emits CSI Z, and pyte has no handler of its own for it.
+
+    Without this the emulator's column drifts from the real one and
+    everything written afterwards lands a few cells off - seen as a status
+    line reading "focus ontwo", a screen no terminal would have shown.
+    """
+    term = terminal(cols=40, rows=4)
+    term._stream.feed(b"\x1b[H" + b"x" * 20 + b"\x1b[ZHERE")
+    assert term.row(0).startswith("x" * 16 + "HERE")
+
+
+def test_back_tab_takes_a_count(terminal):
+    term = terminal(cols=40, rows=4)
+    term._stream.feed(b"\x1b[H" + b"x" * 20 + b"\x1b[2ZHERE")
+    assert term.row(0).startswith("x" * 8 + "HERE")
+
+
+def test_back_tab_stops_at_the_left_margin(terminal):
+    term = terminal(cols=40, rows=4)
+    term._stream.feed(b"\x1b[H" + b"xxx" + b"\x1b[9ZHERE")
+    assert term.row(0).startswith("HERE")
