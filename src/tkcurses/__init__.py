@@ -81,6 +81,7 @@ __all__ = [
     "Grid",
     "IntVar",
     "Label",
+    "Listbox",
     "Misc",
     "NoDefaultRoot",
     "Pack",
@@ -4658,4 +4659,417 @@ def _entry_click(event: Event) -> None:
 
 def _entry_refresh(event: Event) -> None:
     """Repaint after the focus moved, so the cursor appears or goes."""
+    event.widget._redraw()
+
+
+class Listbox(_Drawable):
+    """A scrollable list of strings, one of which is selected.
+
+    Four selection modes, as in Tk. ``browse`` - the default - keeps one item
+    selected and moves it with the arrows; ``single`` selects only by click or
+    by space, leaving the arrows to move an *active* item that is not
+    selected; ``multiple`` toggles items independently; ``extended`` adds
+    shifted ranges to that.
+
+    The distinction between active and selected is the one worth holding on
+    to: the active item is where the keyboard is, and in every mode but
+    browse it can be somewhere the selection is not.
+    """
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "activestyle": "underline",
+        "height": 10,
+        "relief": "sunken",
+        "selectmode": "browse",
+        "state": "normal",
+        "takefocus": True,
+        "width": 20,
+    }
+
+    #: Markers either side of a selected row.
+    _SELECTED_MARKERS = ("\u25b6", "\u25c0")
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``height``, ``width``, ``selectmode``, ``state``, and the
+                standard options.
+        """
+        self._items: list[str] = []
+        self._selection: set[int] = set()
+        self._active = 0
+        self._anchor = 0
+        self._top = 0
+        super().__init__(master, cnf, name=name, **kw)
+        self._apply_requested_size()
+        self._install_class_bindings()
+
+    def _install_class_bindings(self) -> None:
+        """Register the list keys for every Listbox in this application."""
+        if "Listbox" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("Listbox")
+        bind = self.bind_class
+        bind("Listbox", "<Any-Key>", _listbox_key)
+        bind("Listbox", "<Button-1>", _listbox_click)
+        # A separate binding, because modifiers match exactly: <Button-1>
+        # does not fire for a shifted click, in Tk or here. Binding the plain
+        # one and expecting both is a mistake this rule makes easy.
+        bind("Listbox", "<Shift-Button-1>", _listbox_click)
+        bind("Listbox", "<Button-4>", _listbox_wheel)
+        bind("Listbox", "<Button-5>", _listbox_wheel)
+        bind("Listbox", "<FocusIn>", _listbox_refresh)
+        bind("Listbox", "<FocusOut>", _listbox_refresh)
+
+    def _apply_requested_size(self) -> None:
+        """Ask for the configured rows and columns, plus border and padding."""
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        self._request_size(
+            int(self._options["width"]) + 2 * int(self._options["padx"]) + edge,
+            int(self._options["height"]) + 2 * int(self._options["pady"]) + edge,
+        )
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, re-measuring and repainting as the change requires."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if not given:
+            return result
+        if {"width", "height"} & set(given):
+            self._apply_requested_size()
+            self._invalidate_layout()
+        self._redraw()
+        return result
+
+    config = configure
+
+    # ------------------------------------------------------------- contents
+
+    def insert(self, index: Any, *elements: str) -> None:
+        """Insert items before ``index``; ``end`` appends."""
+        at = len(self._items) if index in ("end", END) else self.index(index)
+        self._items[at:at] = [str(element) for element in elements]
+        self._shift_state(at, len(elements))
+        self._redraw()
+
+    def delete(self, first: Any, last: Any = None) -> None:
+        """Delete items from ``first`` up to and including ``last``.
+
+        Tk's range is inclusive here, unlike Entry's - a difference in Tk
+        itself rather than one introduced here.
+        """
+        start = self.index(first)
+        stop = start if last is None else self.index(last)
+        if stop < start:
+            return
+        removed = self._items[start : stop + 1]
+        del self._items[start : stop + 1]
+        self._selection = {
+            i if i < start else i - len(removed)
+            for i in self._selection
+            if not start <= i <= stop
+        }
+        self._active = min(self._active, max(0, len(self._items) - 1))
+        self._clamp_view()
+        self._redraw()
+
+    def get(self, first: Any, last: Any = None) -> Any:
+        """One item, or a tuple of them when ``last`` is given."""
+        start = self.index(first)
+        if last is None:
+            return self._items[start] if 0 <= start < len(self._items) else ""
+        return tuple(self._items[start : self.index(last) + 1])
+
+    def size(self) -> int:
+        """How many items there are."""
+        return len(self._items)
+
+    def _shift_state(self, at: int, count: int) -> None:
+        """Move the selection and active item along after an insertion."""
+        self._selection = {i + count if i >= at else i for i in self._selection}
+        if self._active >= at:
+            self._active += count
+        self._clamp_view()
+
+    # -------------------------------------------------------------- indices
+
+    def index(self, index: Any) -> int:
+        """Resolve one of Tk's index forms to a number.
+
+        Understands integers, ``end``, ``active``, ``anchor`` and ``@x,y``.
+
+        Raises:
+            TclError: If the form is not one Tk defines.
+        """
+        if isinstance(index, int):
+            return max(0, min(len(self._items), index))
+        text = str(index)
+        if text.isdigit() or (text.startswith("-") and text[1:].isdigit()):
+            return max(0, min(len(self._items), int(text)))
+        if text in ("end", END):
+            return len(self._items)
+        if text == "active":
+            return self._active
+        if text in ("anchor", ANCHOR):
+            return self._anchor
+        if text.startswith("@"):
+            _, _, coords = text.partition("@")
+            _, _, y = coords.partition(",")
+            return self.nearest(int(y or 0))
+        raise TclError(f'bad listbox index "{index}"')
+
+    def nearest(self, y: int) -> int:
+        """The item nearest a screen row."""
+        row = y - self.winfo_rooty() - self._text_area().y
+        return max(0, min(max(0, len(self._items) - 1), self._top + max(0, row)))
+
+    # ------------------------------------------------------------ selection
+
+    def curselection(self) -> tuple[int, ...]:
+        """The selected indices, in order."""
+        return tuple(sorted(self._selection))
+
+    def selection_set(self, first: Any, last: Any = None) -> None:
+        """Select from ``first`` to ``last`` inclusive."""
+        start = self.index(first)
+        stop = start if last is None else self.index(last)
+        if str(self._options["selectmode"]) in ("browse", "single"):
+            self._selection = {start}
+        else:
+            self._selection |= {
+                i
+                for i in range(min(start, stop), max(start, stop) + 1)
+                if 0 <= i < len(self._items)
+            }
+        self._notify()
+
+    select_set = selection_set
+
+    def selection_clear(  # type: ignore[override]
+        self, first: Any = 0, last: Any = None
+    ) -> None:
+        """Deselect from ``first`` to ``last`` inclusive.
+
+        The signature disagrees with ``Misc.selection_clear``, which clears
+        the X selection and takes keyword arguments. tkinter has the same
+        clash for the same reason - a list's selection and the display's
+        selection are different things that ended up with one name.
+        """
+        start = self.index(first)
+        stop = (
+            len(self._items)
+            if last is None and first == 0
+            else (start if last is None else self.index(last))
+        )
+        self._selection -= set(range(min(start, stop), max(start, stop) + 1))
+        self._notify()
+
+    select_clear = selection_clear
+
+    def selection_includes(self, index: Any) -> bool:
+        """True if ``index`` is selected."""
+        return self.index(index) in self._selection
+
+    select_includes = selection_includes
+
+    def selection_anchor(self, index: Any) -> None:
+        """Set the anchor a shifted range extends from."""
+        self._anchor = self.index(index)
+
+    select_anchor = selection_anchor
+
+    def activate(self, index: Any) -> None:
+        """Make ``index`` the active item - where the keyboard is."""
+        self._active = max(0, min(max(0, len(self._items) - 1), self.index(index)))
+        self.see(self._active)
+        self._redraw()
+
+    def _notify(self) -> None:
+        """Tell the application the selection changed, and repaint.
+
+        ``<<ListboxSelect>>`` is how tkinter code hears about it, and what a
+        form uses to enable its buttons.
+        """
+        self._redraw()
+        self.event_generate("<<ListboxSelect>>")
+
+    # ----------------------------------------------------------- scrolling
+
+    def see(self, index: Any) -> None:
+        """Scroll so ``index`` is visible, moving as little as possible."""
+        position = self.index(index)
+        height = self._text_area().height
+        if height <= 0:
+            return
+        if position < self._top:
+            self._top = position
+        elif position > self._top + height - 1:
+            self._top = position - height + 1
+        self._clamp_view()
+
+    def yview(self, index: Any = None) -> int:
+        """Get or set the first visible item."""
+        if index is not None:
+            self._top = self.index(index)
+            self._clamp_view()
+            self._redraw()
+        return self._top
+
+    def _clamp_view(self) -> None:
+        """Keep the visible window inside the list."""
+        height = max(1, self._text_area().height)
+        self._top = max(0, min(self._top, max(0, len(self._items) - height)))
+
+    def bbox(self, index: Any) -> tuple[int, int, int, int] | None:
+        """Where an item is on screen, or None if it is scrolled out of view."""
+        position = self.index(index)
+        area = self._text_area()
+        row = position - self._top
+        if not (0 <= row < area.height):
+            return None
+        return (
+            self.winfo_rootx() + area.x,
+            self.winfo_rooty() + area.y + row,
+            area.width,
+            1,
+        )
+
+    # ------------------------------------------------------------- painting
+
+    def _text_area(self) -> Rect:
+        """Where the items go, in cells relative to this widget's window."""
+        edge = BORDER_WIDTH if self._bordered else 0
+        padx, pady = int(self._options["padx"]), int(self._options["pady"])
+        return Rect(
+            edge + padx,
+            edge + pady,
+            max(0, self._rect.width - 2 * (edge + padx)),
+            max(0, self._rect.height - 2 * (edge + pady)),
+        )
+
+    def _redraw(self) -> None:
+        """Paint the visible items, marking the selected and active ones."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        area = self._text_area()
+        dispatcher = CursesDispatcher.get()
+        attribute = self._background_attribute()
+        with contextlib.suppress(ValueError):
+            attribute = for_state(str(self._options["state"]), attribute)
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            if self._bordered and self._rect.width >= 2 and self._rect.height >= 2:
+                self._draw_border(
+                    dispatcher, window, self._rect.width, self._rect.height, attribute
+                )
+            if area.is_empty:
+                return
+            self._clamp_view()
+            for row in range(area.height):
+                position = self._top + row
+                if position >= len(self._items):
+                    break
+                self._draw_item(dispatcher, window, area, row, position, attribute)
+
+    def _draw_item(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        area: Rect,
+        row: int,
+        position: int,
+        attribute: int,
+    ) -> None:
+        """Draw one row: its markers if selected, then its text."""
+        selected = position in self._selection
+        style = attribute | (curses.A_REVERSE if selected else 0)
+        if position == self._active and self.focus_get() is self and not selected:
+            style |= curses.A_UNDERLINE
+        left, right = self._SELECTED_MARKERS if selected else (" ", " ")
+        body = clip_text(self._items[position], max(0, area.width - 2))
+        line = f"{left}{body}".ljust(area.width - 1)[: area.width - 1]
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.addstr, area.y + row, area.x, line, style)
+            dispatcher.call(
+                window.insstr, area.y + row, area.x + area.width - 1, right, style
+            )
+
+
+def _listbox_key(event: Event) -> str | None:
+    """Move the active item, or select with the space bar."""
+    listbox = event.widget
+    if str(listbox._options["state"]) == "disabled":
+        return None
+    keysym = event.keysym
+    height = max(1, listbox._text_area().height)
+    moves = {
+        "Up": -1,
+        "Down": 1,
+        "Prior": -height,
+        "Next": height,
+        "Home": -len(listbox._items),
+        "End": len(listbox._items),
+    }
+    if keysym in moves:
+        listbox.activate(listbox._active + moves[keysym])
+        if str(listbox._options["selectmode"]) == "browse":
+            # browse drags the selection along with the active item, which is
+            # what makes a plain list usable with the arrows alone.
+            listbox.selection_clear(0, "end")
+            listbox.selection_set(listbox._active)
+        return "break"
+    if keysym == "space":
+        _listbox_toggle(listbox, listbox._active, extend=False)
+        return "break"
+    return None
+
+
+def _listbox_click(event: Event) -> None:
+    """Take the focus and select the row that was clicked."""
+    listbox = event.widget
+    if str(listbox._options["state"]) == "disabled":
+        return
+    listbox.focus_set()
+    row = listbox._top + max(0, event.y - listbox._text_area().y)
+    if row >= len(listbox._items):
+        return
+    listbox.activate(row)
+    _listbox_toggle(listbox, row, extend=bool(event.state & MOD_SHIFT))
+
+
+def _listbox_toggle(listbox: Listbox, index: int, *, extend: bool) -> None:
+    """Apply a selection gesture according to the selection mode."""
+    mode = str(listbox._options["selectmode"])
+    if mode in ("browse", "single"):
+        listbox.selection_clear(0, "end")
+        listbox.selection_set(index)
+    elif mode == "extended" and extend:
+        listbox.selection_set(listbox._anchor, index)
+    elif index in listbox._selection:
+        listbox.selection_clear(index)
+    else:
+        listbox.selection_set(index)
+        listbox.selection_anchor(index)
+
+
+def _listbox_wheel(event: Event) -> None:
+    """Scroll the list by the wheel, without moving the selection."""
+    listbox = event.widget
+    listbox.yview(listbox._top + (-1 if event.num == 4 else 1))
+
+
+def _listbox_refresh(event: Event) -> None:
+    """Repaint after the focus moved, so the active row shows or stops."""
     event.widget._redraw()
