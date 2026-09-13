@@ -562,12 +562,42 @@ class TerminalHarness:
         """A rectangular block of the screen, as row strings."""
         return [line[left : left + width] for line in self.display[top : top + height]]
 
-    def assert_box(self, top: int, left: int, height: int, width: int) -> None:
-        """Assert a box-drawn border occupies the given rectangle.
+    def assert_box(
+        self,
+        top: int,
+        left: int,
+        height: int,
+        width: int,
+        *,
+        timeout: float | None = None,
+    ) -> None:
+        """Wait for a box-drawn border to occupy the given rectangle.
 
         Checks corners and edges, which is what actually distinguishes a
         correctly drawn border from an off-by-one one.
+
+        Waits rather than asserting on one sample. curses sends a refresh as
+        a series of writes and the harness can read the screen between them,
+        so a box still arriving looked exactly like a box drawn wrong - a
+        false failure roughly one CI run in ten, and only ever on the slowest
+        machine in the matrix.
         """
+        budget = self.timeout if timeout is None else timeout
+        deadline = time.monotonic() + budget
+        while True:
+            faults = self._box_faults(top, left, height, width)
+            if not faults:
+                return
+            if time.monotonic() >= deadline:
+                raise AssertionError(
+                    f"box at ({top},{left}) {width}x{height} is malformed:\n"
+                    + "\n".join(faults[:12])
+                    + f"\n{self.describe()}"
+                )
+            self._drain(min(0.05, max(0.0, deadline - time.monotonic())))
+
+    def _box_faults(self, top: int, left: int, height: int, width: int) -> list[str]:
+        """Every cell of a box border that is not what it should be."""
         bottom, right = top + height - 1, left + width - 1
         corners = {
             (top, left): "┌",
@@ -588,12 +618,7 @@ class TerminalHarness:
             for x in (left, right):
                 if self.display[y][x] != "│":
                     bad.append(f"  ({y},{x}) expected '│', got {self.display[y][x]!r}")
-        if bad:
-            raise AssertionError(
-                f"box at ({top},{left}) {width}x{height} is malformed:\n"
-                + "\n".join(bad[:12])
-                + f"\n{self.describe()}"
-            )
+        return bad
 
     def describe(self) -> str:
         """A framed rendering of the screen, plus child stderr, for failures."""

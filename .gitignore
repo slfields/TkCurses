@@ -82,3 +82,12 @@ Thumbs.db
 
 # graphify knowledge-graph build output
 graphify-out/
+
+# LibreOffice writes a lock file beside any document it has open. One was
+# committed by a `git add -A` while a UAT checklist was being read.
+.~lock.*#
+
+# bd's audit log of field changes. Local history that every branch appends
+# to, so it conflicts on every merge; .beads/issues.jsonl is the export that
+# is meant to travel.
+.beads/interactions.jsonl
