@@ -74,6 +74,7 @@ __all__ = [
     "BaseWidget",
     "BooleanVar",
     "Button",
+    "Checkbutton",
     "DoubleVar",
     "Entry",
     "Event",
@@ -3947,6 +3948,15 @@ class _TextWidget(_Drawable):
         self._invalidate_layout()
         self._redraw()
 
+    @property
+    def _disabled(self) -> bool:
+        """True while the widget refuses to be invoked.
+
+        Here rather than on Button because ``state`` is declared here, and
+        every widget that answers a click has the same question to ask.
+        """
+        return str(self._options["state"]) == "disabled"
+
     def _text(self) -> str:
         """The text to display.
 
@@ -4204,11 +4214,6 @@ class Button(_TextWidget):
         self._pressed = False
         self._redraw()
 
-    @property
-    def _disabled(self) -> bool:
-        """True while the button refuses to be invoked."""
-        return str(self._options["state"]) == "disabled"
-
     # ------------------------------------------------------------- painting
 
     def _apply_requested_size(self) -> None:
@@ -4248,7 +4253,11 @@ class Button(_TextWidget):
 
 
 def _button_press(event: Event) -> None:
-    """Take the focus and show the button held down."""
+    """Take the focus and show the button held down.
+
+    Shared with Checkbutton, which presses and releases the same way and
+    differs only in what invoking it does.
+    """
     button = event.widget
     if button._disabled:
         return
@@ -4286,6 +4295,9 @@ def _within(widget: Misc, event: Event) -> bool:
 def _button_key(event: Event) -> str:
     """Invoke the button from the keyboard.
 
+    Bound to Return and space on a Button and to space alone on a
+    Checkbutton, so which keys reach here is the caller's choice.
+
     Returns ``"break"`` so the key does not also reach whatever else is bound
     to it - a Return that both presses the button and submits a dialog would
     do the same thing twice.
@@ -4299,6 +4311,289 @@ def _button_key(event: Event) -> str:
 def _button_refresh(event: Event) -> None:
     """Repaint after the focus moved in or out."""
     event.widget._redraw()
+
+
+class Checkbutton(_TextWidget):
+    """A box that is ticked or not, and a variable that says which.
+
+    The widget keeps no state of its own: the tick comes from comparing its
+    ``variable`` against ``onvalue`` every time it paints. That is what makes
+    two checkbuttons over one variable show the same tick, and what makes
+    setting the variable from code move both of them. A checkbutton made
+    without a variable is given one, as tkinter's is - it works out of the
+    box at the cost of the caller having nothing to read.
+
+    Tk's third state is drawn too. A variable holding neither value - the
+    "some of the selected files are read-only" case - shows ``[-]`` rather
+    than guessing, and a click from there turns the button on.
+
+    With ``indicatoron`` false there is no box at all: the text reverses
+    while the button is on, which is how a checkbutton is used as a toggle
+    in a toolbar.
+    """
+
+    #: The box in each state, unfocused and focused. Focus changes the
+    #: brackets rather than the colour: it is the same width, so nothing
+    #: moves when the focus arrives, and it survives a terminal with no
+    #: colour - which is the same reason Button draws markers.
+    _INDICATORS: ClassVar[dict[str, tuple[str, str]]] = {
+        "on": ("[x]", "<x>"),
+        "off": ("[ ]", "< >"),
+        "tristate": ("[-]", "<->"),
+    }
+
+    #: Cells the box and the space after it take from the text.
+    _INDICATOR_WIDTH = 4
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "command": None,
+        "indicatoron": True,
+        "offvalue": 0,
+        "onvalue": 1,
+        "takefocus": True,
+        "tristatevalue": "",
+        "variable": None,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``variable``, ``onvalue``, ``offvalue``, ``tristatevalue``,
+                ``command``, ``indicatoron``, plus everything a Label takes.
+        """
+        self._pressed = False
+        self._value_trace: tuple[Variable, str] | None = None
+        super().__init__(master, cnf, name=name, **kw)
+        if self._options["variable"] is None:
+            # A variable of its own, so that a checkbutton created with no
+            # arguments still ticks. Plain Variable rather than IntVar: the
+            # values it has to hold are whatever onvalue and offvalue are,
+            # and those are only integers by default.
+            self._options["variable"] = Variable(
+                master=self, value=self._options["offvalue"]
+            )
+        self._follow_value()
+        self._install_class_bindings()
+
+    # ------------------------------------------------------------- bindings
+
+    def _install_class_bindings(self) -> None:
+        """Register the default behaviour for every Checkbutton here.
+
+        The same handlers Button uses, less Return: Tk's checkbutton answers
+        the space bar and not Return, so that Return still reaches a dialog's
+        default button from wherever the focus happens to be.
+        """
+        if "Checkbutton" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("Checkbutton")
+        bind = self.bind_class
+        bind("Checkbutton", "<Button-1>", _button_press)
+        bind("Checkbutton", "<ButtonRelease-1>", _button_release)
+        bind("Checkbutton", "<Key-space>", _button_key)
+        bind("Checkbutton", "<FocusIn>", _button_refresh)
+        bind("Checkbutton", "<FocusOut>", _button_refresh)
+
+    # --------------------------------------------------------------- options
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, following a new variable if one was named."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if "variable" in given:
+            self._follow_value()
+            self._redraw()
+        return result
+
+    config = configure
+
+    def _follow_value(self) -> None:
+        """Track the ``variable``, dropping any previous one.
+
+        The old trace has to go for the same reason a Label's does: a widget
+        still answering to the variable it used to show would repaint itself
+        whenever something unrelated wrote to it.
+        """
+        if self._value_trace is not None:
+            previous, handle = self._value_trace
+            previous.trace_remove("write", handle)
+            self._value_trace = None
+        variable = self._options["variable"]
+        if variable is None:
+            return
+        handle = variable.trace_add("write", lambda *_: self._redraw())
+        self._value_trace = (variable, handle)
+
+    @property
+    def _indicator_on(self) -> bool:
+        """True while the box is drawn, false while the widget is a toggle."""
+        try:
+            return self.getboolean(self._options["indicatoron"])
+        except TclError:
+            return True
+
+    # ----------------------------------------------------------------- value
+
+    @property
+    def _indicator_state(self) -> str:
+        """Which of the three states the variable puts this button in.
+
+        Tk's order, which matters: on, then the third state, then off as the
+        fallback. So an empty variable with the default ``tristatevalue`` of
+        ``""`` shows ``[-]`` rather than ``[ ]``, exactly as Tk's does - a
+        surprise worth keeping, because code that means "off" should say so.
+        """
+        variable = self._options["variable"]
+        value = None if variable is None else variable.get()
+        if _same_value(value, self._options["onvalue"]):
+            return "on"
+        if _same_value(value, self._options["tristatevalue"]):
+            return "tristate"
+        return "off"
+
+    def select(self) -> None:
+        """Turn the button on by writing ``onvalue`` to its variable."""
+        self._write(self._options["onvalue"])
+
+    def deselect(self) -> None:
+        """Turn it off by writing ``offvalue``."""
+        self._write(self._options["offvalue"])
+
+    def toggle(self) -> None:
+        """Flip the button. From the third state it turns on, as Tk does."""
+        if self._indicator_state == "on":
+            self.deselect()
+        else:
+            self.select()
+
+    def _write(self, value: Any) -> None:
+        """Put a value in the variable, if there still is one."""
+        variable = self._options["variable"]
+        if variable is not None:
+            variable.set(value)
+
+    # ------------------------------------------------------------ behaviour
+
+    def invoke(self) -> Any:
+        """Toggle the button and run its command, as a click does.
+
+        Returns whatever the command returns. Does nothing while disabled -
+        the guard belongs here rather than in every caller, and ``invoke`` is
+        how a key binding, a test and a click all reach one path.
+        """
+        if self._disabled:
+            return None
+        self.toggle()
+        command = self._options["command"]
+        return None if command is None else command()
+
+    def flash(self) -> None:
+        """Blink the box, as tkinter's does.
+
+        Drawn twice through the after-queue rather than with a sleep: a
+        widget that stopped the event loop to flash would also stop whatever
+        it was flashing about.
+        """
+        if self._disabled:
+            return
+        self._pressed = not self._pressed
+        self._redraw()
+        self.after(80, self._end_flash)
+
+    def _end_flash(self) -> None:
+        """Put the box back the way it was after a flash."""
+        self._pressed = False
+        self._redraw()
+
+    # ------------------------------------------------------------- painting
+
+    def _apply_requested_size(self) -> None:
+        """Ask for the text's room plus the box to the left of it."""
+        super()._apply_requested_size()
+        if self._indicator_on:
+            self._request_size(
+                self._requested.width + self._INDICATOR_WIDTH,
+                self._requested.height,
+            )
+
+    def _text_area(self) -> Rect:
+        """Where the text goes: what is left once the box has its cells."""
+        area = super()._text_area()
+        if not self._indicator_on:
+            return area
+        return Rect(
+            area.x + self._INDICATOR_WIDTH,
+            area.y,
+            max(0, area.width - self._INDICATOR_WIDTH),
+            area.height,
+        )
+
+    def _text_attribute(self) -> int:
+        """Attributes on the text, including a boxless button's own state.
+
+        Without a box there is nothing else to show it with, so the text
+        itself carries both: reversed while the button is on, underlined
+        while it has the focus.
+        """
+        attribute = super()._text_attribute()
+        if self._indicator_on:
+            return attribute
+        if self._indicator_state == "on":
+            attribute |= curses.A_REVERSE
+        if self.focus_get() is self:
+            attribute |= curses.A_UNDERLINE
+        return attribute
+
+    def _redraw(self) -> None:
+        """Paint the widget, then the box to the left of the text."""
+        super()._redraw()
+        self._draw_indicator()
+
+    def _draw_indicator(self) -> None:
+        """Draw the box, on the row the text's first line sits on."""
+        window = self._window
+        if window is None or self.tk.screen is None or not self._indicator_on:
+            return
+        # The whole area, not the text's - _text_area() has already handed
+        # the box's cells away and would put it on top of the text.
+        area = super()._text_area()
+        if area.is_empty or area.width < self._INDICATOR_WIDTH:
+            return
+        focused = self.focus_get() is self
+        box = self._INDICATORS[self._indicator_state][1 if focused else 0]
+        attribute = self._background_attribute() | self._text_attribute()
+        if self._pressed:
+            attribute |= curses.A_REVERSE
+        _, block_height = measure(self._lines())
+        _, down = parse_anchor(str(self._options["anchor"]))
+        row = area.y + int((area.height - block_height) * down)
+        with contextlib.suppress(curses.error):
+            CursesDispatcher.get().call(window.addstr, row, area.x, box, attribute)
+
+
+def _same_value(left: Any, right: Any) -> bool:
+    """True if two option values are the same value as Tcl would see them.
+
+    Tcl has one type, so a StringVar holding ``"1"`` and an ``onvalue`` of
+    the integer 1 are the same thing there. Compared by value first, so that
+    1 and 1.0 match, and then as text, so that 1 and "1" do.
+    """
+    if left is None or right is None:
+        return left is right
+    with contextlib.suppress(TypeError):
+        if left == right:
+            return True
+    return str(left) == str(right)
 
 
 class Entry(_Drawable):
