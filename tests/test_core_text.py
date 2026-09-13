@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tkcurses._core.text import align_offset, measure, wrap
+from tkcurses._core.text import align_offset, measure, wrap, wrap_spans
 
 # ------------------------------------------------------------------ wrapping
 
@@ -96,3 +96,53 @@ def test_a_line_wider_than_the_space_starts_at_the_left():
 def test_an_unknown_justification_is_refused():
     with pytest.raises(ValueError, match="justify"):
         align_offset(4, 10, "sideways")
+
+
+# ------------------------------------------------------------- wrap_spans
+
+
+def test_spans_cover_the_whole_line():
+    line = "the quick brown fox jumps"
+    spans = wrap_spans(line, 10, "char")
+    assert "".join(line[a:b] for a, b in spans) == line
+
+
+def test_no_wrapping_is_one_span():
+    assert wrap_spans("anything at all", 5, "none") == [(0, 15)]
+
+
+def test_a_width_of_zero_does_not_wrap():
+    assert wrap_spans("anything at all", 0, "char") == [(0, 15)]
+
+
+def test_char_wrapping_breaks_at_the_width():
+    assert wrap_spans("abcdefgh", 3, "char") == [(0, 3), (3, 6), (6, 8)]
+
+
+def test_word_wrapping_breaks_at_a_space():
+    line = "the quick brown"
+    spans = wrap_spans(line, 10, "word")
+    assert [line[a:b] for a, b in spans] == ["the quick ", "brown"]
+
+
+def test_word_wrapping_keeps_the_space_on_the_line_it_broke():
+    """Otherwise every wrapped line after the first starts with a space."""
+    line = "aaa bbb ccc"
+    assert all(not line[a:b].startswith(" ") or a == 0 for a, b in wrap_spans(line, 4, "word"))
+
+
+def test_a_word_too_long_to_fit_is_broken():
+    line = "antidisestablishmentarianism"
+    spans = wrap_spans(line, 10, "word")
+    assert all(b - a <= 10 for a, b in spans)
+    assert "".join(line[a:b] for a, b in spans) == line
+
+
+def test_an_empty_line_is_one_empty_span():
+    assert wrap_spans("", 10, "char") == [(0, 0)]
+
+
+def test_spans_are_contiguous_and_ordered():
+    spans = wrap_spans("one two three four five", 7, "word")
+    assert spans[0][0] == 0
+    assert all(spans[i][1] == spans[i + 1][0] for i in range(len(spans) - 1))
