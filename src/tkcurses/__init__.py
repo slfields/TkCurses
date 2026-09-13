@@ -35,9 +35,10 @@ from tkcurses._core.bindings import (
 from tkcurses._core.clipboard import CLIPBOARD, PRIMARY
 from tkcurses._core.colors import ColorManager, palette_rgb, parse_color, rgb_for
 from tkcurses._core.dispatcher import CursesDispatcher
+from tkcurses._core.editing import TextField
 from tkcurses._core.errors import TclError, TkCursesError
+from tkcurses._core.events import MOD_SHIFT, KeyEvent, MouseEvent, ResizeEvent
 from tkcurses._core.events import Event as CoreEvent
-from tkcurses._core.events import KeyEvent, MouseEvent, ResizeEvent
 from tkcurses._core.geometry import (
     BORDER_WIDTH,
     Insets,
@@ -59,7 +60,7 @@ from tkcurses._core.panels import PanelStack
 from tkcurses._core.place import BORDERMODES, PlaceLayout, PlaceOptions
 from tkcurses._core.screen import CursesScreen
 from tkcurses._core.text import align_offset, measure, wrap
-from tkcurses.constants import FLAT
+from tkcurses.constants import ANCHOR, END, FLAT, INSERT, SEL_FIRST, SEL_LAST
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -74,6 +75,7 @@ __all__ = [
     "BooleanVar",
     "Button",
     "DoubleVar",
+    "Entry",
     "Event",
     "Frame",
     "Grid",
@@ -4197,4 +4199,463 @@ def _button_key(event: Event) -> str:
 
 def _button_refresh(event: Event) -> None:
     """Repaint after the focus moved in or out."""
+    event.widget._redraw()
+
+
+class Entry(_Drawable):
+    """A one-line text field.
+
+    The editing itself is :class:`~tkcurses._core.editing.TextField`; what is
+    here is the widget around it - options, key bindings, the cursor and
+    selection on screen, and keeping a ``textvariable`` in step both ways.
+
+    ``state`` has three values rather than two. ``readonly`` shows the text
+    and lets it be selected and copied but refuses every edit, which is what
+    a field displaying a computed value wants; ``disabled`` refuses the focus
+    as well.
+    """
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "justify": "left",
+        "relief": "sunken",
+        "show": "",
+        "state": "normal",
+        "takefocus": True,
+        "textvariable": None,
+        "validate": "none",
+        "validatecommand": None,
+        "width": 20,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``width``, ``textvariable``, ``show``, ``state``,
+                ``justify``, ``validate``, ``validatecommand``, and the
+                standard options.
+        """
+        self._field = TextField()
+        self._variable_trace: tuple[Variable, str] | None = None
+        self._syncing = False
+        super().__init__(master, cnf, name=name, **kw)
+        self._follow_variable()
+        self._apply_requested_size()
+        self._install_class_bindings()
+
+    # ------------------------------------------------------------- bindings
+
+    def _install_class_bindings(self) -> None:
+        """Register the editing keys for every Entry in this application."""
+        if "Entry" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("Entry")
+        bind = self.bind_class
+        bind("Entry", "<Any-Key>", _entry_key)
+        bind("Entry", "<Button-1>", _entry_click)
+        bind("Entry", "<FocusIn>", _entry_refresh)
+        bind("Entry", "<FocusOut>", _entry_refresh)
+
+    # ---------------------------------------------------------------- state
+
+    @property
+    def _editable(self) -> bool:
+        """True while the field accepts changes from the keyboard."""
+        return str(self._options["state"]) == "normal"
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, following a new variable and repainting as needed."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if not given:
+            return result
+        if "textvariable" in given:
+            self._follow_variable()
+        if "width" in given:
+            self._apply_requested_size()
+            self._invalidate_layout()
+        self._redraw()
+        return result
+
+    config = configure
+
+    def _apply_requested_size(self) -> None:
+        """Ask for the field's width plus whatever the border and padding need."""
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        self._request_size(
+            int(self._options["width"]) + 2 * int(self._options["padx"]) + edge,
+            1 + 2 * int(self._options["pady"]) + edge,
+        )
+
+    # ----------------------------------------------------------- the variable
+
+    def _follow_variable(self) -> None:
+        """Track the ``textvariable``, dropping any previous one."""
+        if self._variable_trace is not None:
+            variable, handle = self._variable_trace
+            variable.trace_remove("write", handle)
+            self._variable_trace = None
+        variable = self._options["textvariable"]
+        if variable is None:
+            return
+        handle = variable.trace_add("write", lambda *_: self._variable_changed())
+        self._variable_trace = (variable, handle)
+        self._variable_changed()
+
+    def _variable_changed(self) -> None:
+        """Take the variable's value, unless this widget is what changed it.
+
+        Without the guard the two would chase each other: every keystroke
+        writes the variable, whose trace writes the field, which resets the
+        cursor the keystroke just moved.
+        """
+        if self._syncing:
+            return
+        variable = self._options["textvariable"]
+        if variable is None:
+            return
+        self._field.text = str(variable.get())
+        self._refresh_view()
+        self._redraw()
+
+    def _publish(self) -> None:
+        """Write the field's contents back to the variable, if there is one."""
+        variable = self._options["textvariable"]
+        if variable is None:
+            return
+        self._syncing = True
+        try:
+            variable.set(self._field.text)
+        finally:
+            self._syncing = False
+
+    # ------------------------------------------------------------ public API
+
+    def get(self) -> str:
+        """The text in the field."""
+        return self._field.text
+
+    def insert(self, index: Any, string: str) -> None:
+        """Insert ``string`` at ``index``."""
+        self._field.insert(self.index(index), string)
+        self._changed()
+
+    def delete(self, first: Any, last: Any = None) -> None:
+        """Delete from ``first`` up to but not including ``last``."""
+        self._field.delete(
+            self.index(first), None if last is None else self.index(last)
+        )
+        self._changed()
+
+    def icursor(self, index: Any) -> None:
+        """Put the insertion cursor at ``index``."""
+        self._field.move_to(self.index(index))
+        self._refresh_view()
+        self._redraw()
+
+    def index(self, index: Any) -> int:
+        """Resolve one of Tk's index forms to a number.
+
+        Understands integers, ``end``, ``insert``, ``anchor``, ``sel.first``,
+        ``sel.last`` and ``@x`` for a screen column.
+
+        Raises:
+            TclError: If the form is not one Tk defines, or names a selection
+                that does not exist.
+        """
+        if isinstance(index, int):
+            return self._field.clamp(index)
+        text = str(index)
+        if text.isdigit() or (text.startswith("-") and text[1:].isdigit()):
+            return self._field.clamp(int(text))
+        if text in ("end", END):
+            return len(self._field.text)
+        if text in ("insert", INSERT):
+            return self._field.cursor
+        if text.startswith("@"):
+            return self._field.index_at(int(text[1:]) - self._text_area().x)
+        selection = self._field.selection
+        if text in ("sel.first", SEL_FIRST):
+            if selection is None:
+                raise TclError("selection isn't in widget " + str(self))
+            return selection[0]
+        if text in ("sel.last", SEL_LAST):
+            if selection is None:
+                raise TclError("selection isn't in widget " + str(self))
+            return selection[1]
+        if text in ("anchor", ANCHOR):
+            return self._field.cursor
+        raise TclError(f'bad entry index "{index}"')
+
+    def selection_range(self, start: Any, end: Any) -> None:
+        """Select from ``start`` to ``end``."""
+        self._field.select_range(self.index(start), self.index(end))
+        self._redraw()
+
+    select_range = selection_range
+
+    def selection_clear(self, **kw: Any) -> None:  # noqa: ARG002 - Misc signature
+        """Drop the selection."""
+        self._field.select_clear()
+        self._redraw()
+
+    select_clear = selection_clear
+
+    def selection_present(self) -> bool:
+        """True if anything is selected."""
+        return self._field.selection is not None
+
+    select_present = selection_present
+
+    def selection_from(self, index: Any) -> None:
+        """Start a selection at ``index``."""
+        self._field.select_range(self.index(index), self.index(index))
+        self._field.move_to(self.index(index))
+        self._redraw()
+
+    select_from = selection_from
+
+    def selection_to(self, index: Any) -> None:
+        """Extend the selection to ``index``."""
+        self._field.move_to(self.index(index), extend=True)
+        self._refresh_view()
+        self._redraw()
+
+    select_to = selection_to
+    selection_adjust = selection_to
+    select_adjust = selection_to
+
+    def xview(self, index: Any = None) -> int:
+        """Get or set the first character shown."""
+        if index is not None:
+            self._field.move_to(self.index(index))
+            self._refresh_view()
+            self._redraw()
+        return self._field.view
+
+    # -------------------------------------------------------------- editing
+
+    def _validated(self, proposed: str) -> bool:
+        """Ask the ``validatecommand`` whether an edit may go ahead.
+
+        tkinter passes Tcl substitution codes to a registered command; without
+        Tcl there is nothing to register against, so the callable is handed
+        the proposed contents directly. Anything it raises counts as a
+        refusal - a validator that fails should not take the application with
+        it.
+        """
+        if str(self._options["validate"]) in ("none", ""):
+            return True
+        command = self._options["validatecommand"]
+        if command is None:
+            return True
+        try:
+            return bool(command(proposed))
+        except Exception:
+            return False
+
+    def _edit(self, change: Callable[[], None], proposed: str) -> None:
+        """Apply an edit if the state and the validator both allow it."""
+        if not self._editable or not self._validated(proposed):
+            return
+        change()
+        self._changed()
+
+    def _changed(self) -> None:
+        """Publish, rescroll and repaint after the contents changed."""
+        self._publish()
+        self._refresh_view()
+        self._redraw()
+
+    def _refresh_view(self) -> None:
+        """Scroll so the cursor is on screen."""
+        self._field.scroll_into_view(self._text_area().width)
+
+    # ------------------------------------------------------------- painting
+
+    def _text_area(self) -> Rect:
+        """Where the text goes, in cells relative to this widget's window."""
+        edge = BORDER_WIDTH if self._bordered else 0
+        padx, pady = int(self._options["padx"]), int(self._options["pady"])
+        return Rect(
+            edge + padx,
+            edge + pady,
+            max(0, self._rect.width - 2 * (edge + padx)),
+            max(0, self._rect.height - 2 * (edge + pady)),
+        )
+
+    def _displayed(self) -> str:
+        """What is on screen, masked if ``show`` says so."""
+        mask = str(self._options["show"])
+        text = self._field.text
+        return mask[0] * len(text) if mask else text
+
+    def _redraw(self) -> None:
+        """Paint the field, its selection, and the cursor."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        area = self._text_area()
+        # The window is a function of the cursor and the current width, and
+        # the width is not known until the widget has been laid out - text
+        # inserted before then scrolled against a field of no width at all.
+        self._field.scroll_into_view(area.width)
+        dispatcher = CursesDispatcher.get()
+        attribute = self._background_attribute()
+        with contextlib.suppress(ValueError):
+            attribute = for_state(str(self._options["state"]), attribute)
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            if self._bordered and self._rect.width >= 2 and self._rect.height >= 2:
+                self._draw_border(
+                    dispatcher, window, self._rect.width, self._rect.height, attribute
+                )
+            if area.is_empty:
+                return
+            view = self._field.view
+            text = self._displayed()[view : view + area.width]
+            dispatcher.call(window.addstr, area.y, area.x, text, attribute)
+            self._draw_selection(dispatcher, window, area, attribute)
+            self._draw_cursor(dispatcher, window, area, attribute)
+
+    def _draw_selection(
+        self, dispatcher: CursesDispatcher, window: Any, area: Rect, attribute: int
+    ) -> None:
+        """Show the selected range in reverse video."""
+        selection = self._field.selection
+        if selection is None:
+            return
+        first, last = selection
+        start = max(0, self._field.column_of(first))
+        stop = min(area.width, self._field.column_of(last))
+        if stop <= start:
+            return
+        text = self._displayed()[self._field.view + start : self._field.view + stop]
+        with contextlib.suppress(curses.error):
+            dispatcher.call(
+                window.addstr,
+                area.y,
+                area.x + start,
+                text,
+                attribute | curses.A_REVERSE,
+            )
+
+    def _draw_cursor(
+        self, dispatcher: CursesDispatcher, window: Any, area: Rect, attribute: int
+    ) -> None:
+        """Show where typing will go, but only while the field has the focus.
+
+        A cursor drawn in an unfocused field claims the keyboard is there when
+        it is not, which in a form of several fields is actively misleading.
+        """
+        if self.focus_get() is not self or not self._editable:
+            return
+        column = self._field.column_of(self._field.cursor)
+        if not (0 <= column < area.width):
+            return
+        under = self._displayed()[self._field.cursor : self._field.cursor + 1] or " "
+        with contextlib.suppress(curses.error):
+            dispatcher.call(
+                window.addstr,
+                area.y,
+                area.x + column,
+                under,
+                attribute | curses.A_REVERSE,
+            )
+
+
+#: Keys that move the cursor, as offsets or as absolute positions.
+_ENTRY_MOTION: dict[str, Any] = {
+    "Left": -1,
+    "Right": 1,
+    "Home": "start",
+    "End": "end",
+}
+
+
+def _entry_key(event: Event) -> str | None:
+    """Handle one key in an Entry.
+
+    Returns ``"break"`` for keys the field consumed, so a Left arrow moving
+    the cursor does not also reach whatever else is bound to it.
+    """
+    entry = event.widget
+    field = entry._field
+    keysym = event.keysym
+    extend = bool(event.state & MOD_SHIFT)
+
+    if keysym in _ENTRY_MOTION:
+        motion = _ENTRY_MOTION[keysym]
+        if motion == "start":
+            field.move_to(0, extend=extend)
+        elif motion == "end":
+            field.move_to(len(field.text), extend=extend)
+        else:
+            field.move_by(motion, extend=extend)
+        entry._refresh_view()
+        entry._redraw()
+        return "break"
+
+    if keysym == "BackSpace":
+        if not field.delete_selection() and field.cursor > 0:
+            entry._edit(
+                lambda: field.delete(field.cursor - 1, field.cursor),
+                field.text[: field.cursor - 1] + field.text[field.cursor :],
+            )
+        else:
+            entry._changed()
+        return "break"
+
+    if keysym == "Delete":
+        if not field.delete_selection():
+            entry._edit(
+                lambda: field.delete(field.cursor, field.cursor + 1),
+                field.text[: field.cursor] + field.text[field.cursor + 1 :],
+            )
+        else:
+            entry._changed()
+        return "break"
+
+    if event.char and event.char.isprintable():
+        selection = field.selection
+        start = selection[0] if selection else field.cursor
+        remainder = (
+            field.text[: selection[0]] + field.text[selection[1] :]
+            if selection
+            else field.text
+        )
+        proposed = remainder[:start] + event.char + remainder[start:]
+
+        def apply() -> None:
+            field.delete_selection()
+            field.insert(field.cursor, event.char)
+
+        entry._edit(apply, proposed)
+        return "break"
+    return None
+
+
+def _entry_click(event: Event) -> None:
+    """Take the focus and put the cursor where the click landed."""
+    entry = event.widget
+    if str(entry._options["state"]) == "disabled":
+        return
+    entry.focus_set()
+    entry._field.move_to(entry._field.index_at(event.x - entry._text_area().x))
+    entry._refresh_view()
+    entry._redraw()
+
+
+def _entry_refresh(event: Event) -> None:
+    """Repaint after the focus moved, so the cursor appears or goes."""
     event.widget._redraw()
