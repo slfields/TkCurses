@@ -3748,6 +3748,21 @@ class BooleanVar(Variable):
 class _Drawable(Widget):
     """Painting shared by the widgets that draw a background and a border."""
 
+    def _font_attribute(self) -> int:
+        """What this widget's ``font`` option does to its text.
+
+        A terminal has one typeface, so the part of a Tk font specification
+        that survives is the styling: bold, italic and underline. A widget
+        with no ``font`` option - a Frame, a Scrollbar - has no text of its
+        own to style and gets nothing.
+        """
+        font = str(self._options.get("font", "")).lower()
+        return from_font(
+            bold="bold" in font,
+            italic="italic" in font,
+            underline="underline" in font,
+        )
+
     @property
     def _disabled(self) -> bool:
         """True while the widget refuses to answer the user.
@@ -4089,12 +4104,7 @@ class _TextWidget(_Drawable):
 
     def _text_attribute(self) -> int:
         """Attributes the font and state put on the text."""
-        font = str(self._options["font"]).lower()
-        attribute = from_font(
-            bold="bold" in font,
-            italic="italic" in font,
-            underline="underline" in font,
-        )
+        attribute = self._font_attribute()
         with contextlib.suppress(ValueError):
             attribute = for_state(str(self._options["state"]), attribute)
         return attribute
@@ -4764,6 +4774,7 @@ class Entry(_Drawable):
     """
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "font": "",
         "justify": "left",
         "relief": "sunken",
         "show": "",
@@ -5058,7 +5069,7 @@ class Entry(_Drawable):
         # inserted before then scrolled against a field of no width at all.
         self._field.scroll_into_view(area.width)
         dispatcher = CursesDispatcher.get()
-        attribute = self._background_attribute()
+        attribute = self._background_attribute() | self._font_attribute()
         with contextlib.suppress(ValueError):
             attribute = for_state(str(self._options["state"]), attribute)
         with contextlib.suppress(curses.error):
@@ -5331,6 +5342,7 @@ class LabelFrame(Frame):
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "font": "",
         "labelanchor": "nw",
         "relief": GROOVE,
         "text": "",
@@ -5442,7 +5454,7 @@ class LabelFrame(Frame):
         else:
             column = BORDER_WIDTH
         row = 0 if edge == "top" else height - 1
-        attribute = self._background_attribute() | self._caption_attribute()
+        attribute = self._background_attribute() | self._font_attribute()
         dispatcher = CursesDispatcher.get()
         with contextlib.suppress(curses.error):
             if row == height - 1 and column + len(text) >= width:
@@ -5451,15 +5463,6 @@ class LabelFrame(Frame):
                 dispatcher.call(window.insstr, row, column, text, attribute)
             else:
                 dispatcher.call(window.addstr, row, column, text, attribute)
-
-    def _caption_attribute(self) -> int:
-        """Attributes the font option puts on the caption."""
-        font = str(self._options.get("font", "")).lower()
-        return from_font(
-            bold="bold" in font,
-            italic="italic" in font,
-            underline="underline" in font,
-        )
 
 
 class Spinbox(Entry):
@@ -5728,7 +5731,7 @@ class Spinbox(Entry):
         if up_column is None or down_column is None:
             return
         area = super()._text_area()
-        attribute = self._background_attribute()
+        attribute = self._background_attribute() | self._font_attribute()
         with contextlib.suppress(ValueError):
             attribute = for_state(str(self._options["state"]), attribute)
         dispatcher = CursesDispatcher.get()
@@ -5793,6 +5796,7 @@ class Text(_Drawable):
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "exportselection": True,
+        "font": "",
         "height": 24,
         "relief": "sunken",
         "state": "normal",
@@ -6411,7 +6415,7 @@ class Text(_Drawable):
         if window is None or self.tk.screen is None:
             return
         dispatcher = CursesDispatcher.get()
-        attribute = self._background_attribute()
+        attribute = self._background_attribute() | self._font_attribute()
         with contextlib.suppress(ValueError):
             attribute = for_state(str(self._options["state"]), attribute)
         area = self._text_area()
@@ -6658,6 +6662,7 @@ class Listbox(_Drawable):
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "activestyle": "underline",
+        "font": "",
         "height": 10,
         "relief": "sunken",
         "selectmode": "browse",
@@ -6976,7 +6981,7 @@ class Listbox(_Drawable):
             return
         area = self._text_area()
         dispatcher = CursesDispatcher.get()
-        attribute = self._background_attribute()
+        attribute = self._background_attribute() | self._font_attribute()
         with contextlib.suppress(ValueError):
             attribute = for_state(str(self._options["state"]), attribute)
         with contextlib.suppress(curses.error):
@@ -7348,6 +7353,7 @@ class Scale(_Drawable):
         "bigincrement": 0,
         "command": None,
         "digits": 0,
+        "font": "",
         "from_": 0.0,
         "label": "",
         "length": 20,
@@ -7682,7 +7688,9 @@ class Scale(_Drawable):
         if window is None or self.tk.screen is None:
             return
         dispatcher = CursesDispatcher.get()
-        attribute = self._background_attribute()
+        attribute = self._background_attribute() | self._font_attribute()
+        with contextlib.suppress(ValueError):
+            attribute = for_state(str(self._options["state"]), attribute)
         with contextlib.suppress(curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
