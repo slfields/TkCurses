@@ -86,3 +86,26 @@ raise SystemExit(_support.run("broken", build))
     )
     assert term.wait_for_exit(timeout=10) == 1
     assert "scenario is broken" in term.stderr
+
+
+# The documented run-from-anywhere form. Given a path rather than -m, Python
+# puts the uat directory itself on sys.path and never the repository root, so
+# these would fail without the bootstrap in __main__.py - whatever the working
+# directory. PYTHONSAFEPATH stops Python adding any path of its own, which
+# rules out passing by luck.
+
+
+def test_the_runner_works_when_given_its_path(terminal):
+    term = terminal(cols=80, rows=30, env={"PYTHONSAFEPATH": "1"})
+    term.run([sys.executable, str(PROJECT_ROOT / "uat")])
+    assert term.wait_for_exit(timeout=10) == 0
+    assert "Acceptance scenarios" in "\n".join(term.display)
+
+
+def test_a_scenario_runs_when_the_runner_is_given_its_path(terminal):
+    term = terminal(cols=60, rows=20, env={"PYTHONSAFEPATH": "1"})
+    term.run([sys.executable, str(PROJECT_ROOT / "uat"), "2"])
+    term.wait_for(lambda t: t.row(0).strip() != "", message="the title line")
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+    assert "Traceback" not in term.stderr

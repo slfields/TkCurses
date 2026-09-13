@@ -1,8 +1,12 @@
 """Run the acceptance scenarios.
 
-``python -m uat`` lists them; ``python -m uat 3`` runs the third. Each also
-runs on its own - ``python -m uat.scenario_03_stacking`` - which is what the
-list prints, so a scenario can be pointed at directly from a bug report.
+``python3 -m uat`` lists them; ``python3 -m uat 3`` runs the third. Both need
+the repository root as the working directory, since uat/ lives there and is
+not part of the installed package. Giving the path instead works from
+anywhere: ``python3 /path/to/TkCurses/uat``.
+
+Each scenario also runs on its own - ``python3 -m uat.scenario_03_stacking`` -
+which is what the list prints, so one can be pointed at from a bug report.
 """
 
 from __future__ import annotations
@@ -10,8 +14,16 @@ from __future__ import annotations
 import importlib
 import pkgutil
 import sys
+from pathlib import Path
 
-import uat
+# Run by path rather than with -m, this file's own directory is what lands on
+# sys.path, not the repository root, so the package it belongs to cannot be
+# imported. Putting the root on the path first is what makes the
+# run-from-anywhere form work.
+if __package__ in (None, ""):  # pragma: no cover - only when run by path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import uat  # placed here deliberately: it needs the sys.path fix above
 
 
 def scenarios() -> list[str]:
@@ -31,10 +43,10 @@ def summary(name: str) -> str:
 
 def show() -> int:
     """Print the list of scenarios."""
-    print("Acceptance scenarios. Run one with: python -m uat <number>\n")
+    print("Acceptance scenarios. Run one with: python3 -m uat <number>\n")
     for index, name in enumerate(scenarios(), start=1):
         print(f"  {index:>2}. {summary(name)}")
-        print(f"      python -m uat.{name}")
+        print(f"      python3 -m uat.{name}")
     print("\nWhat to look for in each: docs/UAT_BASE_WIDGETS.md")
     return 0
 

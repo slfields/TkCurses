@@ -8,13 +8,29 @@ checklist is for those questions.
 
 **How to run**
 
+`uat/` is a development tool at the repository root, not part of the installed
+package, so Python finds it only when the root is where you are:
+
 ```bash
-python -m uat            # list the scenarios
-python -m uat 3          # run the third
+cd /path/to/TkCurses
+python3 -m uat            # list the scenarios
+python3 -m uat 3          # run the third
 ```
 
-Each scenario also runs on its own, for example
-`python -m uat.scenario_03_stacking`. Every one exits on **Escape**.
+From anywhere else, give the path instead — the runner puts itself on the
+path when invoked this way:
+
+```bash
+python3 /path/to/TkCurses/uat
+python3 /path/to/TkCurses/uat 3
+```
+
+Each scenario also runs on its own from the repository root, for example
+`python3 -m uat.scenario_03_stacking`, which is the form the list prints.
+Every scenario exits on **Escape**.
+
+> `python3` is spelled out because plenty of systems have no `python` at all.
+> Use whichever name is your Python 3 interpreter.
 
 **Before you start**, note the terminal you are using and its size — behaviour
 differs between emulators, and a failure is much easier to chase with that
@@ -40,7 +56,7 @@ ways out deliberately; the others should be checked for it in passing.
 
 ## 1. Root window
 
-`python -m uat 1`
+`python3 -m uat 1`
 
 Watch the screen come up, then press Escape.
 
@@ -51,7 +67,7 @@ Watch the screen come up, then press Escape.
 
 ## 2. A window above the root
 
-`python -m uat 2`
+`python3 -m uat 2`
 
 - [ ] A box is drawn in single lines, not letters like `lqqqk`
 - [ ] Its title is centred on the top edge
@@ -60,7 +76,7 @@ Watch the screen come up, then press Escape.
 
 ## 3. Stacking
 
-`python -m uat 3`
+`python3 -m uat 3`
 
 Press `1` and `2` to raise each window.
 
@@ -71,7 +87,7 @@ Press `1` and `2` to raise each window.
 
 ## 4. Window manager
 
-`python -m uat 4`
+`python3 -m uat 4`
 
 Press `m` move, `h` hide, `s` show, `f` fullscreen, `r` restore.
 
@@ -83,7 +99,7 @@ Press `m` move, `h` hide, `s` show, `f` fullscreen, `r` restore.
 
 ## 5. Terminal resize
 
-`python -m uat 5`
+`python3 -m uat 5`
 
 Drag the terminal's edge, or resize the pane.
 
@@ -96,7 +112,7 @@ Drag the terminal's edge, or resize the pane.
 
 ## 6. Keyboard and mouse
 
-`python -m uat 6`
+`python3 -m uat 6`
 
 Type letters, arrows, function keys, modified keys. Click and drag.
 
@@ -111,7 +127,7 @@ Type letters, arrows, function keys, modified keys. Click and drag.
 
 ## 7. Timers and idling
 
-`python -m uat 7`
+`python3 -m uat 7`
 
 Leave it alone for half a minute, then type.
 
@@ -121,7 +137,7 @@ Leave it alone for half a minute, then type.
 
 ## 8. Variables and traces
 
-`python -m uat 8`
+`python3 -m uat 8`
 
 Press `+`, `-`, `r`.
 
@@ -131,7 +147,7 @@ Press `+`, `-`, `r`.
 
 ## 9. Failure modes
 
-`python -m uat 9`
+`python3 -m uat 9`
 
 Run it four times, ending it differently each time: `q`, `c`, `x`, and Ctrl-C.
 
