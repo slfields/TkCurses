@@ -25,7 +25,7 @@ import traceback
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from tkcurses._core.application import Application
-from tkcurses._core.attributes import style_for_relief
+from tkcurses._core.attributes import for_state, from_font, style_for_relief
 from tkcurses._core.bindings import (
     EventPattern,
     parse_sequence,
@@ -57,6 +57,7 @@ from tkcurses._core.pack import FILLS, SIDES, PackLayout, PackOptions, parse_anc
 from tkcurses._core.panels import PanelStack
 from tkcurses._core.place import BORDERMODES, PlaceLayout, PlaceOptions
 from tkcurses._core.screen import CursesScreen
+from tkcurses._core.text import align_offset, measure, wrap
 from tkcurses.constants import FLAT
 
 if TYPE_CHECKING:
@@ -75,6 +76,7 @@ __all__ = [
     "Frame",
     "Grid",
     "IntVar",
+    "Label",
     "Misc",
     "NoDefaultRoot",
     "Pack",
@@ -3604,7 +3606,60 @@ class BooleanVar(Variable):
 # ======================================================================
 
 
-class Frame(Widget):
+class _Drawable(Widget):
+    """Painting shared by the widgets that draw a background and a border."""
+
+    def _background_attribute(self) -> int:
+        """The curses attribute this frame's colours resolve to.
+
+        Falls back to plain when no colour manager is running, which is what a
+        terminal without colour gives anyway.
+        """
+        colors = self.tk.colors
+        if colors is None:
+            return curses.A_NORMAL
+        return colors.attribute_for(
+            str(self._options["foreground"] or "white"),
+            str(self._options["background"] or "black"),
+        )
+
+    def _draw_border(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        width: int,
+        height: int,
+        attribute: int,
+    ) -> None:
+        """Draw the box for this frame's relief.
+
+        Drawn character by character rather than with curses' own ``border``,
+        because a relief is a choice of line style - single, double, heavy -
+        and ``border`` only knows one.
+        """
+        style = style_for_relief(str(self._options["relief"]) or FLAT)
+        attribute |= style.attr
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.addstr, 0, 0, style.top(width), attribute)
+            for row in range(1, height - 1):
+                dispatcher.call(window.addstr, row, 0, style.vertical, attribute)
+                dispatcher.call(
+                    window.addstr, row, width - 1, style.vertical, attribute
+                )
+            # The last cell of the bottom row is inserted rather than added:
+            # writing it with addstr would scroll a window whose cursor has
+            # nowhere left to go, which curses refuses. insstr rather than
+            # insch because a box-drawing character is multibyte and does not
+            # fit in the single chtype insch takes.
+            dispatcher.call(
+                window.addstr, height - 1, 0, style.bottom(width)[:-1], attribute
+            )
+            dispatcher.call(
+                window.insstr, height - 1, width - 1, style.bottom_right, attribute
+            )
+
+
+class Frame(_Drawable):
     """A container, and the first widget that draws itself.
 
     A frame is a rectangle of background with an optional border, and
@@ -3701,51 +3756,231 @@ class Frame(Widget):
             if self._bordered and width >= 2 and height >= 2:
                 self._draw_border(dispatcher, window, width, height, attribute)
 
-    def _background_attribute(self) -> int:
-        """The curses attribute this frame's colours resolve to.
 
-        Falls back to plain when no colour manager is running, which is what a
-        terminal without colour gives anyway.
+class Label(_Drawable):
+    """A run of text, and the first widget with something to say.
+
+    Its size comes from the text unless ``width`` or ``height`` says
+    otherwise, so a label is as wide as its longest line and as tall as it has
+    lines. ``wraplength`` breaks the text at that many cells, at word
+    boundaries where it can.
+
+    Two options decide where the text ends up and they are not the same thing:
+    ``justify`` aligns the lines against each other, and ``anchor`` puts the
+    resulting block within whatever area the geometry manager handed over.
+    """
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "anchor": "center",
+        "font": "",
+        "height": 0,
+        "justify": "center",
+        "state": "normal",
+        "text": "",
+        "textvariable": None,
+        "underline": -1,
+        "width": 0,
+        "wraplength": 0,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
         """
-        colors = self.tk.colors
-        if colors is None:
-            return curses.A_NORMAL
-        return colors.attribute_for(
-            str(self._options["foreground"] or "white"),
-            str(self._options["background"] or "black"),
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``text``, ``textvariable``, ``anchor``, ``justify``,
+                ``wraplength``, ``width``, ``height``, ``state``,
+                ``underline``, ``font``, and the standard options.
+        """
+        self._variable_trace: tuple[Variable, str] | None = None
+        super().__init__(master, cnf, name=name, **kw)
+        self._follow_variable()
+        self._apply_requested_size()
+
+    # -------------------------------------------------------------- content
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, re-measuring and repainting as the change requires."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if not given:
+            return result
+        if "textvariable" in given:
+            self._follow_variable()
+        self._apply_requested_size()
+        self._invalidate_layout()
+        self._redraw()
+        return result
+
+    config = configure
+
+    def _follow_variable(self) -> None:
+        """Track the ``textvariable``, dropping any previous one.
+
+        The old trace has to go: a label pointed at a second variable that
+        still answered to the first would take its text from whichever was
+        written to last.
+        """
+        if self._variable_trace is not None:
+            variable, handle = self._variable_trace
+            variable.trace_remove("write", handle)
+            self._variable_trace = None
+        variable = self._options["textvariable"]
+        if variable is None:
+            return
+        handle = variable.trace_add("write", lambda *_: self._variable_changed())
+        self._variable_trace = (variable, handle)
+        self._variable_changed()
+
+    def _variable_changed(self) -> None:
+        """Re-measure and repaint after the variable behind the text moved."""
+        self._apply_requested_size()
+        self._invalidate_layout()
+        self._redraw()
+
+    def _text(self) -> str:
+        """The text to display.
+
+        A ``textvariable`` wins over ``text`` when both are set, which is what
+        tkinter does: the variable is the live one.
+        """
+        variable = self._options["textvariable"]
+        if variable is not None:
+            return str(variable.get())
+        return str(self._options["text"])
+
+    def _lines(self) -> list[str]:
+        """The text as display lines, wrapped if ``wraplength`` says so."""
+        return wrap(self._text(), int(self._options["wraplength"]))
+
+    def _apply_requested_size(self) -> None:
+        """Ask for room for the text, or for the size the options name.
+
+        Padding and any border are included: a label asks for what it needs to
+        draw, not for what is left after the frame around it.
+        """
+        text_width, text_height = measure(self._lines())
+        width = int(self._options["width"]) or text_width
+        height = int(self._options["height"]) or text_height
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        self._request_size(
+            width + 2 * int(self._options["padx"]) + edge,
+            height + 2 * int(self._options["pady"]) + edge,
         )
 
-    def _draw_border(
+    # ------------------------------------------------------------- painting
+
+    def _redraw(self) -> None:
+        """Paint the background, the border if any, and then the text."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        dispatcher = CursesDispatcher.get()
+        attribute = self._background_attribute()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            if self._bordered and self._rect.width >= 2 and self._rect.height >= 2:
+                self._draw_border(
+                    dispatcher, window, self._rect.width, self._rect.height, attribute
+                )
+            self._draw_text(dispatcher, window, attribute)
+
+    def _draw_text(
+        self, dispatcher: CursesDispatcher, window: Any, attribute: int
+    ) -> None:
+        """Write the lines into the area left after border and padding."""
+        area = self._text_area()
+        if area.is_empty:
+            return
+        lines = self._lines()
+        attribute |= self._text_attribute()
+        across, down = parse_anchor(str(self._options["anchor"]))
+        block_width, block_height = measure(lines)
+        top = area.y + int((area.height - block_height) * down)
+        for index, line in enumerate(lines):
+            row = top + index
+            if not (area.y <= row < area.y + area.height):
+                continue
+            text = clip_text(line, area.width)
+            column = area.x + int((area.width - block_width) * across)
+            column += align_offset(
+                len(text), block_width, str(self._options["justify"])
+            )
+            with contextlib.suppress(curses.error):
+                dispatcher.call(window.addstr, row, column, text, attribute)
+        self._draw_underline(dispatcher, window, area, lines, attribute)
+
+    def _text_area(self) -> Rect:
+        """Where the text may go, in cells relative to this widget's window."""
+        edge = BORDER_WIDTH if self._bordered else 0
+        padx, pady = int(self._options["padx"]), int(self._options["pady"])
+        return Rect(
+            edge + padx,
+            edge + pady,
+            max(0, self._rect.width - 2 * (edge + padx)),
+            max(0, self._rect.height - 2 * (edge + pady)),
+        )
+
+    def _text_attribute(self) -> int:
+        """Attributes the font and state put on the text."""
+        font = str(self._options["font"]).lower()
+        attribute = from_font(
+            bold="bold" in font,
+            italic="italic" in font,
+            underline="underline" in font,
+        )
+        with contextlib.suppress(ValueError):
+            attribute = for_state(str(self._options["state"]), attribute)
+        return attribute
+
+    def _draw_underline(
         self,
         dispatcher: CursesDispatcher,
         window: Any,
-        width: int,
-        height: int,
+        area: Rect,
+        lines: list[str],
         attribute: int,
     ) -> None:
-        """Draw the box for this frame's relief.
+        """Underline one character, as tkinter's ``underline`` index does.
 
-        Drawn character by character rather than with curses' own ``border``,
-        because a relief is a choice of line style - single, double, heavy -
-        and ``border`` only knows one.
+        The index counts through the text as written, so on wrapped text it
+        has to be resolved to a line and a column rather than used directly.
         """
-        style = style_for_relief(str(self._options["relief"]) or FLAT)
-        attribute |= style.attr
+        index = int(self._options["underline"])
+        if index < 0:
+            return
+        remaining = index
+        line_number: int | None = None
+        for number, line in enumerate(lines):
+            if remaining < len(line):
+                line_number = number
+                break
+            remaining -= len(line)
+        if line_number is None:
+            # The index runs past the end of the text, which is how tkinter
+            # code switches the underline off without removing the option.
+            return
+        block_width, block_height = measure(lines)
+        across, down = parse_anchor(str(self._options["anchor"]))
+        row = area.y + int((area.height - block_height) * down) + line_number
+        column = area.x + int((area.width - block_width) * across)
+        column += align_offset(
+            len(lines[line_number]), block_width, str(self._options["justify"])
+        )
         with contextlib.suppress(curses.error):
-            dispatcher.call(window.addstr, 0, 0, style.top(width), attribute)
-            for row in range(1, height - 1):
-                dispatcher.call(window.addstr, row, 0, style.vertical, attribute)
-                dispatcher.call(
-                    window.addstr, row, width - 1, style.vertical, attribute
-                )
-            # The last cell of the bottom row is inserted rather than added:
-            # writing it with addstr would scroll a window whose cursor has
-            # nowhere left to go, which curses refuses. insstr rather than
-            # insch because a box-drawing character is multibyte and does not
-            # fit in the single chtype insch takes.
             dispatcher.call(
-                window.addstr, height - 1, 0, style.bottom(width)[:-1], attribute
-            )
-            dispatcher.call(
-                window.insstr, height - 1, width - 1, style.bottom_right, attribute
+                window.addstr,
+                row,
+                column + remaining,
+                lines[line_number][remaining],
+                attribute | curses.A_UNDERLINE,
             )
