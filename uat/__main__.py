@@ -48,7 +48,8 @@ def show() -> int:
         print(f"  {index:>2}. {summary(name)}")
         print(f"      python3 -m uat.{name}")
     print("\nWhat to look for: docs/UAT_BASE_WIDGETS.md (1-9),")
-    print("                 docs/UAT_GEOMETRY.md (10-14)")
+    print("                 docs/UAT_GEOMETRY.md (10-14),")
+    print("                 docs/UAT_INTERACTIVE.md (15-19)")
     return 0
 
 

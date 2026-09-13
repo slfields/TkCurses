@@ -604,7 +604,19 @@ _KEYS: dict[str, bytes] = {
     "<Next>": b"\x1b[6~",
     "<Insert>": b"\x1b[2~",
     "<Delete>": b"\x1b[3~",
-    **{f"<F{n}>": f"\x1b[{10 + n}~".encode() for n in range(1, 13)},
+    # Function keys as xterm sends them, which is what _CHILD_ENV claims to
+    # be. The obvious formula - CSI 10+n ~ - is the linux and vt220 encoding:
+    # under xterm it makes F1 arrive as Escape, [, 1, 1, ~ and only F5 comes
+    # out right by coincidence. F1 to F4 are SS3, and the numbers above skip
+    # 16 and 22.
+    "<F1>": b"\x1bOP",
+    "<F2>": b"\x1bOQ",
+    "<F3>": b"\x1bOR",
+    "<F4>": b"\x1bOS",
+    **{
+        f"<F{n}>": f"\x1b[{code}~".encode()
+        for n, code in zip(range(5, 13), (15, 17, 18, 19, 20, 21, 23, 24), strict=True)
+    },
     **{f"<Control-{c}>": bytes([ord(c) - 96]) for c in "abcdefghijklmnopqrstuvwxyz"},
 }
 

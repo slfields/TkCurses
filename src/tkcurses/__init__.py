@@ -234,6 +234,30 @@ class Event:
         return event
 
 
+def _focus_next(event: Event) -> str:
+    """Move the focus to the next widget that will take it."""
+    _move_focus(event.widget, forwards=True)
+    return "break"
+
+
+def _focus_previous(event: Event) -> str:
+    """Move the focus to the previous widget that will take it."""
+    _move_focus(event.widget, forwards=False)
+    return "break"
+
+
+def _move_focus(widget: Misc, *, forwards: bool) -> None:
+    """Hand the focus on, starting from wherever it currently is.
+
+    From the widget the event reached rather than from the focus, because a
+    key pressed with nothing focused still has to start somewhere.
+    """
+    current = widget.focus_get() or widget
+    target = current.tk_focusNext() if forwards else current.tk_focusPrev()
+    if target is not None:
+        target.focus_set()
+
+
 #: tkinter's event type names for each mouse state the input layer reports.
 _MOUSE_EVENT_TYPES: dict[str, str] = {
     "pressed": "ButtonPress",
@@ -2839,6 +2863,11 @@ class Wm:
 # The root window
 # ======================================================================
 
+#: How long ncurses waits for the rest of an escape sequence before deciding
+#: a lone Escape was meant. Tracked as TkCurses-dn5 for a config option; this
+#: is the value most terminal applications settle on.
+_ESCAPE_DELAY_MS = 25
+
 #: Longest the loop will wait on input when no timer is due. It does not sit
 #: on a blocking read forever: quit() may be called from another thread, a
 #: SIGWINCH may need servicing, and work queued through the dispatcher has to
@@ -2919,6 +2948,7 @@ class Tk(BaseWidget, Wm):
         if useTk:
             self._start()
 
+        self._install_default_bindings()
         _active_root = self
         if _default_root is None and _support_default_root:
             _default_root = self
@@ -2935,6 +2965,14 @@ class Tk(BaseWidget, Wm):
         """
         buffer = self._screen.start()
         try:
+            # ncurses cannot tell a lone Escape from the start of an escape
+            # sequence until this long has passed with nothing following. The
+            # default is a full second, which makes Escape - the key that
+            # cancels things - feel broken. Every terminal in use sends the
+            # rest of a sequence in the same packet, so a short wait loses
+            # nothing and makes the key usable.
+            with contextlib.suppress(AttributeError, curses.error):
+                curses.set_escdelay(_ESCAPE_DELAY_MS)
             self._input = InputHandler(self._screen.stdscr)
             colors = ColorManager()
             if colors.start():
@@ -2950,6 +2988,24 @@ class Tk(BaseWidget, Wm):
         except BaseException:
             self._screen.stop()
             raise
+
+    def _install_default_bindings(self) -> None:
+        """Bindings every application gets, on the ``all`` tag.
+
+        Tab traversal lives here rather than in any widget: moving the focus
+        is the application's business, not the business of whichever widget
+        happens to have it. Tk does the same, which is why a widget can leave
+        Tab alone and still be reachable from the keyboard.
+
+        Registered on ``all``, the last tag consulted, so a widget that wants
+        Tab for itself - a text editor inserting one - binds it and returns
+        "break" without having to remove anything.
+        """
+        if "all" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("all")
+        self.bind_all("<Key-Tab>", _focus_next)
+        self.bind_all("<Key-ISO_Left_Tab>", _focus_previous)
 
     def winfo_class(self) -> str:
         """The class this root binds and reads options under."""
