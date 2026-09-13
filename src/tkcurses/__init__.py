@@ -6086,9 +6086,19 @@ class Scale(_Drawable):
         )
 
     def _value_width(self) -> int:
-        """Cells the widest value this scale can show would need."""
+        """Cells the widest value this scale can show would need.
+
+        The two ends are not enough. A scale from 0 to 1 by 0.1 reads "0"
+        and "1" at its ends and "0.5" everywhere between, so measuring the
+        ends alone reserves one cell and leaves the value nowhere to go -
+        which on a vertical scale means it is simply not drawn.
+        """
         low, high = self._range()
-        return max(len(self._format(low)), len(self._format(high)))
+        resolution = abs(float(self._options["resolution"]))
+        candidates = [low, high]
+        if resolution:
+            candidates += [self._snap(low + resolution), self._snap(high - resolution)]
+        return max(len(self._format(value)) for value in candidates)
 
     def _head_rows(self) -> int:
         """Rows above the trough, for the label and - horizontally - the value."""

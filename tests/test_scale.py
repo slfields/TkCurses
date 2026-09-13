@@ -368,3 +368,24 @@ def test_a_disabled_scale_ignores_the_keyboard(root):
 
 def test_a_scale_takes_the_focus(root):
     assert Scale(root, name="s")._takefocus is True
+
+
+def test_room_is_kept_for_the_widest_value_not_just_the_ends(root):
+    """0 to 1 by 0.1 reads "0" and "1" at the ends and "0.5" between them.
+
+    Measuring only the ends reserved one cell, and the value then had
+    nowhere to go - on a vertical scale it was simply never drawn.
+    """
+    scale = Scale(root, name="s", from_=0, to=1, resolution=0.1)
+    assert scale._value_width() == len("0.1")
+
+
+def test_a_vertical_scale_draws_its_value_at_every_step(root):
+    scale = Scale(root, name="s", from_=0, to=1, resolution=0.1)
+    scale._allocate(Rect(0, 0, scale.winfo_reqwidth(), scale.winfo_reqheight()))
+    scale._map()
+    origin_x, _ = scale._trough_origin()
+    for step in range(11):
+        scale.set(step / 10)
+        text = scale._format(scale.get())
+        assert origin_x - len(text) - 1 >= scale._content_area().x
