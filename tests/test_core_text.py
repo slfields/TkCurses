@@ -128,7 +128,9 @@ def test_word_wrapping_breaks_at_a_space():
 def test_word_wrapping_keeps_the_space_on_the_line_it_broke():
     """Otherwise every wrapped line after the first starts with a space."""
     line = "aaa bbb ccc"
-    assert all(not line[a:b].startswith(" ") or a == 0 for a, b in wrap_spans(line, 4, "word"))
+    assert all(
+        not line[a:b].startswith(" ") or a == 0 for a, b in wrap_spans(line, 4, "word")
+    )
 
 
 def test_a_word_too_long_to_fit_is_broken():

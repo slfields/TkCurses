@@ -65,7 +65,8 @@ from tkcurses._core.pack import FILLS, SIDES, PackLayout, PackOptions, parse_anc
 from tkcurses._core.panels import PanelStack
 from tkcurses._core.place import BORDERMODES, PlaceLayout, PlaceOptions
 from tkcurses._core.screen import CursesScreen
-from tkcurses._core.text import align_offset, measure, wrap
+from tkcurses._core.text import align_offset, measure, wrap, wrap_spans
+from tkcurses._core.textbuffer import Index, TextBuffer
 from tkcurses.constants import (
     ANCHOR,
     END,
@@ -109,6 +110,7 @@ __all__ = [
     "Spinbox",
     "StringVar",
     "TclError",
+    "Text",
     "Tk",
     "TkCursesError",
     "Toplevel",
@@ -5763,6 +5765,881 @@ def _spinbox_click(event: Event) -> None:
         spinbox._step(-1)
     else:
         _entry_click(event)
+
+
+class Text(_Drawable):
+    """An editable block of text, with marks and tags.
+
+    The contents, the index arithmetic, the marks and the tag ranges are
+    :class:`~tkcurses._core.textbuffer.TextBuffer`; what is here is the widget
+    around it - options, key bindings, what the tags look like on screen, and
+    the two-directional scrolling that a Text needs and an Entry does not.
+
+    Everything is addressed by index, written ``line.char`` with lines
+    counting from 1. ``insert`` is the cursor, ``end`` is past everything, and
+    ``sel.first``/``sel.last`` are the ends of the selection. Because Tk keeps
+    a newline at the end of the buffer that no edit can remove, ``end`` on a
+    one-line Text is ``2.0`` and ``get("1.0", "end")`` comes back with a
+    newline nobody typed. That surprises people, and it is kept, because
+    tkinter code depends on it.
+
+    ``wrap`` decides what a long line does: ``none`` scrolls sideways,
+    ``char`` breaks wherever the width runs out, ``word`` at the last space
+    that fits. The distinction between a line in the buffer and a line on
+    screen runs through the whole widget - Up and Down move by *display*
+    lines, as they do in every editor, while ``insert linestart`` means the
+    beginning of the real line.
+    """
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "exportselection": True,
+        "height": 24,
+        "relief": "sunken",
+        "state": "normal",
+        "takefocus": True,
+        "width": 80,
+        "wrap": "char",
+        "xscrollcommand": None,
+        "yscrollcommand": None,
+    }
+
+    #: What a tag can be given. Deliberately smaller than Tk's: the options
+    #: with no meaning in a character grid - borders, spacing, margins,
+    #: bitmaps - are left out rather than accepted and ignored, so setting
+    #: one fails loudly instead of quietly doing nothing.
+    _TAG_OPTIONS: ClassVar[dict[str, Any]] = {
+        "background": "",
+        "foreground": "",
+        "font": "",
+        "justify": "",
+        "underline": False,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``width``, ``height``, ``wrap``, ``state``,
+                ``xscrollcommand``, ``yscrollcommand``, and the standard
+                options.
+        """
+        self._buffer = TextBuffer()
+        self._top = 0
+        self._left = 0
+        self._anchor: Index | None = None
+        self._dragging = False
+        self._tag_options: dict[str, dict[str, Any]] = {}
+        self._tag_order: list[str] = []
+        super().__init__(master, cnf, name=name, **kw)
+        self._buffer.mark_set("insert", "1.0")
+        self._buffer.mark_set("current", "1.0")
+        # The selection is a tag like any other, which is why sel.first works
+        # as an index. It is given its look here so a selection shows up
+        # without the application configuring anything.
+        self.tag_configure("sel", background="", foreground="")
+        self._apply_requested_size()
+        self._install_class_bindings()
+
+    # ------------------------------------------------------------- bindings
+
+    def _install_class_bindings(self) -> None:
+        """Register the editing keys and the mouse for every Text here."""
+        if "Text" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("Text")
+        bind = self.bind_class
+        bind("Text", "<Any-Key>", _text_key)
+        bind("Text", "<Button-1>", _text_press)
+        # A drag arrives as Motion - curses reports motion-with-a-button and
+        # there is no Button1 modifier to match against - and the implicit
+        # grab keeps it with the widget that was pressed.
+        bind("Text", "<Motion>", _text_motion)
+        bind("Text", "<ButtonRelease-1>", _text_release)
+        bind("Text", "<Button-4>", _text_wheel)
+        bind("Text", "<Button-5>", _text_wheel)
+        bind("Text", "<FocusIn>", _text_refresh)
+        bind("Text", "<FocusOut>", _text_refresh)
+
+    # --------------------------------------------------------------- options
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, re-measuring and repainting as the change requires."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if not given:
+            return result
+        if {"width", "height"} & set(given):
+            self._apply_requested_size()
+            self._invalidate_layout()
+        self._clamp_view()
+        self._redraw()
+        self._report_view()
+        return result
+
+    config = configure
+
+    @property
+    def _editable(self) -> bool:
+        """True while the keyboard may change the contents."""
+        return str(self._options["state"]) == "normal"
+
+    def _apply_requested_size(self) -> None:
+        """Ask for the configured rows and columns, plus border and padding."""
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        self._request_size(
+            int(self._options["width"]) + 2 * int(self._options["padx"]) + edge,
+            int(self._options["height"]) + 2 * int(self._options["pady"]) + edge,
+        )
+
+    # --------------------------------------------------------------- indices
+
+    def index(self, spec: Any) -> str:
+        """Resolve an index and return it as ``line.char``.
+
+        Returns a string rather than an object, because that is what tkinter
+        returns and what code written against it compares and slices.
+        """
+        return str(self._resolve(spec))
+
+    def compare(self, first: Any, op: str, last: Any) -> bool:
+        """Compare two indices with ``<``, ``<=``, ``==``, ``!=``, ``>``, ``>=``."""
+        return self._buffer.compare(self._resolve(first), op, self._resolve(last))
+
+    def _resolve(self, spec: Any) -> Index:
+        """One index, including the ``@x,y`` form only the widget can answer."""
+        if isinstance(spec, Index):
+            return self._buffer.clamp(spec)
+        text = str(spec).strip()
+        if text.startswith("@"):
+            position, _, rest = text[1:].partition(",")
+            column, _, modifiers = rest.partition(" ")
+            index = self._index_at_cell(int(position), int(column))
+            if modifiers.strip():
+                return self._buffer.index(f"{index} {modifiers.strip()}")
+            return index
+        return self._buffer.index(text)
+
+    # -------------------------------------------------------------- contents
+
+    def get(self, first: Any, last: Any = None) -> str:
+        """The text between two indices, or one character from ``first``."""
+        if last is None:
+            return self._buffer.get(self._resolve(first))
+        return self._buffer.get(self._resolve(first), self._resolve(last))
+
+    def insert(self, index: Any, chars: str, *tags: str) -> None:
+        """Insert text, optionally tagging everything inserted."""
+        start = self._resolve(index)
+        end = self._buffer.insert(start, chars)
+        for tag in tags:
+            self.tag_add(tag, start, end)
+        self._after_edit()
+
+    def delete(self, first: Any, last: Any = None) -> None:
+        """Delete a range, or one character from ``first``."""
+        if last is None:
+            self._buffer.delete(self._resolve(first))
+        else:
+            self._buffer.delete(self._resolve(first), self._resolve(last))
+        self._after_edit()
+
+    def _after_edit(self) -> None:
+        """Put the view back where it should be and repaint."""
+        self.see("insert")
+        self._redraw()
+        self._report_view()
+        self.event_generate("<<Modified>>")
+
+    # ----------------------------------------------------------------- marks
+
+    def mark_set(self, name: str, index: Any) -> None:
+        """Put a mark at an index."""
+        self._buffer.mark_set(name, self._resolve(index))
+        if name == "insert":
+            self.see("insert")
+        self._redraw()
+
+    def mark_unset(self, *names: str) -> None:
+        """Remove marks."""
+        self._buffer.mark_unset(*names)
+        self._redraw()
+
+    def mark_names(self) -> tuple[str, ...]:
+        """Every mark."""
+        return self._buffer.mark_names()
+
+    def mark_gravity(self, name: str, direction: str | None = None) -> str:
+        """Read or set which side of an insertion a mark ends up on."""
+        return self._buffer.mark_gravity(name, direction)
+
+    def mark_next(self, index: Any) -> str | None:
+        """The first mark after an index."""
+        return self._buffer.mark_next(self._resolve(index))
+
+    def mark_previous(self, index: Any) -> str | None:
+        """The last mark before an index."""
+        return self._buffer.mark_previous(self._resolve(index))
+
+    # ------------------------------------------------------------------ tags
+
+    def tag_add(self, name: str, first: Any, last: Any = None) -> None:
+        """Tag a range."""
+        self._note_tag(name)
+        if last is None:
+            self._buffer.tag_add(name, self._resolve(first))
+        else:
+            self._buffer.tag_add(name, self._resolve(first), self._resolve(last))
+        self._redraw()
+
+    def tag_remove(self, name: str, first: Any, last: Any = None) -> None:
+        """Untag a range."""
+        if last is None:
+            self._buffer.tag_remove(name, self._resolve(first))
+        else:
+            self._buffer.tag_remove(name, self._resolve(first), self._resolve(last))
+        self._redraw()
+
+    def tag_delete(self, *names: str) -> None:
+        """Forget tags entirely, ranges, options and all."""
+        self._buffer.tag_delete(*names)
+        for name in names:
+            self._tag_options.pop(name, None)
+            if name in self._tag_order:
+                self._tag_order.remove(name)
+        self._redraw()
+
+    def tag_names(self, index: Any = None) -> tuple[str, ...]:
+        """Every tag, or only those covering one index."""
+        if index is None:
+            return tuple(self._tag_order)
+        return self._buffer.tag_names(self._resolve(index))
+
+    def tag_ranges(self, name: str) -> list[str]:
+        """Every range of a tag, flat, as ``line.char`` strings."""
+        return [str(index) for index in self._buffer.tag_ranges(name)]
+
+    def tag_nextrange(
+        self, name: str, first: Any, last: Any = None
+    ) -> tuple[str, str] | tuple[()]:
+        """The first range of a tag at or after an index, or ``()``."""
+        found = self._buffer.tag_nextrange(
+            name, self._resolve(first), None if last is None else self._resolve(last)
+        )
+        return () if found is None else (str(found[0]), str(found[1]))
+
+    def tag_prevrange(
+        self, name: str, first: Any, last: Any = None
+    ) -> tuple[str, str] | tuple[()]:
+        """The last range of a tag before an index, or ``()``."""
+        found = self._buffer.tag_prevrange(
+            name, self._resolve(first), None if last is None else self._resolve(last)
+        )
+        return () if found is None else (str(found[0]), str(found[1]))
+
+    def tag_configure(
+        self, name: str, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> Any:
+        """Set how a tag looks, or read what it is set to.
+
+        Raises:
+            TclError: If an option is not one a tag accepts here.
+        """
+        self._note_tag(name)
+        options = self._tag_options[name]
+        given = {**(cnf or {}), **kw}
+        if not given:
+            return dict(options)
+        for option, value in given.items():
+            resolved = _OPTION_ALIASES.get(option, option)
+            if resolved not in self._TAG_OPTIONS:
+                raise TclError(f'unknown option "-{option}"')
+            options[resolved] = value
+        self._redraw()
+        return None
+
+    tag_config = tag_configure
+
+    def tag_cget(self, name: str, option: str) -> Any:
+        """One of a tag's options.
+
+        Raises:
+            TclError: If the tag or the option does not exist.
+        """
+        if name not in self._tag_options:
+            raise TclError(f'tag "{name}" is not defined')
+        resolved = _OPTION_ALIASES.get(option, option)
+        if resolved not in self._TAG_OPTIONS:
+            raise TclError(f'unknown option "-{option}"')
+        return self._tag_options[name][resolved]
+
+    def tag_raise(self, name: str, above: str | None = None) -> None:
+        """Move a tag up the priority order, so it draws over the others."""
+        self._reorder(name, above, offset=1)
+
+    def tag_lower(self, name: str, below: str | None = None) -> None:
+        """Move a tag down the priority order."""
+        self._reorder(name, below, offset=0)
+
+    def _reorder(self, name: str, other: str | None, *, offset: int) -> None:
+        """Shared by tag_raise and tag_lower."""
+        self._note_tag(name)
+        self._tag_order.remove(name)
+        if other is None:
+            self._tag_order.append(name) if offset else self._tag_order.insert(0, name)
+        else:
+            self._note_tag(other)
+            self._tag_order.insert(self._tag_order.index(other) + offset, name)
+        self._redraw()
+
+    def _note_tag(self, name: str) -> None:
+        """Record a tag's existence and its place in the priority order."""
+        if name not in self._tag_options:
+            self._tag_options[name] = dict(self._TAG_OPTIONS)
+            self._tag_order.append(name)
+
+    # ------------------------------------------------------------- selection
+
+    def _select(self, first: Any, last: Any) -> None:
+        """Replace the selection with one range, dropping it if it is empty."""
+        self._buffer.tag_remove("sel", "1.0", "end")
+        start, stop = self._resolve(first), self._resolve(last)
+        if start != stop:
+            self._buffer.tag_add("sel", start, stop)
+
+    def _selection_range(self) -> tuple[Index, Index] | None:
+        """The selection, or None."""
+        ranges = self._buffer.tag_ranges("sel")
+        return (ranges[0], ranges[-1]) if ranges else None
+
+    def _delete_selection(self) -> bool:
+        """Delete the selected text. True if there was any."""
+        found = self._selection_range()
+        if found is None:
+            return False
+        self._buffer.mark_set("insert", found[0])
+        self._buffer.delete(found[0], found[1])
+        self._anchor = None
+        return True
+
+    # ------------------------------------------------------------- editing
+
+    def _move(self, where: Any, *, extend: bool) -> None:
+        """Move the insert cursor, dragging the selection along if asked.
+
+        ``extend`` is what a shifted arrow does: the selection runs from
+        wherever it was anchored to wherever the cursor has got to. Without
+        it the selection is dropped, which is what a plain arrow does.
+        """
+        insert = self._buffer.mark_index("insert") or Index(1, 0)
+        if isinstance(where, tuple):
+            kind, count = where
+            rows = self._view_size()[1]
+            target = self._by_row(insert, count * (rows if kind == "page" else 1))
+        else:
+            target = self._resolve(where)
+        if extend and self._anchor is None:
+            self._anchor = insert
+        self._buffer.mark_set("insert", target)
+        if extend and self._anchor is not None:
+            self._select(self._anchor, target)
+        else:
+            self._anchor = None
+            self._buffer.tag_remove("sel", "1.0", "end")
+        self.see("insert")
+        self._redraw()
+        self._report_view()
+
+    def _by_row(self, index: Index, distance: int) -> Index:
+        """The index ``distance`` display rows away, at the same column.
+
+        Display rows, not buffer lines: with wrapping on, Up from the middle
+        of a wrapped paragraph has to go to the row above it on screen, which
+        is what every editor does and what the buffer alone cannot answer.
+        """
+        rows = self._display_lines()
+        row = self._row_of(index)
+        _, start, _ = rows[min(row, len(rows) - 1)]
+        column = index.char - start
+        target = min(max(row + distance, 0), len(rows) - 1)
+        line, new_start, new_stop = rows[target]
+        return self._buffer.clamp(Index(line, min(new_start + column, new_stop)))
+
+    def _type(self, characters: str) -> None:
+        """Put typed characters in, replacing the selection if there is one."""
+        if not self._editable:
+            return
+        self._delete_selection()
+        insert = self._buffer.mark_index("insert") or Index(1, 0)
+        self._buffer.insert(insert, characters)
+        self._anchor = None
+        self._after_edit()
+
+    def _backspace(self) -> None:
+        """Delete the selection, or the character before the cursor."""
+        if not self._editable:
+            return
+        if not self._delete_selection():
+            insert = self._buffer.mark_index("insert") or Index(1, 0)
+            start = self._buffer.index(f"{insert} -1c")
+            if start == insert:
+                return
+            self._buffer.delete(start, insert)
+        self._after_edit()
+
+    def _delete_forward(self) -> None:
+        """Delete the selection, or the character after the cursor."""
+        if not self._editable:
+            return
+        if not self._delete_selection():
+            insert = self._buffer.mark_index("insert") or Index(1, 0)
+            self._buffer.delete(insert)
+        self._after_edit()
+
+    # --------------------------------------------------------- display lines
+
+    def _wrap_mode(self) -> str:
+        """How long lines are broken, defaulting to Tk's ``char``."""
+        mode = str(self._options["wrap"])
+        return mode if mode in ("none", "char", "word") else "char"
+
+    def _view_size(self) -> tuple[int, int]:
+        """The cells the text is laid out in, as ``(width, height)``.
+
+        Falls back to the configured width and height until the widget has
+        been given a rect. Without that fallback, anything asking for the
+        display lines or the view before layout wraps every line to a single
+        cell - one display row per character - which makes `yview` nonsense
+        and turns a large document into a very slow one.
+        """
+        area = self._text_area()
+        if area.width > 0 and area.height > 0:
+            return (area.width, area.height)
+        return (
+            max(1, int(self._options["width"])),
+            max(1, int(self._options["height"])),
+        )
+
+    def _display_lines(self) -> list[tuple[int, int, int]]:
+        """Every row the text would occupy, as ``(line, start, end)``.
+
+        One entry per line on screen rather than per line in the buffer: with
+        wrapping on, one is many of the other, and everything about scrolling
+        and about Up and Down is counted in these.
+        """
+        width = self._view_size()[0]
+        mode = self._wrap_mode()
+        rows: list[tuple[int, int, int]] = []
+        for number, line in enumerate(self._buffer.lines, start=1):
+            rows.extend(
+                (number, start, stop) for start, stop in wrap_spans(line, width, mode)
+            )
+        return rows or [(1, 0, 0)]
+
+    def _row_of(
+        self, index: Index, rows: list[tuple[int, int, int]] | None = None
+    ) -> int:
+        """Which display row an index falls on."""
+        return self._display_position(index, rows)[0]
+
+    def _display_position(
+        self, index: Index, rows: list[tuple[int, int, int]] | None = None
+    ) -> tuple[int, int]:
+        """Where an index sits, as ``(row, column within that row)``."""
+        rows = self._display_lines() if rows is None else rows
+        for row, (line, start, stop) in enumerate(rows):
+            if line == index.line and start <= index.char <= stop:
+                return row, index.char - start
+        # `end` on a buffer whose last line has text is a line past every
+        # display row, so it has none of its own; it belongs at the end of
+        # the last one. Without this the cursor came back at column 0 and
+        # blanked the first character of the bottom line.
+        last = max(0, len(rows) - 1)
+        _, start, stop = rows[last]
+        return last, stop - start
+
+    def _index_at_cell(self, x: int, y: int) -> Index:
+        """The index at a cell within this widget, for a click or ``@x,y``."""
+        area = self._text_area()
+        rows = self._display_lines()
+        row = min(max(self._top + (y - area.y), 0), len(rows) - 1)
+        line, start, stop = rows[row]
+        column = max(0, x - area.x) + self._left
+        return self._buffer.clamp(Index(line, min(start + column, stop)))
+
+    # --------------------------------------------------------------- the view
+
+    def see(self, index: Any) -> None:
+        """Scroll the least that puts an index on screen, both directions."""
+        target = self._resolve(index)
+        width, height = self._view_size()
+        rows = self._display_lines()
+        row = self._row_of(target, rows)
+        if row < self._top:
+            self._top = row
+        elif row >= self._top + height:
+            self._top = row - height + 1
+        if self._wrap_mode() == "none":
+            if target.char < self._left:
+                self._left = target.char
+            elif target.char > self._left + width - 1:
+                self._left = target.char - width + 1
+        self._top = max(0, min(self._top, max(0, len(rows) - 1)))
+        self._left = max(0, self._left)
+
+    def _clamp_view(self) -> None:
+        """Keep the view inside the text after anything that could move it."""
+        rows = len(self._display_lines())
+        self._top = max(0, min(self._top, max(0, rows - 1)))
+        if self._wrap_mode() != "none":
+            self._left = 0
+
+    def yview(self, *args: Any) -> tuple[float, float] | None:
+        """Read or move the vertical view, in the shape Tk uses.
+
+        With no arguments returns ``(first, last)`` as fractions, which is
+        what a Scrollbar's ``set`` wants. Otherwise takes ``("moveto", f)`` or
+        ``("scroll", n, "units"|"pages")``, which is what a Scrollbar sends.
+        """
+        if not args:
+            return self._view_fractions()
+        self._scroll(args, vertical=True)
+        return None
+
+    def xview(self, *args: Any) -> tuple[float, float] | None:
+        """Read or move the horizontal view, in the same shape."""
+        if not args:
+            return self._horizontal_fractions()
+        self._scroll(args, vertical=False)
+        return None
+
+    def yview_moveto(self, fraction: float) -> None:
+        """Put the top of the view at a fraction of the whole."""
+        self.yview("moveto", fraction)
+
+    def yview_scroll(self, number: int, what: str) -> None:
+        """Scroll by lines or by screenfuls."""
+        self.yview("scroll", number, what)
+
+    def xview_moveto(self, fraction: float) -> None:
+        """Put the left of the view at a fraction of the longest line."""
+        self.xview("moveto", fraction)
+
+    def xview_scroll(self, number: int, what: str) -> None:
+        """Scroll sideways by characters or by screenfuls."""
+        self.xview("scroll", number, what)
+
+    def _scroll(self, args: tuple[Any, ...], *, vertical: bool) -> None:
+        """Apply one Tk scrolling command to one axis."""
+        view = self._view_size()
+        span = view[1] if vertical else view[0]
+        total = (
+            len(self._display_lines())
+            if vertical
+            else max(1, max((len(line) for line in self._buffer.lines), default=1))
+        )
+        current = self._top if vertical else self._left
+        action = str(args[0])
+        if action == "moveto":
+            current = int(float(args[1]) * total)
+        elif action == "scroll":
+            count = int(float(args[1]))
+            unit = str(args[2]) if len(args) > 2 else "units"
+            current += count * (span if unit.startswith("page") else 1)
+        else:
+            raise TclError(f'bad option "{action}": must be moveto or scroll')
+        limit = max(0, total - (span if vertical else 0))
+        if vertical:
+            self._top = max(0, min(current, limit))
+        else:
+            self._left = max(0, min(current, max(0, total - span)))
+        self._redraw()
+        self._report_view()
+
+    def _view_fractions(self) -> tuple[float, float]:
+        """Where the vertical view is, as two fractions of the whole."""
+        total = max(1, len(self._display_lines()))
+        height = self._view_size()[1]
+        return (
+            min(1.0, self._top / total),
+            min(1.0, (self._top + height) / total),
+        )
+
+    def _horizontal_fractions(self) -> tuple[float, float]:
+        """Where the horizontal view is, as two fractions of the longest line."""
+        total = max(1, max((len(line) for line in self._buffer.lines), default=1))
+        width = self._view_size()[0]
+        return (
+            min(1.0, self._left / total),
+            min(1.0, (self._left + width) / total),
+        )
+
+    def _report_view(self) -> None:
+        """Tell the scrollbars where the view is, if anything is listening."""
+        for option, fractions in (
+            ("yscrollcommand", self._view_fractions()),
+            ("xscrollcommand", self._horizontal_fractions()),
+        ):
+            command = self._options[option]
+            if command is not None:
+                command(*fractions)
+
+    # -------------------------------------------------------------- painting
+
+    def _text_area(self) -> Rect:
+        """Where the text goes, in cells relative to this widget's window."""
+        edge = BORDER_WIDTH if self._border_drawn else 0
+        padx, pady = int(self._options["padx"]), int(self._options["pady"])
+        return Rect(
+            edge + padx,
+            edge + pady,
+            max(0, self._rect.width - 2 * (edge + padx)),
+            max(0, self._rect.height - 2 * (edge + pady)),
+        )
+
+    def _redraw(self) -> None:
+        """Paint the border, the visible rows, their tags, and the cursor."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        dispatcher = CursesDispatcher.get()
+        attribute = self._background_attribute()
+        with contextlib.suppress(ValueError):
+            attribute = for_state(str(self._options["state"]), attribute)
+        area = self._text_area()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            if self._border_drawn:
+                self._draw_border(
+                    dispatcher, window, self._rect.width, self._rect.height, attribute
+                )
+            if area.is_empty:
+                return
+            rows = self._display_lines()
+            lines = self._buffer.lines
+            for offset in range(area.height):
+                row = self._top + offset
+                if row >= len(rows):
+                    break
+                self._draw_row(
+                    dispatcher, window, area, offset, rows[row], lines, attribute
+                )
+            self._draw_cursor(dispatcher, window, area, rows, attribute)
+
+    def _draw_row(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        area: Rect,
+        offset: int,
+        span: tuple[int, int, int],
+        lines: list[str],
+        attribute: int,
+    ) -> None:
+        """Draw one display row, then whatever tags cover part of it."""
+        line, start, stop = span
+        text = lines[line - 1][start:stop] if line <= len(lines) else ""
+        visible = text[self._left : self._left + area.width]
+        dispatcher.call(window.addstr, area.y + offset, area.x, visible, attribute)
+        for name in self._tag_order:
+            self._draw_tagged(
+                dispatcher, window, area, offset, span, visible, name, attribute
+            )
+
+    def _draw_tagged(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        area: Rect,
+        offset: int,
+        span: tuple[int, int, int],
+        visible: str,
+        name: str,
+        attribute: int,
+    ) -> None:
+        """Redraw the parts of one row that a tag covers.
+
+        Drawn over the plain text rather than worked out per character before
+        anything is written: tags overlap, and painting them in priority order
+        is what makes the topmost one win without having to resolve the whole
+        stack up front.
+        """
+        line, start, _ = span
+        tagged = self._tag_attribute(name)
+        if tagged is None:
+            return
+        first = start + self._left
+        for column, character in enumerate(visible):
+            at = Index(line, first + column)
+            if name not in self._buffer.tag_names(at):
+                continue
+            dispatcher.call(
+                window.addstr,
+                area.y + offset,
+                area.x + column,
+                character,
+                attribute | tagged,
+            )
+
+    def _tag_attribute(self, name: str) -> int | None:
+        """What a tag does to the cells it covers, or None if nothing.
+
+        ``sel`` with no colours configured falls back to reverse video, so a
+        selection is visible on a terminal that has no colour and in an
+        application that never configured the tag.
+        """
+        options = self._tag_options.get(name)
+        if options is None:
+            return None
+        attribute = 0
+        font = str(options.get("font", "")).lower()
+        attribute |= from_font(
+            bold="bold" in font,
+            italic="italic" in font,
+            underline="underline" in font or bool(options.get("underline")),
+        )
+        foreground, background = options.get("foreground"), options.get("background")
+        colors = self.tk.colors
+        if colors is not None and (foreground or background):
+            attribute |= colors.attribute_for(
+                str(foreground or self._options["foreground"] or "white"),
+                str(background or self._options["background"] or "black"),
+            )
+        elif name == "sel":
+            attribute |= curses.A_REVERSE
+        return attribute or None
+
+    def _draw_cursor(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        area: Rect,
+        rows: list[tuple[int, int, int]],
+        attribute: int,
+    ) -> None:
+        """Show where typing will go, but only while the widget has the focus.
+
+        A cursor in an unfocused widget claims the keyboard is there when it
+        is not, which in a window of several fields is actively misleading.
+        """
+        if self.focus_get() is not self:
+            return
+        insert = self._buffer.mark_index("insert")
+        if insert is None:
+            return
+        at, within = self._display_position(insert, rows)
+        row = at - self._top
+        if not 0 <= row < area.height:
+            return
+        column = within - self._left
+        if not 0 <= column < area.width:
+            return
+        under = self._buffer.get(insert) or " "
+        if under == "\n":
+            under = " "
+        dispatcher.call(
+            window.addstr,
+            area.y + row,
+            area.x + column,
+            under,
+            attribute | curses.A_REVERSE,
+        )
+
+
+#: Keys that move the insert cursor without changing anything, and what they
+#: mean as an index expression or as a display-line movement.
+_TEXT_MOTION: dict[str, Any] = {
+    "Left": "insert -1c",
+    "Right": "insert +1c",
+    "Home": "insert linestart",
+    "End": "insert lineend",
+    "Prior": ("page", -1),
+    "Next": ("page", 1),
+    "Up": ("row", -1),
+    "Down": ("row", 1),
+}
+
+
+def _text_key(event: Event) -> str | None:
+    """Handle one key in a Text.
+
+    Returns ``"break"`` for keys the widget consumed, so a Left arrow moving
+    the cursor does not also reach whatever else is bound to it. Tab is left
+    alone deliberately: a widget that swallowed it would trap the focus, and
+    a terminal user with no mouse would have nowhere to go.
+    """
+    text = event.widget
+    keysym = event.keysym
+    extend = bool(event.state & MOD_SHIFT)
+
+    if keysym in _TEXT_MOTION:
+        text._move(_TEXT_MOTION[keysym], extend=extend)
+        return "break"
+    if keysym == "BackSpace":
+        text._backspace()
+        return "break"
+    if keysym == "Delete":
+        text._delete_forward()
+        return "break"
+    if keysym == "Return":
+        text._type("\n")
+        return "break"
+    if keysym == "Tab":
+        return None
+    if len(event.char) == 1 and event.char.isprintable():
+        text._type(event.char)
+        return "break"
+    return None
+
+
+def _text_press(event: Event) -> None:
+    """Take the focus, put the cursor where the click was, and start a drag."""
+    text = event.widget
+    text.focus_set()
+    index = text._index_at_cell(event.x, event.y)
+    text._buffer.mark_set("insert", index)
+    text._buffer.mark_set("current", index)
+    text._anchor = index
+    text._dragging = True
+    text._select(index, index)
+    text._redraw()
+
+
+def _text_motion(event: Event) -> None:
+    """Extend the selection to the pointer while a drag is going on."""
+    text = event.widget
+    if not text._dragging or text._anchor is None:
+        return
+    index = text._index_at_cell(event.x, event.y)
+    text._buffer.mark_set("insert", index)
+    text._select(text._anchor, index)
+    text.see("insert")
+    text._redraw()
+    text._report_view()
+
+
+def _text_release(event: Event) -> None:
+    """Stop dragging, wherever the pointer ended up."""
+    event.widget._dragging = False
+
+
+def _text_wheel(event: Event) -> None:
+    """Scroll the view without moving the cursor, as a wheel should."""
+    event.widget.yview("scroll", -event.delta * 3, "units")
+
+
+def _text_refresh(event: Event) -> None:
+    """Repaint after the focus moved in or out."""
+    event.widget._redraw()
 
 
 class Listbox(_Drawable):

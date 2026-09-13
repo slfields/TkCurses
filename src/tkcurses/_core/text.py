@@ -114,7 +114,11 @@ def wrap_spans(line: str, width: int, mode: str = "char") -> list[tuple[int, int
     while start < len(line):
         end = min(start + width, len(line))
         if mode == "word" and end < len(line):
-            cut = line.rfind(" ", start, end + 1)
+            # Searched within the span, not one past it. A space sitting
+            # exactly at start + width would otherwise be kept as well, and
+            # the row would come out one cell wider than the area it has to
+            # fit in - which in a character grid means over the border.
+            cut = line.rfind(" ", start, end)
             if cut > start:
                 end = cut + 1
         spans.append((start, end))
