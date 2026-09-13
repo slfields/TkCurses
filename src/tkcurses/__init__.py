@@ -86,6 +86,7 @@ __all__ = [
     "NoDefaultRoot",
     "Pack",
     "Place",
+    "Scrollbar",
     "StringVar",
     "TclError",
     "Tk",
@@ -4684,6 +4685,7 @@ class Listbox(_Drawable):
         "state": "normal",
         "takefocus": True,
         "width": 20,
+        "yscrollcommand": None,
     }
 
     #: Markers either side of a selected row.
@@ -4917,18 +4919,49 @@ class Listbox(_Drawable):
             self._top = position - height + 1
         self._clamp_view()
 
-    def yview(self, index: Any = None) -> int:
-        """Get or set the first visible item."""
-        if index is not None:
-            self._top = self.index(index)
-            self._clamp_view()
-            self._redraw()
-        return self._top
+    def yview(self, *args: Any) -> Any:
+        """Get or set the visible window.
+
+        Called with nothing it reports the view as the pair of fractions a
+        scrollbar wants. Called by a scrollbar it takes Tk's own arguments -
+        ``("moveto", fraction)`` or ``("scroll", count, "units"|"pages")`` -
+        which is what lets any scrollbar drive any widget without either
+        knowing what the other is.
+        """
+        if not args:
+            return self._view_fractions()
+        if len(args) == 1:
+            self._top = self.index(args[0])
+        elif args[0] == "moveto":
+            self._top = int(float(args[1]) * len(self._items))
+        elif args[0] == "scroll":
+            count = int(args[1])
+            step = max(1, self._text_area().height) if args[2] == "pages" else 1
+            self._top += count * step
+        self._clamp_view()
+        self._redraw()
+        return None
+
+    def _view_fractions(self) -> tuple[float, float]:
+        """Where the window is, as two fractions of the whole list."""
+        total = len(self._items)
+        if total <= 0:
+            return (0.0, 1.0)
+        height = max(1, self._text_area().height)
+        return (self._top / total, min(1.0, (self._top + height) / total))
+
+    def _publish_view(self) -> None:
+        """Tell the scrollbar where the view is, if one is listening."""
+        command = self._options["yscrollcommand"]
+        if command is not None:
+            first, last = self._view_fractions()
+            command(first, last)
 
     def _clamp_view(self) -> None:
-        """Keep the visible window inside the list."""
+        """Keep the visible window inside the list, and report where it is."""
         height = max(1, self._text_area().height)
         self._top = max(0, min(self._top, max(0, len(self._items) - height)))
+        self._publish_view()
 
     def bbox(self, index: Any) -> tuple[int, int, int, int] | None:
         """Where an item is on screen, or None if it is scrolled out of view."""
@@ -5067,9 +5100,221 @@ def _listbox_toggle(listbox: Listbox, index: int, *, extend: bool) -> None:
 def _listbox_wheel(event: Event) -> None:
     """Scroll the list by the wheel, without moving the selection."""
     listbox = event.widget
-    listbox.yview(listbox._top + (-1 if event.num == 4 else 1))
+    listbox.yview("scroll", -1 if event.num == 4 else 1, "units")
 
 
 def _listbox_refresh(event: Event) -> None:
     """Repaint after the focus moved, so the active row shows or stops."""
     event.widget._redraw()
+
+
+class Scrollbar(_Drawable):
+    """A scroll control: arrows, a trough, and a thumb showing the view.
+
+    A scrollbar holds no content of its own. It is told where the view is by
+    whatever it scrolls, through :meth:`set`, and it tells that thing to move
+    by calling its ``command``. Neither end knows anything else about the
+    other, which is why any widget with a ``yview`` can be scrolled by one.
+
+    The command is called the way Tk calls it: ``("moveto", fraction)`` when
+    the thumb is dragged, and ``("scroll", count, "units" | "pages")`` when an
+    arrow or the trough is clicked.
+    """
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "command": None,
+        "orient": "vertical",
+        "relief": "sunken",
+        "takefocus": False,
+        "width": 1,
+    }
+
+    #: Trough, thumb, and the two arrows, vertical then horizontal.
+    _TROUGH = "\u2591"
+    _THUMB = "\u2588"
+    _ARROWS: ClassVar[dict[str, tuple[str, str]]] = {
+        "vertical": ("\u25b2", "\u25bc"),
+        "horizontal": ("\u25c4", "\u25ba"),
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``orient``, ``command``, and the standard options.
+        """
+        self._first = 0.0
+        self._last = 1.0
+        super().__init__(master, cnf, name=name, **kw)
+        self._apply_requested_size()
+        self._install_class_bindings()
+
+    def _install_class_bindings(self) -> None:
+        """Register the click behaviour for every Scrollbar in this application."""
+        if "Scrollbar" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("Scrollbar")
+        self.bind_class("Scrollbar", "<Button-1>", _scrollbar_click)
+
+    @property
+    def _vertical(self) -> bool:
+        """True if this scrollbar runs up and down."""
+        return str(self._options["orient"]) != "horizontal"
+
+    def _apply_requested_size(self) -> None:
+        """One cell across, and as long as whatever it is packed beside."""
+        thickness = max(1, int(self._options["width"]))
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        if self._vertical:
+            self._request_size(thickness + edge, 3 + edge)
+        else:
+            self._request_size(3 + edge, thickness + edge)
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, re-measuring and repainting as the change requires."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if not given:
+            return result
+        if {"width", "orient"} & set(given):
+            self._apply_requested_size()
+            self._invalidate_layout()
+        self._redraw()
+        return result
+
+    config = configure
+
+    # ---------------------------------------------------------------- state
+
+    def set(self, first: float, last: float) -> None:
+        """Record where the view is, as two fractions of the whole.
+
+        Called by the widget being scrolled, not by the application. Values
+        outside 0 to 1 are clamped rather than refused: a widget reporting a
+        view slightly past its own end is common enough during editing that
+        failing on it would be worse than tidying it up.
+        """
+        self._first = min(max(float(first), 0.0), 1.0)
+        self._last = min(max(float(last), self._first), 1.0)
+        self._redraw()
+
+    def get(self) -> tuple[float, float]:
+        """Where the view is, as ``(first, last)``."""
+        return self._first, self._last
+
+    def fraction(self, x: int, y: int) -> float:
+        """The fraction of the way along a screen position lies."""
+        area = self._trough_bounds()
+        if area <= 0:
+            return 0.0
+        offset = y - self.winfo_rooty() if self._vertical else x - self.winfo_rootx()
+        return min(max((offset - self._trough_start()) / area, 0.0), 1.0)
+
+    def identify(self, x: int, y: int) -> str:
+        """Which part of the scrollbar is at a screen position."""
+        offset = y - self.winfo_rooty() if self._vertical else x - self.winfo_rootx()
+        start = self._trough_start()
+        if offset < start:
+            return "arrow1"
+        if offset >= start + self._trough_bounds():
+            return "arrow2"
+        thumb_start, thumb_end = self._thumb_range()
+        if thumb_start <= offset - start < thumb_end:
+            return "slider"
+        return "trough1" if offset - start < thumb_start else "trough2"
+
+    # -------------------------------------------------------------- geometry
+
+    def _length(self) -> int:
+        """Cells along the scrollbar's own direction."""
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        span = self._rect.height if self._vertical else self._rect.width
+        return max(0, span - edge)
+
+    def _trough_start(self) -> int:
+        """Where the trough begins, after the first arrow."""
+        return (BORDER_WIDTH if self._bordered else 0) + 1
+
+    def _trough_bounds(self) -> int:
+        """Cells of trough, once the two arrows have taken theirs."""
+        return max(0, self._length() - 2)
+
+    def _thumb_range(self) -> tuple[int, int]:
+        """The thumb's extent within the trough, as ``(start, end)``.
+
+        The thumb is never shorter than one cell: a view onto a very long
+        document would otherwise round to nothing and leave the scrollbar
+        looking broken.
+        """
+        trough = self._trough_bounds()
+        if trough <= 0:
+            return (0, 0)
+        start = int(self._first * trough)
+        end = max(start + 1, int(self._last * trough))
+        return (min(start, trough - 1), min(end, trough))
+
+    # -------------------------------------------------------------- painting
+
+    def _redraw(self) -> None:
+        """Paint the arrows, the trough, and the thumb."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        length = self._length()
+        if length <= 0:
+            return
+        dispatcher = CursesDispatcher.get()
+        attribute = self._background_attribute()
+        first_arrow, last_arrow = self._ARROWS[
+            "vertical" if self._vertical else "horizontal"
+        ]
+        trough = self._trough_bounds()
+        thumb_start, thumb_end = self._thumb_range()
+        cells = [first_arrow]
+        for index in range(trough):
+            cells.append(
+                self._THUMB if thumb_start <= index < thumb_end else self._TROUGH
+            )
+        cells.append(last_arrow)
+
+        edge = BORDER_WIDTH if self._bordered else 0
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            if self._bordered and self._rect.width >= 2 and self._rect.height >= 2:
+                self._draw_border(
+                    dispatcher, window, self._rect.width, self._rect.height, attribute
+                )
+            if self._vertical:
+                for offset, cell in enumerate(cells):
+                    dispatcher.call(window.addstr, edge + offset, edge, cell, attribute)
+            else:
+                dispatcher.call(window.addstr, edge, edge, "".join(cells), attribute)
+
+
+def _scrollbar_click(event: Event) -> None:
+    """Scroll by whatever part of the scrollbar was clicked."""
+    bar = event.widget
+    command = bar._options["command"]
+    if command is None:
+        return
+    part = bar.identify(event.x_root, event.y_root)
+    if part == "arrow1":
+        command("scroll", -1, "units")
+    elif part == "arrow2":
+        command("scroll", 1, "units")
+    elif part == "trough1":
+        command("scroll", -1, "pages")
+    elif part == "trough2":
+        command("scroll", 1, "pages")
+    else:
+        command("moveto", bar.fraction(event.x_root, event.y_root))

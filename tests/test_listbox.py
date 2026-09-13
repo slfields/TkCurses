@@ -255,7 +255,7 @@ def test_shift_clicking_extends_in_extended_mode(listbox):
 def test_the_wheel_scrolls_without_selecting(listbox):
     listbox.selection_set(0)
     listbox._handle(MouseEvent(button=5, state="pressed", x=2, y=2))
-    assert listbox.yview() == 1
+    assert listbox._top == 1
     assert listbox.curselection() == (0,)
 
 
@@ -265,29 +265,29 @@ def test_the_wheel_scrolls_without_selecting(listbox):
 def test_a_short_list_does_not_scroll(listbox):
     listbox.delete(0, "end")
     listbox.insert("end", "one", "two")
-    assert listbox.yview() == 0
+    assert listbox._top == 0
 
 
 def test_see_scrolls_an_item_into_view(listbox):
     listbox.see(7)
-    assert listbox.yview() == 7 - 4 + 1
+    assert listbox._top == 7 - 4 + 1
 
 
 def test_see_only_moves_as_far_as_it_must(listbox):
     listbox.see(7)
-    before = listbox.yview()
+    before = listbox._top
     listbox.see(5)
-    assert listbox.yview() == before
+    assert listbox._top == before
 
 
 def test_activating_scrolls_into_view(listbox):
     listbox.activate(7)
-    assert listbox.yview() > 0
+    assert listbox._top > 0
 
 
 def test_the_view_is_clamped_to_the_list(listbox):
     listbox.yview(99)
-    assert listbox.yview() == 8 - 4
+    assert listbox._top == 8 - 4
 
 
 def test_bbox_reports_a_visible_row(listbox):
@@ -322,3 +322,55 @@ def test_a_listbox_asks_for_its_rows_and_columns(root):
     box = Listbox(root, name="lb", width=30, height=5)
     assert box.winfo_reqwidth() == 30 + 2
     assert box.winfo_reqheight() == 5 + 2
+
+
+# ----------------------------------------------------------- scrollbar pair
+
+
+def test_yview_reports_the_window_as_fractions(listbox):
+    """What a scrollbar wants, and what tkinter's yview() returns."""
+    first, last = listbox.yview()
+    assert first == 0.0
+    assert 0.0 < last <= 1.0
+
+
+def test_yview_moveto_scrolls(listbox):
+    listbox.yview("moveto", 0.5)
+    assert listbox._top == 4
+
+
+def test_yview_scroll_by_units(listbox):
+    listbox.yview("scroll", 2, "units")
+    assert listbox._top == 2
+
+
+def test_yview_scroll_by_pages(listbox):
+    listbox.yview("scroll", 1, "pages")
+    assert listbox._top == 4
+
+
+def test_the_scroll_command_is_told_where_the_view_is(listbox):
+    reports = []
+    listbox.configure(yscrollcommand=lambda first, last: reports.append((first, last)))
+    listbox.yview("scroll", 1, "units")
+    assert reports
+    assert reports[-1][0] > 0
+
+
+def test_a_scrollbar_and_a_listbox_drive_each_other(root):
+    """Neither knows what the other is; both speak Tk's scrolling protocol."""
+    from tkcurses import Scrollbar
+
+    listbox = Listbox(root, name="lb", height=4, width=16)
+    listbox._allocate(Rect(0, 0, 18, 6))
+    listbox._map()
+    listbox.insert("end", *[f"item {n}" for n in range(20)])
+    bar = Scrollbar(root, name="sb", command=listbox.yview)
+    listbox.configure(yscrollcommand=bar.set)
+
+    listbox.yview("scroll", 4, "units")
+    first, _ = bar.get()
+    assert first > 0
+
+    bar._options["command"]("moveto", 0.0)
+    assert listbox._top == 0
