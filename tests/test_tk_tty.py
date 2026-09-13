@@ -387,3 +387,79 @@ root.destroy()
         assert indent <= 4, f"staircased: {line!r}"
     assert any(line.startswith("ZeroDivisionError") for line in lines)
     assert any(line.startswith('  File "') for line in lines)
+
+
+def test_a_widget_placed_off_screen_does_not_take_the_application_down(
+    terminal, tmp_path
+):
+    """Curses refuses to move a panel past an edge, and says so with ERR.
+
+    place() lets a widget sit partly or wholly outside its container, and Tk
+    clips the result. A curses window cannot, so the panel has to cover the
+    visible part only - otherwise the refusal comes back as an exception from
+    inside the layout and the whole application goes down.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        """
+import tkcurses
+
+root = tkcurses.Tk()
+buffer = root.tk.screen.buffer
+box = tkcurses.Widget(root, name="box")
+box._requested = tkcurses._core.geometry.Size(10, 3)
+for x, y in ((-20, -20), (38, 11), (-5, 4), (200, 200), (2, 2)):
+    box.place(x=x, y=y)
+    root.update_layout()
+buffer.write(0, 0, "survived")
+root.tk.screen.refresh()
+root.after(50, root.quit)
+root.mainloop()
+root.destroy()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("survived")
+    assert "Traceback" not in term.stderr
+
+
+def test_a_terminal_resize_lays_the_tree_out_again(terminal, tmp_path):
+    """The root's size is set directly, so its layout must be told separately.
+
+    Without that, anything sized against the terminal keeps the size the
+    terminal used to be.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        """
+import tkcurses
+
+root = tkcurses.Tk()
+buffer = root.tk.screen.buffer
+box = tkcurses.Widget(root, name="box")
+box._requested = tkcurses._core.geometry.Size(4, 1)
+# Placed on the lower half: a widget's panel is opaque, and one
+# covering row 0 would hide the line being asserted on.
+box.place(relx=0.0, rely=0.5, relwidth=1.0, relheight=0.5)
+
+def show(event=None):
+    # <Configure> is delivered before the loop lays the tree out again, as in
+    # Tk where layout happens at idle time, so a handler that wants fresh
+    # child geometry has to ask for it.
+    root.update_layout()
+    buffer.write(0, 0, "box %s in %sx%s    " % (
+        box.winfo_geometry(), root.winfo_width(), root.winfo_height()))
+    root.tk.screen.refresh()
+
+root.bind("<Configure>", show)
+root.update_layout()
+show()
+root.after(4000, root.quit)
+root.mainloop()
+root.destroy()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("box 40x6+0+6 in 40x12")
+    term.resize(60, 20)
+    term.wait_for_text("box 60x10+0+10 in 60x20")

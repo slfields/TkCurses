@@ -893,6 +893,19 @@ class Misc:
         x, y = self._root_offset()
         return Rect(x, y, self._rect.width, self._rect.height)
 
+    def _visible_rect(self) -> Rect:
+        """The part of this widget that is on the screen.
+
+        A widget may be positioned partly or wholly outside the terminal -
+        place() allows it and Tk clips the result - but a curses window may
+        not: asking curses to move a panel past an edge fails outright, and
+        the whole application goes down with it. The panel therefore covers
+        the visible part only, while the widget's own geometry is left alone,
+        so winfo_x() still reports where it was actually put.
+        """
+        width, height = self._screen_size()
+        return self._screen_rect().intersection(Rect(0, 0, width, height))
+
     def _request_size(self, width: int, height: int) -> None:
         """Declare the size this widget would like to be.
 
@@ -1769,7 +1782,12 @@ class BaseWidget(Misc):
         # Compared against where the panel actually is, not against the
         # widget's previous rect: a rect is an offset from the master, so an
         # ancestor moving relocates the panel without changing it.
-        target = self._screen_rect()
+        target = self._visible_rect()
+        if target.is_empty:
+            # Entirely off screen. The widget keeps its geometry and gets its
+            # window back when it comes into view again.
+            self._destroy_window()
+            return
         current = self._panel.rect
         if (target.width, target.height) != (current.width, current.height):
             # Curses cannot resize a window in place, and replacing it is also
@@ -1816,8 +1834,11 @@ class BaseWidget(Misc):
         stack = self.tk.panels
         if stack is None or self._rect.is_empty:
             return
+        visible = self._visible_rect()
+        if visible.is_empty:
+            return
         if self._panel is None:
-            self._panel = stack.new_panel(self._screen_rect(), userptr=self)
+            self._panel = stack.new_panel(visible, userptr=self)
             # A panel goes on top of the stack when it is made, and windows
             # are made in layout order, which is not tree order: a container
             # laid out after its own children would sit in front of them and
@@ -3022,6 +3043,11 @@ class Tk(BaseWidget, Wm):
         """
         size = self._screen.handle_resize()
         self._rect = Rect(0, 0, size.width, size.height)
+        # The root's rect is set directly rather than through _allocate, which
+        # would give the root a panel it does not want - so its layout has to
+        # be told separately. Without this, everything sized against the
+        # terminal keeps the size the terminal used to be.
+        self.tk.layout.invalidate(self)
         self.event_generate("<Configure>", width=size.width, height=size.height)
 
     def _update_display(self) -> None:
