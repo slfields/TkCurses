@@ -19,6 +19,7 @@ import curses
 import os
 import sys
 import time
+import traceback
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from tkcurses._core.application import Application
@@ -29,10 +30,14 @@ from tkcurses._core.bindings import (
 )
 from tkcurses._core.clipboard import CLIPBOARD, PRIMARY
 from tkcurses._core.colors import palette_rgb, parse_color, rgb_for
+from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.errors import TclError, TkCursesError
 from tkcurses._core.events import Event as CoreEvent
 from tkcurses._core.events import KeyEvent, MouseEvent, ResizeEvent
 from tkcurses._core.geometry import Rect, Size
+from tkcurses._core.input import InputHandler
+from tkcurses._core.panels import PanelStack
+from tkcurses._core.screen import CursesScreen
 from tkcurses.constants import FLAT
 
 if TYPE_CHECKING:
@@ -48,6 +53,7 @@ __all__ = [
     "Misc",
     "NoDefaultRoot",
     "TclError",
+    "Tk",
     "TkCursesError",
     "Widget",
     "__version__",
@@ -1480,3 +1486,342 @@ class Widget(BaseWidget):
     then it is what separates a widget that a manager can place from a
     toplevel that manages itself.
     """
+
+
+# ======================================================================
+# The root window
+# ======================================================================
+
+#: Longest the loop will wait on input when no timer is due. It does not sit
+#: on a blocking read forever: quit() may be called from another thread, a
+#: SIGWINCH may need servicing, and work queued through the dispatcher has to
+#: be picked up. A twentieth of a second is below the threshold of noticing
+#: and costs nothing while idle.
+_IDLE_TIMEOUT_MS = 50
+
+#: How many queued cross-thread calls to run per pass. Bounded so a thread
+#: posting work in a tight loop cannot starve input handling.
+_DISPATCH_BATCH = 64
+
+#: The root that currently owns the terminal. Curses is process-global -
+#: there is one screen, whatever the object model says - so a second live
+#: root is refused rather than allowed to corrupt the first.
+_active_root: Tk | None = None
+
+
+class Tk(BaseWidget):
+    """The root window, and the event loop that drives everything.
+
+    Creating one initialises curses and takes over the terminal; destroying
+    one gives it back. Because that is process-global state rather than
+    something owned by the object, only one may be live at a time, and the
+    teardown path runs even when the application fails - a program that dies
+    with the terminal in raw mode leaves the user with an unusable shell.
+
+    tkinter's hierarchy is ``Tk(Misc, Wm)``. The window manager half arrives
+    with the Wm class; what is here is the root widget and the loop.
+    """
+
+    _is_toplevel = True
+
+    #: The root accepts the standard options; the rest of its configuration
+    #: is window manager business.
+    _widget_options: ClassVar[dict[str, Any]] = {}
+
+    def __init__(
+        self,
+        screenName: str | None = None,  # noqa: ARG002 - tkinter signature
+        baseName: str | None = None,  # noqa: ARG002 - tkinter signature
+        className: str = "Tk",
+        useTk: bool = True,
+        sync: bool = False,  # noqa: ARG002 - tkinter signature
+        use: str | None = None,  # noqa: ARG002 - tkinter signature
+    ) -> None:
+        """
+        Args:
+            screenName: Ignored. Names an X display, of which there is none.
+            baseName: Ignored. Names the resource file tkinter would read.
+            className: The widget class this root binds and looks options up
+                under, as in tkinter.
+            useTk: Ignored; there is no Tcl-without-Tk mode to select.
+            sync: Ignored. X11 synchronous mode.
+            use: Ignored. Embeds Tk in a foreign window.
+
+        Raises:
+            TclError: If another root already owns the terminal.
+        """
+        global _default_root, _active_root
+
+        if _active_root is not None and _active_root.winfo_exists():
+            raise TclError(
+                "a Tk() already owns the terminal; destroy it before creating "
+                "another, since curses has one screen per process"
+            )
+
+        Misc.__init__(self, None, ".")
+        self.className = className
+        self._options = dict(self._option_spec())
+        self._panel = None
+        self._takefocus = True
+
+        self._screen = CursesScreen()
+        self._input: InputHandler | None = None
+        self._started = False
+        self._running = False
+
+        if useTk:
+            self._start()
+
+        _active_root = self
+        if _default_root is None and _support_default_root:
+            _default_root = self
+
+    # ------------------------------------------------------------- startup
+
+    def _start(self) -> None:
+        """Initialise curses and hang the screen-dependent pieces off it.
+
+        Anything that fails here must still give the terminal back, which is
+        why the whole body is guarded rather than just the parts that look
+        risky: ``initscr()`` has already changed the terminal by the time the
+        next line runs.
+        """
+        buffer = self._screen.start()
+        try:
+            self._input = InputHandler(self._screen.stdscr)
+            self.tk.screen = self._screen
+            self.tk.panels = PanelStack()
+            self._rect = Rect(0, 0, buffer.width, buffer.height)
+            self._mapped = True
+            self._started = True
+        except BaseException:
+            self._screen.stop()
+            raise
+
+    def winfo_class(self) -> str:
+        """The class this root binds and reads options under."""
+        return self.className
+
+    # ---------------------------------------------------------- event loop
+
+    def mainloop(self, n: int = 0) -> None:
+        """Run until :meth:`quit` is called or the root is destroyed.
+
+        Args:
+            n: Run at most this many passes, or unlimited when 0. tkinter
+                takes the same argument; it is what lets a test drive the
+                loop a step at a time.
+
+        The terminal is restored on the way out however the loop ends,
+        including an exception escaping a callback that
+        :meth:`report_callback_exception` chose to re-raise.
+        """
+        self._running = True
+        self.tk.quit_requested = False
+        passes = 0
+        try:
+            while self._running and not self.tk.quit_requested:
+                if not self.winfo_exists():
+                    break
+                self._loop_once()
+                passes += 1
+                if n and passes >= n:
+                    break
+        finally:
+            self._running = False
+
+    def _loop_once(self) -> None:
+        """One pass: queued work, idle work, timers, input, then output.
+
+        The order is not arbitrary. Work queued from another thread runs
+        first because it may schedule timers; idle work runs before timers
+        because that is what "idle" means; input is read last, with a timeout
+        derived from the next timer, so the loop sleeps exactly as long as it
+        can afford to.
+        """
+        # Fetched rather than stored: shutdown resets the dispatcher, and a
+        # held reference would outlive the one the rest of the process uses.
+        CursesDispatcher.get().process_queue(limit=_DISPATCH_BATCH)
+        self._guard(self.tk.timers.run_idle)
+        self._guard(self.tk.timers.run_due)
+        self._read_input()
+        self._update_display()
+
+    def _read_input(self) -> None:
+        """Wait for input up to the next timer's deadline, then route it."""
+        if self._input is None:
+            return
+        delay = self.tk.timers.next_delay()
+        timeout = (
+            _IDLE_TIMEOUT_MS
+            if delay is None
+            else min(int(delay * 1000), _IDLE_TIMEOUT_MS)
+        )
+        self._input.wait_for_input(max(timeout, 0))
+        for event in self._input.poll():
+            self._guard(self._route, event)
+
+    def _route(self, event: CoreEvent) -> None:
+        """Deliver one event to the widget it belongs to.
+
+        Keyboard goes to the focus, mouse to whatever is under the pointer,
+        and a resize to the root, which owns the screen. A grab overrides all
+        three: that is what makes a modal dialog modal.
+        """
+        if isinstance(event, ResizeEvent):
+            self._handle_resize()
+            return
+        if isinstance(event, MouseEvent):
+            target = self._widget_at(event.x, event.y)
+        else:
+            target = self.tk.focus or self
+        target = self._through_grab(target)
+        target._handle(event)
+
+    def _widget_at(self, x: int, y: int) -> Misc:
+        """The widget under a screen cell, falling back to the root.
+
+        The panel stack answers this when there is one, because it knows the
+        z-order; before there is, the widget tree's own geometry does.
+        """
+        stack = self.tk.panels
+        if stack is not None:
+            panel = stack.panel_at(x, y)
+            if panel is not None:
+                widget = panel.userptr()
+                if isinstance(widget, Misc) and widget.winfo_exists():
+                    return widget
+        return self.winfo_containing(x, y) or self
+
+    def _through_grab(self, target: Misc) -> Misc:
+        """Redirect an event to the grab holder unless it is already inside it."""
+        grab = self.tk.grab
+        if grab is None or not grab.winfo_exists():
+            return target
+        if any(widget is grab for widget in target._ancestry()):
+            return target
+        return grab
+
+    def _handle_resize(self) -> None:
+        """Take the terminal's new size and tell the tree about it.
+
+        The event carries a size, but it is not the one used: curses reports
+        the old dimensions until resize_term() has been given what the
+        terminal actually is, which is what handle_resize() does.
+        """
+        size = self._screen.handle_resize()
+        self._rect = Rect(0, 0, size.width, size.height)
+        self.event_generate("<Configure>", width=size.width, height=size.height)
+
+    def _update_display(self) -> None:
+        """Push what changed to the terminal.
+
+        The screen goes first and the panels over it, which is the order they
+        are stacked in. Widgets do not draw anything yet; when they do, their
+        rendering happens before this.
+        """
+        if not self._started:
+            return
+        self._screen.refresh()
+        if self.tk.panels is not None:
+            self.tk.panels.update()
+
+    def update(self) -> None:
+        """Process everything pending without entering the loop.
+
+        Unlike :meth:`Misc.update`, this does read input, because the root is
+        the one object entitled to. It is still the reentrancy hazard it is
+        in tkinter: a callback that calls ``update()`` can be re-entered by
+        the event that arrives during it.
+        """
+        self._loop_once()
+
+    # ------------------------------------------------------------ teardown
+
+    def quit(self) -> None:
+        """Stop the loop without destroying anything.
+
+        The loop notices on its next pass, so the callback calling this runs
+        to completion first. The widgets survive, which is what allows
+        ``mainloop()`` to be entered again.
+        """
+        self._running = False
+        self.tk.quit_requested = True
+
+    def destroy(self) -> None:
+        """Destroy every widget and give the terminal back.
+
+        Ordering matters on the way out as much as on the way in: the widget
+        tree goes first, so panels are released while the stack still exists,
+        and curses is shut down last.
+        """
+        global _default_root, _active_root
+        if self._destroyed:
+            return
+        self._running = False
+        try:
+            super().destroy()
+        finally:
+            self._shutdown()
+        if _default_root is self:
+            _default_root = None
+        if _active_root is self:
+            _active_root = None
+
+    def _shutdown(self) -> None:
+        """Release curses and everything hanging off it, once.
+
+        Every step is independent and none may prevent the next: this runs
+        while something has already gone wrong, and the terminal has to come
+        back regardless.
+        """
+        if not self._started:
+            return
+        self._started = False
+        with contextlib.suppress(Exception):
+            if self.tk.panels is not None:
+                self.tk.panels.clear()
+        self.tk.panels = None
+        self.tk.screen = None
+        self._input = None
+        with contextlib.suppress(Exception):
+            self._screen.stop()
+        CursesDispatcher.reset()
+
+    def __enter__(self) -> Tk:
+        """Support ``with Tk() as root:``.
+
+        Not tkinter API. It is here because the alternative to guaranteed
+        teardown in a curses program is a wrecked terminal, and a context
+        manager is the one construct that guarantees it.
+        """
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Destroy the root, restoring the terminal."""
+        self.destroy()
+
+    # ----------------------------------------------------------- callbacks
+
+    def _guard(self, func: Callable[..., Any], *args: Any) -> None:
+        """Run ``func``, reporting rather than propagating what it raises.
+
+        One misbehaving binding should not take the application down, which
+        is tkinter's rule too. KeyboardInterrupt and SystemExit are not
+        caught: those are the user asking to leave.
+        """
+        try:
+            func(*args)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            self.report_callback_exception(*sys.exc_info())
+
+    def report_callback_exception(self, exc: Any, val: Any, tb: Any) -> None:
+        """Report an exception that escaped a callback.
+
+        Writes to stderr, which in a curses program is usually a redirect or
+        the scrollback after exit rather than the screen. Override it to put
+        the report somewhere the application can show.
+        """
+        traceback.print_exception(exc, val, tb)
