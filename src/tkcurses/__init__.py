@@ -46,6 +46,7 @@ from tkcurses._core.geometry import (
     content_rect,
 )
 from tkcurses._core.input import InputHandler
+from tkcurses._core.pack import FILLS, SIDES, PackLayout, PackOptions, parse_anchor
 from tkcurses._core.panels import PanelStack
 from tkcurses._core.screen import CursesScreen
 from tkcurses.constants import FLAT
@@ -66,6 +67,7 @@ __all__ = [
     "IntVar",
     "Misc",
     "NoDefaultRoot",
+    "Pack",
     "StringVar",
     "TclError",
     "Tk",
@@ -883,6 +885,15 @@ class Misc:
             self._invalidate_layout()
         return self._layout_propagate
 
+    def pack_slaves(self) -> list[Misc]:
+        """The children this container is packing, in packing order."""
+        manager = self._layout_manager
+        if not isinstance(manager, PackLayout):
+            return []
+        return list(manager.slaves(self))
+
+    slaves = pack_slaves
+
     def pack_propagate(self, flag: bool | None = None) -> bool:
         """Get or set whether this container resizes to fit its children.
 
@@ -1676,7 +1687,161 @@ class BaseWidget(Misc):
         self._destroy_window()
 
 
-class Widget(BaseWidget):
+# ======================================================================
+# Geometry managers
+# ======================================================================
+
+
+class Pack:
+    """Packing: place a widget against one edge of what space is left.
+
+    The mixin half of the pack manager. The arithmetic is in
+    :mod:`tkcurses._core.pack`; what is here is the tkinter-shaped API and the
+    checking that goes with it.
+    """
+
+    if TYPE_CHECKING:
+        # Supplied by the widget this is mixed into, declared so the contract
+        # is visible and the mixin still type-checks on its own.
+        master: Misc | None
+        _manager: str
+
+        def _map(self) -> None: ...
+        def _unmap(self) -> None: ...
+
+    def pack_configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
+        """Pack this widget into its container.
+
+        Args:
+            cnf: Options as a dictionary, merged with the keywords.
+            **kw: ``side``, ``fill``, ``expand``, ``anchor``, ``padx``,
+                ``pady``, ``ipadx``, ``ipady``, plus ``in_`` to pack into
+                something other than the master, and ``before``/``after`` to
+                place this widget in the packing order.
+
+        Raises:
+            TclError: If an option or its value is not one Tk accepts, or if
+                the container is already managed by a different manager.
+        """
+        options = {**(cnf or {}), **kw}
+        container = options.pop("in_", None) or options.pop("in", None) or self.master
+        if container is None:
+            raise TclError("cannot pack the root window")
+        before = options.pop("before", None)
+        after = options.pop("after", None)
+
+        layout = _pack_layout_of(container)
+        layout.add(self, _pack_options(options), before=before, after=after)
+        self._manager = "pack"
+        self._map()
+        container.tk.layout.invalidate(container)
+
+    pack = pack_configure
+
+    def pack_forget(self) -> None:
+        """Stop packing this widget and take it off the screen.
+
+        Its packing options are forgotten, which is what will separate this
+        from ``grid_remove``: packing it again starts from the defaults.
+        """
+        container = self.master
+        if container is None:
+            return
+        manager = container._layout_manager
+        if isinstance(manager, PackLayout):
+            manager.remove(self)
+            container.tk.layout.invalidate(container)
+        self._manager = ""
+        self._unmap()
+
+    forget = pack_forget
+
+    def pack_info(self) -> dict[str, Any]:
+        """How this widget is packed.
+
+        Raises:
+            TclError: If it is not packed. Tk reports that rather than
+                returning defaults, which would read as though it were.
+        """
+        container = self.master
+        manager = container._layout_manager if container is not None else None
+        options = manager.options_for(self) if isinstance(manager, PackLayout) else None
+        if options is None:
+            raise TclError(f'window "{self}" is not packed')
+        return {
+            "in": container,
+            "side": options.side,
+            "fill": options.fill,
+            "expand": options.expand,
+            "anchor": options.anchor,
+            "padx": options.padx,
+            "pady": options.pady,
+            "ipadx": options.ipadx,
+            "ipady": options.ipady,
+        }
+
+    info = pack_info
+
+
+#: What each layout class is called in the error a mixed container raises.
+_MANAGER_NAMES = {"PackLayout": "pack"}
+
+
+def _pack_layout_of(container: Misc) -> PackLayout:
+    """The container's pack manager, created on first use.
+
+    Raises:
+        TclError: If the container is already laid out by a different manager.
+            Tk refuses the same mixture: two managers each deciding where the
+            same children go is not a layout.
+    """
+    manager = container._layout_manager
+    if manager is None:
+        manager = PackLayout()
+        container._layout_manager = manager
+        return manager
+    if not isinstance(manager, PackLayout):
+        other = _MANAGER_NAMES.get(type(manager).__name__, type(manager).__name__)
+        raise TclError(
+            f"cannot use geometry manager pack inside {container} which already "
+            f"has slaves managed by {other}"
+        )
+    return manager
+
+
+def _pack_options(given: dict[str, Any]) -> PackOptions:
+    """Build and check one widget's packing options.
+
+    Raises:
+        TclError: If an option is unknown or its value is not one Tk accepts.
+            Checked here rather than left to produce a strange layout later: a
+            misspelled ``fill`` is otherwise invisible.
+    """
+    options = PackOptions()
+    for name, value in given.items():
+        if not hasattr(options, name):
+            raise TclError(f'unknown option "-{name}"')
+        setattr(options, name, value)
+
+    if options.side not in SIDES:
+        raise TclError(f'bad side "{options.side}": must be {", ".join(SIDES)}')
+    if options.fill not in FILLS:
+        raise TclError(f'bad fill style "{options.fill}": must be {", ".join(FILLS)}')
+    try:
+        parse_anchor(options.anchor)
+    except ValueError as error:
+        raise TclError(str(error)) from None
+    options.expand = bool(options.expand)
+    for name in ("padx", "pady", "ipadx", "ipady"):
+        value = getattr(options, name)
+        try:
+            setattr(options, name, max(0, int(value)))
+        except (TypeError, ValueError):
+            raise TclError(f'bad pad value "{value}"') from None
+    return options
+
+
+class Widget(BaseWidget, Pack):
     """The base class for every ordinary widget.
 
     In tkinter this is where the three geometry managers are mixed in
