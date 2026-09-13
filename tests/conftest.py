@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,13 @@ import pytest
 from tests.support import TerminalHarness
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# uat/ is a development tool at the repository root, outside the installed
+# distribution, so importing it depends on the root being on the path. pytest
+# usually arranges that; saying so here means the tests do not rely on which
+# import mode it was run with.
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 
 @pytest.fixture(scope="session", autouse=True)

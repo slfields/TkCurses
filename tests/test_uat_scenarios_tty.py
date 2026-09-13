@@ -8,6 +8,7 @@ sat down to accept a release.
 
 from __future__ import annotations
 
+import os
 import sys
 
 import pytest
@@ -20,9 +21,33 @@ pytestmark = pytest.mark.tty
 ESCAPE = b"\x1b"
 
 
+@pytest.fixture
+def uat_terminal(terminal):
+    """A harness whose child process can import the uat package.
+
+    uat/ sits at the repository root and is deliberately outside the
+    installed distribution - it is a development tool, not library code - so a
+    child can import it only if the root is on its path. Inheriting that from
+    whichever directory pytest happened to be started in would make these
+    tests pass or fail depending on where the command was typed, so the path
+    is passed explicitly.
+    """
+
+    def _make(**kwargs):
+        env = dict(kwargs.pop("env", {}))
+        inherited = os.environ.get("PYTHONPATH", "")
+        env.setdefault(
+            "PYTHONPATH",
+            os.pathsep.join(part for part in (str(PROJECT_ROOT), inherited) if part),
+        )
+        return terminal(env=env, **kwargs)
+
+    return _make
+
+
 @pytest.mark.parametrize("scenario", scenarios())
-def test_a_scenario_starts_renders_and_exits_cleanly(terminal, scenario):
-    term = terminal(cols=60, rows=20)
+def test_a_scenario_starts_renders_and_exits_cleanly(uat_terminal, scenario):
+    term = uat_terminal(cols=60, rows=20)
     term.run([sys.executable, "-m", f"uat.{scenario}"])
     # Every scenario puts its title on the first line before waiting.
     term.wait_for(lambda t: t.row(0).strip() != "", message="the title line")
@@ -31,28 +56,25 @@ def test_a_scenario_starts_renders_and_exits_cleanly(terminal, scenario):
     assert "Traceback" not in term.stderr
 
 
-def test_the_runner_lists_every_scenario(terminal):
-    term = terminal(cols=80, rows=30)
+def test_the_runner_lists_every_scenario(uat_terminal):
+    term = uat_terminal(cols=80, rows=30)
     term.run([sys.executable, "-m", "uat"])
     assert term.wait_for_exit(timeout=10) == 0
     for scenario in scenarios():
         assert scenario in "\n".join(term.display)
 
 
-def test_the_runner_refuses_a_scenario_that_does_not_exist(terminal):
-    term = terminal(cols=80, rows=30)
+def test_the_runner_refuses_a_scenario_that_does_not_exist(uat_terminal):
+    term = uat_terminal(cols=80, rows=30)
     term.run([sys.executable, "-m", "uat", "99"])
     assert term.wait_for_exit(timeout=10) == 2
 
 
-def test_a_scenario_reports_failure_through_its_exit_code(terminal, tmp_path):
+def test_a_scenario_reports_failure_through_its_exit_code(uat_terminal, tmp_path):
     """The contract that lets these be pointed at CI later."""
-    term = terminal(cols=60, rows=20)
+    term = uat_terminal(cols=60, rows=20)
     term.run_source(
-        f"""
-import sys
-# run_source runs the script from tmp_path, so the repo is not on the path.
-sys.path.insert(0, {str(PROJECT_ROOT)!r})
+        """
 from uat import _support
 
 def build(root, screen):
