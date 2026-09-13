@@ -228,6 +228,40 @@ class TerminalHarness:
             for leftover in self._workdir.glob(f"tkc_app_{os.getpid()}_{id(self)}.py"):
                 leftover.unlink(missing_ok=True)
 
+    def wait_for_exit(self, *, timeout: float | None = None) -> int:
+        """Wait for the child to exit and return its exit code.
+
+        Keeps pumping the terminal while it waits, so output written on the
+        way out is not lost, and so a child blocked writing into a full pty
+        buffer can finish.
+
+        Raises:
+            TerminalTimeout: If the child is still running when time runs out.
+        """
+        if self._pid is None:
+            return self.exit_code
+        budget = self.timeout if timeout is None else timeout
+        deadline = time.monotonic() + budget
+        while time.monotonic() < deadline:
+            self._drain(0.05)
+            pid, status = os.waitpid(self._pid, os.WNOHANG)
+            if pid:
+                self._exit_status = status
+                self._pid = None
+                return self.exit_code
+        raise TerminalTimeout(f"child did not exit within {budget}s\n{self.describe()}")
+
+    @property
+    def exit_code(self) -> int:
+        """The exit code of the child, once it has exited.
+
+        Raises:
+            RuntimeError: If it is still running, since there is no answer yet.
+        """
+        if self._exit_status is None:
+            raise RuntimeError("the child has not exited")
+        return os.waitstatus_to_exitcode(self._exit_status)
+
     def _reap(self, timeout: float) -> None:
         """Wait for the child, escalating to SIGKILL if it ignores SIGTERM."""
         if self._pid is None:
