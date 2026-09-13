@@ -352,3 +352,30 @@ def test_the_view_comes_back_when_the_cursor_does(entry):
     entry.insert(0, "x" * 50)
     entry.icursor(0)
     assert entry.xview() == 0
+
+
+def test_an_entry_too_short_for_its_border_still_shows_its_text(root):
+    """A bordered widget too small for its border draws none.
+
+    Everything measuring the space left inside has to agree with that. It
+    did not: the edge was subtracted anyway, the content area came out
+    empty, and the entry rendered as a blank rectangle - indistinguishable
+    from a widget that had failed to appear at all. Found by a spinbox
+    packed with pady into a frame three rows tall.
+    """
+    entry = Entry(root, name="e", width=10)
+    entry.insert(0, "visible")
+    entry._allocate(Rect(0, 0, 12, 1))
+    entry._map()
+    assert not entry._border_drawn
+    area = entry._text_area()
+    assert area.height == 1
+    assert area.width == 12
+
+
+def test_an_entry_with_room_for_its_border_keeps_it(root):
+    entry = Entry(root, name="e", width=10)
+    entry._allocate(Rect(0, 0, 12, 3))
+    entry._map()
+    assert entry._border_drawn
+    assert entry._text_area().width == 10

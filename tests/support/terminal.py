@@ -49,7 +49,7 @@ import termios
 import textwrap
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import pyte
 
@@ -108,6 +108,34 @@ class TerminalTimeout(AssertionError):
     """
 
 
+class _Screen(pyte.Screen):
+    """pyte's screen, plus the one sequence ncurses uses that it lacks.
+
+    ncurses moves the cursor with back-tab - ``CSI Z`` - whenever that is the
+    shortest way to reach a column. pyte has no handler for it and drops it
+    silently, so its idea of the cursor drifts from the terminal's and every
+    character written afterwards lands a few cells off. That shows up as a
+    screen that is stably wrong rather than as a missing update, which is
+    what makes it worth implementing rather than waiting out: a test sees
+    text that no real terminal would ever have shown.
+    """
+
+    def cursor_back_tab(self, count: int = 0) -> None:
+        """Move the cursor back ``count`` tab stops, as ``CSI Z`` does."""
+        for _ in range(count or 1):
+            behind = [stop for stop in self.tabstops if stop < self.cursor.x]
+            self.cursor.x = max(behind) if behind else 0
+
+
+class _ByteStream(pyte.ByteStream):
+    """pyte's byte stream, taught the sequence :class:`_Screen` implements."""
+
+    csi: ClassVar[dict[str, str]] = {
+        **pyte.ByteStream.csi,
+        "Z": "cursor_back_tab",
+    }
+
+
 class TerminalHarness:
     """Runs a program under a pty and exposes the rendered character grid.
 
@@ -131,8 +159,8 @@ class TerminalHarness:
         self.timeout = timeout
         self._extra_env = dict(env or {})
 
-        self._screen = pyte.Screen(cols, rows)
-        self._stream = pyte.ByteStream(self._screen)
+        self._screen = _Screen(cols, rows)
+        self._stream = _ByteStream(self._screen)
         # Set when the application enables keypad transmit mode (smkx). A real
         # terminal then sends SS3-prefixed cursor keys, so the harness must too.
         self._app_cursor_keys = False

@@ -162,3 +162,25 @@ def test_a_horizontal_scrollbar_is_one_cell_tall(root):
 def test_a_scrollbar_does_not_take_the_focus(root):
     """Nothing on it can be operated by keyboard, so it must not be a tab stop."""
     assert Scrollbar(root, name="sb")._takefocus is False
+
+
+def test_identify_takes_coordinates_within_the_widget(root):
+    """Tk's identify takes widget-relative coordinates, not screen ones.
+
+    Everything here used to subtract winfo_rootx, which is the same thing
+    only for a widget at the origin - which is where every test had put it.
+    """
+    bar = Scrollbar(root, name="b", orient="vertical")
+    bar._allocate(Rect(5, 4, 1, 12))
+    bar._map()
+    assert bar.winfo_rooty() == 4
+    assert bar.identify(0, 0) == "arrow1"
+    assert bar.identify(0, 11) == "arrow2"
+
+
+def test_fraction_takes_coordinates_within_the_widget(root):
+    bar = Scrollbar(root, name="b", orient="vertical")
+    bar._allocate(Rect(5, 4, 1, 12))
+    bar._map()
+    assert bar.fraction(0, 1) == 0.0
+    assert bar.fraction(0, 11) == 1.0

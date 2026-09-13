@@ -201,6 +201,14 @@ class Application:
         #: Values behind ``getvar``/``setvar`` and the Variable classes.
         self.variables: dict[str, Any] = {}
 
+        #: Variable objects the library itself owns, by name. A Variable
+        #: forgets its value when the last reference to it goes, so a
+        #: default shared by several widgets - Tk's ``selectedButton``
+        #: radiobutton group - cannot be a new object per widget: destroying
+        #: any one of them would wipe the group's value. Held here instead,
+        #: so it lives as long as the application and no longer.
+        self.shared_variables: dict[str, Any] = {}
+
         #: Widget that currently has keyboard focus, and the last widget to
         #: have had it within each toplevel, which is what focus_lastfor()
         #: reports and what a toplevel restores when it is raised again.
