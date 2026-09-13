@@ -97,8 +97,12 @@ message aspect, `F3` moves the captions
 - [ ] The readonly spinbox refuses typing and still steps
 - [ ] `0 to 12, wraps` goes from 12 to 0 and back rather than stopping
 - [ ] `0.00 by 0.25` shows two decimals throughout, and can be typed into
-- [ ] Each message wraps itself, and `F2` re-wraps all three
-- [ ] Wider aspects give wider, shorter blocks
+- [ ] The bordered rectangle inside each of the three lower boxes is the
+      **message**; the captioned box around it is a LabelFrame
+- [ ] At aspect 100 the block is roughly as tall as it is wide; at 300 it is
+      about three times as wide as tall
+- [ ] The three aspects stay different from one another
+- [ ] `F2` changes the text and all three re-wrap, each keeping its own shape
 - [ ] A message too tall for its box keeps its **first** line and loses its
       last — text you cannot start reading is text you cannot read
 - [ ] Resizing the terminal re-wraps the messages and keeps every caption on
@@ -140,6 +144,16 @@ message aspect, `F3` moves the captions
   mid-sentence. Clamped to the top, the way the column was already clamped to
   the left: losing the end of a paragraph is recoverable, losing its start is
   not.
+- **The aspect scenario could not show an aspect.** The three messages filled
+  three LabelFrames packed as fixed equal thirds, so the only edges on screen
+  belonged to the frames and never moved; changing `aspect` only reshuffled the
+  wrapping inside a rectangle that could not change shape. Worse, `F2` set all
+  three boxes to the *same* aspect, which made the columns identical and threw
+  away the comparison they exist for. Each message now has a border of its own
+  and is packed to its own size, so the block it asked for is what you see;
+  `F2` cycles the text instead, and the three aspects stay distinct. Reported
+  from UAT: "the border for the different windows never change when the aspect
+  value is changed".
 - **A scenario key that a focused entry ate.** Scenario 22 first used `a` and
   `c`; with the focus in a spinbox neither ever arrived. The interactive round
   had already written this down, which is the argument for reading your own
