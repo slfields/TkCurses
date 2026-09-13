@@ -152,8 +152,11 @@ Press `+`, `-`, `r`.
 Run it four times, ending it differently each time: `q`, `c`, `x`, and Ctrl-C.
 
 - [ ] `q` — quits cleanly, terminal usable
-- [ ] `c` — the callback raises and **the application keeps running**; a
-      traceback appears on stderr (visible after exit, or in a redirect)
+- [ ] `c` — the callback raises and **the application keeps running**
+- [ ] the traceback reads normally: every line starts at the left edge, not
+      stepping further right down the screen
+- [ ] the traceback lands on top of the display and is *not* cleaned up
+      afterwards — expected for now, tracked as **TkCurses-k0k**
 - [ ] `x` — the application ends, terminal usable
 - [ ] Ctrl-C — the application ends, terminal usable
 - [ ] After all four: prompt back, cursor visible, typing echoed, no `reset`

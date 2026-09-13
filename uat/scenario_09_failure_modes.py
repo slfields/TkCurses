@@ -6,6 +6,12 @@ application from inside a callback. Then press Ctrl-C on a fourth run.
 What to look for: after every one of the four, the terminal is usable - prompt
 back, cursor visible, typing echoed, no leftover raw mode. A callback that
 raises must NOT end the application; the other three must.
+
+The traceback from 'c' is written to stderr, which is this same terminal, so
+it lands on top of the display. Every line of it should start at the left
+edge; a traceback that steps further right down the screen means the line
+endings are wrong for a terminal in curses mode. The display is left damaged
+underneath it, which is known and tracked as TkCurses-k0k.
 """
 
 from __future__ import annotations

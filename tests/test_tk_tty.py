@@ -352,3 +352,38 @@ def test_report_callback_exception_can_be_overridden(terminal, tmp_path):
         workdir=tmp_path,
     )
     term.wait_for_text("reported ZeroDivisionError")
+
+
+def test_a_reported_traceback_is_not_staircased(terminal, tmp_path):
+    """curses clears ONLCR, so a bare newline does not return to column 0.
+
+    Without the translation each line of a traceback starts where the last
+    one ended and the report walks off the right edge. stderr is pointed at
+    the terminal here because that is where a person running the application
+    sees it; the harness otherwise keeps it on a separate pipe.
+    """
+    term = terminal(cols=100, rows=30)
+    term.run_source(
+        """
+import sys
+import tkcurses
+
+root = tkcurses.Tk()
+sys.stderr = sys.stdout
+root.after(10, lambda: 1 / 0)
+root.after(400, root.quit)
+root.mainloop()
+root.destroy()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("ZeroDivisionError")
+    lines = [line for line in term.display if line.strip()]
+    # A traceback indents its source lines by four and its File lines by two.
+    # Anything further right is the staircase, each line resuming where the
+    # previous one stopped.
+    for line in lines:
+        indent = len(line) - len(line.lstrip())
+        assert indent <= 4, f"staircased: {line!r}"
+    assert any(line.startswith("ZeroDivisionError") for line in lines)
+    assert any(line.startswith('  File "') for line in lines)

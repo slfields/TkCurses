@@ -2386,8 +2386,21 @@ class Tk(BaseWidget, Wm):
         Writes to stderr, which in a curses program is usually a redirect or
         the scrollback after exit rather than the screen. Override it to put
         the report somewhere the application can show.
+
+        Line endings are rewritten while the screen is up. curses clears
+        ONLCR, so the terminal stops turning a newline into a carriage return
+        and line feed: a traceback written with bare newlines comes out as a
+        staircase, each line starting where the last one ended. Nothing else
+        in the library writes to the terminal directly, so the translation
+        belongs here rather than in a wrapper around stderr.
         """
-        traceback.print_exception(exc, val, tb)
+        text = "".join(traceback.format_exception(exc, val, tb))
+        screen = self.tk.screen
+        if screen is not None and screen.started:
+            text = text.replace("\n", "\r\n")
+        with contextlib.suppress(OSError, ValueError):
+            sys.stderr.write(text)
+            sys.stderr.flush()
 
 
 class Toplevel(BaseWidget, Wm):
