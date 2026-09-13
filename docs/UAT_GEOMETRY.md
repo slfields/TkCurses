@@ -75,15 +75,24 @@ column.
 
 ## 13. Layout under resize
 
-`python3 -m uat 13` · `d` nests a second layout, then resize the terminal
+`python3 -m uat 13` · `d` nests a pair inside B, then resize the terminal
+
+A and B share the screen one above the other. `d` puts two more boxes *inside*
+B, side by side — B stays where it is and keeps its outline, with **1** and
+**2** within it. They are numbered rather than lettered because they belong to
+B; a C and D would suggest two more siblings.
 
 - [ ] The boxes follow the new size immediately
-- [ ] Nothing is left drawn from the previous size
+- [ ] `d` leaves B in place and visibly containing 1 and 2 — B is not replaced
+- [ ] 1 and 2 resize along with B and stay inside its outline
 - [ ] Nothing is drawn outside the screen
-- [ ] `d` nests two boxes side by side inside box B, and they resize with it
 - [ ] Make the terminal very small — a few cells — and check it neither
       crashes nor draws nonsense
-- [ ] Make it large again and check the layout recovers
+- [ ] Make it large again and check the layout recovers exactly
+
+> **Known and already filed:** shrinking a long way can leave fragments of the
+> previous layout on screen until you grow the terminal back. That is
+> **TkCurses-by3**, not a new fault.
 
 ---
 
