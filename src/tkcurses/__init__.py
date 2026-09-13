@@ -45,6 +45,12 @@ from tkcurses._core.geometry import (
     clip_text,
     content_rect,
 )
+from tkcurses._core.grid import (
+    GridLayout,
+    GridOptions,
+    LineConfig,
+    parse_sticky,
+)
 from tkcurses._core.input import InputHandler
 from tkcurses._core.pack import FILLS, SIDES, PackLayout, PackOptions, parse_anchor
 from tkcurses._core.panels import PanelStack
@@ -64,6 +70,7 @@ __all__ = [
     "BooleanVar",
     "DoubleVar",
     "Event",
+    "Grid",
     "IntVar",
     "Misc",
     "NoDefaultRoot",
@@ -893,6 +900,121 @@ class Misc:
         return list(manager.slaves(self))
 
     slaves = pack_slaves
+
+    def grid_slaves(
+        self, row: int | None = None, column: int | None = None
+    ) -> list[Misc]:
+        """The children this container is gridding, optionally in one cell."""
+        manager = self._layout_manager
+        if not isinstance(manager, GridLayout):
+            return []
+        return list(manager.slaves(self, row=row, column=column))
+
+    def grid_size(self) -> tuple[int, int]:
+        """The grid's extent as ``(columns, rows)``."""
+        manager = self._layout_manager
+        return manager.size() if isinstance(manager, GridLayout) else (0, 0)
+
+    def grid_bbox(
+        self,
+        column: int | None = None,
+        row: int | None = None,
+        col2: int | None = None,
+        row2: int | None = None,
+    ) -> tuple[int, int, int, int]:
+        """The region a cell or range of cells covers, in screen cells."""
+        manager = self._layout_manager
+        if not isinstance(manager, GridLayout):
+            return (0, 0, 0, 0)
+        if column is None or row is None:
+            columns, rows = manager.size()
+            return manager.bbox(
+                self._content_rect(), 0, 0, max(0, columns - 1), max(0, rows - 1)
+            )
+        return manager.bbox(
+            self._content_rect(),
+            column,
+            row,
+            col2 if col2 is not None else column,
+            row2 if row2 is not None else row,
+        )
+
+    def grid_location(self, x: int, y: int) -> tuple[int, int]:
+        """The cell at a screen position, or ``(-1, -1)`` outside the grid."""
+        manager = self._layout_manager
+        if not isinstance(manager, GridLayout):
+            return (-1, -1)
+        return manager.location(self._content_rect(), x, y)
+
+    def grid_anchor(self, anchor: str | None = None) -> str:
+        """Get or set where the grid sits when it is smaller than its container."""
+        manager = _grid_layout_of(self)
+        if anchor is not None:
+            if anchor != "center":
+                # Validate before storing, so a bad anchor fails here rather
+                # than during the next layout.
+                try:
+                    parse_sticky(anchor)
+                except ValueError as error:
+                    raise TclError(str(error)) from None
+            manager.anchor = anchor
+            self.tk.layout.invalidate(self)
+        return manager.anchor
+
+    def grid_rowconfigure(
+        self, index: int, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> Any:
+        """Get or set how one row behaves: weight, minsize, pad, uniform."""
+        return self._line_configure("row", index, cnf, kw)
+
+    def grid_columnconfigure(
+        self, index: int, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> Any:
+        """Get or set how one column behaves."""
+        return self._line_configure("column", index, cnf, kw)
+
+    rowconfigure = grid_rowconfigure
+    columnconfigure = grid_columnconfigure
+
+    def _line_configure(
+        self, axis: str, index: int, cnf: dict[str, Any] | None, kw: dict[str, Any]
+    ) -> Any:
+        """Shared implementation of grid_rowconfigure and grid_columnconfigure.
+
+        Raises:
+            TclError: If an option is not one Tk accepts for a grid line.
+        """
+        manager = _grid_layout_of(self)
+        current = (
+            manager.row_config(index) if axis == "row" else manager.column_config(index)
+        )
+        given = {**(cnf or {}), **kw}
+        if not given:
+            return {
+                "weight": current.weight,
+                "minsize": current.minsize,
+                "pad": current.pad,
+                "uniform": current.uniform,
+            }
+        config = LineConfig(
+            current.weight, current.minsize, current.pad, current.uniform
+        )
+        for name, value in given.items():
+            if not hasattr(config, name):
+                raise TclError(f'unknown option "-{name}"')
+            if name == "uniform":
+                config.uniform = str(value)
+            else:
+                try:
+                    setattr(config, name, max(0, int(value)))
+                except (TypeError, ValueError):
+                    raise TclError(f'expected integer but got "{value}"') from None
+        if axis == "row":
+            manager.configure_row(index, config)
+        else:
+            manager.configure_column(index, config)
+        self.tk.layout.invalidate(self)
+        return None
 
     def pack_propagate(self, flag: bool | None = None) -> bool:
         """Get or set whether this container resizes to fit its children.
@@ -1784,7 +1906,7 @@ class Pack:
 
 
 #: What each layout class is called in the error a mixed container raises.
-_MANAGER_NAMES = {"PackLayout": "pack"}
+_MANAGER_NAMES = {"PackLayout": "pack", "GridLayout": "grid"}
 
 
 def _pack_layout_of(container: Misc) -> PackLayout:
@@ -1841,7 +1963,157 @@ def _pack_options(given: dict[str, Any]) -> PackOptions:
     return options
 
 
-class Widget(BaseWidget, Pack):
+class Grid:
+    """Gridding: place a widget in a row and a column.
+
+    The mixin half of the grid manager; the sizing is in
+    :mod:`tkcurses._core.grid`.
+    """
+
+    if TYPE_CHECKING:
+        master: Misc | None
+        _manager: str
+
+        def _map(self) -> None: ...
+        def _unmap(self) -> None: ...
+
+    def grid_configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
+        """Place this widget in its container's grid.
+
+        Args:
+            cnf: Options as a dictionary, merged with the keywords.
+            **kw: ``row``, ``column``, ``rowspan``, ``columnspan``,
+                ``sticky``, ``padx``, ``pady``, ``ipadx``, ``ipady``, plus
+                ``in_`` to grid into something other than the master.
+
+        A bare ``grid()`` on a widget that was hidden with
+        :meth:`grid_remove` puts it back where it was.
+
+        Raises:
+            TclError: If an option or its value is not one Tk accepts, or the
+                container is already managed by a different manager.
+        """
+        options = {**(cnf or {}), **kw}
+        container = options.pop("in_", None) or options.pop("in", None) or self.master
+        if container is None:
+            raise TclError("cannot grid the root window")
+        layout = _grid_layout_of(container)
+        remembered = layout.remembered(self)
+        if not options and remembered is not None:
+            layout.add(self, remembered)
+        else:
+            layout.add(self, _grid_options(options, remembered))
+        self._manager = "grid"
+        self._map()
+        container.tk.layout.invalidate(container)
+
+    grid = grid_configure
+
+    def grid_forget(self) -> None:
+        """Take this widget out of the grid and forget where it was."""
+        self._ungrid(keep=False)
+
+    def grid_remove(self) -> None:
+        """Take this widget out of the grid but remember where it was.
+
+        A later bare ``grid()`` puts it back, which is what makes this the
+        way to hide a widget temporarily.
+        """
+        self._ungrid(keep=True)
+
+    def _ungrid(self, *, keep: bool) -> None:
+        """Shared implementation of grid_forget and grid_remove."""
+        container = self.master
+        if container is None:
+            return
+        manager = container._layout_manager
+        if isinstance(manager, GridLayout):
+            manager.remove(self, keep=keep)
+            container.tk.layout.invalidate(container)
+        self._manager = ""
+        self._unmap()
+
+    def grid_info(self) -> dict[str, Any]:
+        """Where this widget sits in the grid.
+
+        Raises:
+            TclError: If it is not gridded.
+        """
+        container = self.master
+        manager = container._layout_manager if container is not None else None
+        options = manager.options_for(self) if isinstance(manager, GridLayout) else None
+        if options is None:
+            raise TclError(f'window "{self}" is not gridded')
+        return {
+            "in": container,
+            "row": options.row,
+            "column": options.column,
+            "rowspan": options.rowspan,
+            "columnspan": options.columnspan,
+            "sticky": options.sticky,
+            "padx": options.padx,
+            "pady": options.pady,
+            "ipadx": options.ipadx,
+            "ipady": options.ipady,
+        }
+
+
+def _grid_layout_of(container: Misc) -> GridLayout:
+    """The container's grid manager, created on first use.
+
+    Raises:
+        TclError: If the container is already laid out by a different manager.
+    """
+    manager = container._layout_manager
+    if manager is None:
+        manager = GridLayout()
+        container._layout_manager = manager
+        return manager
+    if not isinstance(manager, GridLayout):
+        other = _MANAGER_NAMES.get(type(manager).__name__, type(manager).__name__)
+        raise TclError(
+            f"cannot use geometry manager grid inside {container} which already "
+            f"has slaves managed by {other}"
+        )
+    return manager
+
+
+def _grid_options(
+    given: dict[str, Any], remembered: GridOptions | None = None
+) -> GridOptions:
+    """Build and check one widget's grid options.
+
+    Raises:
+        TclError: If an option is unknown or its value is not one Tk accepts.
+    """
+    options = (
+        GridOptions(**vars(remembered)) if remembered is not None else GridOptions()
+    )
+    for name, value in given.items():
+        if not hasattr(options, name):
+            raise TclError(f'unknown option "-{name}"')
+        setattr(options, name, value)
+
+    try:
+        parse_sticky(options.sticky)
+    except ValueError as error:
+        raise TclError(str(error)) from None
+    for name in ("row", "column", "padx", "pady", "ipadx", "ipady"):
+        value = getattr(options, name)
+        try:
+            setattr(options, name, max(0, int(value)))
+        except (TypeError, ValueError):
+            raise TclError(f'expected integer but got "{value}"') from None
+    for name in ("rowspan", "columnspan"):
+        value = getattr(options, name)
+        try:
+            setattr(options, name, max(1, int(value)))
+        except (TypeError, ValueError):
+            raise TclError(f'expected integer but got "{value}"') from None
+    return options
+
+
+class Widget(BaseWidget, Pack, Grid):
     """The base class for every ordinary widget.
 
     In tkinter this is where the three geometry managers are mixed in
