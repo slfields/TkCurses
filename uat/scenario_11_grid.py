@@ -7,7 +7,7 @@ What to do: press w to give every row and column a weight, n to take the
 weights away, s to cycle sticky, p to toggle E's span.
 What to look for: with no weight the cells stay at their natural size and
 sticky appears to do nothing - that is correct, and the thing people report as
-a bug. With weight, the cells grow and sticky then decides whether a box
+a bug. With weight, the cells grow and sticky then decides whether a frame
 stretches to fill its cell or sits against one side of it.
 
 The same catch applies to the span: pressing p with no sticky makes E *centre*
@@ -18,7 +18,6 @@ s until sticky is ew to see it stretch.
 
 from __future__ import annotations
 
-import tkcurses
 from uat import _support
 
 TITLE = "11 - grid: weight, sticky and span"
@@ -28,38 +27,29 @@ STICKIES = ["", "w", "e", "ew", "ns", "nsew"]
 
 def build(root, screen):
     area = _support.content_area(root)
-    boxes = []
-    for name in "abcde":
-        box = tkcurses.Widget(area, name=name)
-        box._requested = tkcurses._core.geometry.Size(8, 2)
-        boxes.append(box)
-
+    boxes = [
+        _support.labelled_box(area, letter, width=8, height=3) for letter in "ABCDE"
+    ]
+    cells = [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)]
     state = {"sticky": "", "weight": 0, "span": 1}
 
     def relayout():
         for box in boxes:
             box.grid_forget()
-        # A tidy two by two, with E underneath to show what a span does. The
-        # shape is deliberately regular: an irregular one reads as a bug when
-        # it is only an odd choice of cells.
-        boxes[0].grid(row=0, column=0, sticky=state["sticky"])
-        boxes[1].grid(row=0, column=1, sticky=state["sticky"])
-        boxes[2].grid(row=1, column=0, sticky=state["sticky"])
-        boxes[3].grid(row=1, column=1, sticky=state["sticky"])
-        boxes[4].grid(row=2, column=0, columnspan=state["span"], sticky=state["sticky"])
+        for box, (row, column) in zip(boxes, cells, strict=True):
+            span = state["span"] if box is boxes[4] else 1
+            box.grid(row=row, column=column, columnspan=span, sticky=state["sticky"])
         for index in range(2):
             area.grid_columnconfigure(index, weight=state["weight"])
         for index in range(3):
             area.grid_rowconfigure(index, weight=state["weight"])
         root.update_layout()
-        screen.clear()
         screen.line(0, f" {TITLE} ")
         screen.line(
             1,
             f"  weight={state['weight']}  sticky={state['sticky']!r}  "
             f"E spans {state['span']}   w weight, n none, s sticky, p span",
         )
-        screen.outline_on_redraw(boxes)
         screen.footer(" Escape quits ")
         screen.refresh()
 

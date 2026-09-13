@@ -18,6 +18,7 @@ import curses
 import os
 import select
 import sys
+import time
 from typing import TYPE_CHECKING, Any
 
 from tkcurses._core.dispatcher import CursesDispatcher
@@ -95,16 +96,34 @@ def decode_modifiers(bstate: int) -> int:
 
 
 class MouseDecoder:
-    """Turns curses button masks into mouse events, tracking drags.
+    """Turns curses button masks into mouse events, tracking drags and clicks.
 
     A drag is not something curses reports: it has to be inferred from motion
     arriving while a button is known to be down, which means remembering where
     and with which button the press happened.
+
+    Repeat clicks are counted here rather than left to ncurses. Its own click
+    detection withholds a press for ``mouseinterval`` milliseconds to see what
+    follows, and what it reports then depends on what that was: a press and
+    release in the same cell arrive as one CLICKED, a press and a release a
+    cell apart lose the release entirely, and a press followed by motion can
+    lose the press. Each of those has cost this library a bug - the last of
+    them twice. So ncurses is asked for raw transitions, and the counting
+    happens here where the timestamps and positions are already known.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, click_interval: int = DEFAULT_CLICK_INTERVAL) -> None:
+        """
+        Args:
+            click_interval: Milliseconds within which a second press in the
+                same cell counts as a double click.
+        """
         self._button = 0
         self._start: tuple[int, int] = (0, 0)
+        self.click_interval = click_interval
+        self._last_press = 0.0
+        self._last_cell: tuple[int, int] = (-1, -1)
+        self._repeat = 0
 
     @property
     def dragging(self) -> bool:
@@ -115,6 +134,21 @@ class MouseDecoder:
     def drag_button(self) -> int:
         """The button being held, or 0."""
         return self._button
+
+    def _count_click(self, x: int, y: int) -> MouseState:
+        """Decide whether this press is a first, second or third click.
+
+        A repeat has to be both soon enough and in the same cell: two presses
+        far apart are two clicks however quickly they arrive.
+        """
+        now = time.monotonic()
+        soon = (now - self._last_press) * 1000 <= self.click_interval
+        self._repeat = (
+            min(self._repeat + 1, 3) if soon and (x, y) == self._last_cell else 1
+        )
+        self._last_press = now
+        self._last_cell = (x, y)
+        return ("pressed", "double", "triple")[self._repeat - 1]
 
     def reset(self) -> None:
         """Forget any drag in progress."""
@@ -171,6 +205,7 @@ class MouseDecoder:
                 self._button = button
                 self._start = (x, y)
                 event.drag_start = self._start
+                event.state = self._count_click(x, y)
             elif state == "released" and self._button == button:
                 event.drag_start = self._start
                 event.drag_end = (x, y)
@@ -200,7 +235,7 @@ class InputHandler:
         self._stdscr = stdscr
         self._dispatcher = dispatcher or CursesDispatcher.get()
         self._stream = stream if stream is not None else sys.stdin
-        self._decoder = MouseDecoder()
+        self._decoder = MouseDecoder(click_interval)
         self._mouse_available = False
         self._click_interval = click_interval
         self._configure()
@@ -226,7 +261,11 @@ class InputHandler:
             return
         self._mouse_available = bool(available)
         if self._mouse_available:
-            self._dispatcher.call(curses.mouseinterval, self._click_interval)
+            # Zero, so ncurses reports raw button transitions and never
+            # withholds one while it works out what kind of click it was.
+            # MouseDecoder does the counting; its docstring says what
+            # ncurses' own version cost.
+            self._dispatcher.call(curses.mouseinterval, 0)
 
     # ------------------------------------------------------------- state
 
@@ -244,11 +283,11 @@ class InputHandler:
     def click_interval(self) -> int:
         """Multi-click window in milliseconds.
 
-        Tracked here rather than read back from curses: Python's
-        ``mouseinterval()`` returns None, discarding the previous value the C
-        API reports, so this is the only readable source of truth. Querying
-        curses with ``mouseinterval(0)`` would disable multi-click detection
-        outright.
+        Ours, not curses'. ncurses is held at ``mouseinterval(0)`` so that it
+        reports raw transitions; this is the window MouseDecoder measures a
+        repeat click against. It could not be read back from curses in any
+        case: Python's ``mouseinterval()`` returns None rather than the
+        previous value the C API gives.
         """
         return self._click_interval
 
@@ -257,8 +296,10 @@ class InputHandler:
         if milliseconds < 0:
             raise ValueError(f"click interval must not be negative: {milliseconds}")
         self._click_interval = milliseconds
-        if self._mouse_available:
-            self._dispatcher.call(curses.mouseinterval, milliseconds)
+        # The decoder's window, never curses': handing this to ncurses would
+        # put its click detection back, and with it the swallowed presses and
+        # releases the decoder exists to avoid.
+        self._decoder.click_interval = milliseconds
 
     # -------------------------------------------------------------- input
 

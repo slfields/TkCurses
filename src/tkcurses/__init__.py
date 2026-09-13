@@ -22,20 +22,23 @@ import re
 import sys
 import time
 import traceback
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from tkcurses._core.application import Application
+from tkcurses._core.attributes import for_state, from_font, style_for_relief
 from tkcurses._core.bindings import (
     EventPattern,
     parse_sequence,
     pattern_for_event,
 )
 from tkcurses._core.clipboard import CLIPBOARD, PRIMARY
-from tkcurses._core.colors import palette_rgb, parse_color, rgb_for
+from tkcurses._core.colors import ColorManager, palette_rgb, parse_color, rgb_for
 from tkcurses._core.dispatcher import CursesDispatcher
+from tkcurses._core.editing import TextField
 from tkcurses._core.errors import TclError, TkCursesError
+from tkcurses._core.events import MOD_SHIFT, KeyEvent, MouseEvent, ResizeEvent
 from tkcurses._core.events import Event as CoreEvent
-from tkcurses._core.events import KeyEvent, MouseEvent, ResizeEvent
 from tkcurses._core.geometry import (
     BORDER_WIDTH,
     Insets,
@@ -56,7 +59,8 @@ from tkcurses._core.pack import FILLS, SIDES, PackLayout, PackOptions, parse_anc
 from tkcurses._core.panels import PanelStack
 from tkcurses._core.place import BORDERMODES, PlaceLayout, PlaceOptions
 from tkcurses._core.screen import CursesScreen
-from tkcurses.constants import FLAT
+from tkcurses._core.text import align_offset, measure, wrap
+from tkcurses.constants import ANCHOR, END, FLAT, INSERT, SEL_FIRST, SEL_LAST
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -69,14 +73,20 @@ __version__ = "0.1.0"
 __all__ = [
     "BaseWidget",
     "BooleanVar",
+    "Button",
     "DoubleVar",
+    "Entry",
     "Event",
+    "Frame",
     "Grid",
     "IntVar",
+    "Label",
+    "Listbox",
     "Misc",
     "NoDefaultRoot",
     "Pack",
     "Place",
+    "Scrollbar",
     "StringVar",
     "TclError",
     "Tk",
@@ -222,6 +232,30 @@ class Event:
             event.width = core.width
             event.height = core.height
         return event
+
+
+def _focus_next(event: Event) -> str:
+    """Move the focus to the next widget that will take it."""
+    _move_focus(event.widget, forwards=True)
+    return "break"
+
+
+def _focus_previous(event: Event) -> str:
+    """Move the focus to the previous widget that will take it."""
+    _move_focus(event.widget, forwards=False)
+    return "break"
+
+
+def _move_focus(widget: Misc, *, forwards: bool) -> None:
+    """Hand the focus on, starting from wherever it currently is.
+
+    From the widget the event reached rather than from the focus, because a
+    key pressed with nothing focused still has to start somewhere.
+    """
+    current = widget.focus_get() or widget
+    target = current.tk_focusNext() if forwards else current.tk_focusPrev()
+    if target is not None:
+        target.focus_set()
 
 
 #: tkinter's event type names for each mouse state the input layer reports.
@@ -528,6 +562,15 @@ class Misc:
             # The only report of where the mouse is; winfo_pointerxy() has
             # nothing else to go on, since curses cannot be asked.
             self.tk.pointer = (core.x, core.y)
+            if core.state == "clicked":
+                # ncurses merges a quick press and release into one CLICKED
+                # report. Tk has no such event: a widget waits for the
+                # release to decide whether the press counted, so delivering
+                # only a press leaves a button held down for ever and never
+                # invoked. The pair is put back here, where the knowledge that
+                # curses coalesced them belongs.
+                broke = self._handle(replace(core, state="pressed"))
+                return self._handle(replace(core, state="released")) or broke
         pattern = pattern_for_event(core)
         return self._dispatch(Event._from_core(core, self), [pattern])
 
@@ -1638,7 +1681,13 @@ class BaseWidget(Misc):
         "padx": 0,
         "pady": 0,
         "relief": FLAT,
-        "takefocus": True,
+        # False, because a widget with nothing to do with the keyboard must
+        # not be a place the focus can land: Tab stopping on a Frame or a
+        # Label shows the user nothing and looks like the focus vanished.
+        # Widgets that answer the keyboard turn it back on for themselves,
+        # which is how tkinter's "decide by class" default behaves in
+        # practice.
+        "takefocus": False,
     }
 
     def __init__(
@@ -1665,7 +1714,7 @@ class BaseWidget(Misc):
             master = _get_default_root(f"create a {type(self).__name__}")
         super().__init__(master, name)
         self._options = self._initial_options({**(cnf or {}), **kw})
-        self._takefocus = bool(self._options.get("takefocus", True))
+        self._takefocus = bool(self._options.get("takefocus", False))
 
     # ------------------------------------------------------------ options
 
@@ -2820,6 +2869,11 @@ class Wm:
 # The root window
 # ======================================================================
 
+#: How long ncurses waits for the rest of an escape sequence before deciding
+#: a lone Escape was meant. Tracked as TkCurses-dn5 for a config option; this
+#: is the value most terminal applications settle on.
+_ESCAPE_DELAY_MS = 25
+
 #: Longest the loop will wait on input when no timer is due. It does not sit
 #: on a blocking read forever: quit() may be called from another thread, a
 #: SIGWINCH may need servicing, and work queued through the dispatcher has to
@@ -2893,6 +2947,7 @@ class Tk(BaseWidget, Wm):
         self._takefocus = True
 
         self._screen = CursesScreen()
+        self._mouse_owner: Misc | None = None
         self._input: InputHandler | None = None
         self._started = False
         self._running = False
@@ -2900,6 +2955,7 @@ class Tk(BaseWidget, Wm):
         if useTk:
             self._start()
 
+        self._install_default_bindings()
         _active_root = self
         if _default_root is None and _support_default_root:
             _default_root = self
@@ -2916,7 +2972,21 @@ class Tk(BaseWidget, Wm):
         """
         buffer = self._screen.start()
         try:
+            # ncurses cannot tell a lone Escape from the start of an escape
+            # sequence until this long has passed with nothing following. The
+            # default is a full second, which makes Escape - the key that
+            # cancels things - feel broken. Every terminal in use sends the
+            # rest of a sequence in the same packet, so a short wait loses
+            # nothing and makes the key usable.
+            with contextlib.suppress(AttributeError, curses.error):
+                curses.set_escdelay(_ESCAPE_DELAY_MS)
             self._input = InputHandler(self._screen.stdscr)
+            colors = ColorManager()
+            if colors.start():
+                # Cells are painted through this; without colour support the
+                # screen keeps its attributes-only resolver.
+                self._screen.attribute_resolver = colors.attribute_for
+                self.tk.colors = colors
             self.tk.screen = self._screen
             self.tk.panels = PanelStack()
             self._rect = Rect(0, 0, buffer.width, buffer.height)
@@ -2925,6 +2995,24 @@ class Tk(BaseWidget, Wm):
         except BaseException:
             self._screen.stop()
             raise
+
+    def _install_default_bindings(self) -> None:
+        """Bindings every application gets, on the ``all`` tag.
+
+        Tab traversal lives here rather than in any widget: moving the focus
+        is the application's business, not the business of whichever widget
+        happens to have it. Tk does the same, which is why a widget can leave
+        Tab alone and still be reachable from the keyboard.
+
+        Registered on ``all``, the last tag consulted, so a widget that wants
+        Tab for itself - a text editor inserting one - binds it and returns
+        "break" without having to remove anything.
+        """
+        if "all" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("all")
+        self.bind_all("<Key-Tab>", _focus_next)
+        self.bind_all("<Key-ISO_Left_Tab>", _focus_previous)
 
     def winfo_class(self) -> str:
         """The class this root binds and reads options under."""
@@ -3004,11 +3092,34 @@ class Tk(BaseWidget, Wm):
             self._handle_resize()
             return
         if isinstance(event, MouseEvent):
-            target = self._widget_at(event.x, event.y)
+            target = self._mouse_target(event)
         else:
             target = self.tk.focus or self
         target = self._through_grab(target)
         target._handle(event)
+
+    def _mouse_target(self, event: MouseEvent) -> Misc:
+        """The widget a mouse event belongs to, honouring the implicit grab.
+
+        Everything between a press and its release goes to the widget that
+        was pressed, wherever the pointer has since wandered. X11 gives a
+        widget this grab automatically and Tk relies on it; routing each
+        event by position instead means a pointer that drifts a single cell
+        between press and release delivers the release somewhere else. The
+        pressed widget then never hears that the button came up and stays
+        held down, so the *next* click appears to be the one that works -
+        intermittently, depending on whether the hand moved.
+        """
+        if event.state in ("pressed", "clicked"):
+            self._mouse_owner = self._widget_at(event.x, event.y)
+            return self._mouse_owner
+        owner = self._mouse_owner
+        if owner is not None and owner.winfo_exists():
+            if event.state == "released":
+                self._mouse_owner = None
+            return owner
+        self._mouse_owner = None
+        return self._widget_at(event.x, event.y)
 
     def _widget_at(self, x: int, y: int) -> Misc:
         """The widget under a screen cell, falling back to the root.
@@ -3121,6 +3232,7 @@ class Tk(BaseWidget, Wm):
                 self.tk.panels.clear()
         self.tk.panels = None
         self.tk.screen = None
+        self.tk.colors = None
         self._input = None
         with contextlib.suppress(Exception):
             self._screen.stop()
@@ -3588,3 +3700,1718 @@ class BooleanVar(Variable):
         if text in _FALSE:
             return False
         raise TclError(f'expected boolean value but got "{value}"')
+
+
+# ======================================================================
+# Widgets
+# ======================================================================
+
+
+class _Drawable(Widget):
+    """Painting shared by the widgets that draw a background and a border."""
+
+    def _background_attribute(self) -> int:
+        """The curses attribute this frame's colours resolve to.
+
+        Falls back to plain when no colour manager is running, which is what a
+        terminal without colour gives anyway.
+        """
+        colors = self.tk.colors
+        if colors is None:
+            return curses.A_NORMAL
+        return colors.attribute_for(
+            str(self._options["foreground"] or "white"),
+            str(self._options["background"] or "black"),
+        )
+
+    def _draw_border(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        width: int,
+        height: int,
+        attribute: int,
+    ) -> None:
+        """Draw the box for this frame's relief.
+
+        Drawn character by character rather than with curses' own ``border``,
+        because a relief is a choice of line style - single, double, heavy -
+        and ``border`` only knows one.
+        """
+        style = style_for_relief(str(self._options["relief"]) or FLAT)
+        attribute |= style.attr
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.addstr, 0, 0, style.top(width), attribute)
+            for row in range(1, height - 1):
+                dispatcher.call(window.addstr, row, 0, style.vertical, attribute)
+                dispatcher.call(
+                    window.addstr, row, width - 1, style.vertical, attribute
+                )
+            # The last cell of the bottom row is inserted rather than added:
+            # writing it with addstr would scroll a window whose cursor has
+            # nowhere left to go, which curses refuses. insstr rather than
+            # insch because a box-drawing character is multibyte and does not
+            # fit in the single chtype insch takes.
+            dispatcher.call(
+                window.addstr, height - 1, 0, style.bottom(width)[:-1], attribute
+            )
+            dispatcher.call(
+                window.insstr, height - 1, width - 1, style.bottom_right, attribute
+            )
+
+
+class Frame(_Drawable):
+    """A container, and the first widget that draws itself.
+
+    A frame is a rectangle of background with an optional border, and
+    somewhere to put other widgets. Everything interesting about it is
+    inherited - it is packed or gridded like anything else, and it lays its
+    own children out with a manager of their choosing - so what is added here
+    is only the painting.
+
+    Its size comes from its children unless ``width`` or ``height`` says
+    otherwise. Setting either fixes that dimension, which is how a frame is
+    made to hold a shape its contents would not produce on their own.
+    """
+
+    #: ``width`` and ``height`` are cells; zero means "ask the children".
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "height": 0,
+        "width": 0,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        class_: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            class_: The class this frame binds and reads options under, as
+                tkinter's ``class_`` does. Construction-time only.
+            **kw: Options as keywords.
+        """
+        self._class_name = class_
+        super().__init__(master, cnf, name=name, **kw)
+        self._apply_requested_size()
+
+    def winfo_class(self) -> str:
+        """The class this frame binds and reads options under."""
+        return self._class_name or type(self).__name__
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, repainting and resizing as the change requires."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if not given:
+            return result
+        if {"width", "height"} & set(given):
+            self._apply_requested_size()
+        self._invalidate_layout()
+        self._redraw()
+        return result
+
+    config = configure
+
+    def _apply_requested_size(self) -> None:
+        """Fix the size from the options, or hand the question to the children.
+
+        Setting only one fixes that axis and leaves the other to the children,
+        which is what makes a fixed-width sidebar of variable height
+        expressible.
+
+        The size is a *request*, not a guarantee: once the frame has children,
+        its geometry manager works out what they need and that wins. Tk
+        behaves the same way, and the way to keep an explicit size is
+        pack_propagate(False) - the gotcha every tkinter user meets once.
+        """
+        width = int(self._options["width"])
+        height = int(self._options["height"])
+        if width or height:
+            self._request_size(
+                width or self._requested.width, height or self._requested.height
+            )
+
+    def _redraw(self) -> None:
+        """Paint the frame: background first, then its border.
+
+        Silent without a window or a screen, which is every frame until it has
+        been laid out and the terminal is running.
+        """
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        width, height = self._rect.width, self._rect.height
+        dispatcher = CursesDispatcher.get()
+        attribute = self._background_attribute()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            if self._bordered and width >= 2 and height >= 2:
+                self._draw_border(dispatcher, window, width, height, attribute)
+
+
+class _TextWidget(_Drawable):
+    """A widget whose size and appearance come from a run of text.
+
+    Label and Button both are: they measure themselves from their text, wrap
+    it, justify it against itself and anchor the block within whatever area
+    they were given. What separates them is what they do afterwards, not how
+    the text gets there.
+
+    ``justify`` and ``anchor`` are different questions and a one-line widget
+    shows no difference between them: justify aligns the lines against each
+    other, anchor puts the resulting block within the widget.
+    """
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "anchor": "center",
+        "font": "",
+        "height": 0,
+        "justify": "center",
+        "state": "normal",
+        "text": "",
+        "textvariable": None,
+        "underline": -1,
+        "width": 0,
+        "wraplength": 0,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``text``, ``textvariable``, ``anchor``, ``justify``,
+                ``wraplength``, ``width``, ``height``, ``state``,
+                ``underline``, ``font``, and the standard options.
+        """
+        self._variable_trace: tuple[Variable, str] | None = None
+        super().__init__(master, cnf, name=name, **kw)
+        self._follow_variable()
+        self._apply_requested_size()
+
+    # -------------------------------------------------------------- content
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, re-measuring and repainting as the change requires."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if not given:
+            return result
+        if "textvariable" in given:
+            self._follow_variable()
+        self._apply_requested_size()
+        self._invalidate_layout()
+        self._redraw()
+        return result
+
+    config = configure
+
+    def _follow_variable(self) -> None:
+        """Track the ``textvariable``, dropping any previous one.
+
+        The old trace has to go: a label pointed at a second variable that
+        still answered to the first would take its text from whichever was
+        written to last.
+        """
+        if self._variable_trace is not None:
+            variable, handle = self._variable_trace
+            variable.trace_remove("write", handle)
+            self._variable_trace = None
+        variable = self._options["textvariable"]
+        if variable is None:
+            return
+        handle = variable.trace_add("write", lambda *_: self._variable_changed())
+        self._variable_trace = (variable, handle)
+        self._variable_changed()
+
+    def _variable_changed(self) -> None:
+        """Re-measure and repaint after the variable behind the text moved."""
+        self._apply_requested_size()
+        self._invalidate_layout()
+        self._redraw()
+
+    def _text(self) -> str:
+        """The text to display.
+
+        A ``textvariable`` wins over ``text`` when both are set, which is what
+        tkinter does: the variable is the live one.
+        """
+        variable = self._options["textvariable"]
+        if variable is not None:
+            return str(variable.get())
+        return str(self._options["text"])
+
+    def _lines(self) -> list[str]:
+        """The text as display lines, wrapped if ``wraplength`` says so."""
+        return wrap(self._text(), int(self._options["wraplength"]))
+
+    def _apply_requested_size(self) -> None:
+        """Ask for room for the text, or for the size the options name.
+
+        Padding and any border are included: a label asks for what it needs to
+        draw, not for what is left after the frame around it.
+        """
+        text_width, text_height = measure(self._lines())
+        width = int(self._options["width"]) or text_width
+        height = int(self._options["height"]) or text_height
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        self._request_size(
+            width + 2 * int(self._options["padx"]) + edge,
+            height + 2 * int(self._options["pady"]) + edge,
+        )
+
+    # ------------------------------------------------------------- painting
+
+    def _redraw(self) -> None:
+        """Paint the background, the border if any, and then the text."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        dispatcher = CursesDispatcher.get()
+        attribute = self._background_attribute()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            if self._bordered and self._rect.width >= 2 and self._rect.height >= 2:
+                self._draw_border(
+                    dispatcher, window, self._rect.width, self._rect.height, attribute
+                )
+            self._draw_text(dispatcher, window, attribute)
+
+    def _draw_text(
+        self, dispatcher: CursesDispatcher, window: Any, attribute: int
+    ) -> None:
+        """Write the lines into the area left after border and padding."""
+        area = self._text_area()
+        if area.is_empty:
+            return
+        lines = self._lines()
+        attribute |= self._text_attribute()
+        across, down = parse_anchor(str(self._options["anchor"]))
+        block_width, block_height = measure(lines)
+        top = area.y + int((area.height - block_height) * down)
+        justify = str(self._options["justify"])
+        for index, line in enumerate(lines):
+            row = top + index
+            if not (area.y <= row < area.y + area.height):
+                continue
+            # Justify from the line's real length, then clip. Clipping first
+            # measures the wrong thing: a line wider than the area comes back
+            # shortened, and centring the shortened version pushes it right,
+            # so text too long to fit ends up hard against the far edge with
+            # its beginning cut off.
+            column = area.x + int((area.width - block_width) * across)
+            column += align_offset(len(line), block_width, justify)
+            column = max(column, area.x)
+            text = clip_text(line, area.x + area.width - column)
+            with contextlib.suppress(curses.error):
+                dispatcher.call(window.addstr, row, column, text, attribute)
+        self._draw_underline(dispatcher, window, area, lines, attribute)
+
+    def _text_area(self) -> Rect:
+        """Where the text may go, in cells relative to this widget's window."""
+        edge = BORDER_WIDTH if self._bordered else 0
+        padx, pady = int(self._options["padx"]), int(self._options["pady"])
+        return Rect(
+            edge + padx,
+            edge + pady,
+            max(0, self._rect.width - 2 * (edge + padx)),
+            max(0, self._rect.height - 2 * (edge + pady)),
+        )
+
+    def _text_attribute(self) -> int:
+        """Attributes the font and state put on the text."""
+        font = str(self._options["font"]).lower()
+        attribute = from_font(
+            bold="bold" in font,
+            italic="italic" in font,
+            underline="underline" in font,
+        )
+        with contextlib.suppress(ValueError):
+            attribute = for_state(str(self._options["state"]), attribute)
+        return attribute
+
+    def _draw_underline(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        area: Rect,
+        lines: list[str],
+        attribute: int,
+    ) -> None:
+        """Underline one character, as tkinter's ``underline`` index does.
+
+        The index counts through the text as written, so on wrapped text it
+        has to be resolved to a line and a column rather than used directly.
+        """
+        index = int(self._options["underline"])
+        if index < 0:
+            return
+        remaining = index
+        line_number: int | None = None
+        for number, line in enumerate(lines):
+            if remaining < len(line):
+                line_number = number
+                break
+            remaining -= len(line)
+        if line_number is None:
+            # The index runs past the end of the text, which is how tkinter
+            # code switches the underline off without removing the option.
+            return
+        block_width, block_height = measure(lines)
+        across, down = parse_anchor(str(self._options["anchor"]))
+        row = area.y + int((area.height - block_height) * down) + line_number
+        column = area.x + int((area.width - block_width) * across)
+        column += align_offset(
+            len(lines[line_number]), block_width, str(self._options["justify"])
+        )
+        with contextlib.suppress(curses.error):
+            dispatcher.call(
+                window.addstr,
+                row,
+                column + remaining,
+                lines[line_number][remaining],
+                attribute | curses.A_UNDERLINE,
+            )
+
+
+class Label(_TextWidget):
+    """A run of text.
+
+    Its size comes from the text unless ``width`` or ``height`` says
+    otherwise, so a label is as wide as its longest line and as tall as it has
+    lines. ``wraplength`` breaks the text at that many cells, at word
+    boundaries where it can.
+    """
+
+
+class Button(_TextWidget):
+    """A button: text in a box that runs something when pressed.
+
+    Invoked by a mouse click, by Return, or by the space bar when it has the
+    focus - the three gestures a terminal offers. ``invoke()`` does the same
+    thing from code, which is how a dialog's default button is triggered by
+    something else entirely.
+
+    Focus and press are shown by markers either side of the text rather than
+    by colour: ``|> OK <|`` when focused, and reversed while held down. A
+    terminal cannot be relied on for colour, and a button nobody can see the
+    focus on is a button nobody can use from the keyboard.
+    """
+
+    #: The markers drawn either side of the text. Room for them is reserved
+    #: whether or not they are showing, so a button does not change width when
+    #: it gains the focus.
+    _FOCUS_MARKERS = ("\u25b6", "\u25c0")
+    _PRESSED_MARKERS = ("\u258c", "\u2590")
+
+    #: Cells the markers and their spacing occupy, either side of the text.
+    _MARKER_WIDTH = 2
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "command": None,
+        "default": "disabled",
+        "relief": "raised",
+        "takefocus": True,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``command``, ``state``, plus everything a Label takes.
+        """
+        self._pressed = False
+        super().__init__(master, cnf, name=name, **kw)
+        self._install_class_bindings()
+
+    # ------------------------------------------------------------- bindings
+
+    def _install_class_bindings(self) -> None:
+        """Register the default behaviour for every Button in this application.
+
+        Class bindings rather than instance ones, so that a binding of the
+        same event on one button runs first and can stop this one with
+        ``"break"`` - which is what tkinter's binding order is for, and what
+        lets an application override a default without removing it.
+        """
+        if "Button" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("Button")
+        self.bind_class("Button", "<Button-1>", _button_press)
+        self.bind_class("Button", "<ButtonRelease-1>", _button_release)
+        self.bind_class("Button", "<Key-Return>", _button_key)
+        self.bind_class("Button", "<Key-space>", _button_key)
+        self.bind_class("Button", "<FocusIn>", _button_refresh)
+        self.bind_class("Button", "<FocusOut>", _button_refresh)
+
+    # ------------------------------------------------------------ behaviour
+
+    def invoke(self) -> Any:
+        """Run the button's command and return whatever it returns.
+
+        Does nothing when the button is disabled, which is the whole point of
+        disabling one: the guard belongs here rather than in every caller.
+        """
+        if self._disabled:
+            return None
+        command = self._options["command"]
+        if command is None:
+            return None
+        return command()
+
+    def flash(self) -> None:
+        """Blink the button, as tkinter's does.
+
+        Drawn twice through the dispatcher rather than with a sleep: a button
+        that stopped the event loop to flash would also stop the thing it just
+        invoked.
+        """
+        if self._disabled:
+            return
+        self._pressed = not self._pressed
+        self._redraw()
+        self.after(80, self._end_flash)
+
+    def _end_flash(self) -> None:
+        """Put the button back the way it was after a flash."""
+        self._pressed = False
+        self._redraw()
+
+    @property
+    def _disabled(self) -> bool:
+        """True while the button refuses to be invoked."""
+        return str(self._options["state"]) == "disabled"
+
+    # ------------------------------------------------------------- painting
+
+    def _apply_requested_size(self) -> None:
+        """Ask for the text's room plus the markers either side of it."""
+        super()._apply_requested_size()
+        self._request_size(
+            self._requested.width + 2 * self._MARKER_WIDTH, self._requested.height
+        )
+
+    def _redraw(self) -> None:
+        """Paint the button, then its focus or pressed markers."""
+        super()._redraw()
+        self._draw_markers()
+
+    def _draw_markers(self) -> None:
+        """Draw the markers either side of the text, if there are any to draw."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        if self._pressed:
+            left, right = self._PRESSED_MARKERS
+        elif self.focus_get() is self:
+            left, right = self._FOCUS_MARKERS
+        else:
+            return
+        area = self._text_area()
+        if area.is_empty or area.width < 2 * self._MARKER_WIDTH:
+            return
+        row = area.y + area.height // 2
+        attribute = self._background_attribute() | self._text_attribute()
+        dispatcher = CursesDispatcher.get()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.addstr, row, area.x, left, attribute)
+            dispatcher.call(
+                window.addstr, row, area.x + area.width - 1, right, attribute
+            )
+
+
+def _button_press(event: Event) -> None:
+    """Take the focus and show the button held down."""
+    button = event.widget
+    if button._disabled:
+        return
+    button.focus_set()
+    button._pressed = True
+    button._redraw()
+
+
+def _button_release(event: Event) -> None:
+    """Invoke the button, unless the pointer left it first.
+
+    Tk invokes on release rather than press so that pressing and moving away
+    is a way to change your mind, which is what every other toolkit does too.
+    The release reaches this widget wherever the pointer ended up, because of
+    the implicit grab, so whether it counts has to be decided here.
+    """
+    button = event.widget
+    if not button._pressed:
+        return
+    button._pressed = False
+    button._redraw()
+    if not button._disabled and _within(button, event):
+        button.invoke()
+
+
+def _within(widget: Misc, event: Event) -> bool:
+    """True if an event's position lies inside a widget."""
+    left, top = widget.winfo_rootx(), widget.winfo_rooty()
+    return (
+        left <= event.x_root < left + widget.winfo_width()
+        and top <= event.y_root < top + widget.winfo_height()
+    )
+
+
+def _button_key(event: Event) -> str:
+    """Invoke the button from the keyboard.
+
+    Returns ``"break"`` so the key does not also reach whatever else is bound
+    to it - a Return that both presses the button and submits a dialog would
+    do the same thing twice.
+    """
+    button = event.widget
+    if not button._disabled:
+        button.invoke()
+    return "break"
+
+
+def _button_refresh(event: Event) -> None:
+    """Repaint after the focus moved in or out."""
+    event.widget._redraw()
+
+
+class Entry(_Drawable):
+    """A one-line text field.
+
+    The editing itself is :class:`~tkcurses._core.editing.TextField`; what is
+    here is the widget around it - options, key bindings, the cursor and
+    selection on screen, and keeping a ``textvariable`` in step both ways.
+
+    ``state`` has three values rather than two. ``readonly`` shows the text
+    and lets it be selected and copied but refuses every edit, which is what
+    a field displaying a computed value wants; ``disabled`` refuses the focus
+    as well.
+    """
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "justify": "left",
+        "relief": "sunken",
+        "show": "",
+        "state": "normal",
+        "takefocus": True,
+        "textvariable": None,
+        "validate": "none",
+        "validatecommand": None,
+        "width": 20,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``width``, ``textvariable``, ``show``, ``state``,
+                ``justify``, ``validate``, ``validatecommand``, and the
+                standard options.
+        """
+        self._field = TextField()
+        self._variable_trace: tuple[Variable, str] | None = None
+        self._syncing = False
+        super().__init__(master, cnf, name=name, **kw)
+        self._follow_variable()
+        self._apply_requested_size()
+        self._install_class_bindings()
+
+    # ------------------------------------------------------------- bindings
+
+    def _install_class_bindings(self) -> None:
+        """Register the editing keys for every Entry in this application."""
+        if "Entry" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("Entry")
+        bind = self.bind_class
+        bind("Entry", "<Any-Key>", _entry_key)
+        bind("Entry", "<Button-1>", _entry_click)
+        bind("Entry", "<FocusIn>", _entry_refresh)
+        bind("Entry", "<FocusOut>", _entry_refresh)
+
+    # ---------------------------------------------------------------- state
+
+    @property
+    def _editable(self) -> bool:
+        """True while the field accepts changes from the keyboard."""
+        return str(self._options["state"]) == "normal"
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, following a new variable and repainting as needed."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if not given:
+            return result
+        if "textvariable" in given:
+            self._follow_variable()
+        if "width" in given:
+            self._apply_requested_size()
+            self._invalidate_layout()
+        self._redraw()
+        return result
+
+    config = configure
+
+    def _apply_requested_size(self) -> None:
+        """Ask for the field's width plus whatever the border and padding need."""
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        self._request_size(
+            int(self._options["width"]) + 2 * int(self._options["padx"]) + edge,
+            1 + 2 * int(self._options["pady"]) + edge,
+        )
+
+    # ----------------------------------------------------------- the variable
+
+    def _follow_variable(self) -> None:
+        """Track the ``textvariable``, dropping any previous one."""
+        if self._variable_trace is not None:
+            variable, handle = self._variable_trace
+            variable.trace_remove("write", handle)
+            self._variable_trace = None
+        variable = self._options["textvariable"]
+        if variable is None:
+            return
+        handle = variable.trace_add("write", lambda *_: self._variable_changed())
+        self._variable_trace = (variable, handle)
+        self._variable_changed()
+
+    def _variable_changed(self) -> None:
+        """Take the variable's value, unless this widget is what changed it.
+
+        Without the guard the two would chase each other: every keystroke
+        writes the variable, whose trace writes the field, which resets the
+        cursor the keystroke just moved.
+        """
+        if self._syncing:
+            return
+        variable = self._options["textvariable"]
+        if variable is None:
+            return
+        self._field.text = str(variable.get())
+        self._refresh_view()
+        self._redraw()
+
+    def _publish(self) -> None:
+        """Write the field's contents back to the variable, if there is one."""
+        variable = self._options["textvariable"]
+        if variable is None:
+            return
+        self._syncing = True
+        try:
+            variable.set(self._field.text)
+        finally:
+            self._syncing = False
+
+    # ------------------------------------------------------------ public API
+
+    def get(self) -> str:
+        """The text in the field."""
+        return self._field.text
+
+    def insert(self, index: Any, string: str) -> None:
+        """Insert ``string`` at ``index``."""
+        self._field.insert(self.index(index), string)
+        self._changed()
+
+    def delete(self, first: Any, last: Any = None) -> None:
+        """Delete from ``first`` up to but not including ``last``."""
+        self._field.delete(
+            self.index(first), None if last is None else self.index(last)
+        )
+        self._changed()
+
+    def icursor(self, index: Any) -> None:
+        """Put the insertion cursor at ``index``."""
+        self._field.move_to(self.index(index))
+        self._refresh_view()
+        self._redraw()
+
+    def index(self, index: Any) -> int:
+        """Resolve one of Tk's index forms to a number.
+
+        Understands integers, ``end``, ``insert``, ``anchor``, ``sel.first``,
+        ``sel.last`` and ``@x`` for a screen column.
+
+        Raises:
+            TclError: If the form is not one Tk defines, or names a selection
+                that does not exist.
+        """
+        if isinstance(index, int):
+            return self._field.clamp(index)
+        text = str(index)
+        if text.isdigit() or (text.startswith("-") and text[1:].isdigit()):
+            return self._field.clamp(int(text))
+        if text in ("end", END):
+            return len(self._field.text)
+        if text in ("insert", INSERT):
+            return self._field.cursor
+        if text.startswith("@"):
+            return self._field.index_at(int(text[1:]) - self._text_area().x)
+        selection = self._field.selection
+        if text in ("sel.first", SEL_FIRST):
+            if selection is None:
+                raise TclError("selection isn't in widget " + str(self))
+            return selection[0]
+        if text in ("sel.last", SEL_LAST):
+            if selection is None:
+                raise TclError("selection isn't in widget " + str(self))
+            return selection[1]
+        if text in ("anchor", ANCHOR):
+            return self._field.cursor
+        raise TclError(f'bad entry index "{index}"')
+
+    def selection_range(self, start: Any, end: Any) -> None:
+        """Select from ``start`` to ``end``."""
+        self._field.select_range(self.index(start), self.index(end))
+        self._redraw()
+
+    select_range = selection_range
+
+    def selection_clear(self, **kw: Any) -> None:  # noqa: ARG002 - Misc signature
+        """Drop the selection."""
+        self._field.select_clear()
+        self._redraw()
+
+    select_clear = selection_clear
+
+    def selection_present(self) -> bool:
+        """True if anything is selected."""
+        return self._field.selection is not None
+
+    select_present = selection_present
+
+    def selection_from(self, index: Any) -> None:
+        """Start a selection at ``index``."""
+        self._field.select_range(self.index(index), self.index(index))
+        self._field.move_to(self.index(index))
+        self._redraw()
+
+    select_from = selection_from
+
+    def selection_to(self, index: Any) -> None:
+        """Extend the selection to ``index``."""
+        self._field.move_to(self.index(index), extend=True)
+        self._refresh_view()
+        self._redraw()
+
+    select_to = selection_to
+    selection_adjust = selection_to
+    select_adjust = selection_to
+
+    def xview(self, index: Any = None) -> int:
+        """Get or set the first character shown."""
+        if index is not None:
+            self._field.move_to(self.index(index))
+            self._refresh_view()
+            self._redraw()
+        return self._field.view
+
+    # -------------------------------------------------------------- editing
+
+    def _validated(self, proposed: str) -> bool:
+        """Ask the ``validatecommand`` whether an edit may go ahead.
+
+        tkinter passes Tcl substitution codes to a registered command; without
+        Tcl there is nothing to register against, so the callable is handed
+        the proposed contents directly. Anything it raises counts as a
+        refusal - a validator that fails should not take the application with
+        it.
+        """
+        if str(self._options["validate"]) in ("none", ""):
+            return True
+        command = self._options["validatecommand"]
+        if command is None:
+            return True
+        try:
+            return bool(command(proposed))
+        except Exception:
+            return False
+
+    def _edit(self, change: Callable[[], None], proposed: str) -> None:
+        """Apply an edit if the state and the validator both allow it."""
+        if not self._editable or not self._validated(proposed):
+            return
+        change()
+        self._changed()
+
+    def _changed(self) -> None:
+        """Publish, rescroll and repaint after the contents changed."""
+        self._publish()
+        self._refresh_view()
+        self._redraw()
+
+    def _refresh_view(self) -> None:
+        """Scroll so the cursor is on screen."""
+        self._field.scroll_into_view(self._text_area().width)
+
+    # ------------------------------------------------------------- painting
+
+    def _text_area(self) -> Rect:
+        """Where the text goes, in cells relative to this widget's window."""
+        edge = BORDER_WIDTH if self._bordered else 0
+        padx, pady = int(self._options["padx"]), int(self._options["pady"])
+        return Rect(
+            edge + padx,
+            edge + pady,
+            max(0, self._rect.width - 2 * (edge + padx)),
+            max(0, self._rect.height - 2 * (edge + pady)),
+        )
+
+    def _displayed(self) -> str:
+        """What is on screen, masked if ``show`` says so."""
+        mask = str(self._options["show"])
+        text = self._field.text
+        return mask[0] * len(text) if mask else text
+
+    def _redraw(self) -> None:
+        """Paint the field, its selection, and the cursor."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        area = self._text_area()
+        # The window is a function of the cursor and the current width, and
+        # the width is not known until the widget has been laid out - text
+        # inserted before then scrolled against a field of no width at all.
+        self._field.scroll_into_view(area.width)
+        dispatcher = CursesDispatcher.get()
+        attribute = self._background_attribute()
+        with contextlib.suppress(ValueError):
+            attribute = for_state(str(self._options["state"]), attribute)
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            if self._bordered and self._rect.width >= 2 and self._rect.height >= 2:
+                self._draw_border(
+                    dispatcher, window, self._rect.width, self._rect.height, attribute
+                )
+            if area.is_empty:
+                return
+            view = self._field.view
+            text = self._displayed()[view : view + area.width]
+            dispatcher.call(window.addstr, area.y, area.x, text, attribute)
+            self._draw_selection(dispatcher, window, area, attribute)
+            self._draw_cursor(dispatcher, window, area, attribute)
+
+    def _draw_selection(
+        self, dispatcher: CursesDispatcher, window: Any, area: Rect, attribute: int
+    ) -> None:
+        """Show the selected range in reverse video."""
+        selection = self._field.selection
+        if selection is None:
+            return
+        first, last = selection
+        start = max(0, self._field.column_of(first))
+        stop = min(area.width, self._field.column_of(last))
+        if stop <= start:
+            return
+        text = self._displayed()[self._field.view + start : self._field.view + stop]
+        with contextlib.suppress(curses.error):
+            dispatcher.call(
+                window.addstr,
+                area.y,
+                area.x + start,
+                text,
+                attribute | curses.A_REVERSE,
+            )
+
+    def _draw_cursor(
+        self, dispatcher: CursesDispatcher, window: Any, area: Rect, attribute: int
+    ) -> None:
+        """Show where typing will go, but only while the field has the focus.
+
+        A cursor drawn in an unfocused field claims the keyboard is there when
+        it is not, which in a form of several fields is actively misleading.
+        """
+        if self.focus_get() is not self or not self._editable:
+            return
+        column = self._field.column_of(self._field.cursor)
+        if not (0 <= column < area.width):
+            return
+        under = self._displayed()[self._field.cursor : self._field.cursor + 1] or " "
+        with contextlib.suppress(curses.error):
+            dispatcher.call(
+                window.addstr,
+                area.y,
+                area.x + column,
+                under,
+                attribute | curses.A_REVERSE,
+            )
+
+
+#: Keys that move the cursor, as offsets or as absolute positions.
+_ENTRY_MOTION: dict[str, Any] = {
+    "Left": -1,
+    "Right": 1,
+    "Home": "start",
+    "End": "end",
+}
+
+
+def _entry_key(event: Event) -> str | None:
+    """Handle one key in an Entry.
+
+    Returns ``"break"`` for keys the field consumed, so a Left arrow moving
+    the cursor does not also reach whatever else is bound to it.
+    """
+    entry = event.widget
+    field = entry._field
+    keysym = event.keysym
+    extend = bool(event.state & MOD_SHIFT)
+
+    if keysym in _ENTRY_MOTION:
+        motion = _ENTRY_MOTION[keysym]
+        if motion == "start":
+            field.move_to(0, extend=extend)
+        elif motion == "end":
+            field.move_to(len(field.text), extend=extend)
+        else:
+            field.move_by(motion, extend=extend)
+        entry._refresh_view()
+        entry._redraw()
+        return "break"
+
+    if keysym == "BackSpace":
+        if not field.delete_selection() and field.cursor > 0:
+            entry._edit(
+                lambda: field.delete(field.cursor - 1, field.cursor),
+                field.text[: field.cursor - 1] + field.text[field.cursor :],
+            )
+        else:
+            entry._changed()
+        return "break"
+
+    if keysym == "Delete":
+        if not field.delete_selection():
+            entry._edit(
+                lambda: field.delete(field.cursor, field.cursor + 1),
+                field.text[: field.cursor] + field.text[field.cursor + 1 :],
+            )
+        else:
+            entry._changed()
+        return "break"
+
+    if event.char and event.char.isprintable():
+        selection = field.selection
+        start = selection[0] if selection else field.cursor
+        remainder = (
+            field.text[: selection[0]] + field.text[selection[1] :]
+            if selection
+            else field.text
+        )
+        proposed = remainder[:start] + event.char + remainder[start:]
+
+        def apply() -> None:
+            field.delete_selection()
+            field.insert(field.cursor, event.char)
+
+        entry._edit(apply, proposed)
+        return "break"
+    return None
+
+
+def _entry_click(event: Event) -> None:
+    """Take the focus and put the cursor where the click landed."""
+    entry = event.widget
+    if str(entry._options["state"]) == "disabled":
+        return
+    entry.focus_set()
+    entry._field.move_to(entry._field.index_at(event.x - entry._text_area().x))
+    entry._refresh_view()
+    entry._redraw()
+
+
+def _entry_refresh(event: Event) -> None:
+    """Repaint after the focus moved, so the cursor appears or goes."""
+    event.widget._redraw()
+
+
+class Listbox(_Drawable):
+    """A scrollable list of strings, one of which is selected.
+
+    Four selection modes, as in Tk. ``browse`` - the default - keeps one item
+    selected and moves it with the arrows; ``single`` selects only by click or
+    by space, leaving the arrows to move an *active* item that is not
+    selected; ``multiple`` toggles items independently; ``extended`` adds
+    shifted ranges to that.
+
+    The distinction between active and selected is the one worth holding on
+    to: the active item is where the keyboard is, and in every mode but
+    browse it can be somewhere the selection is not.
+    """
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "activestyle": "underline",
+        "height": 10,
+        "relief": "sunken",
+        "selectmode": "browse",
+        "state": "normal",
+        "takefocus": True,
+        "width": 20,
+        "yscrollcommand": None,
+    }
+
+    #: Markers either side of a selected row.
+    _SELECTED_MARKERS = ("\u25b6", "\u25c0")
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``height``, ``width``, ``selectmode``, ``state``, and the
+                standard options.
+        """
+        self._items: list[str] = []
+        self._selection: set[int] = set()
+        self._active = 0
+        self._anchor = 0
+        self._top = 0
+        super().__init__(master, cnf, name=name, **kw)
+        self._apply_requested_size()
+        self._install_class_bindings()
+
+    def _install_class_bindings(self) -> None:
+        """Register the list keys for every Listbox in this application."""
+        if "Listbox" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("Listbox")
+        bind = self.bind_class
+        bind("Listbox", "<Any-Key>", _listbox_key)
+        bind("Listbox", "<Button-1>", _listbox_click)
+        # A separate binding, because modifiers match exactly: <Button-1>
+        # does not fire for a shifted click, in Tk or here. Binding the plain
+        # one and expecting both is a mistake this rule makes easy.
+        bind("Listbox", "<Shift-Button-1>", _listbox_click)
+        bind("Listbox", "<Button-4>", _listbox_wheel)
+        bind("Listbox", "<Button-5>", _listbox_wheel)
+        bind("Listbox", "<FocusIn>", _listbox_refresh)
+        bind("Listbox", "<FocusOut>", _listbox_refresh)
+
+    def _apply_requested_size(self) -> None:
+        """Ask for the configured rows and columns, plus border and padding."""
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        self._request_size(
+            int(self._options["width"]) + 2 * int(self._options["padx"]) + edge,
+            int(self._options["height"]) + 2 * int(self._options["pady"]) + edge,
+        )
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, re-measuring and repainting as the change requires."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if not given:
+            return result
+        if {"width", "height"} & set(given):
+            self._apply_requested_size()
+            self._invalidate_layout()
+        self._redraw()
+        return result
+
+    config = configure
+
+    # ------------------------------------------------------------- contents
+
+    def insert(self, index: Any, *elements: str) -> None:
+        """Insert items before ``index``; ``end`` appends."""
+        at = len(self._items) if index in ("end", END) else self.index(index)
+        self._items[at:at] = [str(element) for element in elements]
+        self._shift_state(at, len(elements))
+        self._redraw()
+
+    def delete(self, first: Any, last: Any = None) -> None:
+        """Delete items from ``first`` up to and including ``last``.
+
+        Tk's range is inclusive here, unlike Entry's - a difference in Tk
+        itself rather than one introduced here.
+        """
+        start = self.index(first)
+        stop = start if last is None else self.index(last)
+        if stop < start:
+            return
+        removed = self._items[start : stop + 1]
+        del self._items[start : stop + 1]
+        self._selection = {
+            i if i < start else i - len(removed)
+            for i in self._selection
+            if not start <= i <= stop
+        }
+        self._active = min(self._active, max(0, len(self._items) - 1))
+        self._clamp_view()
+        self._redraw()
+
+    def get(self, first: Any, last: Any = None) -> Any:
+        """One item, or a tuple of them when ``last`` is given."""
+        start = self.index(first)
+        if last is None:
+            return self._items[start] if 0 <= start < len(self._items) else ""
+        return tuple(self._items[start : self.index(last) + 1])
+
+    def size(self) -> int:
+        """How many items there are."""
+        return len(self._items)
+
+    def _shift_state(self, at: int, count: int) -> None:
+        """Move the selection and active item along after an insertion."""
+        self._selection = {i + count if i >= at else i for i in self._selection}
+        if self._active >= at:
+            self._active += count
+        self._clamp_view()
+
+    # -------------------------------------------------------------- indices
+
+    def index(self, index: Any) -> int:
+        """Resolve one of Tk's index forms to a number.
+
+        Understands integers, ``end``, ``active``, ``anchor`` and ``@x,y``.
+
+        Raises:
+            TclError: If the form is not one Tk defines.
+        """
+        if isinstance(index, int):
+            return max(0, min(len(self._items), index))
+        text = str(index)
+        if text.isdigit() or (text.startswith("-") and text[1:].isdigit()):
+            return max(0, min(len(self._items), int(text)))
+        if text in ("end", END):
+            return len(self._items)
+        if text == "active":
+            return self._active
+        if text in ("anchor", ANCHOR):
+            return self._anchor
+        if text.startswith("@"):
+            _, _, coords = text.partition("@")
+            _, _, y = coords.partition(",")
+            return self.nearest(int(y or 0))
+        raise TclError(f'bad listbox index "{index}"')
+
+    def nearest(self, y: int) -> int:
+        """The item nearest a screen row."""
+        row = y - self.winfo_rooty() - self._text_area().y
+        return max(0, min(max(0, len(self._items) - 1), self._top + max(0, row)))
+
+    # ------------------------------------------------------------ selection
+
+    def curselection(self) -> tuple[int, ...]:
+        """The selected indices, in order."""
+        return tuple(sorted(self._selection))
+
+    def selection_set(self, first: Any, last: Any = None) -> None:
+        """Select from ``first`` to ``last`` inclusive."""
+        start = self.index(first)
+        stop = start if last is None else self.index(last)
+        if str(self._options["selectmode"]) in ("browse", "single"):
+            self._selection = {start}
+        else:
+            self._selection |= {
+                i
+                for i in range(min(start, stop), max(start, stop) + 1)
+                if 0 <= i < len(self._items)
+            }
+        self._notify()
+
+    select_set = selection_set
+
+    def selection_clear(  # type: ignore[override]
+        self, first: Any = 0, last: Any = None
+    ) -> None:
+        """Deselect from ``first`` to ``last`` inclusive.
+
+        The signature disagrees with ``Misc.selection_clear``, which clears
+        the X selection and takes keyword arguments. tkinter has the same
+        clash for the same reason - a list's selection and the display's
+        selection are different things that ended up with one name.
+        """
+        start = self.index(first)
+        stop = (
+            len(self._items)
+            if last is None and first == 0
+            else (start if last is None else self.index(last))
+        )
+        self._selection -= set(range(min(start, stop), max(start, stop) + 1))
+        self._notify()
+
+    select_clear = selection_clear
+
+    def selection_includes(self, index: Any) -> bool:
+        """True if ``index`` is selected."""
+        return self.index(index) in self._selection
+
+    select_includes = selection_includes
+
+    def selection_anchor(self, index: Any) -> None:
+        """Set the anchor a shifted range extends from."""
+        self._anchor = self.index(index)
+
+    select_anchor = selection_anchor
+
+    def activate(self, index: Any) -> None:
+        """Make ``index`` the active item - where the keyboard is."""
+        self._active = max(0, min(max(0, len(self._items) - 1), self.index(index)))
+        self.see(self._active)
+        self._redraw()
+
+    def _notify(self) -> None:
+        """Tell the application the selection changed, and repaint.
+
+        ``<<ListboxSelect>>`` is how tkinter code hears about it, and what a
+        form uses to enable its buttons.
+        """
+        self._redraw()
+        self.event_generate("<<ListboxSelect>>")
+
+    # ----------------------------------------------------------- scrolling
+
+    def see(self, index: Any) -> None:
+        """Scroll so ``index`` is visible, moving as little as possible."""
+        position = self.index(index)
+        height = self._text_area().height
+        if height <= 0:
+            return
+        if position < self._top:
+            self._top = position
+        elif position > self._top + height - 1:
+            self._top = position - height + 1
+        self._clamp_view()
+
+    def yview(self, *args: Any) -> Any:
+        """Get or set the visible window.
+
+        Called with nothing it reports the view as the pair of fractions a
+        scrollbar wants. Called by a scrollbar it takes Tk's own arguments -
+        ``("moveto", fraction)`` or ``("scroll", count, "units"|"pages")`` -
+        which is what lets any scrollbar drive any widget without either
+        knowing what the other is.
+        """
+        if not args:
+            return self._view_fractions()
+        if len(args) == 1:
+            self._top = self.index(args[0])
+        elif args[0] == "moveto":
+            self._top = int(float(args[1]) * len(self._items))
+        elif args[0] == "scroll":
+            count = int(args[1])
+            step = max(1, self._text_area().height) if args[2] == "pages" else 1
+            self._top += count * step
+        self._clamp_view()
+        self._redraw()
+        return None
+
+    def _view_fractions(self) -> tuple[float, float]:
+        """Where the window is, as two fractions of the whole list."""
+        total = len(self._items)
+        if total <= 0:
+            return (0.0, 1.0)
+        height = max(1, self._text_area().height)
+        return (self._top / total, min(1.0, (self._top + height) / total))
+
+    def _publish_view(self) -> None:
+        """Tell the scrollbar where the view is, if one is listening."""
+        command = self._options["yscrollcommand"]
+        if command is not None:
+            first, last = self._view_fractions()
+            command(first, last)
+
+    def _clamp_view(self) -> None:
+        """Keep the visible window inside the list, and report where it is."""
+        height = max(1, self._text_area().height)
+        self._top = max(0, min(self._top, max(0, len(self._items) - height)))
+        self._publish_view()
+
+    def bbox(self, index: Any) -> tuple[int, int, int, int] | None:
+        """Where an item is on screen, or None if it is scrolled out of view."""
+        position = self.index(index)
+        area = self._text_area()
+        row = position - self._top
+        if not (0 <= row < area.height):
+            return None
+        return (
+            self.winfo_rootx() + area.x,
+            self.winfo_rooty() + area.y + row,
+            area.width,
+            1,
+        )
+
+    # ------------------------------------------------------------- painting
+
+    def _text_area(self) -> Rect:
+        """Where the items go, in cells relative to this widget's window."""
+        edge = BORDER_WIDTH if self._bordered else 0
+        padx, pady = int(self._options["padx"]), int(self._options["pady"])
+        return Rect(
+            edge + padx,
+            edge + pady,
+            max(0, self._rect.width - 2 * (edge + padx)),
+            max(0, self._rect.height - 2 * (edge + pady)),
+        )
+
+    def _redraw(self) -> None:
+        """Paint the visible items, marking the selected and active ones."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        area = self._text_area()
+        dispatcher = CursesDispatcher.get()
+        attribute = self._background_attribute()
+        with contextlib.suppress(ValueError):
+            attribute = for_state(str(self._options["state"]), attribute)
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            if self._bordered and self._rect.width >= 2 and self._rect.height >= 2:
+                self._draw_border(
+                    dispatcher, window, self._rect.width, self._rect.height, attribute
+                )
+            if area.is_empty:
+                return
+            self._clamp_view()
+            for row in range(area.height):
+                position = self._top + row
+                if position >= len(self._items):
+                    break
+                self._draw_item(dispatcher, window, area, row, position, attribute)
+
+    def _draw_item(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        area: Rect,
+        row: int,
+        position: int,
+        attribute: int,
+    ) -> None:
+        """Draw one row: its markers if selected, then its text."""
+        selected = position in self._selection
+        style = attribute | (curses.A_REVERSE if selected else 0)
+        if position == self._active and self.focus_get() is self and not selected:
+            style |= curses.A_UNDERLINE
+        left, right = self._SELECTED_MARKERS if selected else (" ", " ")
+        body = clip_text(self._items[position], max(0, area.width - 2))
+        line = f"{left}{body}".ljust(area.width - 1)[: area.width - 1]
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.addstr, area.y + row, area.x, line, style)
+            dispatcher.call(
+                window.insstr, area.y + row, area.x + area.width - 1, right, style
+            )
+
+
+def _listbox_key(event: Event) -> str | None:
+    """Move the active item, or select with the space bar."""
+    listbox = event.widget
+    if str(listbox._options["state"]) == "disabled":
+        return None
+    keysym = event.keysym
+    height = max(1, listbox._text_area().height)
+    moves = {
+        "Up": -1,
+        "Down": 1,
+        "Prior": -height,
+        "Next": height,
+        "Home": -len(listbox._items),
+        "End": len(listbox._items),
+    }
+    if keysym in moves:
+        listbox.activate(listbox._active + moves[keysym])
+        if str(listbox._options["selectmode"]) == "browse":
+            # browse drags the selection along with the active item, which is
+            # what makes a plain list usable with the arrows alone.
+            listbox.selection_clear(0, "end")
+            listbox.selection_set(listbox._active)
+        return "break"
+    if keysym == "space":
+        _listbox_toggle(listbox, listbox._active, extend=False)
+        return "break"
+    return None
+
+
+def _listbox_click(event: Event) -> None:
+    """Take the focus and select the row that was clicked."""
+    listbox = event.widget
+    if str(listbox._options["state"]) == "disabled":
+        return
+    listbox.focus_set()
+    row = listbox._top + max(0, event.y - listbox._text_area().y)
+    if row >= len(listbox._items):
+        return
+    listbox.activate(row)
+    _listbox_toggle(listbox, row, extend=bool(event.state & MOD_SHIFT))
+
+
+def _listbox_toggle(listbox: Listbox, index: int, *, extend: bool) -> None:
+    """Apply a selection gesture according to the selection mode."""
+    mode = str(listbox._options["selectmode"])
+    if mode in ("browse", "single"):
+        listbox.selection_clear(0, "end")
+        listbox.selection_set(index)
+    elif mode == "extended" and extend:
+        listbox.selection_set(listbox._anchor, index)
+    elif index in listbox._selection:
+        listbox.selection_clear(index)
+    else:
+        listbox.selection_set(index)
+        listbox.selection_anchor(index)
+
+
+def _listbox_wheel(event: Event) -> None:
+    """Scroll the list by the wheel, without moving the selection."""
+    listbox = event.widget
+    listbox.yview("scroll", -1 if event.num == 4 else 1, "units")
+
+
+def _listbox_refresh(event: Event) -> None:
+    """Repaint after the focus moved, so the active row shows or stops."""
+    event.widget._redraw()
+
+
+class Scrollbar(_Drawable):
+    """A scroll control: arrows, a trough, and a thumb showing the view.
+
+    A scrollbar holds no content of its own. It is told where the view is by
+    whatever it scrolls, through :meth:`set`, and it tells that thing to move
+    by calling its ``command``. Neither end knows anything else about the
+    other, which is why any widget with a ``yview`` can be scrolled by one.
+
+    The command is called the way Tk calls it: ``("moveto", fraction)`` when
+    the thumb is dragged, and ``("scroll", count, "units" | "pages")`` when an
+    arrow or the trough is clicked.
+    """
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "command": None,
+        "orient": "vertical",
+        "relief": "sunken",
+        "takefocus": False,
+        "width": 1,
+    }
+
+    #: Trough, thumb, and the two arrows, vertical then horizontal.
+    _TROUGH = "\u2591"
+    _THUMB = "\u2588"
+    _ARROWS: ClassVar[dict[str, tuple[str, str]]] = {
+        "vertical": ("\u25b2", "\u25bc"),
+        "horizontal": ("\u25c4", "\u25ba"),
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``orient``, ``command``, and the standard options.
+        """
+        self._first = 0.0
+        self._last = 1.0
+        super().__init__(master, cnf, name=name, **kw)
+        self._apply_requested_size()
+        self._install_class_bindings()
+
+    def _install_class_bindings(self) -> None:
+        """Register the click behaviour for every Scrollbar in this application."""
+        if "Scrollbar" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("Scrollbar")
+        self.bind_class("Scrollbar", "<Button-1>", _scrollbar_click)
+
+    @property
+    def _vertical(self) -> bool:
+        """True if this scrollbar runs up and down."""
+        return str(self._options["orient"]) != "horizontal"
+
+    def _apply_requested_size(self) -> None:
+        """One cell across, and as long as whatever it is packed beside."""
+        thickness = max(1, int(self._options["width"]))
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        if self._vertical:
+            self._request_size(thickness + edge, 3 + edge)
+        else:
+            self._request_size(3 + edge, thickness + edge)
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, re-measuring and repainting as the change requires."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if not given:
+            return result
+        if {"width", "orient"} & set(given):
+            self._apply_requested_size()
+            self._invalidate_layout()
+        self._redraw()
+        return result
+
+    config = configure
+
+    # ---------------------------------------------------------------- state
+
+    def set(self, first: float, last: float) -> None:
+        """Record where the view is, as two fractions of the whole.
+
+        Called by the widget being scrolled, not by the application. Values
+        outside 0 to 1 are clamped rather than refused: a widget reporting a
+        view slightly past its own end is common enough during editing that
+        failing on it would be worse than tidying it up.
+        """
+        self._first = min(max(float(first), 0.0), 1.0)
+        self._last = min(max(float(last), self._first), 1.0)
+        self._redraw()
+
+    def get(self) -> tuple[float, float]:
+        """Where the view is, as ``(first, last)``."""
+        return self._first, self._last
+
+    def fraction(self, x: int, y: int) -> float:
+        """The fraction of the way along a screen position lies."""
+        area = self._trough_bounds()
+        if area <= 0:
+            return 0.0
+        offset = y - self.winfo_rooty() if self._vertical else x - self.winfo_rootx()
+        return min(max((offset - self._trough_start()) / area, 0.0), 1.0)
+
+    def identify(self, x: int, y: int) -> str:
+        """Which part of the scrollbar is at a screen position."""
+        offset = y - self.winfo_rooty() if self._vertical else x - self.winfo_rootx()
+        start = self._trough_start()
+        if offset < start:
+            return "arrow1"
+        if offset >= start + self._trough_bounds():
+            return "arrow2"
+        thumb_start, thumb_end = self._thumb_range()
+        if thumb_start <= offset - start < thumb_end:
+            return "slider"
+        return "trough1" if offset - start < thumb_start else "trough2"
+
+    # -------------------------------------------------------------- geometry
+
+    def _length(self) -> int:
+        """Cells along the scrollbar's own direction."""
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        span = self._rect.height if self._vertical else self._rect.width
+        return max(0, span - edge)
+
+    def _trough_start(self) -> int:
+        """Where the trough begins, after the first arrow."""
+        return (BORDER_WIDTH if self._bordered else 0) + 1
+
+    def _trough_bounds(self) -> int:
+        """Cells of trough, once the two arrows have taken theirs."""
+        return max(0, self._length() - 2)
+
+    def _thumb_range(self) -> tuple[int, int]:
+        """The thumb's extent within the trough, as ``(start, end)``.
+
+        The thumb is never shorter than one cell: a view onto a very long
+        document would otherwise round to nothing and leave the scrollbar
+        looking broken.
+        """
+        trough = self._trough_bounds()
+        if trough <= 0:
+            return (0, 0)
+        start = int(self._first * trough)
+        end = max(start + 1, int(self._last * trough))
+        return (min(start, trough - 1), min(end, trough))
+
+    # -------------------------------------------------------------- painting
+
+    def _redraw(self) -> None:
+        """Paint the arrows, the trough, and the thumb."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        length = self._length()
+        if length <= 0:
+            return
+        dispatcher = CursesDispatcher.get()
+        attribute = self._background_attribute()
+        first_arrow, last_arrow = self._ARROWS[
+            "vertical" if self._vertical else "horizontal"
+        ]
+        trough = self._trough_bounds()
+        thumb_start, thumb_end = self._thumb_range()
+        cells = [first_arrow]
+        for index in range(trough):
+            cells.append(
+                self._THUMB if thumb_start <= index < thumb_end else self._TROUGH
+            )
+        cells.append(last_arrow)
+
+        edge = BORDER_WIDTH if self._bordered else 0
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            if self._bordered and self._rect.width >= 2 and self._rect.height >= 2:
+                self._draw_border(
+                    dispatcher, window, self._rect.width, self._rect.height, attribute
+                )
+            if self._vertical:
+                for offset, cell in enumerate(cells):
+                    dispatcher.call(window.addstr, edge + offset, edge, cell, attribute)
+            else:
+                dispatcher.call(window.addstr, edge, edge, "".join(cells), attribute)
+
+
+def _scrollbar_click(event: Event) -> None:
+    """Scroll by whatever part of the scrollbar was clicked."""
+    bar = event.widget
+    command = bar._options["command"]
+    if command is None:
+        return
+    part = bar.identify(event.x_root, event.y_root)
+    if part == "arrow1":
+        command("scroll", -1, "units")
+    elif part == "arrow2":
+        command("scroll", 1, "units")
+    elif part == "trough1":
+        command("scroll", -1, "pages")
+    elif part == "trough2":
+        command("scroll", 1, "pages")
+    else:
+        command("moveto", bar.fraction(event.x_root, event.y_root))

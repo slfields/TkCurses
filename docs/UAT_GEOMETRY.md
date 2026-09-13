@@ -16,12 +16,9 @@ python3 -m uat 10          # and 11, 12, 13
 From anywhere else: `python3 /path/to/TkCurses/uat 10`. Every scenario exits
 on **Escape**.
 
-> **What you are looking at.** No widget can draw itself yet — `Frame` and
-> `Label` belong to the next cycle. Each scenario outlines its widgets in the
-> widget's *own* window, at the rectangle the real geometry manager gave it.
-> The boxes are therefore honest about position and size, but a real widget
-> will draw its own. When Frame lands these scenarios should be rewritten to
-> use it.
+> **What you are looking at.** Real widgets, since `Frame` and `Label` landed:
+> every box is a `Frame` with a `solid` relief and a `Label` inside naming it.
+> The drawing helper these scenarios used to need is gone.
 
 | | |
 |---|---|
@@ -77,10 +74,14 @@ column.
 
 `python3 -m uat 13` · `d` nests a pair inside B, then resize the terminal
 
-A and B share the screen one above the other. `d` puts two more boxes *inside*
-B, side by side — B stays where it is and keeps its outline, with **1** and
+A and B share the screen one above the other. `d` puts two more frames *inside*
+B, side by side — B stays where it is and keeps its border, with **1** and
 **2** within it. They are numbered rather than lettered because they belong to
 B; a C and D would suggest two more siblings.
+
+On a short terminal the nested pair has no room for its own labels. Grow the
+window until 1 and 2 are readable; that they vanish first and come back is
+itself worth watching.
 
 - [ ] The boxes follow the new size immediately
 - [ ] `d` leaves B in place and visibly containing 1 and 2 — B is not replaced
@@ -113,3 +114,38 @@ the right answer while the screen showed something else:
   creation order rather than tree order.
 
 All three now have regression tests in `tests/test_widget_lifecycle.py`.
+
+## 14. Label — wrapping, justify and anchor
+
+`python3 -m uat 14` · `w` wrap width, `j` justify, `a` anchor
+
+Three labels: prose in a frame that grows to fit it, one long unbroken word,
+and a fixed twelve-cell frame holding text far too wide for it.
+
+- [ ] `w` cycles the wrap width and the prose re-wraps at word boundaries
+- [ ] With no wrap the prose is one long line, clipped at the frame's edge
+- [ ] `j` visibly moves the wrapped lines relative to **each other**
+- [ ] `a` moves the whole block within its frame — a different thing from
+      `j`, and both are needed to see the difference
+- [ ] The long word is broken mid-word rather than overflowing its frame
+- [ ] The narrow frame shows the **beginning** of its text, cut at the right
+      edge — not the end pushed against the far side
+- [ ] Nothing is ever drawn outside a frame's border
+
+---
+
+## What this found, second time round
+
+Rewriting these to use real widgets turned up three more things, after the
+three the stand-in version found:
+
+- A container's requested size was being overwritten by **placed** children,
+  which make no claim on it. Whether a manager sizes its container is now a
+  property of the manager rather than an assumption in the engine.
+- `Label` justified its text **after** clipping it, so a label too narrow for
+  its text showed the end hard against the far edge with the beginning cut
+  off. Justification is measured from the real line length now.
+- A helper that decorated a frame by *placing* a label in it made that frame a
+  place container, and Tk allows only one manager per container — so nothing
+  could be packed inside it afterwards and the nesting scenario silently
+  refused to nest.

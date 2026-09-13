@@ -326,18 +326,21 @@ def test_a_click_is_reported_at_the_right_cell(terminal, tmp_path):
     term.wait_for_text("pressed b1 @10,5")
 
 
-def test_a_quick_press_and_release_coalesces_into_a_click(terminal, tmp_path):
-    """ncurses merges a press and release inside mouseinterval into CLICKED.
+def test_a_click_arrives_as_a_press_and_a_release(terminal, tmp_path):
+    """Both halves, always - the library does its own click counting.
 
-    The separate press and release events only appear when the two are further
-    apart than the multi-click window, which is why click() reports one event
-    rather than two.
+    ncurses would rather report one CLICKED for a quick press and release in
+    the same cell, and nothing at all for the release if the pointer moved a
+    cell in between. InputHandler therefore holds it at mouseinterval(0) and
+    MouseDecoder counts repeats itself, so a widget always hears both halves
+    of a click wherever the pointer ended up.
     """
     term = terminal(cols=40, rows=10)
     term.run_source(MOUSE_LOOP, workdir=tmp_path)
     term.wait_for_text("ready")
     term.click(7, 3)
-    term.wait_for_text("clicked b1 @7,3")
+    term.wait_for_text("pressed b1 @7,3")
+    term.wait_for_text("released b1 @7,3")
 
 
 def test_a_slow_press_and_release_are_reported_separately(terminal, tmp_path):

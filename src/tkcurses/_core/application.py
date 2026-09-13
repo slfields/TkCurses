@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from tkcurses import Misc
+    from tkcurses._core.colors import ColorManager
     from tkcurses._core.panels import PanelStack
     from tkcurses._core.screen import CursesScreen
 
@@ -228,11 +229,21 @@ class Application:
         #: lifecycle without a terminal.
         self.panels: PanelStack | None = None
 
+        #: Colour pairs, once Tk has started curses. None until then, and a
+        #: widget asked to draw without one falls back to attributes alone -
+        #: a terminal with no colour behaves the same way.
+        self.colors: ColorManager | None = None
+
         #: Widget holding the input grab, and whether it is global. A grab
         #: diverts events away from the rest of the application, which is how
         #: a modal dialog stays modal.
         self.grab: Misc | None = None
         self.grab_global = False
+
+        #: Widget classes whose default bindings have been installed. Class
+        #: bindings are per application, and a widget registering its own on
+        #: every instance would stack up one copy per widget.
+        self.bound_classes: set[str] = set()
 
         #: Counters behind automatic widget names (!button, !button2).
         self.name_counts: dict[str, int] = {}

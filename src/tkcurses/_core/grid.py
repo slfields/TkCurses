@@ -126,6 +126,9 @@ class _Axis:
 class GridLayout:
     """Grids one container's children."""
 
+    #: Gridded children decide how much room their container needs.
+    propagates = True
+
     def __init__(self) -> None:
         self._options: dict[int, GridOptions] = {}
         self._widgets: dict[int, Any] = {}

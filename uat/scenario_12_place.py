@@ -2,16 +2,15 @@
 
 What to do: press a for absolute coordinates, r for relative, m for a mixture
 of the two, c to cycle the anchor.
-What to look for: a relatively placed box stays in proportion when you resize
-the terminal while an absolutely placed one does not; the mixture is half the
-width less four cells, so it keeps a two-cell margin either side at any size;
-and the anchor decides which corner of the box lands on the position, so the
-box moves around the point rather than the point moving.
+What to look for: a relatively placed frame stays in proportion when you
+resize the terminal while an absolutely placed one does not; the mixture is
+the full width less four cells, so it keeps a two-cell margin either side at
+any size; and the anchor decides which corner of the frame lands on the
+position, so the frame moves around the point rather than the point moving.
 """
 
 from __future__ import annotations
 
-import tkcurses
 from uat import _support
 
 TITLE = "12 - place: absolute, relative, anchor"
@@ -21,11 +20,10 @@ ANCHORS = ["nw", "n", "ne", "e", "se", "s", "sw", "w", "center"]
 
 def build(root, screen):
     area = _support.content_area(root)
-    box = tkcurses.Widget(area, name="box")
-    box._requested = tkcurses._core.geometry.Size(14, 4)
+    box = _support.labelled_box(area, "A", width=14, height=4)
     state = {"mode": "absolute", "anchor": "nw"}
 
-    def relayout():
+    def relayout(event=None):
         box.place_forget()
         if state["mode"] == "absolute":
             box.place(x=4, y=3, anchor=state["anchor"])
@@ -42,7 +40,6 @@ def build(root, screen):
                 anchor=state["anchor"],
             )
         root.update_layout()
-        screen.clear()
         screen.line(0, f" {TITLE} ")
         screen.line(
             1,
@@ -51,10 +48,9 @@ def build(root, screen):
         )
         screen.line(
             2,
-            f"  box is at {box.winfo_geometry()} in {root.winfo_width()}x"
-            f"{root.winfo_height()} - resize the terminal and watch",
+            f"  frame is at {box.winfo_geometry()} in "
+            f"{root.winfo_width()}x{root.winfo_height()} - resize and watch",
         )
-        screen.outline_on_redraw([box])
         screen.footer(" Escape quits ")
         screen.refresh()
 
@@ -70,7 +66,7 @@ def build(root, screen):
     root.bind("<Key-r>", lambda event: set_mode("relative"))
     root.bind("<Key-m>", lambda event: set_mode("mixed"))
     root.bind("<Key-c>", cycle_anchor)
-    root.bind("<Configure>", lambda event: relayout())
+    root.bind("<Configure>", relayout)
     relayout()
 
 

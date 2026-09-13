@@ -513,3 +513,119 @@ root.destroy()
         message="the restored geometry",
     )
     assert "Traceback" not in term.stderr
+
+
+def test_tab_moves_the_focus_between_widgets(terminal, tmp_path):
+    """Focus traversal is the application's business, not any widget's.
+
+    tk_focusNext has existed since the base widget system; nothing bound a
+    key to it until the interactive UAT went looking, so Tab did nothing at
+    all in a running application.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        """
+import tkcurses
+
+root = tkcurses.Tk()
+buffer = root.tk.screen.buffer
+first = tkcurses.Button(root, text='one', name='one')
+first.place(x=1, y=1)
+second = tkcurses.Button(root, text='two', name='two')
+second.place(x=1, y=5)
+
+def report(event=None):
+    focused = root.focus_get()
+    buffer.write(10, 0, 'focus %s   ' % (focused.winfo_name() if focused else '-'))
+    root.tk.screen.refresh()
+
+root.bind_all('<FocusIn>', report)
+first.focus_set()
+report()
+root.after(4000, root.quit)
+root.mainloop()
+root.destroy()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("focus one")
+    term.send_keys("<Tab>")
+    term.wait_for_text("focus two")
+    term.send_keys("<Tab>")
+    term.wait_for_text("focus one")
+
+
+def test_a_lone_escape_arrives_promptly(terminal, tmp_path):
+    """ncurses waits ESCDELAY before deciding a bare Escape was meant.
+
+    Its default is a full second, which makes the key that cancels things
+    feel broken. Tk shortens it at startup; this checks the key arrives
+    inside a time a person would call immediate.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        """
+import tkcurses
+
+root = tkcurses.Tk()
+buffer = root.tk.screen.buffer
+def pressed(event):
+    buffer.write(0, 0, 'escaped')
+    root.tk.screen.refresh()
+root.bind_all('<Key-Escape>', pressed)
+buffer.write(5, 0, 'ready')
+root.tk.screen.refresh()
+root.after(4000, root.quit)
+root.mainloop()
+root.destroy()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("ready")
+    term.send_keys("<Escape>")
+    term.wait_for_text("escaped", timeout=0.6)
+
+
+def test_a_modal_grab_keeps_keys_from_what_is_behind_it(terminal, tmp_path):
+    """A dialog that leaks keystrokes to the window underneath is worse than none."""
+    term = terminal(cols=40, rows=14)
+    term.run_source(
+        """
+import tkcurses
+
+root = tkcurses.Tk()
+buffer = root.tk.screen.buffer
+behind = tkcurses.Entry(root, width=20, name='behind')
+behind.place(x=1, y=1)
+behind.focus_set()
+
+def report():
+    buffer.write(12, 0, 'behind=%r      ' % behind.get())
+    root.tk.screen.refresh()
+
+def open_dialog(event):
+    dialog = tkcurses.Toplevel(root, width=20, height=5)
+    dialog.grab_set()
+    dialog.focus_set()
+    buffer.write(11, 0, 'dialog up')
+    report()
+    root.tk.screen.refresh()
+
+root.bind_all('<Key-F2>', open_dialog)
+behind.bind('<Any-Key>', lambda event: root.after_idle(report))
+report()
+root.after(4000, root.quit)
+root.mainloop()
+root.destroy()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("behind=''")
+    term.send(b"ab")
+    term.wait_for_text("behind='ab'")
+    term.send_keys("<F2>")
+    term.wait_for_text("dialog up")
+    term.send(b"cd")
+    term.wait_for_idle()
+    # The grab holds: nothing typed since reached the field behind it.
+    assert "behind='ab'" in "\n".join(term.display)
