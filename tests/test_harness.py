@@ -279,3 +279,53 @@ def test_back_tab_stops_at_the_left_margin(terminal):
     term = terminal(cols=40, rows=4)
     term._stream.feed(b"\x1b[H" + b"xxx" + b"\x1b[9ZHERE")
     assert term.row(0).startswith("HERE")
+
+
+def test_assert_box_waits_for_a_box_that_is_still_arriving(terminal, tmp_path):
+    """curses sends a refresh as a series of writes.
+
+    The harness can read the screen between them, so a box still arriving
+    looked exactly like a box drawn wrong. That failed CI roughly one run in
+    ten, and only on the slowest machine in the matrix.
+    """
+    term = terminal(cols=30, rows=10)
+    term.run_source(
+        """
+import curses, time
+
+def main(stdscr):
+    stdscr.addstr(0, 0, "\\u250c" + "\\u2500" * 8 + "\\u2510")
+    stdscr.addstr(1, 0, "\\u2502" + " " * 8 + "\\u2502")
+    stdscr.refresh()
+    time.sleep(0.4)
+    stdscr.addstr(2, 0, "\\u2514" + "\\u2500" * 8 + "\\u2518")
+    stdscr.refresh()
+    stdscr.getch()
+
+curses.wrapper(main)
+""",
+        workdir=tmp_path,
+    )
+    term.assert_box(top=0, left=0, height=3, width=10)
+    term.send_keys("q")
+
+
+def test_assert_box_still_fails_on_a_box_that_never_appears(terminal, tmp_path):
+    term = terminal(cols=30, rows=10)
+    term.run_source(
+        """
+import curses
+
+def main(stdscr):
+    stdscr.addstr(0, 0, "not a box")
+    stdscr.refresh()
+    stdscr.getch()
+
+curses.wrapper(main)
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("not a box")
+    with pytest.raises(AssertionError, match="malformed"):
+        term.assert_box(top=0, left=0, height=3, width=10, timeout=0.4)
+    term.send_keys("q")
