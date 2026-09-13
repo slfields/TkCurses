@@ -22,6 +22,7 @@ import re
 import sys
 import time
 import traceback
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from tkcurses._core.application import Application
@@ -71,6 +72,7 @@ __version__ = "0.1.0"
 __all__ = [
     "BaseWidget",
     "BooleanVar",
+    "Button",
     "DoubleVar",
     "Event",
     "Frame",
@@ -532,6 +534,15 @@ class Misc:
             # The only report of where the mouse is; winfo_pointerxy() has
             # nothing else to go on, since curses cannot be asked.
             self.tk.pointer = (core.x, core.y)
+            if core.state == "clicked":
+                # ncurses merges a quick press and release into one CLICKED
+                # report. Tk has no such event: a widget waits for the
+                # release to decide whether the press counted, so delivering
+                # only a press leaves a button held down for ever and never
+                # invoked. The pair is put back here, where the knowledge that
+                # curses coalesced them belongs.
+                broke = self._handle(replace(core, state="pressed"))
+                return self._handle(replace(core, state="released")) or broke
         pattern = pattern_for_event(core)
         return self._dispatch(Event._from_core(core, self), [pattern])
 
@@ -3757,17 +3768,17 @@ class Frame(_Drawable):
                 self._draw_border(dispatcher, window, width, height, attribute)
 
 
-class Label(_Drawable):
-    """A run of text, and the first widget with something to say.
+class _TextWidget(_Drawable):
+    """A widget whose size and appearance come from a run of text.
 
-    Its size comes from the text unless ``width`` or ``height`` says
-    otherwise, so a label is as wide as its longest line and as tall as it has
-    lines. ``wraplength`` breaks the text at that many cells, at word
-    boundaries where it can.
+    Label and Button both are: they measure themselves from their text, wrap
+    it, justify it against itself and anchor the block within whatever area
+    they were given. What separates them is what they do afterwards, not how
+    the text gets there.
 
-    Two options decide where the text ends up and they are not the same thing:
-    ``justify`` aligns the lines against each other, and ``anchor`` puts the
-    resulting block within whatever area the geometry manager handed over.
+    ``justify`` and ``anchor`` are different questions and a one-line widget
+    shows no difference between them: justify aligns the lines against each
+    other, anchor puts the resulting block within the widget.
     """
 
     _widget_options: ClassVar[dict[str, Any]] = {
@@ -3989,3 +4000,201 @@ class Label(_Drawable):
                 lines[line_number][remaining],
                 attribute | curses.A_UNDERLINE,
             )
+
+
+class Label(_TextWidget):
+    """A run of text.
+
+    Its size comes from the text unless ``width`` or ``height`` says
+    otherwise, so a label is as wide as its longest line and as tall as it has
+    lines. ``wraplength`` breaks the text at that many cells, at word
+    boundaries where it can.
+    """
+
+
+class Button(_TextWidget):
+    """A button: text in a box that runs something when pressed.
+
+    Invoked by a mouse click, by Return, or by the space bar when it has the
+    focus - the three gestures a terminal offers. ``invoke()`` does the same
+    thing from code, which is how a dialog's default button is triggered by
+    something else entirely.
+
+    Focus and press are shown by markers either side of the text rather than
+    by colour: ``|> OK <|`` when focused, and reversed while held down. A
+    terminal cannot be relied on for colour, and a button nobody can see the
+    focus on is a button nobody can use from the keyboard.
+    """
+
+    #: The markers drawn either side of the text. Room for them is reserved
+    #: whether or not they are showing, so a button does not change width when
+    #: it gains the focus.
+    _FOCUS_MARKERS = ("\u25b6", "\u25c0")
+    _PRESSED_MARKERS = ("\u258c", "\u2590")
+
+    #: Cells the markers and their spacing occupy, either side of the text.
+    _MARKER_WIDTH = 2
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "command": None,
+        "default": "disabled",
+        "relief": "raised",
+        "takefocus": True,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``command``, ``state``, plus everything a Label takes.
+        """
+        self._pressed = False
+        super().__init__(master, cnf, name=name, **kw)
+        self._install_class_bindings()
+
+    # ------------------------------------------------------------- bindings
+
+    def _install_class_bindings(self) -> None:
+        """Register the default behaviour for every Button in this application.
+
+        Class bindings rather than instance ones, so that a binding of the
+        same event on one button runs first and can stop this one with
+        ``"break"`` - which is what tkinter's binding order is for, and what
+        lets an application override a default without removing it.
+        """
+        if "Button" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("Button")
+        self.bind_class("Button", "<Button-1>", _button_press)
+        self.bind_class("Button", "<ButtonRelease-1>", _button_release)
+        self.bind_class("Button", "<Key-Return>", _button_key)
+        self.bind_class("Button", "<Key-space>", _button_key)
+        self.bind_class("Button", "<FocusIn>", _button_refresh)
+        self.bind_class("Button", "<FocusOut>", _button_refresh)
+
+    # ------------------------------------------------------------ behaviour
+
+    def invoke(self) -> Any:
+        """Run the button's command and return whatever it returns.
+
+        Does nothing when the button is disabled, which is the whole point of
+        disabling one: the guard belongs here rather than in every caller.
+        """
+        if self._disabled:
+            return None
+        command = self._options["command"]
+        if command is None:
+            return None
+        return command()
+
+    def flash(self) -> None:
+        """Blink the button, as tkinter's does.
+
+        Drawn twice through the dispatcher rather than with a sleep: a button
+        that stopped the event loop to flash would also stop the thing it just
+        invoked.
+        """
+        if self._disabled:
+            return
+        self._pressed = not self._pressed
+        self._redraw()
+        self.after(80, self._end_flash)
+
+    def _end_flash(self) -> None:
+        """Put the button back the way it was after a flash."""
+        self._pressed = False
+        self._redraw()
+
+    @property
+    def _disabled(self) -> bool:
+        """True while the button refuses to be invoked."""
+        return str(self._options["state"]) == "disabled"
+
+    # ------------------------------------------------------------- painting
+
+    def _apply_requested_size(self) -> None:
+        """Ask for the text's room plus the markers either side of it."""
+        super()._apply_requested_size()
+        self._request_size(
+            self._requested.width + 2 * self._MARKER_WIDTH, self._requested.height
+        )
+
+    def _redraw(self) -> None:
+        """Paint the button, then its focus or pressed markers."""
+        super()._redraw()
+        self._draw_markers()
+
+    def _draw_markers(self) -> None:
+        """Draw the markers either side of the text, if there are any to draw."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        if self._pressed:
+            left, right = self._PRESSED_MARKERS
+        elif self.focus_get() is self:
+            left, right = self._FOCUS_MARKERS
+        else:
+            return
+        area = self._text_area()
+        if area.is_empty or area.width < 2 * self._MARKER_WIDTH:
+            return
+        row = area.y + area.height // 2
+        attribute = self._background_attribute() | self._text_attribute()
+        dispatcher = CursesDispatcher.get()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.addstr, row, area.x, left, attribute)
+            dispatcher.call(
+                window.addstr, row, area.x + area.width - 1, right, attribute
+            )
+
+
+def _button_press(event: Event) -> None:
+    """Take the focus and show the button held down."""
+    button = event.widget
+    if button._disabled:
+        return
+    button.focus_set()
+    button._pressed = True
+    button._redraw()
+
+
+def _button_release(event: Event) -> None:
+    """Invoke the button, unless the press was cancelled.
+
+    Tk invokes on release rather than press so that pressing and moving away
+    is a way to change your mind, which is what every other toolkit does too.
+    """
+    button = event.widget
+    if not button._pressed:
+        return
+    button._pressed = False
+    button._redraw()
+    if not button._disabled:
+        button.invoke()
+
+
+def _button_key(event: Event) -> str:
+    """Invoke the button from the keyboard.
+
+    Returns ``"break"`` so the key does not also reach whatever else is bound
+    to it - a Return that both presses the button and submits a dialog would
+    do the same thing twice.
+    """
+    button = event.widget
+    if not button._disabled:
+        button.invoke()
+    return "break"
+
+
+def _button_refresh(event: Event) -> None:
+    """Repaint after the focus moved in or out."""
+    event.widget._redraw()

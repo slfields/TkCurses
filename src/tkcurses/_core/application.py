@@ -240,6 +240,11 @@ class Application:
         self.grab: Misc | None = None
         self.grab_global = False
 
+        #: Widget classes whose default bindings have been installed. Class
+        #: bindings are per application, and a widget registering its own on
+        #: every instance would stack up one copy per widget.
+        self.bound_classes: set[str] = set()
+
         #: Counters behind automatic widget names (!button, !button2).
         self.name_counts: dict[str, int] = {}
 
