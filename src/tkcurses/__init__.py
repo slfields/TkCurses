@@ -6378,6 +6378,9 @@ class Text(_Drawable):
                 self._left = target.char - width + 1
         self._top = max(0, min(self._top, max(0, len(rows) - 1)))
         self._left = max(0, self._left)
+        # A scrollbar cannot know the view moved unless it is told, and see()
+        # is the one thing that moves it without going through _scroll.
+        self._report_view()
 
     def _clamp_view(self) -> None:
         """Keep the view inside the text after anything that could move it."""

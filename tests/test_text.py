@@ -589,3 +589,19 @@ def test_the_cursor_at_end_does_not_land_on_the_first_column(text):
 
 def test_a_text_takes_the_focus(root):
     assert Text(root, name="w")._takefocus is True
+
+
+def test_see_tells_the_scrollbar_where_the_view_went(text):
+    """The one thing a scrollbar exists to report.
+
+    see() moves the view without going through _scroll, so nothing reported
+    it: the thumb sat at the bottom of its trough while the text showed
+    line 1.
+    """
+    seen = []
+    text.insert("1.0", "\n".join(f"line {n}" for n in range(40)))
+    text.configure(yscrollcommand=lambda first, last: seen.append(first))
+    text.see("end")
+    assert seen and seen[-1] > 0.0
+    text.see("1.0")
+    assert seen[-1] == 0.0

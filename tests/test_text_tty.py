@@ -262,8 +262,17 @@ def test_a_scrollbar_tracks_the_view(terminal, tmp_path):
     before = "\n".join(term.display)
     assert "█" in before  # the thumb
     bar_column = next(i for i, cell in enumerate(term.display[3]) if cell in "█░")
-    term.click(bar_column, 8)  # in the trough, below the thumb
-    term.wait_for_text("line 6")
+    # In the trough below the thumb, which pages down by a screenful. The
+    # size of that page depends on the widget, so what is checked is that
+    # the view moved and the top line went with it.
+    term.click(bar_column, 8)
+    term.wait_for(
+        lambda t: (
+            "line 0 " not in "\n".join(t.display)
+            and any("line 1" in line for line in t.display)
+        ),
+        message="the view to page down",
+    )
 
 
 def test_a_disabled_text_refuses_the_keyboard(terminal, tmp_path):
