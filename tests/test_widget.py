@@ -160,16 +160,23 @@ def test_an_alias_and_its_full_name_are_the_same_option(root):
 # ---------------------------------------------------------------- takefocus
 
 
-def test_takefocus_defaults_to_true(root):
-    assert Button(root)._takefocus is True
+def test_takefocus_defaults_to_false(root):
+    """A widget with nothing to do with the keyboard is not a tab stop.
+
+    Tab landing on a Frame or a Label shows the user nothing and reads as the
+    focus having vanished. The widgets that answer the keyboard turn it back
+    on for themselves.
+    """
+    assert Button(root)._takefocus is False
 
 
-def test_takefocus_can_be_refused_at_construction(root):
-    assert Button(root, takefocus=False)._takefocus is False
+def test_takefocus_can_be_asked_for_at_construction(root):
+    assert Button(root, takefocus=True)._takefocus is True
 
 
 def test_configuring_takefocus_updates_the_focus_order(root):
-    first, second = Button(root, name="a"), Button(root, name="b")
+    first = Button(root, name="a", takefocus=True)
+    second = Button(root, name="b", takefocus=True)
     second.configure(takefocus=False)
     assert first.tk_focusNext() is first
 
@@ -263,3 +270,38 @@ def test_winfo_class_reports_the_class_name(root):
 def test_a_widget_can_be_looked_up_by_path(root):
     button = Button(root, name="ok")
     assert root.nametowidget(".ok") is button
+
+
+def test_only_widgets_that_answer_the_keyboard_are_tab_stops(root):
+    """Reported from UAT scenario 17: Tab stopped on frames and labels.
+
+    Nothing marks a focused frame or label, so the focus appeared to vanish
+    every second or third press. tkinter decides takefocus by class; the
+    equivalent here is a default of False that the interactive widgets turn
+    back on for themselves.
+    """
+    import tkcurses
+
+    frame = tkcurses.Frame(root, name="frame")
+    label = tkcurses.Label(root, name="label", text="hello")
+    button = tkcurses.Button(root, name="button", text="press")
+    entry = tkcurses.Entry(root, name="entry")
+    listbox = tkcurses.Listbox(root, name="listbox")
+    scrollbar = tkcurses.Scrollbar(root, name="scrollbar")
+
+    assert frame._takefocus is False
+    assert label._takefocus is False
+    assert scrollbar._takefocus is False
+    assert button._takefocus is True
+    assert entry._takefocus is True
+    assert listbox._takefocus is True
+
+
+def test_tab_order_skips_the_widgets_that_cannot_use_it(root):
+    import tkcurses
+
+    tkcurses.Label(root, name="label", text="hello")
+    entry = tkcurses.Entry(root, name="entry")
+    button = tkcurses.Button(root, name="button", text="press")
+    assert entry.tk_focusNext() is button
+    assert button.tk_focusNext() is entry

@@ -1681,7 +1681,13 @@ class BaseWidget(Misc):
         "padx": 0,
         "pady": 0,
         "relief": FLAT,
-        "takefocus": True,
+        # False, because a widget with nothing to do with the keyboard must
+        # not be a place the focus can land: Tab stopping on a Frame or a
+        # Label shows the user nothing and looks like the focus vanished.
+        # Widgets that answer the keyboard turn it back on for themselves,
+        # which is how tkinter's "decide by class" default behaves in
+        # practice.
+        "takefocus": False,
     }
 
     def __init__(
@@ -1708,7 +1714,7 @@ class BaseWidget(Misc):
             master = _get_default_root(f"create a {type(self).__name__}")
         super().__init__(master, name)
         self._options = self._initial_options({**(cnf or {}), **kw})
-        self._takefocus = bool(self._options.get("takefocus", True))
+        self._takefocus = bool(self._options.get("takefocus", False))
 
     # ------------------------------------------------------------ options
 

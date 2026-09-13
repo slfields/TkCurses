@@ -112,6 +112,11 @@ mouse, and a mouse is the thing a terminal user most often does not have.
   the start of an escape sequence until ESCDELAY expires, and its default is
   1000ms — which makes the key that cancels things feel broken. Shortened to
   25ms at startup; making it configurable is **TkCurses-dn5**.
+- **Tab stopped on frames and labels.** `takefocus` defaulted to true on
+  every widget, so the focus landed on things that mark it in no way and
+  appeared to vanish every second or third press. It defaults to false now,
+  and the widgets that answer the keyboard turn it on for themselves - which
+  is how tkinter's decide-by-class default behaves in practice.
 - **The test harness sent the wrong bytes for function keys.** It used the
   linux encoding (`CSI 10+n ~`) while telling the child it was an xterm, so
   F1 arrived as `Escape [ 1 1 ~` and only F5 was right by coincidence. Any
