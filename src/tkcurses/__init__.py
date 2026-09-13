@@ -54,6 +54,7 @@ from tkcurses._core.grid import (
 from tkcurses._core.input import InputHandler
 from tkcurses._core.pack import FILLS, SIDES, PackLayout, PackOptions, parse_anchor
 from tkcurses._core.panels import PanelStack
+from tkcurses._core.place import BORDERMODES, PlaceLayout, PlaceOptions
 from tkcurses._core.screen import CursesScreen
 from tkcurses.constants import FLAT
 
@@ -75,6 +76,7 @@ __all__ = [
     "Misc",
     "NoDefaultRoot",
     "Pack",
+    "Place",
     "StringVar",
     "TclError",
     "Tk",
@@ -1016,6 +1018,13 @@ class Misc:
         self.tk.layout.invalidate(self)
         return None
 
+    def place_slaves(self) -> list[Misc]:
+        """The children this container is placing."""
+        manager = self._layout_manager
+        if not isinstance(manager, PlaceLayout):
+            return []
+        return list(manager.slaves(self))
+
     def pack_propagate(self, flag: bool | None = None) -> bool:
         """Get or set whether this container resizes to fit its children.
 
@@ -1906,7 +1915,11 @@ class Pack:
 
 
 #: What each layout class is called in the error a mixed container raises.
-_MANAGER_NAMES = {"PackLayout": "pack", "GridLayout": "grid"}
+_MANAGER_NAMES = {
+    "PackLayout": "pack",
+    "GridLayout": "grid",
+    "PlaceLayout": "place",
+}
 
 
 def _pack_layout_of(container: Misc) -> PackLayout:
@@ -2113,7 +2126,148 @@ def _grid_options(
     return options
 
 
-class Widget(BaseWidget, Pack, Grid):
+class Place:
+    """Placing: put a widget at a position you choose.
+
+    The mixin half of the place manager; the arithmetic is in
+    :mod:`tkcurses._core.place`.
+    """
+
+    if TYPE_CHECKING:
+        master: Misc | None
+        _manager: str
+
+        def _map(self) -> None: ...
+        def _unmap(self) -> None: ...
+
+    def place_configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
+        """Place this widget in its container.
+
+        Args:
+            cnf: Options as a dictionary, merged with the keywords.
+            **kw: ``x``, ``y``, ``width``, ``height`` in cells; ``relx``,
+                ``rely``, ``relwidth``, ``relheight`` as fractions of the
+                container; ``anchor``; ``bordermode``; and ``in_`` to place
+                into something other than the master.
+
+        Raises:
+            TclError: If an option or its value is not one Tk accepts, or the
+                container is already managed by a different manager.
+        """
+        options = {**(cnf or {}), **kw}
+        container = options.pop("in_", None) or options.pop("in", None) or self.master
+        if container is None:
+            raise TclError("cannot place the root window")
+        layout = _place_layout_of(container)
+        layout.add(self, _place_options(options))
+        self._manager = "place"
+        self._map()
+        container.tk.layout.invalidate(container)
+
+    place = place_configure
+
+    def place_forget(self) -> None:
+        """Stop placing this widget and take it off the screen."""
+        container = self.master
+        if container is None:
+            return
+        manager = container._layout_manager
+        if isinstance(manager, PlaceLayout):
+            manager.remove(self)
+            container.tk.layout.invalidate(container)
+        self._manager = ""
+        self._unmap()
+
+    def place_info(self) -> dict[str, Any]:
+        """How this widget is placed.
+
+        Raises:
+            TclError: If it is not placed.
+        """
+        container = self.master
+        manager = container._layout_manager if container is not None else None
+        options = (
+            manager.options_for(self) if isinstance(manager, PlaceLayout) else None
+        )
+        if options is None:
+            raise TclError(f'window "{self}" is not placed')
+        return {"in": container, **vars(options)}
+
+
+def _place_layout_of(container: Misc) -> PlaceLayout:
+    """The container's place manager, created on first use.
+
+    Raises:
+        TclError: If the container is already laid out by a different manager.
+    """
+    manager = container._layout_manager
+    if manager is None:
+        manager = PlaceLayout()
+        container._layout_manager = manager
+        return manager
+    if not isinstance(manager, PlaceLayout):
+        other = _MANAGER_NAMES.get(type(manager).__name__, type(manager).__name__)
+        raise TclError(
+            f"cannot use geometry manager place inside {container} which already "
+            f"has slaves managed by {other}"
+        )
+    return manager
+
+
+def _place_options(given: dict[str, Any]) -> PlaceOptions:
+    """Build and check one widget's placement options.
+
+    Raises:
+        TclError: If an option is unknown or its value is not one Tk accepts.
+    """
+    options = PlaceOptions()
+    for name, value in given.items():
+        if not hasattr(options, name):
+            raise TclError(f'unknown option "-{name}"')
+        setattr(options, name, value)
+
+    try:
+        parse_anchor(options.anchor)
+    except ValueError as error:
+        raise TclError(str(error)) from None
+    if options.bordermode not in BORDERMODES:
+        raise TclError(
+            f'bad bordermode "{options.bordermode}": must be {", ".join(BORDERMODES)}'
+        )
+    for name in ("x", "y"):
+        options.__dict__[name] = _place_int(name, getattr(options, name))
+    for name in ("width", "height"):
+        value = getattr(options, name)
+        if value is not None:
+            # Not clamped here: a negative width is meaningful alongside
+            # relwidth, and the result is clamped once it has been used.
+            options.__dict__[name] = _place_int(name, value)
+    for name in ("relx", "rely", "relwidth", "relheight"):
+        value = getattr(options, name)
+        if value is None:
+            continue
+        try:
+            options.__dict__[name] = float(value)
+        except (TypeError, ValueError):
+            raise TclError(
+                f'expected floating-point number but got "{value}"'
+            ) from None
+    return options
+
+
+def _place_int(name: str, value: Any) -> int:
+    """Parse one of place's cell-valued options.
+
+    Raises:
+        TclError: If it is not a whole number.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise TclError(f'bad {name} value "{value}"') from None
+
+
+class Widget(BaseWidget, Pack, Grid, Place):
     """The base class for every ordinary widget.
 
     In tkinter this is where the three geometry managers are mixed in
