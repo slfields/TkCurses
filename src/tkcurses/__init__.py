@@ -22,7 +22,7 @@ import re
 import sys
 import time
 import traceback
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from tkcurses._core.application import Application
@@ -31,6 +31,17 @@ from tkcurses._core.bindings import (
     EventPattern,
     parse_sequence,
     pattern_for_event,
+)
+from tkcurses._core.canvas import (
+    bbox_of,
+    compose,
+    filled_oval_pixels,
+    filled_polygon_pixels,
+    filled_rectangle_pixels,
+    line_pixels,
+    oval_pixels,
+    polygon_pixels,
+    rectangle_pixels,
 )
 from tkcurses._core.clipboard import CLIPBOARD, PRIMARY
 from tkcurses._core.colors import ColorManager, palette_rgb, parse_color, rgb_for
@@ -89,6 +100,7 @@ __all__ = [
     "BaseWidget",
     "BooleanVar",
     "Button",
+    "Canvas",
     "Checkbutton",
     "DoubleVar",
     "Entry",
@@ -6644,6 +6656,852 @@ def _text_wheel(event: Event) -> None:
 def _text_refresh(event: Event) -> None:
     """Repaint after the focus moved in or out."""
     event.widget._redraw()
+
+
+@dataclass
+class _CanvasItem:
+    """One thing drawn on a Canvas.
+
+    Attributes:
+        ident: The number ``create_*`` returned, and the item's first tag.
+        kind: ``line``, ``rectangle``, ``oval``, ``polygon`` or ``text``.
+        coords: Pixel coordinates, flat, as Tk passes them.
+        options: Everything else, already checked against the type's options.
+    """
+
+    ident: int
+    kind: str
+    coords: list[int]
+    options: dict[str, Any]
+
+    @property
+    def tags(self) -> tuple[str, ...]:
+        """The item's tags, as a tuple however they were given."""
+        tags = self.options.get("tags") or ()
+        if isinstance(tags, str):
+            return tuple(tags.split())
+        return tuple(str(tag) for tag in tags)
+
+    def points(self) -> list[tuple[int, int]]:
+        """The coordinates as pairs."""
+        return list(zip(self.coords[::2], self.coords[1::2], strict=False))
+
+
+class Canvas(_Drawable):
+    """A drawing surface, measured in half-cells.
+
+    A character cell is about twice as tall as it is wide, so a canvas that
+    treated one cell as one unit would draw every circle as a tall ellipse.
+    This one is a plane of **half-cells** instead - ``▀`` and ``▄`` divide a
+    cell across the middle, and each half is very nearly square - so a circle
+    is a circle. :mod:`tkcurses._core.canvas` does the drawing and the
+    folding of pixel pairs into cells.
+
+    Two coordinate systems therefore meet on this widget, and only one of
+    them is Tk's:
+
+    - ``width`` and ``height`` are in **cells**, like every other widget
+      here. Pixel dimensions have no cell equivalent and are left out rather
+      than accepted and ignored.
+    - Item coordinates are in **pixels**: one cell wide, half a cell tall. A
+      canvas 40 cells by 10 is a plane 40 pixels by 20.
+
+    Text is the one thing that cannot live on that plane: a glyph occupies a
+    whole cell. A text item therefore snaps to the nearest cell row, and
+    while it is on top nothing else can share those cells - which is what you
+    want for a label on a diagram, and worth knowing before putting one in
+    the middle of a drawing.
+    """
+
+    #: What each kind of item accepts, on top of the options every item has.
+    #: Deliberately smaller than Tk's: dashes, stipples, arrowheads and line
+    #: widths have no meaning in a grid of characters, so asking for one
+    #: fails rather than quietly doing nothing.
+    _COMMON_ITEM_OPTIONS: ClassVar[dict[str, Any]] = {
+        "state": "normal",
+        "tags": (),
+    }
+    _ITEM_OPTIONS: ClassVar[dict[str, dict[str, Any]]] = {
+        "line": {"fill": "white"},
+        "rectangle": {"fill": "", "outline": "white"},
+        "oval": {"fill": "", "outline": "white"},
+        "polygon": {"fill": "white", "outline": ""},
+        "text": {
+            "anchor": "center",
+            "fill": "white",
+            "font": "",
+            "justify": "left",
+            "text": "",
+        },
+    }
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "height": 10,
+        "relief": "sunken",
+        "scrollregion": None,
+        "state": "normal",
+        "takefocus": False,
+        "width": 40,
+        "xscrollcommand": None,
+        "yscrollcommand": None,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``width`` and ``height`` in cells, ``scrollregion``,
+                ``xscrollcommand``, ``yscrollcommand``, and the standard
+                options.
+        """
+        self._items: list[_CanvasItem] = []
+        self._ids = itertools.count(1)
+        self._left = 0
+        self._top = 0
+        self._item_bindings: dict[str, dict[str, list[Callable[[Event], Any]]]] = {}
+        self._current: int | None = None
+        super().__init__(master, cnf, name=name, **kw)
+        self._apply_requested_size()
+        self._install_class_bindings()
+
+    def _install_class_bindings(self) -> None:
+        """Route mouse events to whichever item is under the pointer."""
+        if "Canvas" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("Canvas")
+        for sequence in (
+            "<Button-1>",
+            "<ButtonRelease-1>",
+            "<Motion>",
+            "<Double-Button-1>",
+        ):
+            self.bind_class("Canvas", sequence, _canvas_mouse)
+
+    # --------------------------------------------------------------- options
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, re-measuring and repainting as the change requires."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if not given:
+            return result
+        if {"width", "height"} & set(given):
+            self._apply_requested_size()
+            self._invalidate_layout()
+        self._redraw()
+        self._report_view()
+        return result
+
+    config = configure
+
+    def _apply_requested_size(self) -> None:
+        """Ask for the configured cells, plus border and padding."""
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        self._request_size(
+            int(self._options["width"]) + 2 * int(self._options["padx"]) + edge,
+            int(self._options["height"]) + 2 * int(self._options["pady"]) + edge,
+        )
+
+    def _plane_size(self) -> tuple[int, int]:
+        """The visible plane, in pixels, falling back to the options.
+
+        Before the widget is laid out its area is nothing, and a canvas asked
+        what it can show would answer nothing - so scrolling and ``bbox``
+        would both be wrong until the first paint.
+        """
+        area = self._text_area()
+        if area.width > 0 and area.height > 0:
+            return (area.width, area.height * 2)
+        return (
+            max(1, int(self._options["width"])),
+            max(1, int(self._options["height"])) * 2,
+        )
+
+    def _text_area(self) -> Rect:
+        """Where the drawing goes, in cells relative to this widget's window."""
+        edge = BORDER_WIDTH if self._border_drawn else 0
+        padx, pady = int(self._options["padx"]), int(self._options["pady"])
+        return Rect(
+            edge + padx,
+            edge + pady,
+            max(0, self._rect.width - 2 * (edge + padx)),
+            max(0, self._rect.height - 2 * (edge + pady)),
+        )
+
+    # ----------------------------------------------------------- making items
+
+    def create_line(self, *args: Any, **kw: Any) -> int:
+        """Draw a run of connected straight segments. Returns the item id."""
+        return self._create("line", args, kw, least=2)
+
+    def create_rectangle(self, *args: Any, **kw: Any) -> int:
+        """Draw a rectangle from two opposite corners."""
+        return self._create("rectangle", args, kw, least=2, exactly=2)
+
+    def create_oval(self, *args: Any, **kw: Any) -> int:
+        """Draw the ellipse inscribed in the rectangle given by two corners."""
+        return self._create("oval", args, kw, least=2, exactly=2)
+
+    def create_polygon(self, *args: Any, **kw: Any) -> int:
+        """Draw a closed shape through three or more points."""
+        return self._create("polygon", args, kw, least=3)
+
+    def create_text(self, *args: Any, **kw: Any) -> int:
+        """Draw a string at a point, snapped to the nearest cell row."""
+        return self._create("text", args, kw, least=1, exactly=1)
+
+    def _create(
+        self,
+        kind: str,
+        args: tuple[Any, ...],
+        options: dict[str, Any],
+        *,
+        least: int,
+        exactly: int | None = None,
+    ) -> int:
+        """Make an item of one kind, checking its coordinates and options.
+
+        Raises:
+            TclError: If there are too few points, the wrong number of them,
+                or an option the item does not take.
+        """
+        coords = _canvas_coords(args)
+        points = len(coords) // 2
+        if points < least or (exactly is not None and points != exactly):
+            raise TclError(f"wrong # coordinates: expected {exactly or least}")
+        item = _CanvasItem(
+            ident=next(self._ids),
+            kind=kind,
+            coords=coords,
+            options=self._checked_item_options(kind, options),
+        )
+        self._items.append(item)
+        self._redraw()
+        return item.ident
+
+    def _checked_item_options(self, kind: str, given: dict[str, Any]) -> dict[str, Any]:
+        """Resolve an item's options against what its type accepts.
+
+        Raises:
+            TclError: If an option is not one the type takes.
+        """
+        spec = {**self._COMMON_ITEM_OPTIONS, **self._ITEM_OPTIONS[kind]}
+        options = dict(spec)
+        for name, value in given.items():
+            option = _OPTION_ALIASES.get(name, name)
+            if option not in spec:
+                raise TclError(f'unknown option "-{name}"')
+            options[option] = value
+        return options
+
+    # ----------------------------------------------------------- finding them
+
+    def _item(self, ident: int) -> _CanvasItem | None:
+        """One item by id, or None if it has been deleted."""
+        return next((item for item in self._items if item.ident == ident), None)
+
+    def _matching(self, spec: Any) -> list[_CanvasItem]:
+        """Every item a tag, an id, or ``all`` names, in display order."""
+        if isinstance(spec, int):
+            item = self._item(spec)
+            return [item] if item is not None else []
+        tag = str(spec)
+        if tag == "all":
+            return list(self._items)
+        if tag == "current":
+            # Tk's dynamic tag for whatever the pointer is over. It is not
+            # stored on the item, so gettags() does not report it - the one
+            # place this differs from Tk, and the alternative is gettags
+            # returning a tag nobody set.
+            item = None if self._current is None else self._item(self._current)
+            return [item] if item is not None else []
+        if tag.isdigit():
+            item = self._item(int(tag))
+            return [item] if item is not None else []
+        return [item for item in self._items if tag in item.tags]
+
+    def find_all(self) -> tuple[int, ...]:
+        """Every item, in the order they are drawn."""
+        return tuple(item.ident for item in self._items)
+
+    def find_withtag(self, spec: Any) -> tuple[int, ...]:
+        """Every item a tag or an id names."""
+        return tuple(item.ident for item in self._matching(spec))
+
+    def find_overlapping(self, x0: int, y0: int, x1: int, y1: int) -> tuple[int, ...]:
+        """Every item whose extent meets a rectangle."""
+        left, right = sorted((int(x0), int(x1)))
+        top, bottom = sorted((int(y0), int(y1)))
+        found = []
+        for item in self._items:
+            box = self._item_bbox(item)
+            if box is None:
+                continue
+            if (
+                box[0] <= right
+                and box[2] >= left
+                and box[1] <= bottom
+                and box[3] >= top
+            ):
+                found.append(item.ident)
+        return tuple(found)
+
+    def find_closest(self, x: int, y: int) -> tuple[int, ...]:
+        """The item nearest a point, or nothing if the canvas is empty.
+
+        Distance is measured to the item's extent rather than to its ink,
+        which is Tk's own approximation for everything but a line.
+        """
+        best: tuple[float, int] | None = None
+        for item in self._items:
+            box = self._item_bbox(item)
+            if box is None:
+                continue
+            near_x = min(max(int(x), box[0]), box[2])
+            near_y = min(max(int(y), box[1]), box[3])
+            distance = (near_x - int(x)) ** 2 + (near_y - int(y)) ** 2
+            if best is None or distance <= best[0]:
+                best = (distance, item.ident)
+        return () if best is None else (best[1],)
+
+    # ------------------------------------------------------------ changing them
+
+    def coords(self, spec: Any, *args: Any) -> list[int] | None:
+        """Read or replace an item's coordinates."""
+        items = self._matching(spec)
+        if not args:
+            return list(items[0].coords) if items else []
+        coords = _canvas_coords(args)
+        for item in items:
+            item.coords = list(coords)
+        self._redraw()
+        return None
+
+    def move(self, spec: Any, dx: int, dy: int) -> None:
+        """Shift everything a tag names by a distance in pixels."""
+        for item in self._matching(spec):
+            item.coords = [
+                value + (int(dx) if index % 2 == 0 else int(dy))
+                for index, value in enumerate(item.coords)
+            ]
+        self._redraw()
+
+    def delete(self, *specs: Any) -> None:
+        """Remove everything the tags name."""
+        doomed = {item.ident for spec in specs for item in self._matching(spec)}
+        self._items = [item for item in self._items if item.ident not in doomed]
+        if self._current in doomed:
+            self._current = None
+        self._redraw()
+
+    def itemconfigure(
+        self, spec: Any, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> Any:
+        """Set options on everything a tag names, or read one item's options.
+
+        Raises:
+            TclError: If an option is not one the item's type takes.
+        """
+        items = self._matching(spec)
+        given = {**(cnf or {}), **kw}
+        if not given:
+            return dict(items[0].options) if items else {}
+        for item in items:
+            spec_for_kind = {
+                **self._COMMON_ITEM_OPTIONS,
+                **self._ITEM_OPTIONS[item.kind],
+            }
+            for name, value in given.items():
+                option = _OPTION_ALIASES.get(name, name)
+                if option not in spec_for_kind:
+                    raise TclError(f'unknown option "-{name}"')
+                item.options[option] = value
+        self._redraw()
+        return None
+
+    itemconfig = itemconfigure
+
+    def itemcget(self, spec: Any, option: str) -> Any:
+        """One option of the first item a tag names.
+
+        Raises:
+            TclError: If nothing matches, or the option is not one it takes.
+        """
+        items = self._matching(spec)
+        if not items:
+            raise TclError(f'unknown item "{spec}"')
+        name = _OPTION_ALIASES.get(option, option)
+        if name not in items[0].options:
+            raise TclError(f'unknown option "-{option}"')
+        return items[0].options[name]
+
+    def type(self, spec: Any) -> str | None:
+        """What kind of item a tag names, or None if nothing does."""
+        items = self._matching(spec)
+        return items[0].kind if items else None
+
+    def bbox(self, *specs: Any) -> tuple[int, int, int, int] | None:
+        """The extent of everything the tags name, in pixels."""
+        boxes = [
+            box
+            for spec in (specs or ("all",))
+            for item in self._matching(spec)
+            if (box := self._item_bbox(item)) is not None
+        ]
+        if not boxes:
+            return None
+        return (
+            min(box[0] for box in boxes),
+            min(box[1] for box in boxes),
+            max(box[2] for box in boxes),
+            max(box[3] for box in boxes),
+        )
+
+    def _item_bbox(self, item: _CanvasItem) -> tuple[int, int, int, int] | None:
+        """One item's extent, in pixels."""
+        if item.kind == "text":
+            return self._text_bbox(item)
+        return bbox_of(item.points())
+
+    def _text_bbox(self, item: _CanvasItem) -> tuple[int, int, int, int] | None:
+        """A text item's extent, in pixels, cell-aligned as it is drawn."""
+        placed = self._text_origin(item)
+        if placed is None:
+            return None
+        column, row, lines = placed
+        width = max((len(line) for line in lines), default=0)
+        return (
+            column,
+            row * 2,
+            column + max(0, width - 1),
+            row * 2 + 2 * len(lines) - 1,
+        )
+
+    # ---------------------------------------------------------------- tagging
+
+    def gettags(self, spec: Any) -> tuple[str, ...]:
+        """The tags on the first item a tag or id names."""
+        items = self._matching(spec)
+        return items[0].tags if items else ()
+
+    def addtag_withtag(self, new: str, spec: Any) -> None:
+        """Add a tag to everything another tag names."""
+        for item in self._matching(spec):
+            if new not in item.tags:
+                item.options["tags"] = (*item.tags, new)
+
+    def dtag(self, spec: Any, tag: str | None = None) -> None:
+        """Remove a tag. Without one, remove the tag that was used to find them."""
+        target = str(spec) if tag is None else tag
+        for item in self._matching(spec):
+            item.options["tags"] = tuple(t for t in item.tags if t != target)
+
+    def tag_raise(self, spec: Any, above: Any = None) -> None:
+        """Move items to the front of the drawing order, or above another."""
+        self._reorder_items(spec, above, to_front=True)
+
+    def tag_lower(self, spec: Any, below: Any = None) -> None:
+        """Move items to the back of the drawing order, or below another."""
+        self._reorder_items(spec, below, to_front=False)
+
+    def _reorder_items(self, spec: Any, other: Any, *, to_front: bool) -> None:
+        """Shared by tag_raise and tag_lower."""
+        moving = self._matching(spec)
+        if not moving:
+            return
+        idents = {item.ident for item in moving}
+        rest = [item for item in self._items if item.ident not in idents]
+        if other is None:
+            self._items = rest + moving if to_front else moving + rest
+        else:
+            anchors = [
+                item for item in self._matching(other) if item.ident not in idents
+            ]
+            if not anchors:
+                self._items = rest + moving if to_front else moving + rest
+            else:
+                at = rest.index(anchors[-1] if to_front else anchors[0])
+                cut = at + 1 if to_front else at
+                self._items = rest[:cut] + moving + rest[cut:]
+        self._redraw()
+
+    # --------------------------------------------------------- item bindings
+
+    def tag_bind(
+        self,
+        spec: Any,
+        sequence: str | None = None,
+        func: Callable[[Event], Any] | None = None,
+        add: bool | str | None = None,
+    ) -> None:
+        """Bind an event on the items a tag names.
+
+        Unlike :meth:`Misc.bind`, this is not a binding on the widget: the
+        event is delivered only while the pointer is over one of the items,
+        and ``event.widget`` is still the canvas. The item it happened to is
+        the one ``find_withtag("current")`` names, as in Tk.
+
+        Args:
+            spec: A tag, or an item id.
+            sequence: The event, such as ``"<Button-1>"``.
+            func: What to call.
+            add: True to keep any binding already there.
+        """
+        if sequence is None or func is None:
+            return
+        bindings = self._item_bindings.setdefault(str(spec), {})
+        if add in (True, "+"):
+            bindings.setdefault(sequence, []).append(func)
+        else:
+            bindings[sequence] = [func]
+
+    def tag_unbind(self, spec: Any, sequence: str) -> None:
+        """Remove the bindings a tag has for one event."""
+        self._item_bindings.get(str(spec), {}).pop(sequence, None)
+
+    def _item_at(self, x: int, y: int) -> int | None:
+        """The topmost item whose extent covers a pixel."""
+        for item in reversed(self._items):
+            if str(item.options.get("state")) == "hidden":
+                continue
+            box = self._item_bbox(item)
+            if box is not None and box[0] <= x <= box[2] and box[1] <= y <= box[3]:
+                return item.ident
+        return None
+
+    def _deliver(self, ident: int | None, sequence: str, event: Event) -> None:
+        """Run whatever is bound to one event on one item.
+
+        The item's own id is consulted first, then its tags in the order they
+        were given, then ``all`` - which is the order Tk searches, the id
+        being the item's first tag there.
+        """
+        if ident is None:
+            return
+        item = self._item(ident)
+        if item is None:
+            return
+        keys = [str(ident), *item.tags, "all"]
+        if ident == self._current:
+            keys.insert(-1, "current")
+        for key in keys:
+            for callback in self._item_bindings.get(key, {}).get(sequence, ()):
+                callback(event)
+
+    # ---------------------------------------------------------------- the view
+
+    def canvasx(self, screen_x: int) -> int:
+        """The canvas pixel a screen column is showing."""
+        return int(screen_x) - self.winfo_rootx() - self._text_area().x + self._left
+
+    def canvasy(self, screen_y: int) -> int:
+        """The canvas pixel row a screen row is showing.
+
+        The top half of the cell, since a row holds two pixel rows and the
+        upper one is the one a click is taken to mean.
+        """
+        row = int(screen_y) - self.winfo_rooty() - self._text_area().y
+        return row * 2 + self._top
+
+    def _scroll_region(self) -> tuple[int, int, int, int]:
+        """What there is to scroll over: the option, or everything drawn."""
+        region = self._options["scrollregion"]
+        if region:
+            values = _canvas_coords(
+                region if isinstance(region, (tuple, list)) else region.split()
+            )
+            if len(values) >= 4:
+                return (values[0], values[1], values[2], values[3])
+        return self.bbox() or (0, 0, *self._plane_size())
+
+    def yview(self, *args: Any) -> tuple[float, float] | None:
+        """Read or move the vertical view, in the shape Tk uses."""
+        if not args:
+            return self._fractions(vertical=True)
+        self._scroll(args, vertical=True)
+        return None
+
+    def xview(self, *args: Any) -> tuple[float, float] | None:
+        """Read or move the horizontal view."""
+        if not args:
+            return self._fractions(vertical=False)
+        self._scroll(args, vertical=False)
+        return None
+
+    def yview_moveto(self, fraction: float) -> None:
+        """Put the top of the view at a fraction of the scroll region."""
+        self.yview("moveto", fraction)
+
+    def yview_scroll(self, number: int, what: str) -> None:
+        """Scroll by cells or by screenfuls."""
+        self.yview("scroll", number, what)
+
+    def xview_moveto(self, fraction: float) -> None:
+        """Put the left of the view at a fraction of the scroll region."""
+        self.xview("moveto", fraction)
+
+    def xview_scroll(self, number: int, what: str) -> None:
+        """Scroll sideways by pixels or by screenfuls."""
+        self.xview("scroll", number, what)
+
+    def _scroll(self, args: tuple[Any, ...], *, vertical: bool) -> None:
+        """Apply one Tk scrolling command to one axis."""
+        left, top, right, bottom = self._scroll_region()
+        width, height = self._plane_size()
+        span = height if vertical else width
+        total = max(1, (bottom - top) if vertical else (right - left))
+        origin = top if vertical else left
+        action = str(args[0])
+        if action == "moveto":
+            position = origin + int(float(args[1]) * total)
+        elif action == "scroll":
+            count = int(float(args[1]))
+            unit = str(args[2]) if len(args) > 2 else "units"
+            # A vertical unit is a cell, which is two pixels: scrolling by one
+            # would swap which half of the cell each pixel row lands in, and
+            # the whole picture would shimmer.
+            step = span if unit.startswith("page") else (2 if vertical else 1)
+            position = (self._top if vertical else self._left) + count * step
+        else:
+            raise TclError(f'bad option "{action}": must be moveto or scroll')
+        limit = max(origin, origin + total - span)
+        position = max(origin, min(position, limit))
+        if vertical:
+            self._top = position - position % 2
+        else:
+            self._left = position
+        self._redraw()
+        self._report_view()
+
+    def _fractions(self, *, vertical: bool) -> tuple[float, float]:
+        """Where one axis of the view is, as two fractions of the region."""
+        left, top, right, bottom = self._scroll_region()
+        width, height = self._plane_size()
+        span = height if vertical else width
+        total = max(1, (bottom - top) if vertical else (right - left))
+        origin = top if vertical else left
+        start = ((self._top if vertical else self._left) - origin) / total
+        return (min(1.0, max(0.0, start)), min(1.0, max(0.0, start + span / total)))
+
+    def _report_view(self) -> None:
+        """Tell the scrollbars where the view is, if anything is listening."""
+        for option, fractions in (
+            ("yscrollcommand", self._fractions(vertical=True)),
+            ("xscrollcommand", self._fractions(vertical=False)),
+        ):
+            command = self._options[option]
+            if command is not None:
+                command(*fractions)
+
+    # --------------------------------------------------------------- painting
+
+    def _item_pixels(self, item: _CanvasItem) -> dict[tuple[int, int], str]:
+        """Every pixel one item lights, and what colour.
+
+        Interior first and outline second, so an outline of a different
+        colour is not swallowed by the fill underneath it.
+        """
+        points = item.points()
+        fill = str(item.options.get("fill") or "")
+        outline = str(item.options.get("outline") or "")
+        pixels: dict[tuple[int, int], str] = {}
+        if item.kind == "line":
+            pixels.update(dict.fromkeys(line_pixels(points), fill or "white"))
+        elif item.kind in ("rectangle", "oval"):
+            (x0, y0), (x1, y1) = points[0], points[1]
+            solid = (
+                filled_rectangle_pixels
+                if item.kind == "rectangle"
+                else filled_oval_pixels
+            )
+            edge = rectangle_pixels if item.kind == "rectangle" else oval_pixels
+            if fill:
+                pixels.update(dict.fromkeys(solid(x0, y0, x1, y1), fill))
+            if outline:
+                pixels.update(dict.fromkeys(edge(x0, y0, x1, y1), outline))
+        elif item.kind == "polygon":
+            if fill:
+                pixels.update(dict.fromkeys(filled_polygon_pixels(points), fill))
+            if outline:
+                pixels.update(dict.fromkeys(polygon_pixels(points), outline))
+        return pixels
+
+    def _text_origin(self, item: _CanvasItem) -> tuple[int, int, list[str]] | None:
+        """Where a text item starts, as ``(column, cell row, lines)``.
+
+        The row is a cell row, not a pixel row: a glyph fills a cell, so a
+        text item snaps to the nearest one rather than straddling two.
+        """
+        points = item.points()
+        if not points:
+            return None
+        lines = str(item.options.get("text") or "").split("\n")
+        if not lines:
+            return None
+        x, y = points[0]
+        width = max((len(line) for line in lines), default=0)
+        across, down = parse_anchor(str(item.options.get("anchor") or "center"))
+        column = x - int(width * across)
+        # The cell the point falls in, then whole rows off it for a block of
+        # several lines. Taking half the block height off in *pixels* first
+        # shifted a single line half a cell and rounded it onto the wrong row.
+        row = y // 2 - int(len(lines) * down)
+        return (column, row, lines)
+
+    def _redraw(self) -> None:
+        """Paint the border, then every item in the order it was made."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        dispatcher = CursesDispatcher.get()
+        base = self._background_attribute() | self._font_attribute()
+        with contextlib.suppress(ValueError):
+            base = for_state(str(self._options["state"]), base)
+        area = self._text_area()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", base)
+            dispatcher.call(window.erase)
+            if self._border_drawn:
+                self._draw_border(
+                    dispatcher, window, self._rect.width, self._rect.height, base
+                )
+            if not area.is_empty:
+                for column, row, glyph, attribute in self._painted(area, base):
+                    dispatcher.call(
+                        window.addstr, area.y + row, area.x + column, glyph, attribute
+                    )
+
+    def _painted(self, area: Rect, base: int) -> list[tuple[int, int, str, int]]:
+        """Every cell to draw, worked out item by item in drawing order.
+
+        Items are composed one at a time rather than all at once so that a
+        later item covers an earlier one, including where a drawing and a
+        piece of text want the same cell. Composing the whole plane first and
+        laying text over it afterwards would put every label on top, whatever
+        order it was made in.
+        """
+        pixels: dict[tuple[int, int], str] = {}
+        cells: dict[tuple[int, int], tuple[str, int]] = {}
+        for item in self._items:
+            if str(item.options.get("state")) == "hidden":
+                continue
+            if item.kind == "text":
+                self._compose_text(item, pixels, cells, base)
+            else:
+                drawn = self._item_pixels(item)
+                pixels.update(drawn)
+                # Only the cells this item touched are recomposed. Folding
+                # the whole plane for every item would make drawing cost the
+                # square of what is on the canvas.
+                affected = {}
+                for x, y in drawn:
+                    for half in (y - y % 2, y - y % 2 + 1):
+                        if (x, half) in pixels:
+                            affected[(x, half)] = pixels[(x, half)]
+                for at, (glyph, fore, back) in compose(affected).items():
+                    cells[at] = (glyph, self._ink(fore, back, base))
+        painted = []
+        top_row = self._top // 2
+        for (x, row), (glyph, attribute) in cells.items():
+            column, screen_row = x - self._left, row - top_row
+            if 0 <= column < area.width and 0 <= screen_row < area.height:
+                painted.append((column, screen_row, glyph, attribute))
+        return painted
+
+    def _compose_text(
+        self,
+        item: _CanvasItem,
+        pixels: dict[tuple[int, int], str],
+        cells: dict[tuple[int, int], tuple[str, int]],
+        base: int,
+    ) -> None:
+        """Put a text item's glyphs into the cells, clearing what was under.
+
+        The pixels beneath are dropped, so a drawing item made later composes
+        from its own ink alone rather than resurrecting what the text covered.
+        """
+        placed = self._text_origin(item)
+        if placed is None:
+            return
+        column, row, lines = placed
+        attribute = self._ink(str(item.options.get("fill") or ""), None, base)
+        font = str(item.options.get("font") or "").lower()
+        attribute |= from_font(
+            bold="bold" in font,
+            italic="italic" in font,
+            underline="underline" in font,
+        )
+        justify = str(item.options.get("justify") or "left")
+        width = max((len(line) for line in lines), default=0)
+        for offset, line in enumerate(lines):
+            start = column + align_offset(len(line), width, justify)
+            for index, character in enumerate(line):
+                at = (start + index, row + offset)
+                pixels.pop((at[0], at[1] * 2), None)
+                pixels.pop((at[0], at[1] * 2 + 1), None)
+                cells[at] = (character, attribute)
+
+    def _ink(self, foreground: str, background: str | None, base: int) -> int:
+        """The attribute a cell needs, given the colours its two halves want."""
+        colors = self.tk.colors
+        if colors is None:
+            return base
+        return base | colors.attribute_for(
+            foreground or str(self._options["foreground"] or "white"),
+            background or str(self._options["background"] or "black"),
+        )
+
+
+def _canvas_coords(args: Any) -> list[int]:
+    """Flatten coordinates however they were given.
+
+    Tk takes ``(x0, y0, x1, y1)``, ``((x0, y0), (x1, y1))`` and a single
+    sequence of any of those, so all three arrive here and all three work.
+    """
+    flat: list[int] = []
+    values = list(args)
+    if len(values) == 1 and isinstance(values[0], (list, tuple)):
+        values = list(values[0])
+    for value in values:
+        if isinstance(value, (list, tuple)):
+            flat.extend(round(float(part)) for part in value)
+        else:
+            flat.append(round(float(value)))
+    return flat
+
+
+def _canvas_mouse(event: Event) -> None:
+    """Deliver a mouse event to whichever item is under the pointer.
+
+    Enter and Leave are synthesised here rather than reported by curses:
+    there is no such thing as a pointer crossing an item at the terminal
+    level, so the canvas works it out by noticing that the item under the
+    pointer has changed.
+    """
+    canvas = event.widget
+    x, y = canvas.canvasx(event.x_root), canvas.canvasy(event.y_root)
+    found = canvas._item_at(x, y)
+    if found != canvas._current:
+        canvas._deliver(canvas._current, "<Leave>", event)
+        canvas._current = found
+        canvas._deliver(found, "<Enter>", event)
+    sequence = {
+        "ButtonPress": f"<Button-{event.num}>",
+        "ButtonRelease": f"<ButtonRelease-{event.num}>",
+        "Motion": "<Motion>",
+        "Double": f"<Double-Button-{event.num}>",
+    }.get(event.type, "")
+    if sequence:
+        canvas._deliver(canvas._current, sequence, event)
 
 
 class Listbox(_Drawable):
