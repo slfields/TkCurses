@@ -4115,7 +4115,18 @@ class _Drawable(Widget):
         with no ``font`` option - a Frame, a Scrollbar - has no text of its
         own to style and gets nothing.
         """
-        font = str(self._options.get("font", "")).lower()
+        option = self._options.get("font", "")
+        named = self.tk.fonts.get(str(option))
+        if named is not None:
+            # A font created through tkcurses.font. Tk keeps these in the
+            # interpreter and a widget names one; the styling lives with the
+            # font rather than in the widget's own option string.
+            return from_font(
+                bold=str(named.get("weight", "normal")) == "bold",
+                italic=str(named.get("slant", "roman")) == "italic",
+                underline=bool(named.get("underline", False)),
+            )
+        font = str(option).lower()
         return from_font(
             bold="bold" in font,
             italic="italic" in font,
