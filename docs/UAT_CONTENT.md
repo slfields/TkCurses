@@ -119,8 +119,10 @@ anywhere · `F3` for a menu taller than the terminal
 
 ## What this found
 
-- **The terminal was never asked to report mouse motion, so no drag ever
-  happened outside the test harness.** `mousemask` accepts
+- **Dragging never selected anything, on any real terminal.** Three separate
+  faults, found one at a time because each hid the next:
+
+  1. **The terminal was never asked to report motion.** `mousemask` accepts
   `REPORT_MOUSE_POSITION` and reports it granted — but the only thing ncurses
   writes to the terminal is `ESC [ ? 1006 ; 1000 h`: SGR encoding plus
   *normal* tracking, which is press and release and nothing else. Its built-in
@@ -130,6 +132,24 @@ anywhere · `F3` for a menu taller than the terminal
   cannot check by imitating a terminal is what the terminal was *asked to do*,
   so it now records the bytes the application sends and the tests assert on
   those. **TkCurses-bj4**.
+
+  2. **A drag reported with the button bit set read as a press.** The decoder
+     checked the button masks before deciding whether a report was motion, so
+     on an ncurses build that sets both, every step of a drag re-anchored the
+     selection at the pointer — selecting nothing, while press and release
+     worked perfectly.
+
+  3. **The mode string could be lost on its way out.** Written through
+     ncurses' output buffer it was at the mercy of when that buffer was
+     flushed; it goes straight to the terminal now, after the screen is
+     flushed, and once more from the first turn of the main loop. Which of
+     those two mattered is not known — the fault was never reproducible here,
+     and both were needed before drags worked on the reporting terminal.
+
+  The lesson for the next one of these: the harness imitates a terminal, so it
+  can only ever check what the application *does with* what a terminal sends.
+  It cannot check what the application asks a terminal for, which is why
+  scenario 23 now prints the raw curses report and the mode requested.
 
 - **Shift with the arrows did not select anything, on any terminal.** ncurses
   decodes a shifted arrow into a key code of its own — Shift-Down is `KEY_SF`,
