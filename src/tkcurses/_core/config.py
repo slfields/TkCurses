@@ -52,8 +52,14 @@ class MouseSettings:
     #: Window within which clicks count as a double or triple click.
     click_interval: int = 200
     enabled: bool = True
-    #: Motion reporting, which drag support depends on.
+    #: Motion while a button is held - DEC mode 1002 - which is what a drag
+    #: is made of. ncurses does not ask the terminal for this on its own.
     report_motion: bool = True
+    #: Every movement, button or no button - DEC mode 1003. Needed for a
+    #: widget that highlights what the pointer is over, and off by default
+    #: because it sends an event for every cell the pointer crosses and takes
+    #: the terminal's own text selection away while it is on.
+    report_hover: bool = False
 
 
 @dataclass
@@ -105,6 +111,7 @@ _FIELDS: tuple[tuple[str, str, str, str | None, tuple[int, int] | None], ...] = 
     ("mouse", "click_interval", "int", "TKCURSES_MOUSE_CLICK_INTERVAL", (1, 1000)),
     ("mouse", "enabled", "bool", "TKCURSES_MOUSE_ENABLED", None),
     ("mouse", "report_motion", "bool", "TKCURSES_MOUSE_REPORT_MOTION", None),
+    ("mouse", "report_hover", "bool", "TKCURSES_MOUSE_REPORT_HOVER", None),
     ("display", "color_mode", "choice", "TKCURSES_DISPLAY_COLOR_MODE", None),
     ("display", "unicode_borders", "bool", "TKCURSES_DISPLAY_UNICODE", None),
     (

@@ -28,6 +28,7 @@ __all__ = [
     "ResizeEvent",
     "keysym_for",
     "modifier_names",
+    "shift_held",
 ]
 
 # --------------------------------------------------------------------------
@@ -177,6 +178,32 @@ _SPECIAL_KEYSYMS: dict[int, str] = {
     curses.KEY_RESIZE: "Configure",
 }
 
+#: Curses key codes that are a named key *with Shift held*. ncurses decodes
+#: the terminal's modified-arrow sequences into these - Shift-Down arrives as
+#: KEY_SF, Shift-Up as KEY_SR, from terminfo's kind and kri - so a shifted
+#: arrow is one code here rather than a modifier alongside the plain one.
+#: Without this table, selecting with the keyboard could not work at all:
+#: Shift-Right was indistinguishable from Right.
+_SHIFTED_KEYSYMS: dict[int, str] = {
+    curses.KEY_SLEFT: "Left",
+    curses.KEY_SRIGHT: "Right",
+    # Scroll-forward and scroll-reverse, which is what terminfo calls the
+    # shifted vertical arrows.
+    curses.KEY_SF: "Down",
+    curses.KEY_SR: "Up",
+    curses.KEY_SHOME: "Home",
+    curses.KEY_SEND: "End",
+    curses.KEY_SPREVIOUS: "Prior",
+    curses.KEY_SNEXT: "Next",
+    curses.KEY_SDC: "Delete",
+    curses.KEY_SIC: "Insert",
+}
+
+
+def shift_held(keycode: int) -> bool:
+    """True if a key code is the shifted form of a named key."""
+    return keycode in _SHIFTED_KEYSYMS
+
 
 def keysym_for(keycode: int) -> str:
     """Return the tkinter-style keysym for a curses key code.
@@ -189,6 +216,8 @@ def keysym_for(keycode: int) -> str:
     """
     if keycode in _SPECIAL_KEYSYMS:
         return _SPECIAL_KEYSYMS[keycode]
+    if keycode in _SHIFTED_KEYSYMS:
+        return _SHIFTED_KEYSYMS[keycode]
     if 0 <= keycode - curses.KEY_F0 <= 63:
         return f"F{keycode - curses.KEY_F0}"
     if keycode in _CONTROL_KEYSYMS:

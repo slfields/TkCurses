@@ -6,6 +6,7 @@ genuine pty, so they are driven through the harness.
 
 from __future__ import annotations
 
+import re
 import time
 
 import pytest
@@ -382,3 +383,194 @@ def test_a_drag_reports_both_ends(terminal, tmp_path):
     term.wait_for_text("drag b1 @8,4")
     term.send_mouse(15, 6, action="release")
     term.wait_for_text("released b1 @15,6 end=15,6")
+
+
+def test_the_terminal_is_asked_to_report_drags(terminal, tmp_path):
+    """ncurses will not ask for it, whatever mousemask says.
+
+    mousemask accepts REPORT_MOUSE_POSITION and reports it granted, but the
+    only thing ncurses sends the terminal is normal tracking - press and
+    release. Nothing caught this because the harness sends motion whether
+    the application asked for it or not; a real terminal does not.
+    """
+    term = terminal(cols=30, rows=6)
+    term.run_source(
+        "import tkcurses\n"
+        "root = tkcurses.Tk()\n"
+        "root.tk.screen.buffer.write(0, 0, 'up')\n"
+        "root.tk.screen.refresh()\n"
+        "root.after(1500, root.quit)\n"
+        "root.mainloop()\n"
+        "root.destroy()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("up")
+    assert b"\x1b[?1002h" in term.received
+
+
+def test_hover_reporting_is_off_unless_it_is_asked_for(terminal, tmp_path):
+    """1003 sends an event for every cell the pointer crosses."""
+    term = terminal(cols=30, rows=6)
+    term.run_source(
+        "import tkcurses\n"
+        "root = tkcurses.Tk()\n"
+        "root.tk.screen.buffer.write(0, 0, 'up')\n"
+        "root.tk.screen.refresh()\n"
+        "root.after(1500, root.quit)\n"
+        "root.mainloop()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("up")
+    assert b"\x1b[?1003h" not in term.received
+
+
+def test_hover_reporting_can_be_turned_on(terminal, tmp_path):
+    term = terminal(cols=30, rows=6, env={"TKCURSES_MOUSE_REPORT_HOVER": "1"})
+    term.run_source(
+        "import tkcurses\n"
+        "root = tkcurses.Tk()\n"
+        "root.tk.screen.buffer.write(0, 0, 'up')\n"
+        "root.tk.screen.refresh()\n"
+        "root.after(1500, root.quit)\n"
+        "root.mainloop()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("up")
+    assert b"\x1b[?1003h" in term.received
+
+
+def test_motion_reporting_can_be_turned_off(terminal, tmp_path):
+    term = terminal(cols=30, rows=6, env={"TKCURSES_MOUSE_REPORT_MOTION": "0"})
+    term.run_source(
+        "import tkcurses\n"
+        "root = tkcurses.Tk()\n"
+        "root.tk.screen.buffer.write(0, 0, 'up')\n"
+        "root.tk.screen.refresh()\n"
+        "root.after(1500, root.quit)\n"
+        "root.mainloop()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("up")
+    assert b"\x1b[?1002h" not in term.received
+
+
+def test_the_terminal_is_put_back_on_the_way_out(terminal, tmp_path):
+    """A terminal left reporting the mouse sends garbage to whatever runs next."""
+    term = terminal(cols=30, rows=6)
+    term.run_source(
+        "import tkcurses\n"
+        "root = tkcurses.Tk()\n"
+        "root.tk.screen.buffer.write(0, 0, 'up')\n"
+        "root.tk.screen.refresh()\n"
+        "root.after(300, root.quit)\n"
+        "root.mainloop()\n"
+        "root.destroy()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_exit(timeout=10)
+    assert b"\x1b[?1002l" in term.received
+
+
+def test_the_motion_mode_is_written_after_the_screen_is_up(terminal, tmp_path):
+    """Once at setup and once from the loop, so nothing can overtake it.
+
+    ncurses writes its own mouse mode through its output buffer. A mode that
+    goes into that buffer is at the mercy of when it is flushed and of
+    whatever ncurses writes afterwards, so this one goes straight to the
+    terminal, last.
+    """
+    term = terminal(cols=30, rows=6)
+    term.run_source(
+        "import tkcurses\n"
+        "root = tkcurses.Tk()\n"
+        "root.tk.screen.buffer.write(0, 0, 'up')\n"
+        "root.tk.screen.refresh()\n"
+        "root.after(600, root.quit)\n"
+        "root.mainloop()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("up")
+    term.wait_for_exit(timeout=10)
+    received = term.received
+    assert received.count(b"\x1b[?1002h") >= 2
+    # And it is the last mouse mode set, so nothing overrides it.
+    modes = re.findall(rb"\x1b\[\?([0-9;]*100[0-9][0-9;]*)h", received)
+    assert modes[-1] == b"1002"
+
+
+def _key_reporter() -> str:
+    return (
+        "import tkcurses\n"
+        "root = tkcurses.Tk()\n"
+        "buffer = root.tk.screen.buffer\n"
+        "def show(event):\n"
+        "    buffer.write(1, 0, 'key=%s state=%d   ' % (event.keysym, event.state))\n"
+        "    root.tk.screen.refresh()\n"
+        "root.bind_all('<Any-Key>', show)\n"
+        "buffer.write(0, 0, 'ready')\n"
+        "root.tk.screen.refresh()\n"
+        "root.after(4000, root.quit)\n"
+        "root.mainloop()\n"
+        "root.destroy()\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("byte", "keysym"),
+    [(b"\x0e", "n"), (b"\x0f", "o"), (b"\x11", "q"), (b"\x13", "s")],
+)
+def test_control_keys_reach_the_application(terminal, tmp_path, byte, keysym):
+    """Control-Q and Control-S are XON and XOFF to the line discipline.
+
+    It uses them to pause and resume output and passes neither on, so an
+    application that binds Control-Q - as a menu with a Ctrl+Q accelerator
+    invites - never saw the key at all.
+    """
+    term = terminal(cols=40, rows=6)
+    term.run_source(_key_reporter(), workdir=tmp_path)
+    term.wait_for_text("ready")
+    term.send(byte)
+    term.wait_for_text(f"key={keysym} state=2")
+
+
+def test_control_c_still_interrupts(terminal, tmp_path):
+    """Flow control is cleared by hand rather than with raw(), which would
+    also stop Control-C raising an interrupt - too much to give up."""
+    term = terminal(cols=40, rows=6)
+    term.run_source(
+        "import tkcurses\n"
+        "root = tkcurses.Tk()\n"
+        "buffer = root.tk.screen.buffer\n"
+        "buffer.write(0, 0, 'ready')\n"
+        "root.tk.screen.refresh()\n"
+        "try:\n"
+        "    root.after(4000, root.quit)\n"
+        "    root.mainloop()\n"
+        "except KeyboardInterrupt:\n"
+        "    root.destroy()\n"
+        "    raise SystemExit(7)\n"
+        "root.destroy()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("ready")
+    term.send(b"\x03")
+    assert term.wait_for_exit(timeout=10) == 7
+
+
+def test_the_terminal_flow_control_is_put_back(terminal, tmp_path):
+    """A tty left without XON/XOFF is a tty whose next program cannot be paused."""
+    term = terminal(cols=40, rows=6)
+    term.run_source(
+        "import sys, termios, tkcurses\n"
+        "before = termios.tcgetattr(sys.__stdin__.fileno())[0]\n"
+        "root = tkcurses.Tk()\n"
+        "during = termios.tcgetattr(sys.__stdin__.fileno())[0]\n"
+        "root.after(200, root.quit)\n"
+        "root.mainloop()\n"
+        "root.destroy()\n"
+        "after = termios.tcgetattr(sys.__stdin__.fileno())[0]\n"
+        "ok = (before & termios.IXON) and not (during & termios.IXON)\n"
+        "raise SystemExit(0 if ok and before == after else 1)\n",
+        workdir=tmp_path,
+    )
+    assert term.wait_for_exit(timeout=10) == 0, term.stderr

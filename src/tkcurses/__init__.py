@@ -22,18 +22,35 @@ import re
 import sys
 import time
 import traceback
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from tkcurses._core.application import Application
-from tkcurses._core.attributes import for_state, from_font, style_for_relief
+from tkcurses._core.attributes import (
+    for_state,
+    from_font,
+    style_for_relief,
+    with_colors,
+)
 from tkcurses._core.bindings import (
     EventPattern,
     parse_sequence,
     pattern_for_event,
 )
+from tkcurses._core.canvas import (
+    bbox_of,
+    compose,
+    filled_oval_pixels,
+    filled_polygon_pixels,
+    filled_rectangle_pixels,
+    line_pixels,
+    oval_pixels,
+    polygon_pixels,
+    rectangle_pixels,
+)
 from tkcurses._core.clipboard import CLIPBOARD, PRIMARY
 from tkcurses._core.colors import ColorManager, palette_rgb, parse_color, rgb_for
+from tkcurses._core.config import TkCursesConfig
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.editing import TextField
 from tkcurses._core.errors import TclError, TkCursesError
@@ -61,11 +78,20 @@ from tkcurses._core.grid import (
     parse_sticky,
 )
 from tkcurses._core.input import InputHandler
+from tkcurses._core.menus import (
+    CASCADE,
+    MenuEntry,
+    measure_entries,
+    place_popup,
+    visible_window,
+)
 from tkcurses._core.pack import FILLS, SIDES, PackLayout, PackOptions, parse_anchor
+from tkcurses._core.paned import SASH_WIDTH, PanedLayout, PaneOptions
 from tkcurses._core.panels import PanelStack
 from tkcurses._core.place import BORDERMODES, PlaceLayout, PlaceOptions
 from tkcurses._core.screen import CursesScreen
-from tkcurses._core.text import align_offset, measure, wrap
+from tkcurses._core.text import align_offset, measure, wrap, wrap_spans
+from tkcurses._core.textbuffer import Index, TextBuffer
 from tkcurses.constants import (
     ANCHOR,
     END,
@@ -88,6 +114,7 @@ __all__ = [
     "BaseWidget",
     "BooleanVar",
     "Button",
+    "Canvas",
     "Checkbutton",
     "DoubleVar",
     "Entry",
@@ -98,10 +125,14 @@ __all__ = [
     "Label",
     "LabelFrame",
     "Listbox",
+    "Menu",
+    "Menubutton",
     "Message",
     "Misc",
     "NoDefaultRoot",
+    "OptionMenu",
     "Pack",
+    "PanedWindow",
     "Place",
     "Radiobutton",
     "Scale",
@@ -109,6 +140,7 @@ __all__ = [
     "Spinbox",
     "StringVar",
     "TclError",
+    "Text",
     "Tk",
     "TkCursesError",
     "Toplevel",
@@ -900,6 +932,12 @@ class Misc:
         rect = Rect(
             self.winfo_rootx(), self.winfo_rooty(), self._rect.width, self._rect.height
         )
+        if self._options.get("menu") is not None:
+            # A menubar sits inside the window's border and above everything
+            # else in it, so the row it occupies is not the children's to
+            # use. Taken off here rather than in each window class, because
+            # this is the one place that decides what a container offers.
+            rect = Rect(rect.x, rect.y + 1, rect.width, max(0, rect.height - 1))
         return content_rect(
             rect,
             bordered=self._border_drawn,
@@ -1782,6 +1820,16 @@ class BaseWidget(Misc):
         options.update(self._checked(given))
         return options
 
+    def _configured_menubar(self, given: dict[str, Any]) -> None:
+        """Attach a menubar when one is set through the ``menu`` option.
+
+        Only Tk and Toplevel have that option, and only they have the method
+        - so the check is for both rather than for the class, which keeps
+        BaseWidget from having to know about windows.
+        """
+        if "menu" in given and hasattr(self, "_attach_menubar"):
+            self._attach_menubar()
+
     def _checked(self, given: dict[str, Any]) -> dict[str, Any]:
         """Resolve aliases and reject anything this widget does not accept."""
         spec = self._option_spec()
@@ -1805,6 +1853,7 @@ class BaseWidget(Misc):
         self._options.update(self._checked(given))
         if "takefocus" in self._options:
             self._takefocus = bool(self._options["takefocus"])
+        self._configured_menubar(given)
         return None
 
     config = configure
@@ -2084,6 +2133,7 @@ _MANAGER_NAMES = {
     "PackLayout": "pack",
     "GridLayout": "grid",
     "PlaceLayout": "place",
+    "PanedLayout": "paned",
 }
 
 
@@ -2484,12 +2534,52 @@ class Wm:
         _options: dict[str, Any]
         _is_toplevel: bool
 
+        _menubar_bound: bool
+
+        @property
+        def _border_drawn(self) -> bool: ...
+
+        def bind(
+            self,
+            sequence: str | None = None,
+            func: Callable[[Event], Any] | None = None,
+            add: bool | str | None = None,
+        ) -> Any: ...
         def _allocate(self, rect: Rect) -> None: ...
         def _map(self) -> None: ...
         def _unmap(self) -> None: ...
         def _screen_size(self) -> tuple[int, int]: ...
         def winfo_exists(self) -> bool: ...
         def tkraise(self, aboveThis: Misc | None = None) -> None: ...
+
+    def _attach_menubar(self) -> None:
+        """Lay the window's ``menu`` across its top row, and keep it there.
+
+        The menubar is a Menu like any other, drawn in a row instead of a
+        box. It is positioned here rather than by a geometry manager because
+        it is not part of the layout: the window takes its row away from the
+        children first, and what is left is what they are offered. A
+        ``<Configure>`` binding re-places it, so the bar follows the window
+        when the terminal is resized.
+        """
+        if self._options.get("menu") is None:
+            return
+        if not self._menubar_bound:
+            self._menubar_bound = True
+            self.bind("<Configure>", lambda _event: self._place_menubar(), add=True)
+        self._place_menubar()
+
+    def _place_menubar(self) -> None:
+        """Put the menubar across the top of this window's border."""
+        bar = self._options.get("menu")
+        if bar is None or not bar.winfo_exists():
+            return
+        bar._as_menubar = True
+        bar._apply_requested_size()
+        edge = BORDER_WIDTH if self._border_drawn else 0
+        bar._allocate(Rect(edge, edge, max(0, self._rect.width - 2 * edge), 1))
+        bar._map()
+        bar._redraw()
 
     def _setup_wm(self) -> None:
         """Initialise the window manager state.
@@ -2498,6 +2588,7 @@ class Wm:
         ``__init__`` here: the mixin has no say in the order a widget builds
         itself, and these defaults have to be in place before geometry is.
         """
+        self._menubar_bound = False
         self._title = ""
         self._protocols: dict[str, Callable[[], Any]] = {}
         self._min_size: tuple[int, int] = (1, 1)
@@ -2944,7 +3035,9 @@ class Tk(BaseWidget, Wm):
 
     #: The root accepts the standard options; the rest of its configuration
     #: is window manager business.
-    _widget_options: ClassVar[dict[str, Any]] = {}
+    #: The menubar this window shows, if any. Declared here as well as on
+    #: Toplevel because a menubar on the root window is the common case.
+    _widget_options: ClassVar[dict[str, Any]] = {"menu": None}
 
     def __init__(
         self,
@@ -2985,6 +3078,7 @@ class Tk(BaseWidget, Wm):
         self._screen = CursesScreen()
         self._mouse_owner: Misc | None = None
         self._input: InputHandler | None = None
+        self._motion_asserted = False
         self._started = False
         self._running = False
 
@@ -3016,7 +3110,13 @@ class Tk(BaseWidget, Wm):
             # nothing and makes the key usable.
             with contextlib.suppress(AttributeError, curses.error):
                 curses.set_escdelay(_ESCAPE_DELAY_MS)
-            self._input = InputHandler(self._screen.stdscr)
+            mouse = TkCursesConfig.load().mouse
+            self._input = InputHandler(
+                self._screen.stdscr,
+                click_interval=mouse.click_interval,
+                report_motion=mouse.report_motion,
+                report_hover=mouse.report_hover,
+            )
             colors = ColorManager()
             if colors.start():
                 # Cells are painted through this; without colour support the
@@ -3107,6 +3207,14 @@ class Tk(BaseWidget, Wm):
         """Wait for input up to the next timer's deadline, then route it."""
         if self._input is None:
             return
+        if not self._motion_asserted:
+            # Once more, now that the screen has been painted and whatever
+            # ncurses wanted to say to the terminal has been said. A mouse
+            # mode lost during startup is the difference between drags
+            # working and a terminal that never reports one, and the cost of
+            # being sure is a single write.
+            self._motion_asserted = True
+            self._input.enable_motion()
         delay = self.tk.timers.next_delay()
         timeout = (
             _IDLE_TIMEOUT_MS
@@ -3269,6 +3377,8 @@ class Tk(BaseWidget, Wm):
         self.tk.panels = None
         self.tk.screen = None
         self.tk.colors = None
+        if self._input is not None:
+            self._input.restore()
         self._input = None
         with contextlib.suppress(Exception):
             self._screen.stop()
@@ -3746,6 +3856,21 @@ class BooleanVar(Variable):
 class _Drawable(Widget):
     """Painting shared by the widgets that draw a background and a border."""
 
+    def _font_attribute(self) -> int:
+        """What this widget's ``font`` option does to its text.
+
+        A terminal has one typeface, so the part of a Tk font specification
+        that survives is the styling: bold, italic and underline. A widget
+        with no ``font`` option - a Frame, a Scrollbar - has no text of its
+        own to style and gets nothing.
+        """
+        font = str(self._options.get("font", "")).lower()
+        return from_font(
+            bold="bold" in font,
+            italic="italic" in font,
+            underline="underline" in font,
+        )
+
     @property
     def _disabled(self) -> bool:
         """True while the widget refuses to answer the user.
@@ -4087,12 +4212,7 @@ class _TextWidget(_Drawable):
 
     def _text_attribute(self) -> int:
         """Attributes the font and state put on the text."""
-        font = str(self._options["font"]).lower()
-        attribute = from_font(
-            bold="bold" in font,
-            italic="italic" in font,
-            underline="underline" in font,
-        )
+        attribute = self._font_attribute()
         with contextlib.suppress(ValueError):
             attribute = for_state(str(self._options["state"]), attribute)
         return attribute
@@ -4762,6 +4882,7 @@ class Entry(_Drawable):
     """
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "font": "",
         "justify": "left",
         "relief": "sunken",
         "show": "",
@@ -5056,7 +5177,7 @@ class Entry(_Drawable):
         # inserted before then scrolled against a field of no width at all.
         self._field.scroll_into_view(area.width)
         dispatcher = CursesDispatcher.get()
-        attribute = self._background_attribute()
+        attribute = self._background_attribute() | self._font_attribute()
         with contextlib.suppress(ValueError):
             attribute = for_state(str(self._options["state"]), attribute)
         with contextlib.suppress(curses.error):
@@ -5207,6 +5328,238 @@ def _entry_refresh(event: Event) -> None:
     event.widget._redraw()
 
 
+class Menubutton(_TextWidget):
+    """A button that posts a menu instead of running a command.
+
+    Everything a Label is, plus a ``menu`` and the gestures that open it: a
+    click, Return, the space bar, or Down. It is what sits in a toolbar where
+    a menubar would be too much, and what :class:`OptionMenu` is built from.
+
+    ``direction`` says which side of the button the menu appears on. The menu
+    itself decides whether there is room - a menubutton near the bottom of the
+    terminal posts upwards whatever it was asked for, because a menu that
+    runs off the screen cannot be read.
+    """
+
+    #: Drawn at the right when ``indicatoron`` is true, so a menubutton can
+    #: be told from an ordinary button without opening it.
+    _INDICATOR = "▾"
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "direction": "below",
+        "indicatoron": False,
+        "menu": None,
+        "relief": "raised",
+        "takefocus": True,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``menu``, ``direction``, ``indicatoron``, plus everything a
+                Label takes.
+        """
+        super().__init__(master, cnf, name=name, **kw)
+        self._install_class_bindings()
+
+    def _install_class_bindings(self) -> None:
+        """Register the gestures that post a menubutton's menu.
+
+        Under this widget's own class name, not the literal "Menubutton":
+        binding tags name one class rather than a chain of them, so an
+        OptionMenu - which is a Menubutton - would otherwise match none of
+        these and never open. The same trap Spinbox meets with Entry.
+        """
+        name = self.winfo_class()
+        if name in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add(name)
+        bind = self.bind_class
+        bind(name, "<Button-1>", _menubutton_post)
+        bind(name, "<Key-Return>", _menubutton_key)
+        bind(name, "<Key-space>", _menubutton_key)
+        bind(name, "<Key-Down>", _menubutton_key)
+        bind(name, "<FocusIn>", _button_refresh)
+        bind(name, "<FocusOut>", _button_refresh)
+
+    @property
+    def _indicator_on(self) -> bool:
+        """True while the little arrow is drawn."""
+        try:
+            return self.getboolean(self._options["indicatoron"])
+        except TclError:
+            return False
+
+    def post_menu(self) -> None:
+        """Open the menu where ``direction`` says, if there is one."""
+        menu = self._options["menu"]
+        if menu is None or self._disabled:
+            return
+        left, top = self.winfo_rootx(), self.winfo_rooty()
+        width, height = self._rect.width, self._rect.height
+        direction = str(self._options["direction"])
+        if direction == "above" or direction == "left":
+            where = (left, top)
+        elif direction == "right":
+            where = (left + width, top)
+        elif direction == "flush":
+            where = (left, top)
+        else:
+            where = (left, top + height)
+        menu.post(*where)
+
+    # -------------------------------------------------------------- painting
+
+    def _apply_requested_size(self) -> None:
+        """Ask for the text's room, plus the indicator if it is showing."""
+        super()._apply_requested_size()
+        if self._indicator_on:
+            self._request_size(self._requested.width + 2, self._requested.height)
+
+    def _text_area(self) -> Rect:
+        """Where the text goes, less the indicator's cells."""
+        area = super()._text_area()
+        if not self._indicator_on:
+            return area
+        return Rect(area.x, area.y, max(0, area.width - 2), area.height)
+
+    def _redraw(self) -> None:
+        """Paint the button, then its indicator and focus marker."""
+        super()._redraw()
+        self._draw_indicator()
+
+    def _draw_indicator(self) -> None:
+        """Draw the arrow at the right, and underline the text when focused.
+
+        Focus is shown by underlining rather than by a marker, because a
+        menubutton is usually one of several in a row and markers either side
+        would make the row twice as wide.
+        """
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        area = super()._text_area()
+        if area.is_empty:
+            return
+        attribute = self._background_attribute() | self._text_attribute()
+        if self.focus_get() is self:
+            attribute |= curses.A_UNDERLINE
+        dispatcher = CursesDispatcher.get()
+        if self._indicator_on and area.width >= 2:
+            with contextlib.suppress(curses.error):
+                dispatcher.call(
+                    window.addstr,
+                    area.y + (area.height - 1) // 2,
+                    area.x + area.width - 1,
+                    self._INDICATOR,
+                    attribute,
+                )
+
+
+def _menubutton_post(event: Event) -> None:
+    """Take the focus and open the menu."""
+    button = event.widget
+    button.focus_set()
+    button.post_menu()
+
+
+def _menubutton_key(event: Event) -> str:
+    """Open the menu from the keyboard, and keep the key to ourselves."""
+    event.widget.post_menu()
+    return "break"
+
+
+class OptionMenu(Menubutton):
+    """A menubutton showing the current value of a variable.
+
+    The menu is built for you: one radiobutton entry per value, all sharing
+    the variable, so choosing one both sets the variable and changes what the
+    button says. That is the whole widget - tkinter's is a Menubutton with a
+    constructor that does this, and so is this one.
+
+    The menu is reachable as ``widget["menu"]``, which is how tkinter code
+    adds to it or replaces it after the fact.
+    """
+
+    def __init__(
+        self,
+        master: Misc | None,
+        variable: Variable,
+        value: Any = None,
+        *values: Any,
+        command: Callable[[Any], Any] | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget.
+            variable: The variable the choice is written to, and the one the
+                button's text follows.
+            value: The value to start on. Included in the menu.
+            *values: The rest of the choices.
+            command: Called with the chosen value, after the variable is set.
+            **kw: Anything else a Menubutton takes.
+
+        Raises:
+            TclError: If no values were given at all.
+        """
+        choices = [] if value is None else [value, *values]
+        if not choices:
+            raise TclError("OptionMenu needs at least one value")
+        kw.setdefault("indicatoron", True)
+        kw.setdefault("textvariable", variable)
+        super().__init__(master, **kw)
+        self._variable = variable
+        self._command = command
+        self._options["menu"] = Menu(self, name="menu")
+        self.set_menu(*choices)
+
+    def set_menu(self, *values: Any, current: Any = None) -> None:
+        """Replace the choices, as ttk's OptionMenu does.
+
+        ``current`` is the only way the variable is written from here.
+        Building the menu does not touch it, which is what tkinter does: an
+        OptionMenu over an empty variable shows nothing until something is
+        chosen, and one over a variable that already holds a value leaves it
+        alone. Checked against Tk 9.0.2.
+        """
+        menu = self._options["menu"]
+        menu.delete(0, "end")
+        for choice in values:
+            # Command entries, as tkinter builds them - not radiobuttons.
+            # A tick beside the current choice would read better in a
+            # terminal, but code that asks the menu what type its entries
+            # are would get a different answer than it does under Tk.
+            menu.add_command(
+                label=str(choice),
+                command=lambda chosen=choice: self._chose(chosen),
+            )
+        if current is not None:
+            self._variable.set(current)
+
+    def _chose(self, value: Any) -> None:
+        """Set the variable, then run the command with what was chosen."""
+        self._variable.set(value)
+        if self._command is not None:
+            self._command(value)
+
+    def __getitem__(self, key: str) -> Any:
+        """``widget["menu"]`` reaches the menu, as it does in tkinter."""
+        if key == "menu":
+            return self._options["menu"]
+        return super().__getitem__(key)
+
+
 class Message(_TextWidget):
     """A run of text that chooses its own line length.
 
@@ -5329,6 +5682,7 @@ class LabelFrame(Frame):
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "font": "",
         "labelanchor": "nw",
         "relief": GROOVE,
         "text": "",
@@ -5440,7 +5794,7 @@ class LabelFrame(Frame):
         else:
             column = BORDER_WIDTH
         row = 0 if edge == "top" else height - 1
-        attribute = self._background_attribute() | self._caption_attribute()
+        attribute = self._background_attribute() | self._font_attribute()
         dispatcher = CursesDispatcher.get()
         with contextlib.suppress(curses.error):
             if row == height - 1 and column + len(text) >= width:
@@ -5449,15 +5803,6 @@ class LabelFrame(Frame):
                 dispatcher.call(window.insstr, row, column, text, attribute)
             else:
                 dispatcher.call(window.addstr, row, column, text, attribute)
-
-    def _caption_attribute(self) -> int:
-        """Attributes the font option puts on the caption."""
-        font = str(self._options.get("font", "")).lower()
-        return from_font(
-            bold="bold" in font,
-            italic="italic" in font,
-            underline="underline" in font,
-        )
 
 
 class Spinbox(Entry):
@@ -5726,7 +6071,7 @@ class Spinbox(Entry):
         if up_column is None or down_column is None:
             return
         area = super()._text_area()
-        attribute = self._background_attribute()
+        attribute = self._background_attribute() | self._font_attribute()
         with contextlib.suppress(ValueError):
             attribute = for_state(str(self._options["state"]), attribute)
         dispatcher = CursesDispatcher.get()
@@ -5765,6 +6110,2645 @@ def _spinbox_click(event: Event) -> None:
         _entry_click(event)
 
 
+class Text(_Drawable):
+    """An editable block of text, with marks and tags.
+
+    The contents, the index arithmetic, the marks and the tag ranges are
+    :class:`~tkcurses._core.textbuffer.TextBuffer`; what is here is the widget
+    around it - options, key bindings, what the tags look like on screen, and
+    the two-directional scrolling that a Text needs and an Entry does not.
+
+    Everything is addressed by index, written ``line.char`` with lines
+    counting from 1. ``insert`` is the cursor, ``end`` is past everything, and
+    ``sel.first``/``sel.last`` are the ends of the selection. Because Tk keeps
+    a newline at the end of the buffer that no edit can remove, ``end`` on a
+    one-line Text is ``2.0`` and ``get("1.0", "end")`` comes back with a
+    newline nobody typed. That surprises people, and it is kept, because
+    tkinter code depends on it.
+
+    ``wrap`` decides what a long line does: ``none`` scrolls sideways,
+    ``char`` breaks wherever the width runs out, ``word`` at the last space
+    that fits. The distinction between a line in the buffer and a line on
+    screen runs through the whole widget - Up and Down move by *display*
+    lines, as they do in every editor, while ``insert linestart`` means the
+    beginning of the real line.
+    """
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "exportselection": True,
+        "font": "",
+        "height": 24,
+        "relief": "sunken",
+        "state": "normal",
+        "takefocus": True,
+        "width": 80,
+        "wrap": "char",
+        "xscrollcommand": None,
+        "yscrollcommand": None,
+    }
+
+    #: What a tag can be given. Deliberately smaller than Tk's: the options
+    #: with no meaning in a character grid - borders, spacing, margins,
+    #: bitmaps - are left out rather than accepted and ignored, so setting
+    #: one fails loudly instead of quietly doing nothing.
+    _TAG_OPTIONS: ClassVar[dict[str, Any]] = {
+        "background": "",
+        "foreground": "",
+        "font": "",
+        "justify": "",
+        "underline": False,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``width``, ``height``, ``wrap``, ``state``,
+                ``xscrollcommand``, ``yscrollcommand``, and the standard
+                options.
+        """
+        self._buffer = TextBuffer()
+        self._top = 0
+        self._left = 0
+        self._anchor: Index | None = None
+        self._dragging = False
+        self._tag_options: dict[str, dict[str, Any]] = {}
+        self._tag_order: list[str] = []
+        super().__init__(master, cnf, name=name, **kw)
+        self._buffer.mark_set("insert", "1.0")
+        self._buffer.mark_set("current", "1.0")
+        # The selection is a tag like any other, which is why sel.first works
+        # as an index. It is given its look here so a selection shows up
+        # without the application configuring anything.
+        self.tag_configure("sel", background="", foreground="")
+        self._apply_requested_size()
+        self._install_class_bindings()
+
+    # ------------------------------------------------------------- bindings
+
+    def _install_class_bindings(self) -> None:
+        """Register the editing keys and the mouse for every Text here."""
+        if "Text" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("Text")
+        bind = self.bind_class
+        bind("Text", "<Any-Key>", _text_key)
+        bind("Text", "<Button-1>", _text_press)
+        # A drag arrives as Motion - curses reports motion-with-a-button and
+        # there is no Button1 modifier to match against - and the implicit
+        # grab keeps it with the widget that was pressed.
+        bind("Text", "<Motion>", _text_motion)
+        bind("Text", "<ButtonRelease-1>", _text_release)
+        bind("Text", "<Button-4>", _text_wheel)
+        bind("Text", "<Button-5>", _text_wheel)
+        bind("Text", "<FocusIn>", _text_refresh)
+        bind("Text", "<FocusOut>", _text_refresh)
+
+    # --------------------------------------------------------------- options
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, re-measuring and repainting as the change requires."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if not given:
+            return result
+        if {"width", "height"} & set(given):
+            self._apply_requested_size()
+            self._invalidate_layout()
+        self._clamp_view()
+        self._redraw()
+        self._report_view()
+        return result
+
+    config = configure
+
+    @property
+    def _editable(self) -> bool:
+        """True while the keyboard may change the contents."""
+        return str(self._options["state"]) == "normal"
+
+    def _apply_requested_size(self) -> None:
+        """Ask for the configured rows and columns, plus border and padding."""
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        self._request_size(
+            int(self._options["width"]) + 2 * int(self._options["padx"]) + edge,
+            int(self._options["height"]) + 2 * int(self._options["pady"]) + edge,
+        )
+
+    # --------------------------------------------------------------- indices
+
+    def index(self, spec: Any) -> str:
+        """Resolve an index and return it as ``line.char``.
+
+        Returns a string rather than an object, because that is what tkinter
+        returns and what code written against it compares and slices.
+        """
+        return str(self._resolve(spec))
+
+    def compare(self, first: Any, op: str, last: Any) -> bool:
+        """Compare two indices with ``<``, ``<=``, ``==``, ``!=``, ``>``, ``>=``."""
+        return self._buffer.compare(self._resolve(first), op, self._resolve(last))
+
+    def _resolve(self, spec: Any) -> Index:
+        """One index, including the ``@x,y`` form only the widget can answer."""
+        if isinstance(spec, Index):
+            return self._buffer.clamp(spec)
+        text = str(spec).strip()
+        if text.startswith("@"):
+            position, _, rest = text[1:].partition(",")
+            column, _, modifiers = rest.partition(" ")
+            index = self._index_at_cell(int(position), int(column))
+            if modifiers.strip():
+                return self._buffer.index(f"{index} {modifiers.strip()}")
+            return index
+        return self._buffer.index(text)
+
+    # -------------------------------------------------------------- contents
+
+    def get(self, first: Any, last: Any = None) -> str:
+        """The text between two indices, or one character from ``first``."""
+        if last is None:
+            return self._buffer.get(self._resolve(first))
+        return self._buffer.get(self._resolve(first), self._resolve(last))
+
+    def insert(self, index: Any, chars: str, *tags: str) -> None:
+        """Insert text, optionally tagging everything inserted."""
+        start = self._resolve(index)
+        end = self._buffer.insert(start, chars)
+        for tag in tags:
+            self.tag_add(tag, start, end)
+        self._after_edit()
+
+    def delete(self, first: Any, last: Any = None) -> None:
+        """Delete a range, or one character from ``first``."""
+        if last is None:
+            self._buffer.delete(self._resolve(first))
+        else:
+            self._buffer.delete(self._resolve(first), self._resolve(last))
+        self._after_edit()
+
+    def _after_edit(self) -> None:
+        """Put the view back where it should be and repaint."""
+        self.see("insert")
+        self._redraw()
+        self._report_view()
+        self.event_generate("<<Modified>>")
+
+    # ----------------------------------------------------------------- marks
+
+    def mark_set(self, name: str, index: Any) -> None:
+        """Put a mark at an index."""
+        self._buffer.mark_set(name, self._resolve(index))
+        if name == "insert":
+            self.see("insert")
+        self._redraw()
+
+    def mark_unset(self, *names: str) -> None:
+        """Remove marks."""
+        self._buffer.mark_unset(*names)
+        self._redraw()
+
+    def mark_names(self) -> tuple[str, ...]:
+        """Every mark."""
+        return self._buffer.mark_names()
+
+    def mark_gravity(self, name: str, direction: str | None = None) -> str:
+        """Read or set which side of an insertion a mark ends up on."""
+        return self._buffer.mark_gravity(name, direction)
+
+    def mark_next(self, index: Any) -> str | None:
+        """The first mark after an index."""
+        return self._buffer.mark_next(self._resolve(index))
+
+    def mark_previous(self, index: Any) -> str | None:
+        """The last mark before an index."""
+        return self._buffer.mark_previous(self._resolve(index))
+
+    # ------------------------------------------------------------------ tags
+
+    def tag_add(self, name: str, first: Any, last: Any = None) -> None:
+        """Tag a range."""
+        self._note_tag(name)
+        if last is None:
+            self._buffer.tag_add(name, self._resolve(first))
+        else:
+            self._buffer.tag_add(name, self._resolve(first), self._resolve(last))
+        self._redraw()
+
+    def tag_remove(self, name: str, first: Any, last: Any = None) -> None:
+        """Untag a range."""
+        if last is None:
+            self._buffer.tag_remove(name, self._resolve(first))
+        else:
+            self._buffer.tag_remove(name, self._resolve(first), self._resolve(last))
+        self._redraw()
+
+    def tag_delete(self, *names: str) -> None:
+        """Forget tags entirely, ranges, options and all."""
+        self._buffer.tag_delete(*names)
+        for name in names:
+            self._tag_options.pop(name, None)
+            if name in self._tag_order:
+                self._tag_order.remove(name)
+        self._redraw()
+
+    def tag_names(self, index: Any = None) -> tuple[str, ...]:
+        """Every tag, or only those covering one index."""
+        if index is None:
+            return tuple(self._tag_order)
+        return self._buffer.tag_names(self._resolve(index))
+
+    def tag_ranges(self, name: str) -> list[str]:
+        """Every range of a tag, flat, as ``line.char`` strings."""
+        return [str(index) for index in self._buffer.tag_ranges(name)]
+
+    def tag_nextrange(
+        self, name: str, first: Any, last: Any = None
+    ) -> tuple[str, str] | tuple[()]:
+        """The first range of a tag at or after an index, or ``()``."""
+        found = self._buffer.tag_nextrange(
+            name, self._resolve(first), None if last is None else self._resolve(last)
+        )
+        return () if found is None else (str(found[0]), str(found[1]))
+
+    def tag_prevrange(
+        self, name: str, first: Any, last: Any = None
+    ) -> tuple[str, str] | tuple[()]:
+        """The last range of a tag before an index, or ``()``."""
+        found = self._buffer.tag_prevrange(
+            name, self._resolve(first), None if last is None else self._resolve(last)
+        )
+        return () if found is None else (str(found[0]), str(found[1]))
+
+    def tag_configure(
+        self, name: str, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> Any:
+        """Set how a tag looks, or read what it is set to.
+
+        Raises:
+            TclError: If an option is not one a tag accepts here.
+        """
+        self._note_tag(name)
+        options = self._tag_options[name]
+        given = {**(cnf or {}), **kw}
+        if not given:
+            return dict(options)
+        for option, value in given.items():
+            resolved = _OPTION_ALIASES.get(option, option)
+            if resolved not in self._TAG_OPTIONS:
+                raise TclError(f'unknown option "-{option}"')
+            options[resolved] = value
+        self._redraw()
+        return None
+
+    tag_config = tag_configure
+
+    def tag_cget(self, name: str, option: str) -> Any:
+        """One of a tag's options.
+
+        Raises:
+            TclError: If the tag or the option does not exist.
+        """
+        if name not in self._tag_options:
+            raise TclError(f'tag "{name}" is not defined')
+        resolved = _OPTION_ALIASES.get(option, option)
+        if resolved not in self._TAG_OPTIONS:
+            raise TclError(f'unknown option "-{option}"')
+        return self._tag_options[name][resolved]
+
+    def tag_raise(self, name: str, above: str | None = None) -> None:
+        """Move a tag up the priority order, so it draws over the others."""
+        self._reorder(name, above, offset=1)
+
+    def tag_lower(self, name: str, below: str | None = None) -> None:
+        """Move a tag down the priority order."""
+        self._reorder(name, below, offset=0)
+
+    def _reorder(self, name: str, other: str | None, *, offset: int) -> None:
+        """Shared by tag_raise and tag_lower."""
+        self._note_tag(name)
+        self._tag_order.remove(name)
+        if other is None:
+            self._tag_order.append(name) if offset else self._tag_order.insert(0, name)
+        else:
+            self._note_tag(other)
+            self._tag_order.insert(self._tag_order.index(other) + offset, name)
+        self._redraw()
+
+    def _note_tag(self, name: str) -> None:
+        """Record a tag's existence and its place in the priority order."""
+        if name not in self._tag_options:
+            self._tag_options[name] = dict(self._TAG_OPTIONS)
+            self._tag_order.append(name)
+
+    # ------------------------------------------------------------- selection
+
+    def _select(self, first: Any, last: Any) -> None:
+        """Replace the selection with one range, dropping it if it is empty."""
+        self._buffer.tag_remove("sel", "1.0", "end")
+        start, stop = self._resolve(first), self._resolve(last)
+        if start != stop:
+            self._buffer.tag_add("sel", start, stop)
+
+    def _selection_range(self) -> tuple[Index, Index] | None:
+        """The selection, or None."""
+        ranges = self._buffer.tag_ranges("sel")
+        return (ranges[0], ranges[-1]) if ranges else None
+
+    def _delete_selection(self) -> bool:
+        """Delete the selected text. True if there was any."""
+        found = self._selection_range()
+        if found is None:
+            return False
+        self._buffer.mark_set("insert", found[0])
+        self._buffer.delete(found[0], found[1])
+        self._anchor = None
+        return True
+
+    # ------------------------------------------------------------- editing
+
+    def _move(self, where: Any, *, extend: bool) -> None:
+        """Move the insert cursor, dragging the selection along if asked.
+
+        ``extend`` is what a shifted arrow does: the selection runs from
+        wherever it was anchored to wherever the cursor has got to. Without
+        it the selection is dropped, which is what a plain arrow does.
+        """
+        insert = self._buffer.mark_index("insert") or Index(1, 0)
+        if isinstance(where, tuple):
+            kind, count = where
+            if kind == "word":
+                target = self._by_word(insert, count)
+            elif kind in ("rowstart", "rowend"):
+                target = self._row_edge(insert, end=kind == "rowend")
+            else:
+                rows = self._view_size()[1]
+                target = self._by_row(insert, count * (rows if kind == "page" else 1))
+        else:
+            target = self._resolve(where)
+        if extend and self._anchor is None:
+            self._anchor = insert
+        self._buffer.mark_set("insert", target)
+        if extend and self._anchor is not None:
+            self._select(self._anchor, target)
+        else:
+            self._anchor = None
+            self._buffer.tag_remove("sel", "1.0", "end")
+        self.see("insert")
+        self._redraw()
+        self._report_view()
+
+    def _row_edge(self, index: Index, *, end: bool) -> Index:
+        """The start or end of the display row an index is on.
+
+        The end stops before the space that caused the wrap, which is where
+        Tk puts it: the space belongs to the row but pressing End should not
+        land past the last word on it.
+        """
+        rows = self._display_lines()
+        line, start, stop = rows[self._row_of(index, rows)]
+        if not end:
+            return self._buffer.clamp(Index(line, start))
+        text = self._buffer.lines[line - 1] if line <= len(self._buffer.lines) else ""
+        while stop > start and text[stop - 1 : stop] == " ":
+            stop -= 1
+        return self._buffer.clamp(Index(line, stop))
+
+    def _by_word(self, index: Index, direction: int) -> Index:
+        """The start of the next or previous word, as Control-arrow moves.
+
+        Forwards means the beginning of the word after this one, not the end
+        of this one - which is what Tk does and what makes repeated presses
+        walk the words rather than alternate between their two ends.
+        """
+        offset = self._buffer.offset_of(index)
+        text = self._buffer.text
+        limit = len(text) - 1
+        if direction > 0:
+            while offset < limit and _is_word(text[offset]):
+                offset += 1
+            while offset < limit and not _is_word(text[offset]):
+                offset += 1
+        else:
+            while offset > 0 and not _is_word(text[offset - 1]):
+                offset -= 1
+            while offset > 0 and _is_word(text[offset - 1]):
+                offset -= 1
+        return self._buffer.index_of(offset)
+
+    def _by_row(self, index: Index, distance: int) -> Index:
+        """The index ``distance`` display rows away, at the same column.
+
+        Display rows, not buffer lines: with wrapping on, Up from the middle
+        of a wrapped paragraph has to go to the row above it on screen, which
+        is what every editor does and what the buffer alone cannot answer.
+        """
+        rows = self._display_lines()
+        row = self._row_of(index)
+        _, start, _ = rows[min(row, len(rows) - 1)]
+        column = index.char - start
+        target = min(max(row + distance, 0), len(rows) - 1)
+        line, new_start, new_stop = rows[target]
+        return self._buffer.clamp(Index(line, min(new_start + column, new_stop)))
+
+    def _type(self, characters: str) -> None:
+        """Put typed characters in, replacing the selection if there is one."""
+        if not self._editable:
+            return
+        self._delete_selection()
+        insert = self._buffer.mark_index("insert") or Index(1, 0)
+        self._buffer.insert(insert, characters)
+        self._anchor = None
+        self._after_edit()
+
+    def _backspace(self) -> None:
+        """Delete the selection, or the character before the cursor."""
+        if not self._editable:
+            return
+        if not self._delete_selection():
+            insert = self._buffer.mark_index("insert") or Index(1, 0)
+            start = self._buffer.index(f"{insert} -1c")
+            if start == insert:
+                return
+            self._buffer.delete(start, insert)
+        self._after_edit()
+
+    def _delete_forward(self) -> None:
+        """Delete the selection, or the character after the cursor."""
+        if not self._editable:
+            return
+        if not self._delete_selection():
+            insert = self._buffer.mark_index("insert") or Index(1, 0)
+            self._buffer.delete(insert)
+        self._after_edit()
+
+    # --------------------------------------------------------- display lines
+
+    def _wrap_mode(self) -> str:
+        """How long lines are broken, defaulting to Tk's ``char``."""
+        mode = str(self._options["wrap"])
+        return mode if mode in ("none", "char", "word") else "char"
+
+    def _view_size(self) -> tuple[int, int]:
+        """The cells the text is laid out in, as ``(width, height)``.
+
+        Falls back to the configured width and height until the widget has
+        been given a rect. Without that fallback, anything asking for the
+        display lines or the view before layout wraps every line to a single
+        cell - one display row per character - which makes `yview` nonsense
+        and turns a large document into a very slow one.
+        """
+        area = self._text_area()
+        if area.width > 0 and area.height > 0:
+            return (area.width, area.height)
+        return (
+            max(1, int(self._options["width"])),
+            max(1, int(self._options["height"])),
+        )
+
+    def _display_lines(self) -> list[tuple[int, int, int]]:
+        """Every row the text would occupy, as ``(line, start, end)``.
+
+        One entry per line on screen rather than per line in the buffer: with
+        wrapping on, one is many of the other, and everything about scrolling
+        and about Up and Down is counted in these.
+        """
+        width = self._view_size()[0]
+        mode = self._wrap_mode()
+        rows: list[tuple[int, int, int]] = []
+        for number, line in enumerate(self._buffer.lines, start=1):
+            rows.extend(
+                (number, start, stop) for start, stop in wrap_spans(line, width, mode)
+            )
+        return rows or [(1, 0, 0)]
+
+    def _row_of(
+        self, index: Index, rows: list[tuple[int, int, int]] | None = None
+    ) -> int:
+        """Which display row an index falls on."""
+        return self._display_position(index, rows)[0]
+
+    def _display_position(
+        self, index: Index, rows: list[tuple[int, int, int]] | None = None
+    ) -> tuple[int, int]:
+        """Where an index sits, as ``(row, column within that row)``."""
+        rows = self._display_lines() if rows is None else rows
+        # A wrap boundary belongs to both rows: it is the end of one and the
+        # start of the next. It has to resolve to the *later* one, or the
+        # cursor is drawn one cell past the end of the row above - painting
+        # the first character of the next row there into the bargain.
+        for row, (line, start, stop) in enumerate(rows):
+            if line == index.line and start <= index.char < stop:
+                return row, index.char - start
+        # Nothing contains it, so it is at the end of a line: the last row of
+        # that line is where it goes.
+        for row, (line, start, stop) in enumerate(rows):
+            if line == index.line and index.char == stop:
+                return row, index.char - start
+        # `end` on a buffer whose last line has text is a line past every
+        # display row, so it has none of its own; it belongs at the end of
+        # the last one. Without this the cursor came back at column 0 and
+        # blanked the first character of the bottom line.
+        last = max(0, len(rows) - 1)
+        _, start, stop = rows[last]
+        return last, stop - start
+
+    def _index_at_cell(self, x: int, y: int) -> Index:
+        """The index at a cell within this widget, for a click or ``@x,y``."""
+        area = self._text_area()
+        rows = self._display_lines()
+        row = min(max(self._top + (y - area.y), 0), len(rows) - 1)
+        line, start, stop = rows[row]
+        column = max(0, x - area.x) + self._left
+        return self._buffer.clamp(Index(line, min(start + column, stop)))
+
+    # --------------------------------------------------------------- the view
+
+    def see(self, index: Any) -> None:
+        """Scroll the least that puts an index on screen, both directions."""
+        target = self._resolve(index)
+        width, height = self._view_size()
+        rows = self._display_lines()
+        row = self._row_of(target, rows)
+        if row < self._top:
+            self._top = row
+        elif row >= self._top + height:
+            self._top = row - height + 1
+        if self._wrap_mode() == "none":
+            if target.char < self._left:
+                self._left = target.char
+            elif target.char > self._left + width - 1:
+                self._left = target.char - width + 1
+        self._top = max(0, min(self._top, max(0, len(rows) - 1)))
+        self._left = max(0, self._left)
+        # A scrollbar cannot know the view moved unless it is told, and see()
+        # is the one thing that moves it without going through _scroll.
+        self._report_view()
+
+    def _clamp_view(self) -> None:
+        """Keep the view inside the text after anything that could move it."""
+        rows = len(self._display_lines())
+        self._top = max(0, min(self._top, max(0, rows - 1)))
+        if self._wrap_mode() != "none":
+            self._left = 0
+
+    def yview(self, *args: Any) -> tuple[float, float] | None:
+        """Read or move the vertical view, in the shape Tk uses.
+
+        With no arguments returns ``(first, last)`` as fractions, which is
+        what a Scrollbar's ``set`` wants. Otherwise takes ``("moveto", f)`` or
+        ``("scroll", n, "units"|"pages")``, which is what a Scrollbar sends.
+        """
+        if not args:
+            return self._view_fractions()
+        self._scroll(args, vertical=True)
+        return None
+
+    def xview(self, *args: Any) -> tuple[float, float] | None:
+        """Read or move the horizontal view, in the same shape."""
+        if not args:
+            return self._horizontal_fractions()
+        self._scroll(args, vertical=False)
+        return None
+
+    def yview_moveto(self, fraction: float) -> None:
+        """Put the top of the view at a fraction of the whole."""
+        self.yview("moveto", fraction)
+
+    def yview_scroll(self, number: int, what: str) -> None:
+        """Scroll by lines or by screenfuls."""
+        self.yview("scroll", number, what)
+
+    def xview_moveto(self, fraction: float) -> None:
+        """Put the left of the view at a fraction of the longest line."""
+        self.xview("moveto", fraction)
+
+    def xview_scroll(self, number: int, what: str) -> None:
+        """Scroll sideways by characters or by screenfuls."""
+        self.xview("scroll", number, what)
+
+    def _scroll(self, args: tuple[Any, ...], *, vertical: bool) -> None:
+        """Apply one Tk scrolling command to one axis."""
+        view = self._view_size()
+        span = view[1] if vertical else view[0]
+        total = (
+            len(self._display_lines())
+            if vertical
+            else max(1, max((len(line) for line in self._buffer.lines), default=1))
+        )
+        current = self._top if vertical else self._left
+        action = str(args[0])
+        if action == "moveto":
+            current = int(float(args[1]) * total)
+        elif action == "scroll":
+            count = int(float(args[1]))
+            unit = str(args[2]) if len(args) > 2 else "units"
+            current += count * (span if unit.startswith("page") else 1)
+        else:
+            raise TclError(f'bad option "{action}": must be moveto or scroll')
+        limit = max(0, total - (span if vertical else 0))
+        if vertical:
+            self._top = max(0, min(current, limit))
+        else:
+            self._left = max(0, min(current, max(0, total - span)))
+        self._redraw()
+        self._report_view()
+
+    def _view_fractions(self) -> tuple[float, float]:
+        """Where the vertical view is, as two fractions of the whole."""
+        total = max(1, len(self._display_lines()))
+        height = self._view_size()[1]
+        return (
+            min(1.0, self._top / total),
+            min(1.0, (self._top + height) / total),
+        )
+
+    def _horizontal_fractions(self) -> tuple[float, float]:
+        """Where the horizontal view is, as two fractions of the longest line."""
+        total = max(1, max((len(line) for line in self._buffer.lines), default=1))
+        width = self._view_size()[0]
+        return (
+            min(1.0, self._left / total),
+            min(1.0, (self._left + width) / total),
+        )
+
+    def _report_view(self) -> None:
+        """Tell the scrollbars where the view is, if anything is listening."""
+        for option, fractions in (
+            ("yscrollcommand", self._view_fractions()),
+            ("xscrollcommand", self._horizontal_fractions()),
+        ):
+            command = self._options[option]
+            if command is not None:
+                command(*fractions)
+
+    # -------------------------------------------------------------- painting
+
+    def _text_area(self) -> Rect:
+        """Where the text goes, in cells relative to this widget's window."""
+        edge = BORDER_WIDTH if self._border_drawn else 0
+        padx, pady = int(self._options["padx"]), int(self._options["pady"])
+        return Rect(
+            edge + padx,
+            edge + pady,
+            max(0, self._rect.width - 2 * (edge + padx)),
+            max(0, self._rect.height - 2 * (edge + pady)),
+        )
+
+    def _redraw(self) -> None:
+        """Paint the border, the visible rows, their tags, and the cursor."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        dispatcher = CursesDispatcher.get()
+        attribute = self._background_attribute() | self._font_attribute()
+        with contextlib.suppress(ValueError):
+            attribute = for_state(str(self._options["state"]), attribute)
+        area = self._text_area()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            if self._border_drawn:
+                self._draw_border(
+                    dispatcher, window, self._rect.width, self._rect.height, attribute
+                )
+            if area.is_empty:
+                return
+            rows = self._display_lines()
+            lines = self._buffer.lines
+            for offset in range(area.height):
+                row = self._top + offset
+                if row >= len(rows):
+                    break
+                self._draw_row(
+                    dispatcher, window, area, offset, rows[row], lines, attribute
+                )
+            self._draw_cursor(dispatcher, window, area, rows, attribute)
+
+    def _draw_row(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        area: Rect,
+        offset: int,
+        span: tuple[int, int, int],
+        lines: list[str],
+        attribute: int,
+    ) -> None:
+        """Draw one display row, then whatever tags cover part of it."""
+        line, start, stop = span
+        text = lines[line - 1][start:stop] if line <= len(lines) else ""
+        visible = text[self._left : self._left + area.width]
+        dispatcher.call(window.addstr, area.y + offset, area.x, visible, attribute)
+        for name in self._tag_order:
+            self._draw_tagged(
+                dispatcher, window, area, offset, span, visible, name, attribute
+            )
+
+    def _draw_tagged(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        area: Rect,
+        offset: int,
+        span: tuple[int, int, int],
+        visible: str,
+        name: str,
+        attribute: int,
+    ) -> None:
+        """Redraw the parts of one row that a tag covers.
+
+        Drawn over the plain text rather than worked out per character before
+        anything is written: tags overlap, and painting them in priority order
+        is what makes the topmost one win without having to resolve the whole
+        stack up front.
+        """
+        line, start, _ = span
+        tagged = self._tag_attribute(name)
+        if tagged is None:
+            return
+        first = start + self._left
+        for column, character in enumerate(visible):
+            at = Index(line, first + column)
+            if name not in self._buffer.tag_names(at):
+                continue
+            dispatcher.call(
+                window.addstr,
+                area.y + offset,
+                area.x + column,
+                character,
+                with_colors(attribute, tagged & curses.A_COLOR)
+                | (tagged & ~curses.A_COLOR),
+            )
+
+    def _tag_attribute(self, name: str) -> int | None:
+        """What a tag does to the cells it covers, or None if nothing.
+
+        ``sel`` with no colours configured falls back to reverse video, so a
+        selection is visible on a terminal that has no colour and in an
+        application that never configured the tag.
+        """
+        options = self._tag_options.get(name)
+        if options is None:
+            return None
+        attribute = 0
+        font = str(options.get("font", "")).lower()
+        attribute |= from_font(
+            bold="bold" in font,
+            italic="italic" in font,
+            underline="underline" in font or bool(options.get("underline")),
+        )
+        foreground, background = options.get("foreground"), options.get("background")
+        colors = self.tk.colors
+        if colors is not None and (foreground or background):
+            attribute |= colors.attribute_for(
+                str(foreground or self._options["foreground"] or "white"),
+                str(background or self._options["background"] or "black"),
+            )
+        elif name == "sel":
+            attribute |= curses.A_REVERSE
+        return attribute or None
+
+    def _draw_cursor(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        area: Rect,
+        rows: list[tuple[int, int, int]],
+        attribute: int,
+    ) -> None:
+        """Show where typing will go, but only while the widget has the focus.
+
+        A cursor in an unfocused widget claims the keyboard is there when it
+        is not, which in a window of several fields is actively misleading.
+        """
+        if self.focus_get() is not self:
+            return
+        insert = self._buffer.mark_index("insert")
+        if insert is None:
+            return
+        at, within = self._display_position(insert, rows)
+        row = at - self._top
+        if not 0 <= row < area.height:
+            return
+        column = within - self._left
+        if not 0 <= column < area.width:
+            return
+        under = self._buffer.get(insert) or " "
+        if under == "\n":
+            under = " "
+        dispatcher.call(
+            window.addstr,
+            area.y + row,
+            area.x + column,
+            under,
+            attribute | curses.A_REVERSE,
+        )
+
+
+#: Keys that move the insert cursor without changing anything, and what they
+#: mean as an index expression or as a display-line movement.
+_TEXT_MOTION: dict[str, Any] = {
+    "Left": "insert -1c",
+    "Right": "insert +1c",
+    # Home and End move within the *display* line, not the logical one: on a
+    # wrapped paragraph they go to the beginning and end of the row on
+    # screen. Checked against Tk 9.0.2, which answers 1.17 for Home pressed
+    # at 1.20 on a line whose second row starts there.
+    "Home": ("rowstart", 0),
+    "End": ("rowend", 0),
+    "Prior": ("page", -1),
+    "Next": ("page", 1),
+    "Up": ("row", -1),
+    "Down": ("row", 1),
+}
+
+#: The same keys with Control held, which in Tk move by word and to the ends
+#: of the whole document rather than of a line.
+_TEXT_CONTROL_MOTION: dict[str, Any] = {
+    "Home": "1.0",
+    "End": "end -1c",
+    "Left": ("word", -1),
+    "Right": ("word", 1),
+}
+
+
+def _is_word(character: str) -> bool:
+    """True for the characters Tk counts as part of a word."""
+    return character.isalnum() or character == "_"
+
+
+def _text_key(event: Event) -> str | None:
+    """Handle one key in a Text.
+
+    Returns ``"break"`` for keys the widget consumed, so a Left arrow moving
+    the cursor does not also reach whatever else is bound to it. Tab is left
+    alone deliberately: a widget that swallowed it would trap the focus, and
+    a terminal user with no mouse would have nowhere to go.
+    """
+    text = event.widget
+    keysym = event.keysym
+    extend = bool(event.state & MOD_SHIFT)
+
+    if event.state & MOD_CTRL and keysym in _TEXT_CONTROL_MOTION:
+        text._move(_TEXT_CONTROL_MOTION[keysym], extend=extend)
+        return "break"
+    if keysym in _TEXT_MOTION:
+        text._move(_TEXT_MOTION[keysym], extend=extend)
+        return "break"
+    if keysym == "BackSpace":
+        text._backspace()
+        return "break"
+    if keysym == "Delete":
+        text._delete_forward()
+        return "break"
+    if keysym == "Return":
+        text._type("\n")
+        return "break"
+    if keysym == "Tab":
+        return None
+    if len(event.char) == 1 and event.char.isprintable():
+        text._type(event.char)
+        return "break"
+    return None
+
+
+def _text_press(event: Event) -> None:
+    """Take the focus, put the cursor where the click was, and start a drag."""
+    text = event.widget
+    text.focus_set()
+    index = text._index_at_cell(event.x, event.y)
+    text._buffer.mark_set("insert", index)
+    text._buffer.mark_set("current", index)
+    text._anchor = index
+    text._dragging = True
+    text._select(index, index)
+    text._redraw()
+
+
+def _text_motion(event: Event) -> None:
+    """Extend the selection to the pointer while a drag is going on."""
+    text = event.widget
+    if not text._dragging or text._anchor is None:
+        return
+    index = text._index_at_cell(event.x, event.y)
+    text._buffer.mark_set("insert", index)
+    text._select(text._anchor, index)
+    text.see("insert")
+    text._redraw()
+    text._report_view()
+
+
+def _text_release(event: Event) -> None:
+    """Stop dragging, wherever the pointer ended up."""
+    event.widget._dragging = False
+
+
+def _text_wheel(event: Event) -> None:
+    """Scroll the view without moving the cursor, as a wheel should."""
+    event.widget.yview("scroll", -event.delta * 3, "units")
+
+
+def _text_refresh(event: Event) -> None:
+    """Repaint after the focus moved in or out."""
+    event.widget._redraw()
+
+
+@dataclass
+class _CanvasItem:
+    """One thing drawn on a Canvas.
+
+    Attributes:
+        ident: The number ``create_*`` returned, and the item's first tag.
+        kind: ``line``, ``rectangle``, ``oval``, ``polygon`` or ``text``.
+        coords: Pixel coordinates, flat, as Tk passes them.
+        options: Everything else, already checked against the type's options.
+    """
+
+    ident: int
+    kind: str
+    coords: list[int]
+    options: dict[str, Any]
+
+    @property
+    def tags(self) -> tuple[str, ...]:
+        """The item's tags, as a tuple however they were given."""
+        tags = self.options.get("tags") or ()
+        if isinstance(tags, str):
+            return tuple(tags.split())
+        return tuple(str(tag) for tag in tags)
+
+    def points(self) -> list[tuple[int, int]]:
+        """The coordinates as pairs."""
+        return list(zip(self.coords[::2], self.coords[1::2], strict=False))
+
+
+class Canvas(_Drawable):
+    """A drawing surface, measured in half-cells.
+
+    A character cell is about twice as tall as it is wide, so a canvas that
+    treated one cell as one unit would draw every circle as a tall ellipse.
+    This one is a plane of **half-cells** instead - ``▀`` and ``▄`` divide a
+    cell across the middle, and each half is very nearly square - so a circle
+    is a circle. :mod:`tkcurses._core.canvas` does the drawing and the
+    folding of pixel pairs into cells.
+
+    Two coordinate systems therefore meet on this widget, and only one of
+    them is Tk's:
+
+    - ``width`` and ``height`` are in **cells**, like every other widget
+      here. Pixel dimensions have no cell equivalent and are left out rather
+      than accepted and ignored.
+    - Item coordinates are in **pixels**: one cell wide, half a cell tall. A
+      canvas 40 cells by 10 is a plane 40 pixels by 20.
+
+    Text is the one thing that cannot live on that plane: a glyph occupies a
+    whole cell. A text item therefore snaps to the nearest cell row, and
+    while it is on top nothing else can share those cells - which is what you
+    want for a label on a diagram, and worth knowing before putting one in
+    the middle of a drawing.
+    """
+
+    #: What each kind of item accepts, on top of the options every item has.
+    #: Deliberately smaller than Tk's: dashes, stipples, arrowheads and line
+    #: widths have no meaning in a grid of characters, so asking for one
+    #: fails rather than quietly doing nothing.
+    _COMMON_ITEM_OPTIONS: ClassVar[dict[str, Any]] = {
+        "state": "normal",
+        "tags": (),
+    }
+    _ITEM_OPTIONS: ClassVar[dict[str, dict[str, Any]]] = {
+        "line": {"fill": "white"},
+        "rectangle": {"fill": "", "outline": "white"},
+        "oval": {"fill": "", "outline": "white"},
+        "polygon": {"fill": "white", "outline": ""},
+        "text": {
+            "anchor": "center",
+            "fill": "white",
+            "font": "",
+            "justify": "left",
+            "text": "",
+        },
+    }
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        # How far from an item's ink still counts as being on it. Tk's
+        # default is 1, and a terminal needs it more than Tk does: a thin
+        # outline is one pixel wide and a click only names a whole cell.
+        "closeenough": 1,
+        "height": 10,
+        "relief": "sunken",
+        "scrollregion": None,
+        "state": "normal",
+        "takefocus": False,
+        "width": 40,
+        "xscrollcommand": None,
+        "yscrollcommand": None,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``width`` and ``height`` in cells, ``scrollregion``,
+                ``xscrollcommand``, ``yscrollcommand``, and the standard
+                options.
+        """
+        self._items: list[_CanvasItem] = []
+        self._ids = itertools.count(1)
+        self._left = 0
+        self._top = 0
+        self._item_bindings: dict[str, dict[str, list[Callable[[Event], Any]]]] = {}
+        self._current: int | None = None
+        super().__init__(master, cnf, name=name, **kw)
+        self._apply_requested_size()
+        self._install_class_bindings()
+
+    def _install_class_bindings(self) -> None:
+        """Route mouse events to whichever item is under the pointer."""
+        if "Canvas" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("Canvas")
+        for sequence in (
+            "<Button-1>",
+            "<ButtonRelease-1>",
+            "<Motion>",
+            "<Double-Button-1>",
+        ):
+            self.bind_class("Canvas", sequence, _canvas_mouse)
+
+    # --------------------------------------------------------------- options
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, re-measuring and repainting as the change requires."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if not given:
+            return result
+        if {"width", "height"} & set(given):
+            self._apply_requested_size()
+            self._invalidate_layout()
+        self._redraw()
+        self._report_view()
+        return result
+
+    config = configure
+
+    def _apply_requested_size(self) -> None:
+        """Ask for the configured cells, plus border and padding."""
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        self._request_size(
+            int(self._options["width"]) + 2 * int(self._options["padx"]) + edge,
+            int(self._options["height"]) + 2 * int(self._options["pady"]) + edge,
+        )
+
+    def _plane_size(self) -> tuple[int, int]:
+        """The visible plane, in pixels, falling back to the options.
+
+        Before the widget is laid out its area is nothing, and a canvas asked
+        what it can show would answer nothing - so scrolling and ``bbox``
+        would both be wrong until the first paint.
+        """
+        area = self._text_area()
+        if area.width > 0 and area.height > 0:
+            return (area.width, area.height * 2)
+        return (
+            max(1, int(self._options["width"])),
+            max(1, int(self._options["height"])) * 2,
+        )
+
+    def _text_area(self) -> Rect:
+        """Where the drawing goes, in cells relative to this widget's window."""
+        edge = BORDER_WIDTH if self._border_drawn else 0
+        padx, pady = int(self._options["padx"]), int(self._options["pady"])
+        return Rect(
+            edge + padx,
+            edge + pady,
+            max(0, self._rect.width - 2 * (edge + padx)),
+            max(0, self._rect.height - 2 * (edge + pady)),
+        )
+
+    # ----------------------------------------------------------- making items
+
+    def create_line(self, *args: Any, **kw: Any) -> int:
+        """Draw a run of connected straight segments. Returns the item id."""
+        return self._create("line", args, kw, least=2)
+
+    def create_rectangle(self, *args: Any, **kw: Any) -> int:
+        """Draw a rectangle from two opposite corners."""
+        return self._create("rectangle", args, kw, least=2, exactly=2)
+
+    def create_oval(self, *args: Any, **kw: Any) -> int:
+        """Draw the ellipse inscribed in the rectangle given by two corners."""
+        return self._create("oval", args, kw, least=2, exactly=2)
+
+    def create_polygon(self, *args: Any, **kw: Any) -> int:
+        """Draw a closed shape through three or more points."""
+        return self._create("polygon", args, kw, least=3)
+
+    def create_text(self, *args: Any, **kw: Any) -> int:
+        """Draw a string at a point, snapped to the nearest cell row."""
+        return self._create("text", args, kw, least=1, exactly=1)
+
+    def _create(
+        self,
+        kind: str,
+        args: tuple[Any, ...],
+        options: dict[str, Any],
+        *,
+        least: int,
+        exactly: int | None = None,
+    ) -> int:
+        """Make an item of one kind, checking its coordinates and options.
+
+        Raises:
+            TclError: If there are too few points, the wrong number of them,
+                or an option the item does not take.
+        """
+        coords = _canvas_coords(args)
+        points = len(coords) // 2
+        if points < least or (exactly is not None and points != exactly):
+            raise TclError(f"wrong # coordinates: expected {exactly or least}")
+        item = _CanvasItem(
+            ident=next(self._ids),
+            kind=kind,
+            coords=coords,
+            options=self._checked_item_options(kind, options),
+        )
+        self._items.append(item)
+        self._redraw()
+        return item.ident
+
+    def _checked_item_options(self, kind: str, given: dict[str, Any]) -> dict[str, Any]:
+        """Resolve an item's options against what its type accepts.
+
+        Raises:
+            TclError: If an option is not one the type takes.
+        """
+        spec = {**self._COMMON_ITEM_OPTIONS, **self._ITEM_OPTIONS[kind]}
+        options = dict(spec)
+        for name, value in given.items():
+            option = _OPTION_ALIASES.get(name, name)
+            if option not in spec:
+                raise TclError(f'unknown option "-{name}"')
+            options[option] = value
+        return options
+
+    # ----------------------------------------------------------- finding them
+
+    def _item(self, ident: int) -> _CanvasItem | None:
+        """One item by id, or None if it has been deleted."""
+        return next((item for item in self._items if item.ident == ident), None)
+
+    def _matching(self, spec: Any) -> list[_CanvasItem]:
+        """Every item a tag, an id, or ``all`` names, in display order."""
+        if isinstance(spec, int):
+            item = self._item(spec)
+            return [item] if item is not None else []
+        tag = str(spec)
+        if tag == "all":
+            return list(self._items)
+        if tag == "current":
+            # Tk's dynamic tag for whatever the pointer is over. It is not
+            # stored on the item, so gettags() does not report it - the one
+            # place this differs from Tk, and the alternative is gettags
+            # returning a tag nobody set.
+            item = None if self._current is None else self._item(self._current)
+            return [item] if item is not None else []
+        if tag.isdigit():
+            item = self._item(int(tag))
+            return [item] if item is not None else []
+        return [item for item in self._items if tag in item.tags]
+
+    def find_all(self) -> tuple[int, ...]:
+        """Every item, in the order they are drawn."""
+        return tuple(item.ident for item in self._items)
+
+    def find_withtag(self, spec: Any) -> tuple[int, ...]:
+        """Every item a tag or an id names."""
+        return tuple(item.ident for item in self._matching(spec))
+
+    def find_overlapping(self, x0: int, y0: int, x1: int, y1: int) -> tuple[int, ...]:
+        """Every item whose extent meets a rectangle."""
+        left, right = sorted((int(x0), int(x1)))
+        top, bottom = sorted((int(y0), int(y1)))
+        found = []
+        for item in self._items:
+            box = self._item_bbox(item)
+            if box is None:
+                continue
+            if (
+                box[0] <= right
+                and box[2] >= left
+                and box[1] <= bottom
+                and box[3] >= top
+            ):
+                found.append(item.ident)
+        return tuple(found)
+
+    def find_closest(self, x: int, y: int) -> tuple[int, ...]:
+        """The item nearest a point, or nothing if the canvas is empty.
+
+        Distance is measured to the item's extent rather than to its ink,
+        which is Tk's own approximation for everything but a line.
+        """
+        best: tuple[float, int] | None = None
+        for item in self._items:
+            box = self._item_bbox(item)
+            if box is None:
+                continue
+            near_x = min(max(int(x), box[0]), box[2])
+            near_y = min(max(int(y), box[1]), box[3])
+            distance = (near_x - int(x)) ** 2 + (near_y - int(y)) ** 2
+            if best is None or distance <= best[0]:
+                best = (distance, item.ident)
+        return () if best is None else (best[1],)
+
+    # ------------------------------------------------------------ changing them
+
+    def coords(self, spec: Any, *args: Any) -> list[int] | None:
+        """Read or replace an item's coordinates."""
+        items = self._matching(spec)
+        if not args:
+            return list(items[0].coords) if items else []
+        coords = _canvas_coords(args)
+        for item in items:
+            item.coords = list(coords)
+        self._redraw()
+        return None
+
+    def move(self, spec: Any, dx: int, dy: int) -> None:
+        """Shift everything a tag names by a distance in pixels."""
+        for item in self._matching(spec):
+            item.coords = [
+                value + (int(dx) if index % 2 == 0 else int(dy))
+                for index, value in enumerate(item.coords)
+            ]
+        self._redraw()
+
+    def delete(self, *specs: Any) -> None:
+        """Remove everything the tags name."""
+        doomed = {item.ident for spec in specs for item in self._matching(spec)}
+        self._items = [item for item in self._items if item.ident not in doomed]
+        if self._current in doomed:
+            self._current = None
+        self._redraw()
+
+    def itemconfigure(
+        self, spec: Any, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> Any:
+        """Set options on everything a tag names, or read one item's options.
+
+        Raises:
+            TclError: If an option is not one the item's type takes.
+        """
+        items = self._matching(spec)
+        given = {**(cnf or {}), **kw}
+        if not given:
+            return dict(items[0].options) if items else {}
+        for item in items:
+            spec_for_kind = {
+                **self._COMMON_ITEM_OPTIONS,
+                **self._ITEM_OPTIONS[item.kind],
+            }
+            for name, value in given.items():
+                option = _OPTION_ALIASES.get(name, name)
+                if option not in spec_for_kind:
+                    raise TclError(f'unknown option "-{name}"')
+                item.options[option] = value
+        self._redraw()
+        return None
+
+    itemconfig = itemconfigure
+
+    def itemcget(self, spec: Any, option: str) -> Any:
+        """One option of the first item a tag names.
+
+        Raises:
+            TclError: If nothing matches, or the option is not one it takes.
+        """
+        items = self._matching(spec)
+        if not items:
+            raise TclError(f'unknown item "{spec}"')
+        name = _OPTION_ALIASES.get(option, option)
+        if name not in items[0].options:
+            raise TclError(f'unknown option "-{option}"')
+        return items[0].options[name]
+
+    def type(self, spec: Any) -> str | None:
+        """What kind of item a tag names, or None if nothing does."""
+        items = self._matching(spec)
+        return items[0].kind if items else None
+
+    def bbox(self, *specs: Any) -> tuple[int, int, int, int] | None:
+        """The extent of everything the tags name, in pixels."""
+        boxes = [
+            box
+            for spec in (specs or ("all",))
+            for item in self._matching(spec)
+            if (box := self._item_bbox(item)) is not None
+        ]
+        if not boxes:
+            return None
+        return (
+            min(box[0] for box in boxes),
+            min(box[1] for box in boxes),
+            max(box[2] for box in boxes),
+            max(box[3] for box in boxes),
+        )
+
+    def _item_bbox(self, item: _CanvasItem) -> tuple[int, int, int, int] | None:
+        """One item's extent, in pixels."""
+        if item.kind == "text":
+            return self._text_bbox(item)
+        return bbox_of(item.points())
+
+    def _text_bbox(self, item: _CanvasItem) -> tuple[int, int, int, int] | None:
+        """A text item's extent, in pixels, cell-aligned as it is drawn."""
+        placed = self._text_origin(item)
+        if placed is None:
+            return None
+        column, row, lines = placed
+        width = max((len(line) for line in lines), default=0)
+        return (
+            column,
+            row * 2,
+            column + max(0, width - 1),
+            row * 2 + 2 * len(lines) - 1,
+        )
+
+    # ---------------------------------------------------------------- tagging
+
+    def gettags(self, spec: Any) -> tuple[str, ...]:
+        """The tags on the first item a tag or id names."""
+        items = self._matching(spec)
+        return items[0].tags if items else ()
+
+    def addtag_withtag(self, new: str, spec: Any) -> None:
+        """Add a tag to everything another tag names."""
+        for item in self._matching(spec):
+            if new not in item.tags:
+                item.options["tags"] = (*item.tags, new)
+
+    def dtag(self, spec: Any, tag: str | None = None) -> None:
+        """Remove a tag. Without one, remove the tag that was used to find them."""
+        target = str(spec) if tag is None else tag
+        for item in self._matching(spec):
+            item.options["tags"] = tuple(t for t in item.tags if t != target)
+
+    def tag_raise(self, spec: Any, above: Any = None) -> None:
+        """Move items to the front of the drawing order, or above another."""
+        self._reorder_items(spec, above, to_front=True)
+
+    def tag_lower(self, spec: Any, below: Any = None) -> None:
+        """Move items to the back of the drawing order, or below another."""
+        self._reorder_items(spec, below, to_front=False)
+
+    def _reorder_items(self, spec: Any, other: Any, *, to_front: bool) -> None:
+        """Shared by tag_raise and tag_lower."""
+        moving = self._matching(spec)
+        if not moving:
+            return
+        idents = {item.ident for item in moving}
+        rest = [item for item in self._items if item.ident not in idents]
+        if other is None:
+            self._items = rest + moving if to_front else moving + rest
+        else:
+            anchors = [
+                item for item in self._matching(other) if item.ident not in idents
+            ]
+            if not anchors:
+                self._items = rest + moving if to_front else moving + rest
+            else:
+                at = rest.index(anchors[-1] if to_front else anchors[0])
+                cut = at + 1 if to_front else at
+                self._items = rest[:cut] + moving + rest[cut:]
+        self._redraw()
+
+    # --------------------------------------------------------- item bindings
+
+    def tag_bind(
+        self,
+        spec: Any,
+        sequence: str | None = None,
+        func: Callable[[Event], Any] | None = None,
+        add: bool | str | None = None,
+    ) -> None:
+        """Bind an event on the items a tag names.
+
+        Unlike :meth:`Misc.bind`, this is not a binding on the widget: the
+        event is delivered only while the pointer is over one of the items,
+        and ``event.widget`` is still the canvas. The item it happened to is
+        the one ``find_withtag("current")`` names, as in Tk.
+
+        Args:
+            spec: A tag, or an item id.
+            sequence: The event, such as ``"<Button-1>"``.
+            func: What to call.
+            add: True to keep any binding already there.
+        """
+        if sequence is None or func is None:
+            return
+        bindings = self._item_bindings.setdefault(str(spec), {})
+        if add in (True, "+"):
+            bindings.setdefault(sequence, []).append(func)
+        else:
+            bindings[sequence] = [func]
+
+    def tag_unbind(self, spec: Any, sequence: str) -> None:
+        """Remove the bindings a tag has for one event."""
+        self._item_bindings.get(str(spec), {}).pop(sequence, None)
+
+    def _item_at(self, x: int, y: int) -> int | None:
+        """The topmost item whose ink covers a pixel.
+
+        Ink, not extent. A diagonal line's bounding box is the whole
+        rectangle it crosses, so testing by extent let a thin line claim
+        everything around it - clicking inside a square picked out the
+        diagonal drawn across it rather than the square. Tk tests the item's
+        real shape too, which also means that clicking the middle of an
+        *unfilled* rectangle selects nothing: there is nothing there.
+
+        Both halves of the clicked cell count. A click names a cell, and
+        either of the two pixels stacked in it may be the one with ink.
+        """
+        slack = max(0, int(self._options["closeenough"]))
+        reach = range(-slack, slack + 1)
+        for item in reversed(self._items):
+            if str(item.options.get("state")) == "hidden":
+                continue
+            box = self._item_bbox(item)
+            # The extent is only a cheap filter before the ink is looked at,
+            # and it has to admit both halves of the cell for the same reason
+            # the ink test does.
+            if box is None or not (
+                box[0] - slack <= x <= box[2] + slack
+                and any(box[1] - slack <= row <= box[3] + slack for row in (y, y ^ 1))
+            ):
+                continue
+            # Text fills the cells it occupies, so its extent is its ink.
+            if item.kind == "text":
+                return item.ident
+            pixels = self._item_pixels(item)
+            if any(
+                (x + across, row + down) in pixels
+                for row in (y, y ^ 1)
+                for across in reach
+                for down in reach
+            ):
+                return item.ident
+        return None
+
+    def _deliver(self, ident: int | None, sequence: str, event: Event) -> None:
+        """Run whatever is bound to one event on one item.
+
+        The item's own id is consulted first, then its tags in the order they
+        were given, then ``all`` - which is the order Tk searches, the id
+        being the item's first tag there.
+        """
+        if ident is None:
+            return
+        item = self._item(ident)
+        if item is None:
+            return
+        keys = [str(ident), *item.tags, "all"]
+        if ident == self._current:
+            keys.insert(-1, "current")
+        for key in keys:
+            for callback in self._item_bindings.get(key, {}).get(sequence, ()):
+                callback(event)
+
+    # ---------------------------------------------------------------- the view
+
+    def canvasx(self, screen_x: int) -> int:
+        """The canvas pixel a screen column is showing."""
+        return int(screen_x) - self.winfo_rootx() - self._text_area().x + self._left
+
+    def canvasy(self, screen_y: int) -> int:
+        """The canvas pixel row a screen row is showing.
+
+        The top half of the cell, since a row holds two pixel rows and the
+        upper one is the one a click is taken to mean.
+        """
+        row = int(screen_y) - self.winfo_rooty() - self._text_area().y
+        return row * 2 + self._top
+
+    def _scroll_region(self) -> tuple[int, int, int, int]:
+        """What there is to scroll over: the option, or everything drawn."""
+        region = self._options["scrollregion"]
+        if region:
+            values = _canvas_coords(
+                region if isinstance(region, (tuple, list)) else region.split()
+            )
+            if len(values) >= 4:
+                return (values[0], values[1], values[2], values[3])
+        return self.bbox() or (0, 0, *self._plane_size())
+
+    def yview(self, *args: Any) -> tuple[float, float] | None:
+        """Read or move the vertical view, in the shape Tk uses."""
+        if not args:
+            return self._fractions(vertical=True)
+        self._scroll(args, vertical=True)
+        return None
+
+    def xview(self, *args: Any) -> tuple[float, float] | None:
+        """Read or move the horizontal view."""
+        if not args:
+            return self._fractions(vertical=False)
+        self._scroll(args, vertical=False)
+        return None
+
+    def yview_moveto(self, fraction: float) -> None:
+        """Put the top of the view at a fraction of the scroll region."""
+        self.yview("moveto", fraction)
+
+    def yview_scroll(self, number: int, what: str) -> None:
+        """Scroll by cells or by screenfuls."""
+        self.yview("scroll", number, what)
+
+    def xview_moveto(self, fraction: float) -> None:
+        """Put the left of the view at a fraction of the scroll region."""
+        self.xview("moveto", fraction)
+
+    def xview_scroll(self, number: int, what: str) -> None:
+        """Scroll sideways by pixels or by screenfuls."""
+        self.xview("scroll", number, what)
+
+    def _scroll(self, args: tuple[Any, ...], *, vertical: bool) -> None:
+        """Apply one Tk scrolling command to one axis."""
+        left, top, right, bottom = self._scroll_region()
+        width, height = self._plane_size()
+        span = height if vertical else width
+        total = max(1, (bottom - top) if vertical else (right - left))
+        origin = top if vertical else left
+        action = str(args[0])
+        if action == "moveto":
+            position = origin + int(float(args[1]) * total)
+        elif action == "scroll":
+            count = int(float(args[1]))
+            unit = str(args[2]) if len(args) > 2 else "units"
+            # A vertical unit is a cell, which is two pixels: scrolling by one
+            # would swap which half of the cell each pixel row lands in, and
+            # the whole picture would shimmer.
+            step = span if unit.startswith("page") else (2 if vertical else 1)
+            position = (self._top if vertical else self._left) + count * step
+        else:
+            raise TclError(f'bad option "{action}": must be moveto or scroll')
+        limit = max(origin, origin + total - span)
+        position = max(origin, min(position, limit))
+        if vertical:
+            self._top = position - position % 2
+        else:
+            self._left = position
+        self._redraw()
+        self._report_view()
+
+    def _fractions(self, *, vertical: bool) -> tuple[float, float]:
+        """Where one axis of the view is, as two fractions of the region."""
+        left, top, right, bottom = self._scroll_region()
+        width, height = self._plane_size()
+        span = height if vertical else width
+        total = max(1, (bottom - top) if vertical else (right - left))
+        origin = top if vertical else left
+        start = ((self._top if vertical else self._left) - origin) / total
+        return (min(1.0, max(0.0, start)), min(1.0, max(0.0, start + span / total)))
+
+    def _report_view(self) -> None:
+        """Tell the scrollbars where the view is, if anything is listening."""
+        for option, fractions in (
+            ("yscrollcommand", self._fractions(vertical=True)),
+            ("xscrollcommand", self._fractions(vertical=False)),
+        ):
+            command = self._options[option]
+            if command is not None:
+                command(*fractions)
+
+    # --------------------------------------------------------------- painting
+
+    def _item_pixels(self, item: _CanvasItem) -> dict[tuple[int, int], str]:
+        """Every pixel one item lights, and what colour.
+
+        Interior first and outline second, so an outline of a different
+        colour is not swallowed by the fill underneath it.
+        """
+        points = item.points()
+        fill = str(item.options.get("fill") or "")
+        outline = str(item.options.get("outline") or "")
+        pixels: dict[tuple[int, int], str] = {}
+        if item.kind == "line":
+            pixels.update(dict.fromkeys(line_pixels(points), fill or "white"))
+        elif item.kind in ("rectangle", "oval"):
+            (x0, y0), (x1, y1) = points[0], points[1]
+            solid = (
+                filled_rectangle_pixels
+                if item.kind == "rectangle"
+                else filled_oval_pixels
+            )
+            edge = rectangle_pixels if item.kind == "rectangle" else oval_pixels
+            if fill:
+                pixels.update(dict.fromkeys(solid(x0, y0, x1, y1), fill))
+            if outline:
+                pixels.update(dict.fromkeys(edge(x0, y0, x1, y1), outline))
+        elif item.kind == "polygon":
+            if fill:
+                pixels.update(dict.fromkeys(filled_polygon_pixels(points), fill))
+            if outline:
+                pixels.update(dict.fromkeys(polygon_pixels(points), outline))
+        return pixels
+
+    def _text_origin(self, item: _CanvasItem) -> tuple[int, int, list[str]] | None:
+        """Where a text item starts, as ``(column, cell row, lines)``.
+
+        The row is a cell row, not a pixel row: a glyph fills a cell, so a
+        text item snaps to the nearest one rather than straddling two.
+        """
+        points = item.points()
+        if not points:
+            return None
+        lines = str(item.options.get("text") or "").split("\n")
+        if not lines:
+            return None
+        x, y = points[0]
+        width = max((len(line) for line in lines), default=0)
+        across, down = parse_anchor(str(item.options.get("anchor") or "center"))
+        column = x - int(width * across)
+        # The cell the point falls in, then whole rows off it for a block of
+        # several lines. Taking half the block height off in *pixels* first
+        # shifted a single line half a cell and rounded it onto the wrong row.
+        row = y // 2 - int(len(lines) * down)
+        return (column, row, lines)
+
+    def _redraw(self) -> None:
+        """Paint the border, then every item in the order it was made."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        dispatcher = CursesDispatcher.get()
+        base = self._background_attribute() | self._font_attribute()
+        with contextlib.suppress(ValueError):
+            base = for_state(str(self._options["state"]), base)
+        area = self._text_area()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", base)
+            dispatcher.call(window.erase)
+            if self._border_drawn:
+                self._draw_border(
+                    dispatcher, window, self._rect.width, self._rect.height, base
+                )
+            if not area.is_empty:
+                for column, row, glyph, attribute in self._painted(area, base):
+                    dispatcher.call(
+                        window.addstr, area.y + row, area.x + column, glyph, attribute
+                    )
+
+    def _painted(self, area: Rect, base: int) -> list[tuple[int, int, str, int]]:
+        """Every cell to draw, worked out item by item in drawing order.
+
+        Items are composed one at a time rather than all at once so that a
+        later item covers an earlier one, including where a drawing and a
+        piece of text want the same cell. Composing the whole plane first and
+        laying text over it afterwards would put every label on top, whatever
+        order it was made in.
+        """
+        pixels: dict[tuple[int, int], str] = {}
+        cells: dict[tuple[int, int], tuple[str, int]] = {}
+        for item in self._items:
+            if str(item.options.get("state")) == "hidden":
+                continue
+            if item.kind == "text":
+                self._compose_text(item, pixels, cells, base)
+            else:
+                drawn = self._item_pixels(item)
+                pixels.update(drawn)
+                # Only the cells this item touched are recomposed. Folding
+                # the whole plane for every item would make drawing cost the
+                # square of what is on the canvas.
+                affected = {}
+                for x, y in drawn:
+                    for half in (y - y % 2, y - y % 2 + 1):
+                        if (x, half) in pixels:
+                            affected[(x, half)] = pixels[(x, half)]
+                for at, (glyph, fore, back) in compose(affected).items():
+                    cells[at] = (glyph, self._ink(fore, back, base))
+        painted = []
+        top_row = self._top // 2
+        for (x, row), (glyph, attribute) in cells.items():
+            column, screen_row = x - self._left, row - top_row
+            if 0 <= column < area.width and 0 <= screen_row < area.height:
+                painted.append((column, screen_row, glyph, attribute))
+        return painted
+
+    def _compose_text(
+        self,
+        item: _CanvasItem,
+        pixels: dict[tuple[int, int], str],
+        cells: dict[tuple[int, int], tuple[str, int]],
+        base: int,
+    ) -> None:
+        """Put a text item's glyphs into the cells, clearing what was under.
+
+        The pixels beneath are dropped, so a drawing item made later composes
+        from its own ink alone rather than resurrecting what the text covered.
+        """
+        placed = self._text_origin(item)
+        if placed is None:
+            return
+        column, row, lines = placed
+        attribute = self._ink(str(item.options.get("fill") or ""), None, base)
+        font = str(item.options.get("font") or "").lower()
+        attribute |= from_font(
+            bold="bold" in font,
+            italic="italic" in font,
+            underline="underline" in font,
+        )
+        justify = str(item.options.get("justify") or "left")
+        width = max((len(line) for line in lines), default=0)
+        for offset, line in enumerate(lines):
+            start = column + align_offset(len(line), width, justify)
+            for index, character in enumerate(line):
+                at = (start + index, row + offset)
+                pixels.pop((at[0], at[1] * 2), None)
+                pixels.pop((at[0], at[1] * 2 + 1), None)
+                cells[at] = (character, attribute)
+
+    def _ink(self, foreground: str, background: str | None, base: int) -> int:
+        """The attribute a cell needs, given the colours its two halves want."""
+        colors = self.tk.colors
+        if colors is None:
+            return base
+        return with_colors(
+            base,
+            colors.attribute_for(
+                foreground or str(self._options["foreground"] or "white"),
+                background or str(self._options["background"] or "black"),
+            ),
+        )
+
+
+def _canvas_coords(args: Any) -> list[int]:
+    """Flatten coordinates however they were given.
+
+    Tk takes ``(x0, y0, x1, y1)``, ``((x0, y0), (x1, y1))`` and a single
+    sequence of any of those, so all three arrive here and all three work.
+    """
+    flat: list[int] = []
+    values = list(args)
+    if len(values) == 1 and isinstance(values[0], (list, tuple)):
+        values = list(values[0])
+    for value in values:
+        if isinstance(value, (list, tuple)):
+            flat.extend(round(float(part)) for part in value)
+        else:
+            flat.append(round(float(value)))
+    return flat
+
+
+def _canvas_mouse(event: Event) -> None:
+    """Deliver a mouse event to whichever item is under the pointer.
+
+    Enter and Leave are synthesised here rather than reported by curses:
+    there is no such thing as a pointer crossing an item at the terminal
+    level, so the canvas works it out by noticing that the item under the
+    pointer has changed.
+    """
+    canvas = event.widget
+    x, y = canvas.canvasx(event.x_root), canvas.canvasy(event.y_root)
+    found = canvas._item_at(x, y)
+    if found != canvas._current:
+        canvas._deliver(canvas._current, "<Leave>", event)
+        canvas._current = found
+        canvas._deliver(found, "<Enter>", event)
+    sequence = {
+        "ButtonPress": f"<Button-{event.num}>",
+        "ButtonRelease": f"<ButtonRelease-{event.num}>",
+        "Motion": "<Motion>",
+        "Double": f"<Double-Button-{event.num}>",
+    }.get(event.type, "")
+    if sequence:
+        canvas._deliver(canvas._current, sequence, event)
+
+
+class Menu(_Drawable):
+    """A list of things to choose, posted over everything else.
+
+    A menu is the one widget here that is placed against the *screen* rather
+    than inside its parent. It is not packed or gridded: it is **posted** at a
+    point - by :meth:`post`, by :meth:`tk_popup`, or by a menubar - and
+    :mod:`tkcurses._core.menus` works out where it actually fits. A menu with
+    no room below its point is drawn above it, one that would run off the
+    right is pulled left, and one taller than the screen scrolls rather than
+    being cut off.
+
+    While a menu is posted it holds the grab and the focus, so every key and
+    every click reaches it - including a click somewhere else, which is how it
+    knows to dismiss itself. Escape dismisses it too, and so does invoking
+    anything on it.
+
+    The same widget is also a **menubar** when a toplevel is given one
+    through its ``menu`` option. It then draws in a row across the top of
+    that window, its cascades post beneath their labels, and the toplevel
+    lays its children out in what is left.
+    """
+
+    #: Entry kinds, and what each one accepts on top of the common options.
+    _ENTRY_OPTIONS: ClassVar[dict[str, dict[str, Any]]] = {
+        "command": {},
+        "cascade": {"menu": None},
+        "checkbutton": {"onvalue": 1, "offvalue": 0, "variable": None},
+        "radiobutton": {"value": "", "variable": None},
+        "separator": {},
+    }
+    _COMMON_ENTRY_OPTIONS: ClassVar[dict[str, Any]] = {
+        "accelerator": "",
+        "command": None,
+        "label": "",
+        "state": "normal",
+        "underline": -1,
+    }
+
+    #: What a ticked checkbutton and a chosen radiobutton look like.
+    _INDICATORS: ClassVar[dict[str, tuple[str, str]]] = {
+        "checkbutton": ("[x] ", "[ ] "),
+        "radiobutton": ("(•) ", "( ) "),
+    }
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "postcommand": None,
+        "relief": "raised",
+        "takefocus": False,
+        "tearoff": False,
+        "title": "",
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``postcommand``, ``title``, and the standard options.
+        """
+        self._entries: list[MenuEntry] = []
+        self._active: int | None = None
+        self._posted = False
+        self._first = 0
+        self._as_menubar = False
+        self._open_cascade: Menu | None = None
+        self._parent_menu: Menu | None = None
+        self._focus_before: Misc | None = None
+        super().__init__(master, cnf, name=name, **kw)
+        self._apply_requested_size()
+        self._install_class_bindings()
+
+    def _install_class_bindings(self) -> None:
+        """Register the keys and clicks every Menu answers."""
+        if "Menu" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("Menu")
+        bind = self.bind_class
+        bind("Menu", "<Any-Key>", _menu_key)
+        bind("Menu", "<Button-1>", _menu_click)
+        bind("Menu", "<Motion>", _menu_motion)
+
+    # ---------------------------------------------------------- making entries
+
+    def add(self, kind: str, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
+        """Append an entry of one kind.
+
+        Raises:
+            TclError: If the kind is not one Tk defines, or an option is not
+                one that kind takes.
+        """
+        self.insert(len(self._entries), kind, cnf, **kw)
+
+    def insert(
+        self, index: Any, kind: str, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> None:
+        """Put an entry of one kind at a position.
+
+        Raises:
+            TclError: If the kind or an option is not one Tk defines.
+        """
+        if kind not in self._ENTRY_OPTIONS:
+            raise TclError(f'bad menu entry type "{kind}"')
+        entry = MenuEntry(kind, self._checked_entry(kind, {**(cnf or {}), **kw}))
+        self._entries.insert(self._insert_at(index), entry)
+        self._apply_requested_size()
+        self._refresh()
+
+    def add_command(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
+        """Append an entry that runs something."""
+        self.add("command", cnf, **kw)
+
+    def add_cascade(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
+        """Append an entry that opens a submenu."""
+        self.add("cascade", cnf, **kw)
+
+    def add_checkbutton(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
+        """Append an entry that toggles a variable."""
+        self.add("checkbutton", cnf, **kw)
+
+    def add_radiobutton(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
+        """Append an entry that sets a variable to its own value."""
+        self.add("radiobutton", cnf, **kw)
+
+    def add_separator(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
+        """Append a dividing line."""
+        self.add("separator", cnf, **kw)
+
+    def insert_command(
+        self, index: Any, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> None:
+        """Insert an entry that runs something."""
+        self.insert(index, "command", cnf, **kw)
+
+    def insert_cascade(
+        self, index: Any, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> None:
+        """Insert an entry that opens a submenu."""
+        self.insert(index, "cascade", cnf, **kw)
+
+    def insert_checkbutton(
+        self, index: Any, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> None:
+        """Insert an entry that toggles a variable."""
+        self.insert(index, "checkbutton", cnf, **kw)
+
+    def insert_radiobutton(
+        self, index: Any, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> None:
+        """Insert an entry that sets a variable."""
+        self.insert(index, "radiobutton", cnf, **kw)
+
+    def insert_separator(
+        self, index: Any, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> None:
+        """Insert a dividing line."""
+        self.insert(index, "separator", cnf, **kw)
+
+    def _checked_entry(self, kind: str, given: dict[str, Any]) -> dict[str, Any]:
+        """Resolve an entry's options against what its kind accepts.
+
+        Raises:
+            TclError: If an option is not one the kind takes.
+        """
+        spec = {**self._COMMON_ENTRY_OPTIONS, **self._ENTRY_OPTIONS[kind]}
+        options = dict(spec)
+        for name, value in given.items():
+            option = _OPTION_ALIASES.get(name, name)
+            if option not in spec:
+                raise TclError(f'unknown option "-{name}"')
+            options[option] = value
+        return options
+
+    # -------------------------------------------------------------- indices
+
+    def index(self, spec: Any) -> int | None:
+        """Resolve one of Tk's entry indices.
+
+        Takes a number, ``end`` or ``last``, ``active``, ``none``, ``@y`` for
+        a row within the menu, or the label of an entry. Returns None for
+        ``none`` and for a label that matches nothing, which is what Tk does.
+        """
+        if spec is None:
+            return None
+        if isinstance(spec, int):
+            return spec if 0 <= spec < len(self._entries) else None
+        text = str(spec).strip()
+        if text in ("end", "last"):
+            return len(self._entries) - 1 if self._entries else None
+        if text == "active":
+            return self._active
+        if text == "none":
+            return None
+        if text.startswith("@"):
+            return self._entry_at_row(int(text[1:]))
+        if text.lstrip("-").isdigit():
+            number = int(text)
+            return number if 0 <= number < len(self._entries) else None
+        return next(
+            (n for n, entry in enumerate(self._entries) if entry.label == text), None
+        )
+
+    def _insert_at(self, spec: Any) -> int:
+        """Where an insertion goes, clamped into the list."""
+        if isinstance(spec, int):
+            return max(0, min(spec, len(self._entries)))
+        resolved = self.index(spec)
+        return len(self._entries) if resolved is None else resolved
+
+    def _entry_at_row(self, row: int) -> int | None:
+        """Which entry a row within the widget falls on."""
+        area = self._text_area()
+        if self._as_menubar:
+            return self._entry_at_column(row)
+        offset = row - area.y + self._first
+        return offset if 0 <= offset < len(self._entries) else None
+
+    def _entry_at_column(self, column: int) -> int | None:
+        """Which menubar entry a column falls on."""
+        at = self._text_area().x
+        for number, entry in enumerate(self._entries):
+            width = len(entry.label) + 2
+            if at <= column < at + width:
+                return number
+            at += width
+        return None
+
+    def type(self, spec: Any) -> str | None:
+        """What kind of entry an index names."""
+        at = self.index(spec)
+        return None if at is None else self._entries[at].kind
+
+    def yposition(self, spec: Any) -> int:
+        """The row an entry occupies within the menu, as Tk reports it."""
+        at = self.index(spec)
+        return 0 if at is None else at - self._first
+
+    # ------------------------------------------------------ changing entries
+
+    def delete(self, first: Any, last: Any = None) -> None:
+        """Remove entries from ``first`` up to and including ``last``."""
+        start = self.index(first)
+        if start is None:
+            return
+        stop = start if last is None else self.index(last)
+        if stop is None:
+            stop = len(self._entries) - 1
+        del self._entries[start : stop + 1]
+        if self._active is not None and self._active >= len(self._entries):
+            self._active = None
+        self._apply_requested_size()
+        self._refresh()
+
+    def entryconfigure(
+        self, spec: Any, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> Any:
+        """Set options on one entry, or read them all.
+
+        Raises:
+            TclError: If the index names nothing, or an option is not one the
+                entry's kind takes.
+        """
+        at = self.index(spec)
+        if at is None:
+            raise TclError(f'bad menu entry index "{spec}"')
+        entry = self._entries[at]
+        given = {**(cnf or {}), **kw}
+        if not given:
+            return dict(entry.options)
+        spec_for_kind = {
+            **self._COMMON_ENTRY_OPTIONS,
+            **self._ENTRY_OPTIONS[entry.kind],
+        }
+        for name, value in given.items():
+            option = _OPTION_ALIASES.get(name, name)
+            if option not in spec_for_kind:
+                raise TclError(f'unknown option "-{name}"')
+            entry.options[option] = value
+        self._apply_requested_size()
+        self._refresh()
+        return None
+
+    entryconfig = entryconfigure
+
+    def entrycget(self, spec: Any, option: str) -> Any:
+        """One option of one entry.
+
+        Raises:
+            TclError: If the index or the option names nothing.
+        """
+        at = self.index(spec)
+        if at is None:
+            raise TclError(f'bad menu entry index "{spec}"')
+        name = _OPTION_ALIASES.get(option, option)
+        if name not in self._entries[at].options:
+            raise TclError(f'unknown option "-{option}"')
+        return self._entries[at].options[name]
+
+    # ------------------------------------------------------------ behaviour
+
+    def activate(self, spec: Any) -> None:
+        """Make an entry the active one, or ``none`` to make none of them."""
+        at = self.index(spec)
+        if at is not None and not self._entries[at].selectable:
+            return
+        self._active = at
+        if at is not None and not self._as_menubar:
+            self._first = visible_window(len(self._entries), at, self._rows())
+        self._refresh()
+
+    def invoke(self, spec: Any) -> Any:
+        """Do what choosing an entry does, and return what its command did.
+
+        A cascade opens its submenu rather than running anything; a
+        checkbutton or radiobutton writes its variable first; everything else
+        dismisses the menu before running, so that a command which posts
+        another window does not fight with this one.
+        """
+        at = self.index(spec)
+        if at is None:
+            return None
+        entry = self._entries[at]
+        if not entry.selectable:
+            return None
+        if entry.kind == "cascade":
+            self._open(at)
+            return None
+        self._write_variable(entry)
+        self._dismiss_all()
+        command = entry.options.get("command")
+        return None if command is None else command()
+
+    def _write_variable(self, entry: MenuEntry) -> None:
+        """Put the entry's value in its variable, for the two kinds that have one."""
+        variable = entry.options.get("variable")
+        if variable is None:
+            return
+        if entry.kind == "checkbutton":
+            on, off = entry.options["onvalue"], entry.options["offvalue"]
+            variable.set(off if _same_value(variable.get(), on) else on)
+        elif entry.kind == "radiobutton":
+            variable.set(entry.options["value"])
+
+    def _indicator_for(self, entry: MenuEntry) -> str:
+        """The tick or bullet an entry shows, or spaces to line up with one."""
+        if entry.kind not in self._INDICATORS:
+            return "    " if self._has_indicators() else ""
+        on, off = self._INDICATORS[entry.kind]
+        variable = entry.options.get("variable")
+        if variable is None:
+            return off
+        wanted = (
+            entry.options["onvalue"]
+            if entry.kind == "checkbutton"
+            else entry.options["value"]
+        )
+        return on if _same_value(variable.get(), wanted) else off
+
+    def _has_indicators(self) -> bool:
+        """True if any entry needs room on the left for a tick."""
+        return any(entry.kind in self._INDICATORS for entry in self._entries)
+
+    # -------------------------------------------------------------- posting
+
+    def post(self, x: int, y: int) -> None:
+        """Put the menu on screen at a point, moving it to fit.
+
+        Args:
+            x: Screen column to post at.
+            y: Screen row.
+        """
+        command = self._options["postcommand"]
+        if command is not None:
+            command()
+        width, height = self._posted_size()
+        screen_width, screen_height = self._screen_size()
+        x, y, height = place_popup(x, y, width, height, screen_width, screen_height)
+        self._posted = True
+        # place_popup works in screen cells; _allocate takes coordinates
+        # relative to the master, as every geometry manager hands it. They
+        # are the same thing only for a menu whose master is the root, which
+        # is why nothing noticed until an OptionMenu made its menu a child of
+        # the button - Tk builds it that way too - and the menu was allocated
+        # at an offset and posted off the screen.
+        master = self.master
+        origin_x = master.winfo_rootx() if master is not None else 0
+        origin_y = master.winfo_rooty() if master is not None else 0
+        self._allocate(Rect(x - origin_x, y - origin_y, width, height))
+        self._map()
+        self._restack_panels()
+        self._focus_before = self.tk.focus
+        self.grab_set()
+        self.focus_set()
+        self._first = visible_window(
+            len(self._entries), self._active or 0, self._rows()
+        )
+        self._refresh()
+
+    def unpost(self) -> None:
+        """Take the menu off screen, and any submenu with it."""
+        if self._open_cascade is not None:
+            self._open_cascade.unpost()
+            self._open_cascade = None
+        if not self._posted:
+            return
+        self._posted = False
+        self._active = None
+        self.grab_release()
+        self._unmap()
+        parent = self._parent_menu
+        self._parent_menu = None
+        if parent is not None and parent._posted:
+            parent._open_cascade = None
+            parent.grab_set()
+            parent.focus_set()
+        elif self._focus_before is not None and self._focus_before.winfo_exists():
+            self._focus_before.focus_set()
+        self._focus_before = None
+
+    def tk_popup(self, x: int, y: int, entry: Any = None) -> None:
+        """Post the menu at a point, optionally with one entry active."""
+        self.post(x, y)
+        if entry is not None:
+            self.activate(entry)
+
+    def _open(self, at: int) -> None:
+        """Post the submenu of a cascade entry, beside its own row."""
+        entry = self._entries[at]
+        submenu: Menu | None = entry.options.get("menu")
+        if submenu is None:
+            return
+        # `_posted` first: comparing against _open_cascade, which is
+        # `Menu | None`, widens submenu back to include None for a type
+        # checker, and the two tests are independent anyway.
+        if submenu._posted and self._open_cascade is submenu:
+            return
+        if self._open_cascade is not None:
+            self._open_cascade.unpost()
+        self._active = at
+        submenu._parent_menu = self
+        self._open_cascade = submenu
+        if self._as_menubar:
+            submenu.post(
+                self.winfo_rootx() + self._label_column(at), self.winfo_rooty() + 1
+            )
+        else:
+            submenu.post(
+                self.winfo_rootx() + self._rect.width,
+                self.winfo_rooty() + (at - self._first),
+            )
+        self._refresh()
+
+    def _label_column(self, at: int) -> int:
+        """Where one menubar label starts, relative to the bar."""
+        column = self._text_area().x
+        for entry in self._entries[:at]:
+            column += len(entry.label) + 2
+        return column
+
+    def _dismiss_all(self) -> None:
+        """Unpost this menu and every one above it, back to the menubar.
+
+        Each one in turn, rather than walking to the root and unposting that:
+        a menubar is never itself posted, so doing it that way dismissed
+        nothing at all and left the dropdown on screen. The parent is taken
+        before unposting, because unposting forgets it.
+        """
+        menu: Menu | None = self
+        while menu is not None:
+            parent = menu._parent_menu
+            if menu._posted:
+                menu.unpost()
+            else:
+                menu._open_cascade = None
+                menu._active = None
+                menu._refresh()
+            menu = parent
+
+    # -------------------------------------------------------------- geometry
+
+    def _posted_size(self) -> tuple[int, int]:
+        """The size a posted menu wants, border included."""
+        width, height = measure_entries(
+            self._entries, indicators=self._has_indicators()
+        )
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        return (width + edge + 2, height + edge)
+
+    def _apply_requested_size(self) -> None:
+        """Ask for a bar's row, or for what the entries need when posted."""
+        if self._as_menubar:
+            self._request_size(
+                sum(len(entry.label) + 2 for entry in self._entries) or 1, 1
+            )
+            return
+        width, height = self._posted_size()
+        self._request_size(width, height)
+
+    def _rows(self) -> int:
+        """How many entries are visible at once."""
+        return max(1, self._text_area().height)
+
+    def _text_area(self) -> Rect:
+        """Where the entries go, in cells relative to this widget's window."""
+        edge = BORDER_WIDTH if self._border_drawn and not self._as_menubar else 0
+        return Rect(
+            edge + 1 if not self._as_menubar else 0,
+            edge,
+            max(0, self._rect.width - 2 * edge - (2 if not self._as_menubar else 0)),
+            max(0, self._rect.height - 2 * edge),
+        )
+
+    def _refresh(self) -> None:
+        """Repaint, and push it to the terminal if one is running."""
+        self._redraw()
+        screen = self.tk.screen
+        if screen is not None and self._mapped:
+            with contextlib.suppress(curses.error):
+                screen.refresh()
+
+    # -------------------------------------------------------------- painting
+
+    def _redraw(self) -> None:
+        """Paint the menu, as a bar across the top or as a posted box."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        dispatcher = CursesDispatcher.get()
+        attribute = self._background_attribute() | self._font_attribute()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            if self._as_menubar:
+                self._draw_bar(dispatcher, window, attribute)
+                return
+            if self._border_drawn:
+                self._draw_border(
+                    dispatcher, window, self._rect.width, self._rect.height, attribute
+                )
+            self._draw_entries(dispatcher, window, attribute)
+
+    def _draw_bar(
+        self, dispatcher: CursesDispatcher, window: Any, attribute: int
+    ) -> None:
+        """Draw the labels in a row, the open one picked out."""
+        column = 0
+        for number, entry in enumerate(self._entries):
+            text = f" {entry.label} "
+            style = attribute
+            if number == self._active:
+                style |= curses.A_REVERSE
+            if str(entry.options.get("state")) == "disabled":
+                style = for_state("disabled", style)
+            dispatcher.call(
+                window.addstr,
+                0,
+                column,
+                clip_text(text, self._rect.width - column),
+                style,
+            )
+            column += len(text)
+            if column >= self._rect.width:
+                break
+
+    def _draw_entries(
+        self, dispatcher: CursesDispatcher, window: Any, attribute: int
+    ) -> None:
+        """Draw the visible entries, the active one picked out."""
+        area = self._text_area()
+        if area.is_empty:
+            return
+        cascades = any(entry.kind == "cascade" for entry in self._entries)
+        for row in range(area.height):
+            number = self._first + row
+            if number >= len(self._entries):
+                break
+            entry = self._entries[number]
+            style = attribute
+            if str(entry.options.get("state")) == "disabled":
+                with contextlib.suppress(ValueError):
+                    style = for_state("disabled", style)
+            if number == self._active:
+                style |= curses.A_REVERSE
+            if entry.kind == "separator":
+                dispatcher.call(
+                    window.addstr,
+                    area.y + row,
+                    area.x - 1,
+                    "─" * (area.width + 2),
+                    attribute,
+                )
+                continue
+            text = self._indicator_for(entry) + entry.label
+            line = text.ljust(area.width)
+            accelerator = entry.accelerator
+            if accelerator:
+                line = line[: area.width - len(accelerator)] + accelerator
+            if entry.kind == "cascade" and cascades:
+                line = line[: area.width - 1] + CASCADE
+            dispatcher.call(
+                window.addstr, area.y + row, area.x, clip_text(line, area.width), style
+            )
+            self._draw_underline(dispatcher, window, area, row, entry, style)
+
+    def _draw_underline(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        area: Rect,
+        row: int,
+        entry: MenuEntry,
+        style: int,
+    ) -> None:
+        """Underline the mnemonic character, as tkinter's ``underline`` does."""
+        index = int(entry.options.get("underline", -1))
+        if not 0 <= index < len(entry.label):
+            return
+        column = area.x + len(self._indicator_for(entry)) + index
+        if column >= area.x + area.width:
+            return
+        with contextlib.suppress(curses.error):
+            dispatcher.call(
+                window.addstr,
+                area.y + row,
+                column,
+                entry.label[index],
+                style | curses.A_UNDERLINE,
+            )
+
+    # --------------------------------------------------------------- moving
+
+    def _step(self, direction: int) -> None:
+        """Move the active entry, skipping what cannot be chosen."""
+        if not self._entries:
+            return
+        count = len(self._entries)
+        at = (
+            self._active if self._active is not None else -1 if direction > 0 else count
+        )
+        for _ in range(count):
+            at = (at + direction) % count
+            if self._entries[at].selectable:
+                self.activate(at)
+                return
+
+    def _within(self, x: int, y: int) -> bool:
+        """True if a screen cell is inside this menu."""
+        left, top = self.winfo_rootx(), self.winfo_rooty()
+        return (
+            left <= x < left + self._rect.width and top <= y < top + self._rect.height
+        )
+
+
+def _menu_key(event: Event) -> str | None:
+    """Move about a posted menu, choose an entry, or dismiss it.
+
+    Returns ``"break"`` for everything the menu consumed. A posted menu holds
+    the grab, so it sees every key; letting one through would send it to a
+    widget the user cannot currently see.
+    """
+    menu = event.widget
+    keysym = event.keysym
+    if keysym == "Escape":
+        menu.unpost()
+        return "break"
+    if menu._as_menubar:
+        return _menubar_key(menu, keysym)
+    if keysym == "Up":
+        menu._step(-1)
+    elif keysym == "Down":
+        menu._step(1)
+    elif keysym == "Home":
+        menu.activate(_first_selectable(menu, 1))
+    elif keysym == "End":
+        menu.activate(_first_selectable(menu, -1))
+    elif keysym in ("Return", "space"):
+        menu.invoke("active")
+    elif keysym == "Right":
+        if menu.type("active") == "cascade":
+            menu.invoke("active")
+        else:
+            _to_parent_bar(menu, 1)
+    elif keysym == "Left":
+        if menu._parent_menu is not None:
+            menu.unpost()
+        else:
+            _to_parent_bar(menu, -1)
+    else:
+        return _by_mnemonic(menu, event.char)
+    return "break"
+
+
+def _menubar_key(menu: Menu, keysym: str) -> str | None:
+    """Move along a menubar, and open what is under the cursor."""
+    if keysym == "Left":
+        menu._step(-1)
+        _reopen(menu)
+    elif keysym == "Right":
+        menu._step(1)
+        _reopen(menu)
+    elif keysym in ("Down", "Return", "space"):
+        menu.invoke("active")
+    else:
+        return None
+    return "break"
+
+
+def _reopen(menu: Menu) -> None:
+    """Follow the active menubar entry with its dropdown, if one is open."""
+    if menu._open_cascade is not None and menu._active is not None:
+        menu._open(menu._active)
+
+
+def _to_parent_bar(menu: Menu, direction: int) -> None:
+    """Step along the menubar a dropdown belongs to, opening the next one."""
+    root_menu: Menu | None = menu
+    while root_menu is not None and root_menu._parent_menu is not None:
+        root_menu = root_menu._parent_menu
+    if root_menu is None or not root_menu._as_menubar:
+        return
+    root_menu._step(direction)
+    if root_menu._active is not None:
+        root_menu._open(root_menu._active)
+
+
+def _first_selectable(menu: Menu, direction: int) -> int:
+    """The first or last entry that can be chosen."""
+    numbers = list(range(len(menu._entries)))
+    if direction < 0:
+        numbers.reverse()
+    return next((n for n in numbers if menu._entries[n].selectable), menu._active or 0)
+
+
+def _by_mnemonic(menu: Menu, char: str) -> str | None:
+    """Choose the entry whose underlined letter was typed.
+
+    Returns None when nothing matches, so an unrelated key is not silently
+    swallowed by a menu that had no use for it.
+    """
+    if not char or not char.isprintable():
+        return None
+    for number, entry in enumerate(menu._entries):
+        index = int(entry.options.get("underline", -1))
+        if not entry.selectable or not 0 <= index < len(entry.label):
+            continue
+        if entry.label[index].lower() == char.lower():
+            menu.activate(number)
+            menu.invoke(number)
+            return "break"
+    return None
+
+
+def _menu_click(event: Event) -> None:
+    """Choose what was clicked, or dismiss the menu if the click was elsewhere.
+
+    A posted menu holds the grab, so a click anywhere on the screen arrives
+    here - which is exactly what makes clicking away from a menu close it.
+    """
+    menu = event.widget
+    if not menu._within(event.x_root, event.y_root):
+        if menu._as_menubar:
+            menu._open_cascade = None
+            menu._active = None
+            menu._refresh()
+        else:
+            menu._dismiss_all()
+        return
+    at = (
+        menu._entry_at_column(event.x_root - menu.winfo_rootx())
+        if menu._as_menubar
+        else menu._entry_at_row(event.y_root - menu.winfo_rooty())
+    )
+    if at is not None:
+        menu.activate(at)
+        menu.invoke(at)
+
+
+def _menu_motion(event: Event) -> None:
+    """Follow the pointer, as a menu does while it is open."""
+    menu = event.widget
+    if not menu._within(event.x_root, event.y_root):
+        return
+    at = (
+        menu._entry_at_column(event.x_root - menu.winfo_rootx())
+        if menu._as_menubar
+        else menu._entry_at_row(event.y_root - menu.winfo_rooty())
+    )
+    if at is None or at == menu._active:
+        return
+    menu.activate(at)
+    # A cascade already open follows the pointer to the next one, which is
+    # what makes running down a menubar with the button held work.
+    if menu._open_cascade is not None and menu._entries[at].kind == "cascade":
+        menu._open(at)
+
+
 class Listbox(_Drawable):
     """A scrollable list of strings, one of which is selected.
 
@@ -5781,6 +8765,7 @@ class Listbox(_Drawable):
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "activestyle": "underline",
+        "font": "",
         "height": 10,
         "relief": "sunken",
         "selectmode": "browse",
@@ -6099,7 +9084,7 @@ class Listbox(_Drawable):
             return
         area = self._text_area()
         dispatcher = CursesDispatcher.get()
-        attribute = self._background_attribute()
+        attribute = self._background_attribute() | self._font_attribute()
         with contextlib.suppress(ValueError):
             attribute = for_state(str(self._options["state"]), attribute)
         with contextlib.suppress(curses.error):
@@ -6208,6 +9193,366 @@ def _listbox_wheel(event: Event) -> None:
 def _listbox_refresh(event: Event) -> None:
     """Repaint after the focus moved, so the active row shows or stops."""
     event.widget._redraw()
+
+
+class PanedWindow(_Drawable):
+    """A container whose children are divided by sashes a person can drag.
+
+    It is the only widget here that is also a geometry manager: children are
+    added with :meth:`add` rather than packed or gridded, and
+    :class:`~tkcurses._core.paned.PanedLayout` arranges them. The difference
+    from pack is that the arrangement is *stateful* - a sash someone dragged
+    stays where they put it, and a later resize works from there rather than
+    starting again from what the children ask for.
+
+    Drag a sash with the mouse, or move it with the arrows once the paned
+    window has the focus: a terminal user with no mouse would otherwise have
+    no way to resize a pane at all.
+    """
+
+    #: The sash, drawn along the whole division.
+    _SASH: ClassVar[dict[str, str]] = {"horizontal": "│", "vertical": "─"}
+
+    #: Drawn in the middle of the sash when ``showhandle`` is on, so a sash
+    #: can be told from a border.
+    _HANDLE: ClassVar[dict[str, str]] = {"horizontal": "┃", "vertical": "━"}
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "orient": "horizontal",
+        "relief": "flat",
+        "sashwidth": 1,
+        "showhandle": True,
+        "takefocus": True,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``orient``, ``showhandle``, and the standard options.
+        """
+        self._active_sash: int | None = None
+        super().__init__(master, cnf, name=name, **kw)
+        self._paned = PanedLayout(str(self._options["orient"]))
+        self._layout_manager = self._paned
+        self._install_class_bindings()
+
+    def _install_class_bindings(self) -> None:
+        """Register sash dragging and the keys that move one."""
+        if "PanedWindow" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("PanedWindow")
+        bind = self.bind_class
+        bind("PanedWindow", "<Button-1>", _paned_press)
+        bind("PanedWindow", "<Motion>", _paned_motion)
+        bind("PanedWindow", "<ButtonRelease-1>", _paned_release)
+        bind("PanedWindow", "<Any-Key>", _paned_key)
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, re-laying the panes out as the change requires."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if "orient" in given:
+            self._paned.orient = str(self._options["orient"])
+        if given:
+            self._invalidate_layout()
+            self._redraw()
+        return result
+
+    config = configure
+
+    # ------------------------------------------------------------------ panes
+
+    def add(self, child: Widget, **kw: Any) -> None:
+        """Add a pane at the end.
+
+        Args:
+            child: The widget to put in it. Must be a child of this window.
+            **kw: ``minsize``, ``sticky``, ``width`` or ``height``.
+        """
+        self._paned.add(child, self._pane_options(kw))
+        self._manage(child)
+
+    def insert(self, index: Any, child: Widget, **kw: Any) -> None:
+        """Add a pane at a position rather than at the end."""
+        self._paned.insert(self._pane_index(index), child, self._pane_options(kw))
+        self._manage(child)
+
+    def _manage(self, child: Widget) -> None:
+        """Take a child on, the way pack and grid take one on.
+
+        A geometry manager does two things beyond deciding where a child
+        goes: it records that it is the one managing it, so a second manager
+        cannot also claim it, and it maps the child so there is a window to
+        draw into. Adding a pane without this laid the panes out correctly
+        and drew nothing at all.
+        """
+        child._manager = "paned"
+        child._map()
+        self._invalidate_layout()
+        self._redraw()
+
+    def forget(self, child: Widget | None = None) -> None:
+        """Take a pane out and unmap its child.
+
+        With no argument this is the ``forget`` every widget has, which stops
+        *this* window being managed by its own parent. Tk's PanedWindow has
+        the same overloading, for the same reason: both meanings are wanted
+        and there is only one name for them.
+        """
+        if child is None:
+            super().forget()
+            return
+        self._paned.remove(child)
+        child._unmap()
+        self._invalidate_layout()
+        self._redraw()
+
+    def remove(self, child: Widget) -> None:
+        """Take a pane out, the spelling Tk also accepts."""
+        self.forget(child)
+
+    def panes(self) -> list[str]:
+        """The panes' widget paths, in order, as Tk reports them."""
+        return [child._w for child in self._paned.slaves()]
+
+    def _pane_options(self, given: dict[str, Any]) -> PaneOptions:
+        """Turn the keywords one pane was given into its options.
+
+        Raises:
+            TclError: If an option is not one a pane takes.
+        """
+        allowed = {"minsize", "sticky", "width", "height"}
+        unknown = set(given) - allowed
+        if unknown:
+            raise TclError(f'unknown option "-{sorted(unknown)[0]}"')
+        along = "height" if self._paned.vertical else "width"
+        size = given.get(along)
+        return PaneOptions(
+            minsize=int(given.get("minsize", 0)),
+            sticky=str(given.get("sticky", "nsew")),
+            size=None if size is None else int(size),
+        )
+
+    def _pane_index(self, index: Any) -> int:
+        """Where a pane goes, taking a number, a widget or a widget path."""
+        if isinstance(index, int):
+            return index
+        children = self._paned.slaves()
+        for position, child in enumerate(children):
+            if child is index or child._w == str(index):
+                return position
+        return len(children)
+
+    def panecget(self, child: Widget, option: str) -> Any:
+        """One option of one pane.
+
+        Raises:
+            TclError: If the widget is not a pane here, or the option is not
+                one a pane takes.
+        """
+        options = self._paned.options_for(child)
+        if options is None:
+            raise TclError(f'not managed by this window: "{child}"')
+        if option == "minsize":
+            return options.minsize
+        if option == "sticky":
+            return options.sticky
+        if option in ("width", "height"):
+            return options.size
+        raise TclError(f'unknown option "-{option}"')
+
+    def paneconfigure(self, child: Widget, **kw: Any) -> None:
+        """Change one pane's options.
+
+        Raises:
+            TclError: If the widget is not a pane here.
+        """
+        if self._paned.options_for(child) is None:
+            raise TclError(f'not managed by this window: "{child}"')
+        self._paned.add(child, self._pane_options(kw))
+        self._invalidate_layout()
+        self._redraw()
+
+    paneconfig = paneconfigure
+
+    # ------------------------------------------------------------------ sashes
+
+    def sash_coord(self, index: int) -> tuple[int, int]:
+        """Where a sash begins, in cells relative to this widget."""
+        area = self._content_area()
+        offset = self._paned.sash_position(index)
+        if self._paned.vertical:
+            return (area.x, area.y + offset)
+        return (area.x + offset, area.y)
+
+    def sash_place(self, index: int, x: int, y: int) -> None:
+        """Put a sash at a position, in cells relative to this widget."""
+        area = self._content_area()
+        position = (y - area.y) if self._paned.vertical else (x - area.x)
+        self._paned.move_sash(index, position, self._screen_area())
+        self._apply_panes()
+
+    def identify(self, x: int, y: int) -> tuple[int, str] | tuple[()]:
+        """Which sash is at a position within this widget, if any.
+
+        Returns ``(index, "sash")`` as Tk does, or ``()`` for anywhere that
+        is not on one.
+        """
+        area = self._content_area()
+        offset = (y - area.y) if self._paned.vertical else (x - area.x)
+        for index in range(max(0, len(self._paned.slaves()) - 1)):
+            at = self._paned.sash_position(index)
+            if at <= offset < at + SASH_WIDTH:
+                return (index, "sash")
+        return ()
+
+    def _screen_area(self) -> Rect:
+        """The region the panes are laid out in, in screen cells."""
+        return self._content_rect()
+
+    def _content_area(self) -> Rect:
+        """The region the panes occupy, relative to this widget's window."""
+        edge = BORDER_WIDTH if self._border_drawn else 0
+        padx, pady = int(self._options["padx"]), int(self._options["pady"])
+        return Rect(
+            edge + padx,
+            edge + pady,
+            max(0, self._rect.width - 2 * (edge + padx)),
+            max(0, self._rect.height - 2 * (edge + pady)),
+        )
+
+    def _apply_panes(self) -> None:
+        """Re-place the panes after a sash moved, without a full relayout.
+
+        A sash drag must not go through the engine: the engine would ask the
+        children what they want and undo the drag, which is the whole reason
+        the sizes are remembered.
+        """
+        self._paned.apply(self, self._screen_area())
+        for child in self._paned.slaves():
+            child._map()
+        self._redraw()
+
+    def _move_sash_by(self, distance: int) -> None:
+        """Nudge the active sash, for the keyboard."""
+        index = self._active_sash if self._active_sash is not None else 0
+        if index >= max(0, len(self._paned.slaves()) - 1):
+            return
+        self._active_sash = index
+        self._paned.move_sash(
+            index, self._paned.sash_position(index) + distance, self._screen_area()
+        )
+        self._apply_panes()
+
+    # -------------------------------------------------------------- painting
+
+    def _redraw(self) -> None:
+        """Paint the background, any border, and the sashes between panes."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        dispatcher = CursesDispatcher.get()
+        attribute = self._background_attribute() | self._font_attribute()
+        area = self._content_area()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            if self._border_drawn:
+                self._draw_border(
+                    dispatcher, window, self._rect.width, self._rect.height, attribute
+                )
+            self._draw_sashes(dispatcher, window, area, attribute)
+
+    def _draw_sashes(
+        self, dispatcher: CursesDispatcher, window: Any, area: Rect, attribute: int
+    ) -> None:
+        """Draw a line down each division, with a handle in the middle of it."""
+        if area.is_empty:
+            return
+        kind = "vertical" if self._paned.vertical else "horizontal"
+        line, handle = self._SASH[kind], self._HANDLE[kind]
+        show = self._showhandle
+        for index in range(max(0, len(self._paned.slaves()) - 1)):
+            offset = self._paned.sash_position(index)
+            focused = self.focus_get() is self and index == (self._active_sash or 0)
+            style = attribute | (curses.A_REVERSE if focused else 0)
+            if self._paned.vertical:
+                if not 0 <= offset < area.height:
+                    continue
+                middle = area.x + area.width // 2
+                for column in range(area.width):
+                    glyph = handle if show and column == middle else line
+                    dispatcher.call(
+                        window.addstr, area.y + offset, area.x + column, glyph, style
+                    )
+            else:
+                if not 0 <= offset < area.width:
+                    continue
+                middle = area.y + area.height // 2
+                for row in range(area.height):
+                    glyph = handle if show and row == middle else line
+                    dispatcher.call(
+                        window.addstr, area.y + row, area.x + offset, glyph, style
+                    )
+
+    @property
+    def _showhandle(self) -> bool:
+        """True while the sash shows a handle in its middle."""
+        try:
+            return self.getboolean(self._options["showhandle"])
+        except TclError:
+            return True
+
+
+def _paned_press(event: Event) -> None:
+    """Take the focus, and start dragging a sash if one was clicked."""
+    paned = event.widget
+    paned.focus_set()
+    found = paned.identify(event.x, event.y)
+    paned._active_sash = found[0] if found else None
+    paned._redraw()
+
+
+def _paned_motion(event: Event) -> None:
+    """Move the sash being dragged to the pointer."""
+    paned = event.widget
+    if paned._active_sash is None:
+        return
+    paned.sash_place(paned._active_sash, event.x, event.y)
+
+
+def _paned_release(event: Event) -> None:
+    """Stop dragging, leaving the sash where it was let go."""
+    event.widget._redraw()
+
+
+def _paned_key(event: Event) -> str | None:
+    """Move the active sash with the arrows.
+
+    Along the window's own direction only: the other two arrows would have
+    nothing to move, and swallowing them would trap a keyboard user.
+    """
+    paned = event.widget
+    back, forward = ("Up", "Down") if paned._paned.vertical else ("Left", "Right")
+    if event.keysym == back:
+        paned._move_sash_by(-1)
+    elif event.keysym == forward:
+        paned._move_sash_by(1)
+    elif event.keysym == "Tab" or len(event.keysym) > 1:
+        return None
+    else:
+        return None
+    return "break"
 
 
 class Scrollbar(_Drawable):
@@ -6471,6 +9816,7 @@ class Scale(_Drawable):
         "bigincrement": 0,
         "command": None,
         "digits": 0,
+        "font": "",
         "from_": 0.0,
         "label": "",
         "length": 20,
@@ -6805,7 +10151,9 @@ class Scale(_Drawable):
         if window is None or self.tk.screen is None:
             return
         dispatcher = CursesDispatcher.get()
-        attribute = self._background_attribute()
+        attribute = self._background_attribute() | self._font_attribute()
+        with contextlib.suppress(ValueError):
+            attribute = for_state(str(self._options["state"]), attribute)
         with contextlib.suppress(curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)

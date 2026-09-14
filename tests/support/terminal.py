@@ -118,7 +118,57 @@ class _Screen(pyte.Screen):
     screen that is stably wrong rather than as a missing update, which is
     what makes it worth implementing rather than waiting out: a test sees
     text that no real terminal would ever have shown.
+
+    It also tracks dim, which pyte does not model at all. curses draws a
+    disabled widget with A_DIM and ncurses emits it as SGR 2; pyte's Char has
+    no field for it, so every disabled widget looked identical to a live one
+    and nothing could assert otherwise. Tracked here as a set of cells rather
+    than by extending Char, which is a namedtuple and not extensible.
+
+    The tracking is per line: a run of dim text that wraps onto the next row
+    is recorded only as far as the line it started on. Nothing here writes
+    text that wraps, and widening it would mean reimplementing pyte's own
+    wrapping.
     """
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self._dim = False
+        self._dim_cells: set[tuple[int, int]] = set()
+        super().__init__(*args, **kwargs)
+
+    def reset(self) -> None:
+        """Clear the screen, and everything remembered about it."""
+        super().reset()
+        self._dim = False
+        self._dim_cells = set()
+
+    def select_graphic_rendition(self, *attrs: int, **kwargs: object) -> None:
+        """Note dim on the way past, then let pyte handle the rest.
+
+        SGR 2 turns it on; 0 and 22 turn it off, and ncurses usually sends
+        the pair together as ``ESC [ 0 ; 2 m``, so the order matters.
+        """
+        for code in attrs or (0,):
+            if code == 2:
+                self._dim = True
+            elif code in (0, 22):
+                self._dim = False
+        super().select_graphic_rendition(*attrs, **kwargs)
+
+    def draw(self, data: str) -> None:
+        """Write characters, recording which cells came out dim."""
+        row, start = self.cursor.y, self.cursor.x
+        super().draw(data)
+        end = self.cursor.x if self.cursor.y == row else self.columns
+        for column in range(start, max(start, end)):
+            if self._dim:
+                self._dim_cells.add((row, column))
+            else:
+                self._dim_cells.discard((row, column))
+
+    def is_dim(self, row: int, column: int) -> bool:
+        """Whether one cell was drawn dim."""
+        return (row, column) in self._dim_cells
 
     def cursor_back_tab(self, count: int = 0) -> None:
         """Move the cursor back ``count`` tab stops, as ``CSI Z`` does."""
@@ -170,6 +220,10 @@ class TerminalHarness:
         self._pid: int | None = None
         self._exit_status: int | None = None
         self._stderr = bytearray()
+        #: Every byte the child has sent. Kept so a test can assert what the
+        #: application asked the *terminal* for - mouse modes, cursor
+        #: visibility - which the rendered screen cannot show.
+        self._received = bytearray()
         self._workdir: Path | None = None
 
     # ------------------------------------------------------------ lifecycle
@@ -361,6 +415,7 @@ class TerminalHarness:
                 if not data:
                     continue
                 if fd == self._master:
+                    self._received.extend(data)
                     self._note_modes(data)
                     self._stream.feed(data)
                     got = True
@@ -512,6 +567,12 @@ class TerminalHarness:
         return list(self._screen.display)
 
     @property
+    def received(self) -> bytes:
+        """Every byte the child has written to the terminal so far."""
+        self._drain(0.0)
+        return bytes(self._received)
+
+    @property
     def stderr(self) -> str:
         """Anything the child wrote to stderr, typically a traceback."""
         self._drain(0.0)
@@ -556,6 +617,8 @@ class TerminalHarness:
             "bold": cell.bold,
             "reverse": cell.reverse,
             "underscore": cell.underscore,
+            # pyte has no field for this; _Screen tracks it separately.
+            "dim": self._screen.is_dim(row, col),
         }
 
     def region(self, top: int, left: int, height: int, width: int) -> list[str]:
@@ -648,6 +711,20 @@ _CURSOR_KEYS: dict[str, tuple[bytes, bytes]] = {
 
 #: Key symbols to the bytes a terminal sends for them.
 _KEYS: dict[str, bytes] = {
+    # Modified cursor keys use the CSI 1 ; modifier form, where the modifier
+    # is 1 plus the bits: Shift is 2, Control 5, both 6. ncurses decodes
+    # these through terminfo into single key codes - Shift-Down is KEY_SF,
+    # Shift-Up is KEY_SR - rather than reporting a modifier separately.
+    "<Shift-Up>": b"\x1b[1;2A",
+    "<Shift-Down>": b"\x1b[1;2B",
+    "<Shift-Right>": b"\x1b[1;2C",
+    "<Shift-Left>": b"\x1b[1;2D",
+    "<Shift-Home>": b"\x1b[1;2H",
+    "<Shift-End>": b"\x1b[1;2F",
+    "<Control-Up>": b"\x1b[1;5A",
+    "<Control-Down>": b"\x1b[1;5B",
+    "<Control-Right>": b"\x1b[1;5C",
+    "<Control-Left>": b"\x1b[1;5D",
     "<Return>": b"\r",
     "<Enter>": b"\r",
     "<Tab>": b"\t",

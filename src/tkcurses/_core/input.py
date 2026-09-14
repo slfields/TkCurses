@@ -18,6 +18,7 @@ import curses
 import os
 import select
 import sys
+import termios
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -32,6 +33,7 @@ from tkcurses._core.events import (
     MouseState,
     ResizeEvent,
     keysym_for,
+    shift_held,
 )
 
 if TYPE_CHECKING:
@@ -162,15 +164,14 @@ class MouseDecoder:
         button. It is empty when the report says nothing actionable.
         """
         modifiers = decode_modifiers(bstate)
-        events: list[MouseEvent] = []
-        for button, states in _MASKS.items():
-            event = self._decode_button(button, bstate, x, y, modifiers, states)
-            if event is not None:
-                events.append(event)
-        if events:
-            return events
-        if self._button:
-            # Motion with a button held is a drag, which curses does not name.
+        position = bool(bstate & getattr(curses, "REPORT_MOUSE_POSITION", 0))
+        # Motion while a button is held is a drag, and curses has no name for
+        # one. It has to be decided before the button masks are looked at:
+        # some ncurses builds report a drag as REPORT_MOUSE_POSITION *and*
+        # the button's own pressed bit, and reading that as another press
+        # would re-anchor the selection at every step of the drag - so a drag
+        # would select nothing at all, while press and release looked fine.
+        if position and self._button:
             return [
                 MouseEvent(
                     x=x,
@@ -181,7 +182,25 @@ class MouseDecoder:
                     drag_start=self._start,
                 )
             ]
-        if bstate & getattr(curses, "REPORT_MOUSE_POSITION", 0):
+        events: list[MouseEvent] = []
+        for button, states in _MASKS.items():
+            event = self._decode_button(button, bstate, x, y, modifiers, states)
+            if event is not None:
+                events.append(event)
+        if events:
+            return events
+        if self._button:
+            return [
+                MouseEvent(
+                    x=x,
+                    y=y,
+                    button=self._button,
+                    state="drag",
+                    modifiers=modifiers,
+                    drag_start=self._start,
+                )
+            ]
+        if position:
             return [MouseEvent(x=x, y=y, button=0, state="motion", modifiers=modifiers)]
         return []
 
@@ -231,6 +250,8 @@ class InputHandler:
         dispatcher: CursesDispatcher | None = None,
         click_interval: int = DEFAULT_CLICK_INTERVAL,
         stream: Any = None,
+        report_motion: bool = True,
+        report_hover: bool = False,
     ) -> None:
         self._stdscr = stdscr
         self._dispatcher = dispatcher or CursesDispatcher.get()
@@ -238,6 +259,10 @@ class InputHandler:
         self._decoder = MouseDecoder(click_interval)
         self._mouse_available = False
         self._click_interval = click_interval
+        self._report_motion = report_motion
+        self._report_hover = report_hover
+        self._motion_mode = b""
+        self._saved_termios: tuple[int, list[Any]] | None = None
         self._configure()
 
     def _configure(self) -> None:
@@ -247,7 +272,47 @@ class InputHandler:
         self._dispatcher.call(curses.cbreak)
         # select() does the waiting, so getch() must never block.
         self._dispatcher.call(self._stdscr.nodelay, True)
+        self._disable_flow_control()
         self._enable_mouse()
+
+    def _disable_flow_control(self) -> None:
+        """Stop the tty swallowing Control-S and Control-Q.
+
+        They are XOFF and XON: the line discipline uses them to pause and
+        resume output, and never passes either on - so an application that
+        binds Control-Q, as a menu with a Ctrl+Q accelerator invites, never
+        sees the key at all. curses' raw() would clear them, but it also
+        stops Control-C raising an interrupt, which is far too much to give
+        up for two keys; clearing the two input flags directly keeps signals
+        working.
+        """
+        stream = sys.__stdin__
+        if stream is None:
+            return
+        try:
+            fd = stream.fileno()
+            saved = termios.tcgetattr(fd)
+        except (termios.error, ValueError, OSError, AttributeError):
+            return
+        self._saved_termios = (fd, saved)
+        attributes = list(saved)
+        attributes[0] &= ~(termios.IXON | termios.IXOFF | termios.IXANY)
+        with contextlib.suppress(termios.error, OSError):
+            termios.tcsetattr(fd, termios.TCSANOW, attributes)
+
+    def _restore_flow_control(self) -> None:
+        """Put the tty's flow control back the way it was found."""
+        if self._saved_termios is None:
+            return
+        fd, saved = self._saved_termios
+        self._saved_termios = None
+        with contextlib.suppress(termios.error, OSError, ValueError):
+            termios.tcsetattr(fd, termios.TCSANOW, saved)
+
+    def restore(self) -> None:
+        """Undo everything this handler did to the terminal."""
+        self.disable_mouse()
+        self._restore_flow_control()
 
     def _enable_mouse(self) -> None:
         """Ask for mouse reporting, tolerating terminals that refuse."""
@@ -266,8 +331,80 @@ class InputHandler:
             # MouseDecoder does the counting; its docstring says what
             # ncurses' own version cost.
             self._dispatcher.call(curses.mouseinterval, 0)
+            self._enable_motion()
+
+    def _enable_motion(self) -> None:
+        """Ask the terminal itself to report the mouse moving.
+
+        ncurses will not. ``mousemask`` accepts REPORT_MOUSE_POSITION and
+        reports it granted, but the only thing it sends the terminal is
+        ``ESC [ ? 1006 ; 1000 h`` - SGR encoding and *normal* tracking, which
+        is press and release and nothing else. Its built-in xterm string
+        hard-codes 1000, and only a terminfo entry with an ``XM`` capability
+        of its own would change that.
+
+        So the mode is set here. 1002 reports motion while a button is held,
+        which is what a drag is; 1003 reports every movement, which is what
+        hovering needs and what floods an application that does not. Written
+        through ncurses' own output so it cannot overtake what curses has
+        buffered.
+        """
+        if self._report_hover:
+            self._motion_mode = b"\x1b[?1003h"
+        elif self._report_motion:
+            self._motion_mode = b"\x1b[?1002h"
+        else:
+            return
+        self.enable_motion()
+
+    def enable_motion(self) -> bool:
+        """Write the motion mode to the terminal. True if it was written.
+
+        Straight to the terminal's file descriptor, not through putp. ncurses
+        sends its own ``1006;1000h`` through its output buffer, and a mode
+        written into that buffer is at the mercy of when it is flushed and of
+        anything ncurses decides to write afterwards - so the screen is
+        flushed first and ours goes out last, where nothing can overtake it.
+
+        Safe to call more than once, and worth doing: a single mode string
+        lost during startup is the difference between drags working and a
+        terminal that never reports them.
+        """
+        if not self._motion_mode:
+            return False
+        with contextlib.suppress(curses.error):
+            self._dispatcher.call(curses.doupdate)
+        return self._write_to_terminal(self._motion_mode)
+
+    @staticmethod
+    def _write_to_terminal(data: bytes) -> bool:
+        """Put bytes on the terminal itself, past any buffering."""
+        stream = sys.__stdout__
+        if stream is None:
+            return False
+        try:
+            os.write(stream.fileno(), data)
+        except (OSError, ValueError):
+            return False
+        return True
+
+    def disable_mouse(self) -> None:
+        """Stop the terminal reporting the mouse, on the way out.
+
+        A terminal left in 1002 or 1003 goes on sending mouse reports to
+        whatever runs next, which sees them as garbage input.
+        """
+        if not self._motion_mode:
+            return
+        self._motion_mode = b""
+        self._write_to_terminal(b"\x1b[?1003l\x1b[?1002l")
 
     # ------------------------------------------------------------- state
+
+    @property
+    def motion_mode(self) -> bytes:
+        """The motion mode this handler asked the terminal for, if any."""
+        return self._motion_mode
 
     @property
     def mouse_available(self) -> bool:
@@ -378,6 +515,8 @@ class InputHandler:
                 modifiers |= MOD_CTRL
         elif 32 <= code <= 126:
             char = chr(code)
+        if shift_held(code):
+            modifiers |= MOD_SHIFT
         return KeyEvent(
             keycode=code,
             keysym=keysym_for(code),

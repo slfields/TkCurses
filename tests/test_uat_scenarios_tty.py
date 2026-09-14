@@ -56,8 +56,16 @@ def test_a_scenario_starts_renders_and_exits_cleanly(uat_terminal, scenario):
     assert "Traceback" not in term.stderr
 
 
+#: Rows the whole listing needs: two lines per scenario, plus the header and
+#: the footer. Computed rather than guessed, because the listing grows every
+#: time a scenario is added and a fixed number quietly starts scrolling the
+#: top off instead of failing for a reason anyone can read.
+def _listing_rows() -> int:
+    return 2 * len(scenarios()) + 14
+
+
 def test_the_runner_lists_every_scenario(uat_terminal):
-    term = uat_terminal(cols=80, rows=60)
+    term = uat_terminal(cols=80, rows=_listing_rows())
     term.run([sys.executable, "-m", "uat"])
     assert term.wait_for_exit(timeout=10) == 0
     for scenario in scenarios():
@@ -96,9 +104,7 @@ raise SystemExit(_support.run("broken", build))
 
 
 def test_the_runner_works_when_given_its_path(terminal):
-    # Tall enough to hold the whole listing: two lines per scenario, and the
-    # header scrolls off a short screen as scenarios are added.
-    term = terminal(cols=80, rows=60, env={"PYTHONSAFEPATH": "1"})
+    term = terminal(cols=80, rows=_listing_rows(), env={"PYTHONSAFEPATH": "1"})
     term.run([sys.executable, str(PROJECT_ROOT / "uat")])
     assert term.wait_for_exit(timeout=10) == 0
     assert "Acceptance scenarios" in "\n".join(term.display)

@@ -14,7 +14,7 @@ character grid means on top of a neighbour.
 
 from __future__ import annotations
 
-__all__ = ["align_offset", "measure", "wrap"]
+__all__ = ["align_offset", "measure", "wrap", "wrap_spans"]
 
 #: Where each justification puts a short line within the available width.
 _JUSTIFY_FRACTIONS: dict[str, float] = {
@@ -89,3 +89,38 @@ def align_offset(line_width: int, available: int, justify: str = "left") -> int:
     except KeyError:
         raise ValueError(f"unknown justify: {justify!r}") from None
     return max(0, int((available - line_width) * fraction))
+
+
+def wrap_spans(line: str, width: int, mode: str = "char") -> list[tuple[int, int]]:
+    """Where one line breaks on screen, as ``(start, end)`` character offsets.
+
+    Offsets rather than strings, because a Text has to turn a screen position
+    back into a position in its buffer, and a list of wrapped strings cannot
+    answer that - the breaks have thrown the offsets away. :func:`wrap` is
+    still the right thing for a Label, which only ever needs to draw.
+
+    ``mode`` is Tk's ``wrap`` option: ``none`` leaves the line whole and lets
+    the widget scroll sideways, ``char`` breaks wherever the width runs out,
+    and ``word`` breaks at the last space that fits, keeping that space at the
+    end of the line it broke - which is what stops a wrapped paragraph
+    starting every line with a space.
+
+    Always at least one span, so an empty line still occupies a row.
+    """
+    if width <= 0 or mode == "none" or not line:
+        return [(0, len(line))]
+    spans: list[tuple[int, int]] = []
+    start = 0
+    while start < len(line):
+        end = min(start + width, len(line))
+        if mode == "word" and end < len(line):
+            # Searched within the span, not one past it. A space sitting
+            # exactly at start + width would otherwise be kept as well, and
+            # the row would come out one cell wider than the area it has to
+            # fit in - which in a character grid means over the border.
+            cut = line.rfind(" ", start, end)
+            if cut > start:
+                end = cut + 1
+        spans.append((start, end))
+        start = end
+    return spans

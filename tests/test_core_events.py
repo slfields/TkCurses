@@ -17,6 +17,7 @@ from tkcurses._core.events import (
     ResizeEvent,
     keysym_for,
     modifier_names,
+    shift_held,
 )
 
 # ------------------------------------------------------------------ events
@@ -148,3 +149,33 @@ def test_page_keys_use_tkinter_not_curses_names():
 def test_every_printable_ascii_has_a_keysym():
     for code in range(32, 127):
         assert keysym_for(code), f"no keysym for {code}"
+
+
+# ------------------------------------------------------------ shifted keys
+
+
+@pytest.mark.parametrize(
+    ("keycode", "expected"),
+    [
+        (curses.KEY_SLEFT, "Left"),
+        (curses.KEY_SRIGHT, "Right"),
+        (curses.KEY_SF, "Down"),
+        (curses.KEY_SR, "Up"),
+        (curses.KEY_SHOME, "Home"),
+        (curses.KEY_SEND, "End"),
+    ],
+)
+def test_a_shifted_arrow_is_the_plain_keysym(keycode, expected):
+    """ncurses reports Shift-Down as KEY_SF, not as Down with a modifier.
+
+    Without this, selecting with the keyboard could not work at all:
+    Shift-Right was indistinguishable from Right, so nothing extended a
+    selection.
+    """
+    assert keysym_for(keycode) == expected
+    assert shift_held(keycode)
+
+
+def test_a_plain_arrow_is_not_shifted():
+    assert not shift_held(curses.KEY_DOWN)
+    assert keysym_for(curses.KEY_DOWN) == "Down"

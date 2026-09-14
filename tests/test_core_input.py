@@ -203,13 +203,29 @@ class FakeScreen:
         return self.codes.pop(0) if self.codes else curses.ERR
 
 
+#: What the handler asked the terminal for, filled in by the stub below.
+PUT: list[bytes] = []
+
+
 @pytest.fixture
 def curses_stub(monkeypatch):
-    """Neutralise the curses calls the handler makes during setup."""
+    """Neutralise the curses calls the handler makes during setup.
+
+    The terminal write included: it goes straight to the file descriptor, so
+    without a stub these tests set the developer's own terminal reporting the
+    mouse and leave it that way.
+    """
+    PUT.clear()
     monkeypatch.setattr(curses, "noecho", lambda: None)
     monkeypatch.setattr(curses, "cbreak", lambda: None)
     monkeypatch.setattr(curses, "mousemask", lambda mask: (mask, 0))
     monkeypatch.setattr(curses, "mouseinterval", lambda ms: None)
+    monkeypatch.setattr(curses, "doupdate", lambda: None)
+    monkeypatch.setattr(
+        InputHandler,
+        "_write_to_terminal",
+        staticmethod(lambda data: bool(PUT.append(data)) or True),
+    )
     return monkeypatch
 
 
@@ -336,3 +352,75 @@ def test_button_masks_of_this_platform_cover_the_main_buttons():
     masks = button_masks()
     assert {1, 2, 3} <= set(masks)
     assert "pressed" in masks[1]
+
+
+# --------------------------------------------------------- motion reporting
+
+
+def test_the_handler_asks_the_terminal_for_drags(curses_stub):
+    """ncurses asks only for press and release, whatever mousemask grants."""
+    make_handler(FakeScreen())
+    assert b"\x1b[?1002h" in PUT
+
+
+def test_hover_reporting_is_not_asked_for_by_default(curses_stub):
+    make_handler(FakeScreen())
+    assert b"\x1b[?1003h" not in PUT
+
+
+def test_hover_reporting_is_asked_for_when_wanted(curses_stub):
+    make_handler(FakeScreen(), report_hover=True)
+    assert b"\x1b[?1003h" in PUT
+    assert b"\x1b[?1002h" not in PUT
+
+
+def test_nothing_is_asked_for_when_motion_is_off(curses_stub):
+    make_handler(FakeScreen(), report_motion=False)
+    assert PUT == []
+
+
+def test_the_terminal_is_put_back(curses_stub):
+    handler = make_handler(FakeScreen())
+    handler.disable_mouse()
+    assert b"\x1b[?1003l\x1b[?1002l" in PUT
+
+
+def test_putting_it_back_twice_is_harmless(curses_stub):
+    handler = make_handler(FakeScreen())
+    handler.disable_mouse()
+    before = len(PUT)
+    handler.disable_mouse()
+    assert len(PUT) == before
+
+
+def test_a_drag_reported_with_the_button_bit_is_still_a_drag(curses_stub):
+    """Some ncurses builds set both, and reading it as a press is fatal.
+
+    Every motion of the drag would look like a fresh press, re-anchoring the
+    selection where the pointer is - so a drag would select nothing while
+    press and release went on working perfectly.
+    """
+    handler = make_handler(FakeScreen())
+    decoder = handler.decoder
+    pressed = decoder.decode(4, 4, curses.BUTTON1_PRESSED)
+    assert [event.state for event in pressed] == ["pressed"]
+    dragged = decoder.decode(
+        9, 4, curses.BUTTON1_PRESSED | curses.REPORT_MOUSE_POSITION
+    )
+    assert [event.state for event in dragged] == ["drag"]
+    assert dragged[0].button == 1
+
+
+def test_motion_with_no_button_held_is_not_a_drag(curses_stub):
+    handler = make_handler(FakeScreen())
+    events = handler.decoder.decode(3, 3, curses.REPORT_MOUSE_POSITION)
+    assert [event.state for event in events] == ["motion"]
+
+
+def test_a_press_after_a_release_is_a_press_again(curses_stub):
+    handler = make_handler(FakeScreen())
+    decoder = handler.decoder
+    decoder.decode(1, 1, curses.BUTTON1_PRESSED)
+    decoder.decode(1, 1, curses.BUTTON1_RELEASED)
+    events = decoder.decode(2, 2, curses.BUTTON1_PRESSED | curses.REPORT_MOUSE_POSITION)
+    assert [event.state for event in events] == ["pressed"]
