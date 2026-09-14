@@ -129,10 +129,12 @@ itself worth watching.
       crashes nor draws nonsense
 - [ ] Make it large again and check the layout recovers exactly
 
-> **Known and already filed:** at a size too small for everything to fit, a
-> box that should be off screen can still be drawn, on top of one that should
-> be there. That is **TkCurses-pxk**, not a new fault. Fragments of the
-> previous layout surviving a shrink were **TkCurses-by3**, now fixed.
+> **Known and already filed:** a widget the screen edge cuts in half draws all
+> of itself into the smaller window it was given, so the overflow wraps onto
+> the next row instead of being dropped — a box border that runs on into the
+> line below. That is **TkCurses-4jd.3**, not a new fault. A box that should
+> be off screen being drawn anyway was **TkCurses-pxk**, and fragments of the
+> previous layout surviving a shrink were **TkCurses-by3**; both are fixed.
 
 ---
 

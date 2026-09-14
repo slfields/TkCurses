@@ -403,6 +403,74 @@ def test_a_toplevel_clipped_by_a_small_terminal_comes_back_whole(terminal, tmp_p
     )
 
 
+def test_a_container_going_off_screen_takes_its_children_with_it(terminal, tmp_path):
+    """A window dropped for being off screen must drop its children's too.
+
+    Nothing lays the children out again: their rects are offsets from the
+    container's and did not change, and the container itself is not laid out
+    at all once it is off screen. Only the curses windows are wrong, so this
+    is visible on the terminal and nowhere else - the child stays drawn where
+    it was, on top of whatever is in that place now.
+
+    Found in uat/scenario_11_grid at 34x9, where the fifth box is off the
+    bottom and its label was drawn over the third box's, hiding it.
+    """
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        program(
+            "keep = tkcurses.Frame(root, width=12, height=4, relief='solid')\n"
+            "tkcurses.Label(keep, text='K').place(x=1, y=1)\n"
+            "keep.place(x=0, y=2)\n"
+            "gone = tkcurses.Frame(root, width=12, height=4)\n"
+            "tkcurses.Label(gone, text='G').place(x=1, y=1)\n"
+            "gone.place(x=0, y=6)\n"
+            "root.update_layout()\n"
+            "def banish(event):\n"
+            "    gone.place(y=40)\n"
+            "    root.update_layout()\n"
+            '    buffer.write(0, 0, "moved")\n'
+            "    root.tk.screen.refresh()\n"
+            'root.bind("<Key-b>", banish)'
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda t: t.contains("G"), message="the label to start with")
+    term.send(b"b")
+    term.wait_for_text("moved")
+    term.wait_for(
+        lambda t: not t.contains("G"), message="the label of the banished frame to go"
+    )
+    assert term.contains("K"), (
+        f"the frame that stayed put lost its label too:\n{term.describe()}"
+    )
+
+
+def test_a_container_coming_back_brings_its_children_with_it(terminal, tmp_path):
+    """The other direction: a window made again has to make its children's."""
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        program(
+            "box = tkcurses.Frame(root, width=12, height=4, relief='solid')\n"
+            "tkcurses.Label(box, text='G').place(x=1, y=1)\n"
+            "box.place(x=0, y=40)\n"
+            "root.update_layout()\n"
+            "def bring_back(event):\n"
+            "    box.place(y=3)\n"
+            "    root.update_layout()\n"
+            '    buffer.write(0, 0, "moved")\n'
+            "    root.tk.screen.refresh()\n"
+            'buffer.write(0, 0, "ready")\n'
+            'root.bind("<Key-b>", bring_back)'
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("ready")
+    assert not term.contains("G"), "the frame starts off screen"
+    term.send(b"b")
+    term.wait_for_text("moved")
+    term.wait_for(lambda t: t.contains("G"), message="the label to come back")
+
+
 def test_moving_a_container_takes_its_children_with_it(terminal, tmp_path):
     """A container that moves without resizing must relocate its children.
 

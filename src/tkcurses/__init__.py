@@ -1976,12 +1976,12 @@ class BaseWidget(Misc):
             self.tk.layout.invalidate(self)
         if not self._sync_window():
             return
-        # The widget's window has gone somewhere else on the screen, and its
-        # descendants' windows have not: their rects are offsets from this
-        # one and so did not change, which is exactly why nothing above tells
-        # them anything. A container that moves without changing size does
-        # not lay its children out again, so without this the children stay
-        # drawn where the container used to be.
+        # The widget's window has changed and its descendants' have not:
+        # their rects are offsets from this one and so did not change, which
+        # is exactly why nothing above tells them anything. A container that
+        # moves without changing size does not lay its children out again,
+        # and one that goes off screen is not laid out at all - so without
+        # this the children stay drawn where the container used to be.
         for widget in self._subtree():
             # A subtree is typed as Misc, and only a widget has a window; the
             # root is the one Misc that is not a widget, and it is nobody's
@@ -1993,18 +1993,23 @@ class BaseWidget(Misc):
         """Put this widget's curses window where its geometry now says.
 
         Returns:
-            True if the window moved or was rebuilt, so anything positioned
-            relative to it has to be seen to as well.
+            True if the window changed at all - made, dropped, moved or
+            rebuilt - so that anything positioned relative to it has to be
+            seen to as well. A widget that goes off screen counts: its own
+            window is dropped, and the descendants whose windows are drawn
+            over the same cells would otherwise stay exactly where they
+            were, which is a label left behind on top of whatever is now in
+            its place.
         """
         stack = self.tk.panels
         if stack is None:
             return False
         if self._rect.is_empty:
-            self._destroy_window()
-            return False
+            return self._drop_window()
         if self._panel is None:
             if self._mapped:
                 self._create_window()
+                return self._panel is not None
             return False
         # Compared against where the panel actually is, not against the
         # widget's previous rect: a rect is an offset from the master, so an
@@ -2013,8 +2018,7 @@ class BaseWidget(Misc):
         if target.is_empty:
             # Entirely off screen. The widget keeps its geometry and gets its
             # window back when it comes into view again.
-            self._destroy_window()
-            return False
+            return self._drop_window()
         current = self._panel.rect
         if (target.width, target.height) != (current.width, current.height):
             # Curses cannot resize a window in place, and replacing it is also
@@ -2027,6 +2031,12 @@ class BaseWidget(Misc):
             self._redraw()
             return True
         return False
+
+    def _drop_window(self) -> bool:
+        """Release this widget's window and say whether there was one."""
+        had_one = self._panel is not None
+        self._destroy_window()
+        return had_one
 
     def _map(self) -> None:
         """Put the widget on screen, creating its window if it has none.
