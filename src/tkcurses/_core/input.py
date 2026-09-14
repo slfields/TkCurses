@@ -313,8 +313,38 @@ class InputHandler:
             self._motion_mode = b"\x1b[?1002h"
         else:
             return
+        self.enable_motion()
+
+    def enable_motion(self) -> bool:
+        """Write the motion mode to the terminal. True if it was written.
+
+        Straight to the terminal's file descriptor, not through putp. ncurses
+        sends its own ``1006;1000h`` through its output buffer, and a mode
+        written into that buffer is at the mercy of when it is flushed and of
+        anything ncurses decides to write afterwards - so the screen is
+        flushed first and ours goes out last, where nothing can overtake it.
+
+        Safe to call more than once, and worth doing: a single mode string
+        lost during startup is the difference between drags working and a
+        terminal that never reports them.
+        """
+        if not self._motion_mode:
+            return False
         with contextlib.suppress(curses.error):
-            self._dispatcher.call(curses.putp, self._motion_mode)
+            self._dispatcher.call(curses.doupdate)
+        return self._write_to_terminal(self._motion_mode)
+
+    @staticmethod
+    def _write_to_terminal(data: bytes) -> bool:
+        """Put bytes on the terminal itself, past any buffering."""
+        stream = sys.__stdout__
+        if stream is None:
+            return False
+        try:
+            os.write(stream.fileno(), data)
+        except (OSError, ValueError):
+            return False
+        return True
 
     def disable_mouse(self) -> None:
         """Stop the terminal reporting the mouse, on the way out.
@@ -325,10 +355,14 @@ class InputHandler:
         if not self._motion_mode:
             return
         self._motion_mode = b""
-        with contextlib.suppress(curses.error):
-            self._dispatcher.call(curses.putp, b"\x1b[?1003l\x1b[?1002l")
+        self._write_to_terminal(b"\x1b[?1003l\x1b[?1002l")
 
     # ------------------------------------------------------------- state
+
+    @property
+    def motion_mode(self) -> bytes:
+        """The motion mode this handler asked the terminal for, if any."""
+        return self._motion_mode
 
     @property
     def mouse_available(self) -> bool:

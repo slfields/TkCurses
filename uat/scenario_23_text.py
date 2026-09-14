@@ -135,6 +135,8 @@ def build(root, screen):
         handler = getattr(root, "_input", None)
         if handler is None:
             return
+        mode = handler.motion_mode
+        state["raw"] = f"asked for {mode.decode('ascii', 'replace')!r}"
         decoder = handler.decoder
         original = decoder.decode
 

@@ -211,16 +211,21 @@ PUT: list[bytes] = []
 def curses_stub(monkeypatch):
     """Neutralise the curses calls the handler makes during setup.
 
-    putp included: it writes straight to the terminal, so without a stub
-    these tests set the developer's own terminal reporting the mouse and
-    leave it that way.
+    The terminal write included: it goes straight to the file descriptor, so
+    without a stub these tests set the developer's own terminal reporting the
+    mouse and leave it that way.
     """
     PUT.clear()
     monkeypatch.setattr(curses, "noecho", lambda: None)
     monkeypatch.setattr(curses, "cbreak", lambda: None)
     monkeypatch.setattr(curses, "mousemask", lambda mask: (mask, 0))
     monkeypatch.setattr(curses, "mouseinterval", lambda ms: None)
-    monkeypatch.setattr(curses, "putp", PUT.append)
+    monkeypatch.setattr(curses, "doupdate", lambda: None)
+    monkeypatch.setattr(
+        InputHandler,
+        "_write_to_terminal",
+        staticmethod(lambda data: bool(PUT.append(data)) or True),
+    )
     return monkeypatch
 
 
@@ -417,7 +422,5 @@ def test_a_press_after_a_release_is_a_press_again(curses_stub):
     decoder = handler.decoder
     decoder.decode(1, 1, curses.BUTTON1_PRESSED)
     decoder.decode(1, 1, curses.BUTTON1_RELEASED)
-    events = decoder.decode(
-        2, 2, curses.BUTTON1_PRESSED | curses.REPORT_MOUSE_POSITION
-    )
+    events = decoder.decode(2, 2, curses.BUTTON1_PRESSED | curses.REPORT_MOUSE_POSITION)
     assert [event.state for event in events] == ["pressed"]

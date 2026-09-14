@@ -6,6 +6,7 @@ genuine pty, so they are driven through the harness.
 
 from __future__ import annotations
 
+import re
 import time
 
 import pytest
@@ -468,3 +469,30 @@ def test_the_terminal_is_put_back_on_the_way_out(terminal, tmp_path):
     )
     term.wait_for_exit(timeout=10)
     assert b"\x1b[?1002l" in term.received
+
+
+def test_the_motion_mode_is_written_after_the_screen_is_up(terminal, tmp_path):
+    """Once at setup and once from the loop, so nothing can overtake it.
+
+    ncurses writes its own mouse mode through its output buffer. A mode that
+    goes into that buffer is at the mercy of when it is flushed and of
+    whatever ncurses writes afterwards, so this one goes straight to the
+    terminal, last.
+    """
+    term = terminal(cols=30, rows=6)
+    term.run_source(
+        "import tkcurses\n"
+        "root = tkcurses.Tk()\n"
+        "root.tk.screen.buffer.write(0, 0, 'up')\n"
+        "root.tk.screen.refresh()\n"
+        "root.after(600, root.quit)\n"
+        "root.mainloop()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("up")
+    term.wait_for_exit(timeout=10)
+    received = term.received
+    assert received.count(b"\x1b[?1002h") >= 2
+    # And it is the last mouse mode set, so nothing overrides it.
+    modes = re.findall(rb"\x1b\[\?([0-9;]*100[0-9][0-9;]*)h", received)
+    assert modes[-1] == b"1002"

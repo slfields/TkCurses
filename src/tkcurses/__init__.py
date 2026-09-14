@@ -3073,6 +3073,7 @@ class Tk(BaseWidget, Wm):
         self._screen = CursesScreen()
         self._mouse_owner: Misc | None = None
         self._input: InputHandler | None = None
+        self._motion_asserted = False
         self._started = False
         self._running = False
 
@@ -3201,6 +3202,14 @@ class Tk(BaseWidget, Wm):
         """Wait for input up to the next timer's deadline, then route it."""
         if self._input is None:
             return
+        if not self._motion_asserted:
+            # Once more, now that the screen has been painted and whatever
+            # ncurses wanted to say to the terminal has been said. A mouse
+            # mode lost during startup is the difference between drags
+            # working and a terminal that never reports one, and the cost of
+            # being sure is a single write.
+            self._motion_asserted = True
+            self._input.enable_motion()
         delay = self.tk.timers.next_delay()
         timeout = (
             _IDLE_TIMEOUT_MS
