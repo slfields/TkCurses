@@ -124,9 +124,53 @@ anywhere · `F3` for a menu taller than the terminal
 - [ ] **`F3` posts more entries than the terminal has rows**, and the arrows
       scroll through them to `Item 39` rather than stopping at the bottom
 
+## 26. Menubuttons, option menus and panes
+
+`python3 -m uat 26` · click `File` and the option menu · drag the sashes ·
+`Tab` to a pane and use the arrows · `F2` add a pane, `F3` remove one, `F4`
+turn it on its side
+
+- [ ] `File` posts a menu, and choosing an entry closes it and reports the
+      choice
+- [ ] The option menu shows the current size, and choosing a different one
+      changes what the button says
+- [ ] Both are clickable *and* reachable by Tab and Return
+- [ ] Dragging a sash moves the boundary between two panes and leaves the
+      others alone
+- [ ] **A sash you have dragged stays where you put it** when a pane is added
+      or the terminal is resized — that is the difference between a paned
+      window and a row of packed frames
+- [ ] A pane never shrinks below its minimum, however hard the sash is pushed
+- [ ] The widths at the top always add up to the window, sashes included
+- [ ] `Tab` reaches a paned window and the arrows move its sash
+- [ ] The nested vertical panes work the same way inside the horizontal ones
+- [ ] `F4` turns the whole thing on its side and the panes come with it
+- [ ] Shrinking the terminal squeezes the panes rather than losing them
+
 ---
 
 ## What this found
+
+- **A pane was laid out and never mapped**, so the panes were in exactly the
+  right places and nothing at all was drawn. A geometry manager does two
+  things beyond deciding where a child goes: it claims the child, and it maps
+  it so there is a window to draw into.
+- **The sashes were drawn before the layout knew where they were.** A window
+  is painted when it is allocated, which is before its own manager has worked
+  anything out — so they were drawn at position zero, underneath the first
+  pane.
+- **A menu posted off the screen.** `Menu.post` allocated screen coordinates
+  as if they were relative to the master. That is the same thing only when the
+  master is the root, which every menu so far had been; an OptionMenu makes
+  its menu a child of the button, as tkinter does.
+- **Every OptionMenu was inert.** Binding tags name one class, not a chain, so
+  bindings registered under the literal `"Menubutton"` matched nothing on an
+  `OptionMenu`. Spinbox meets the same trap with Entry and says so in a
+  comment — which did not stop it being walked into a second time.
+- **Two guesses about OptionMenu were wrong**, and driving a real
+  `tkinter.OptionMenu` corrected both: building one does *not* write the
+  variable, so an empty one shows nothing until something is chosen; and its
+  entries are commands, not radiobuttons.
 
 - **Control-Q and Control-S never reached the application.** They are XON and
   XOFF: the line discipline uses them to pause and resume output and passes

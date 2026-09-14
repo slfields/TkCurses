@@ -51,7 +51,7 @@ def show() -> int:
     print("                 docs/UAT_GEOMETRY.md (10-14),")
     print("                 docs/UAT_INTERACTIVE.md (15-19),")
     print("                 docs/UAT_VALUES.md (20-22),")
-    print("                 docs/UAT_CONTENT.md (23-25)")
+    print("                 docs/UAT_CONTENT.md (23-26)")
     return 0
 
 
