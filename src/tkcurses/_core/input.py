@@ -18,6 +18,7 @@ import curses
 import os
 import select
 import sys
+import termios
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -261,6 +262,7 @@ class InputHandler:
         self._report_motion = report_motion
         self._report_hover = report_hover
         self._motion_mode = b""
+        self._saved_termios: tuple[int, list[Any]] | None = None
         self._configure()
 
     def _configure(self) -> None:
@@ -270,7 +272,47 @@ class InputHandler:
         self._dispatcher.call(curses.cbreak)
         # select() does the waiting, so getch() must never block.
         self._dispatcher.call(self._stdscr.nodelay, True)
+        self._disable_flow_control()
         self._enable_mouse()
+
+    def _disable_flow_control(self) -> None:
+        """Stop the tty swallowing Control-S and Control-Q.
+
+        They are XOFF and XON: the line discipline uses them to pause and
+        resume output, and never passes either on - so an application that
+        binds Control-Q, as a menu with a Ctrl+Q accelerator invites, never
+        sees the key at all. curses' raw() would clear them, but it also
+        stops Control-C raising an interrupt, which is far too much to give
+        up for two keys; clearing the two input flags directly keeps signals
+        working.
+        """
+        stream = sys.__stdin__
+        if stream is None:
+            return
+        try:
+            fd = stream.fileno()
+            saved = termios.tcgetattr(fd)
+        except (termios.error, ValueError, OSError, AttributeError):
+            return
+        self._saved_termios = (fd, saved)
+        attributes = list(saved)
+        attributes[0] &= ~(termios.IXON | termios.IXOFF | termios.IXANY)
+        with contextlib.suppress(termios.error, OSError):
+            termios.tcsetattr(fd, termios.TCSANOW, attributes)
+
+    def _restore_flow_control(self) -> None:
+        """Put the tty's flow control back the way it was found."""
+        if self._saved_termios is None:
+            return
+        fd, saved = self._saved_termios
+        self._saved_termios = None
+        with contextlib.suppress(termios.error, OSError, ValueError):
+            termios.tcsetattr(fd, termios.TCSANOW, saved)
+
+    def restore(self) -> None:
+        """Undo everything this handler did to the terminal."""
+        self.disable_mouse()
+        self._restore_flow_control()
 
     def _enable_mouse(self) -> None:
         """Ask for mouse reporting, tolerating terminals that refuse."""

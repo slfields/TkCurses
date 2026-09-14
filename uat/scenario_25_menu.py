@@ -6,6 +6,8 @@ Down through a dropdown, Right opens a submenu and Left closes it. Escape
 dismisses. Right-click anywhere for a popup, including **near the bottom
 right corner**. Press F3 for a menu with more entries than the terminal has
 rows.
+Ctrl+N, Ctrl+O and Ctrl+Q work from anywhere, including Ctrl+Q - which the
+terminal would normally swallow as flow control.
 What to look for: a dropdown covers the window beneath it and disappears
 cleanly, leaving no marks behind. Clicking away from a menu closes it.
 Accelerators are right-aligned and the underlined letter chooses its entry.
@@ -91,7 +93,7 @@ def build(root, screen):
         )
         screen.line(2, "  Click the bar, or F2 to open File from the keyboard.")
         screen.line(3, "  Arrows move.  Escape closes.  Right-click for a popup.")
-        screen.line(4, "  F3 posts a menu taller than this terminal.")
+        screen.line(4, "  F3 posts a taller menu.  Ctrl+N / Ctrl+O / Ctrl+Q work too.")
         screen.footer(" Escape quits ")
         screen.refresh()
 
@@ -106,6 +108,17 @@ def build(root, screen):
     def post_tall(event):
         tall.post(2, 2)
         return "break"
+
+    # Tk's -accelerator draws the text and binds nothing: the application
+    # binds the key itself, and it is the application's business to keep the
+    # two in step. Checked against Tk 9.0.2, where an accelerator alone fires
+    # no command either.
+    for sequence, what in (
+        ("<Control-n>", "New"),
+        ("<Control-o>", "Open"),
+        ("<Control-q>", "Quit"),
+    ):
+        root.bind_all(sequence, lambda event, label=what: chose(label)())
 
     root.bind_all("<Key-F2>", open_file)
     root.bind_all("<Key-F3>", post_tall)

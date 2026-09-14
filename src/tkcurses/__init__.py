@@ -3373,7 +3373,7 @@ class Tk(BaseWidget, Wm):
         self.tk.screen = None
         self.tk.colors = None
         if self._input is not None:
-            self._input.disable_mouse()
+            self._input.restore()
         self._input = None
         with contextlib.suppress(Exception):
             self._screen.stop()

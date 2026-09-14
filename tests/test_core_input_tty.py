@@ -496,3 +496,81 @@ def test_the_motion_mode_is_written_after_the_screen_is_up(terminal, tmp_path):
     # And it is the last mouse mode set, so nothing overrides it.
     modes = re.findall(rb"\x1b\[\?([0-9;]*100[0-9][0-9;]*)h", received)
     assert modes[-1] == b"1002"
+
+
+def _key_reporter() -> str:
+    return (
+        "import tkcurses\n"
+        "root = tkcurses.Tk()\n"
+        "buffer = root.tk.screen.buffer\n"
+        "def show(event):\n"
+        "    buffer.write(1, 0, 'key=%s state=%d   ' % (event.keysym, event.state))\n"
+        "    root.tk.screen.refresh()\n"
+        "root.bind_all('<Any-Key>', show)\n"
+        "buffer.write(0, 0, 'ready')\n"
+        "root.tk.screen.refresh()\n"
+        "root.after(4000, root.quit)\n"
+        "root.mainloop()\n"
+        "root.destroy()\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("byte", "keysym"),
+    [(b"\x0e", "n"), (b"\x0f", "o"), (b"\x11", "q"), (b"\x13", "s")],
+)
+def test_control_keys_reach_the_application(terminal, tmp_path, byte, keysym):
+    """Control-Q and Control-S are XON and XOFF to the line discipline.
+
+    It uses them to pause and resume output and passes neither on, so an
+    application that binds Control-Q - as a menu with a Ctrl+Q accelerator
+    invites - never saw the key at all.
+    """
+    term = terminal(cols=40, rows=6)
+    term.run_source(_key_reporter(), workdir=tmp_path)
+    term.wait_for_text("ready")
+    term.send(byte)
+    term.wait_for_text(f"key={keysym} state=2")
+
+
+def test_control_c_still_interrupts(terminal, tmp_path):
+    """Flow control is cleared by hand rather than with raw(), which would
+    also stop Control-C raising an interrupt - too much to give up."""
+    term = terminal(cols=40, rows=6)
+    term.run_source(
+        "import tkcurses\n"
+        "root = tkcurses.Tk()\n"
+        "buffer = root.tk.screen.buffer\n"
+        "buffer.write(0, 0, 'ready')\n"
+        "root.tk.screen.refresh()\n"
+        "try:\n"
+        "    root.after(4000, root.quit)\n"
+        "    root.mainloop()\n"
+        "except KeyboardInterrupt:\n"
+        "    root.destroy()\n"
+        "    raise SystemExit(7)\n"
+        "root.destroy()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("ready")
+    term.send(b"\x03")
+    assert term.wait_for_exit(timeout=10) == 7
+
+
+def test_the_terminal_flow_control_is_put_back(terminal, tmp_path):
+    """A tty left without XON/XOFF is a tty whose next program cannot be paused."""
+    term = terminal(cols=40, rows=6)
+    term.run_source(
+        "import sys, termios, tkcurses\n"
+        "before = termios.tcgetattr(sys.__stdin__.fileno())[0]\n"
+        "root = tkcurses.Tk()\n"
+        "during = termios.tcgetattr(sys.__stdin__.fileno())[0]\n"
+        "root.after(200, root.quit)\n"
+        "root.mainloop()\n"
+        "root.destroy()\n"
+        "after = termios.tcgetattr(sys.__stdin__.fileno())[0]\n"
+        "ok = (before & termios.IXON) and not (during & termios.IXON)\n"
+        "raise SystemExit(0 if ok and before == after else 1)\n",
+        workdir=tmp_path,
+    )
+    assert term.wait_for_exit(timeout=10) == 0, term.stderr

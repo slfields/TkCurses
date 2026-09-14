@@ -114,6 +114,9 @@ anywhere · `F3` for a menu taller than the terminal
 - [ ] Right opens the `More` submenu; Left closes it and leaves the parent up
 - [ ] Accelerators are right-aligned and do not touch the labels
 - [ ] The underlined letter chooses its entry
+- [ ] `Ctrl+N`, `Ctrl+O` and `Ctrl+Q` all work from anywhere — including
+      `Ctrl+Q`, which a tty normally swallows as flow control
+- [ ] `Ctrl+C` still interrupts the scenario, as it always did
 - [ ] The checkbutton and radiobutton entries show their state, and the radio
       group shows exactly one dot
 - [ ] **A popup near the bottom right corner is moved so all of it is on
@@ -124,6 +127,19 @@ anywhere · `F3` for a menu taller than the terminal
 ---
 
 ## What this found
+
+- **Control-Q and Control-S never reached the application.** They are XON and
+  XOFF: the line discipline uses them to pause and resume output and passes
+  neither on, so a menu offering a `Ctrl+Q` accelerator was offering a key
+  nothing could ever receive. Cleared by hand rather than with curses' `raw()`,
+  which would also have stopped `Ctrl+C` raising an interrupt — far too much
+  to give up for two keys — and put back on the way out, so the next program
+  in that terminal can still be paused.
+- **An accelerator binds nothing, in Tk or here.** Reported as GNOME Terminal
+  intercepting `Ctrl+N`; it was not — the key arrived perfectly and there was
+  simply nothing bound to it. Checked against Tk 9.0.2, where an accelerator
+  alone fires no command either: it draws the text, and the application binds
+  the key. Scenario 25 now does, which is the pattern to copy.
 
 - **Home and End moved by paragraph, where Tk moves by display row.** Asked
   whether Down landing on the next row of the same paragraph was correct, the
