@@ -643,8 +643,10 @@ def test_an_unbound_signal_key_still_signals(terminal, tmp_path):
     term.run_source(
         SIGNAL_APP.format(bindings='root.bind("<Key-a>", note)'), workdir=tmp_path
     )
-    term.wait_for_text("ready")
-    assert term.row(1) == "claimed=[]"
+    # Waited for, not read once: "ready" and the claimed line are written in
+    # the same refresh, and nothing says which of the two reaches the
+    # terminal first.
+    term.wait_for_text("claimed=[]")
     term.send(b"\x03")
     assert term.wait_for_exit(timeout=10) != 0, "Control-C should have interrupted"
 
@@ -661,8 +663,7 @@ def test_one_signal_key_is_given_up_without_the_others(terminal, tmp_path):
         SIGNAL_APP.format(bindings='root.bind("<Control-c>", note)'),
         workdir=tmp_path,
     )
-    term.wait_for_text("ready")
-    assert term.row(1) == "claimed=['c']"
+    term.wait_for_text("claimed=['c']")
     term.send(b"\x03")
     term.wait_for_text("hits=c/2")
     term.send(b"\x1c")
