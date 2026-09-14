@@ -35,6 +35,12 @@ from typing import Literal
 
 __all__ = [
     "MOD_ALT",
+    "MOD_BUTTON1",
+    "MOD_BUTTON2",
+    "MOD_BUTTON3",
+    "MOD_BUTTON4",
+    "MOD_BUTTON5",
+    "MOD_BUTTONS",
     "MOD_CTRL",
     "MOD_META",
     "MOD_SHIFT",
@@ -58,6 +64,25 @@ MOD_SHIFT = 0x01
 MOD_CTRL = 0x02
 MOD_ALT = 0x04
 MOD_META = 0x08  # Command on macOS
+
+#: A mouse button being *held*, which Tk spells B1 to B5 and treats as a
+#: modifier like any other. <B1-Motion> - drag with the left button down - is
+#: how every Tk program implements dragging, so these are not a corner: they
+#: are the second most used mouse binding there is.
+MOD_BUTTON1 = 0x10
+MOD_BUTTON2 = 0x20
+MOD_BUTTON3 = 0x40
+MOD_BUTTON4 = 0x80
+MOD_BUTTON5 = 0x100
+
+#: The held-button bit for each button number.
+MOD_BUTTONS: dict[int, int] = {
+    1: MOD_BUTTON1,
+    2: MOD_BUTTON2,
+    3: MOD_BUTTON3,
+    4: MOD_BUTTON4,
+    5: MOD_BUTTON5,
+}
 
 _MODIFIER_NAMES: tuple[tuple[int, str], ...] = (
     (MOD_SHIFT, "Shift"),
