@@ -308,6 +308,120 @@ def test_the_root_tracks_its_new_size_after_a_resize(terminal, tmp_path):
     term.wait_for_text("now 48x12")
 
 
+def test_shrinking_hard_and_growing_back_leaves_no_fragment(terminal, tmp_path):
+    """The whole tree, panels included, through a violent resize.
+
+    A terminal shrunk this far scrolls the layout up its own scrollback, and
+    what was a border two thirds of the way down the screen lands on top of
+    the header. Nothing in the widget tree is wrong at that point - the frame
+    is off screen and knows it - so the check has to be what the terminal is
+    actually showing.
+    """
+    term = terminal(cols=40, rows=14)
+    term.run_source(
+        program(
+            'tkcurses.Label(root, text="HEADER").place(x=0, y=0)\n'
+            "frame = tkcurses.Frame(\n"
+            '    root, relief="solid", borderwidth=1, width=14, height=4\n'
+            ")\n"
+            "frame.place(x=2, y=9)\n"
+            "root.update_layout()"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda t: "\u2500" in t.display[9], message="the frame's top edge")
+
+    term.resize(12, 5)
+    term.wait_for(lambda t: t.row(0) == "HEADER", message="the header, repainted")
+    fragments = [
+        row for row in term.display if set(row) & set("\u2500\u2502\u250c\u2514")
+    ]
+    assert not fragments, f"border left on a screen the frame is off: {fragments}"
+
+    term.resize(40, 14)
+    term.wait_for(lambda t: "\u2500" in t.display[9], message="the frame, back again")
+    assert term.row(0) == "HEADER"
+
+
+def test_a_toplevel_clipped_by_a_small_terminal_comes_back_whole(terminal, tmp_path):
+    """Growing the terminal again has to undo the clipping it caused.
+
+    A window is clipped to the screen rather than allowed off the edge,
+    because curses refuses a panel that runs past one. Nothing lays a
+    toplevel out - it is not packed, gridded or placed, so no geometry
+    manager ever looks at it again - and unless the resize goes looking for
+    it itself, it keeps whatever window the narrowest terminal it ever saw
+    left it with, and never fills out again.
+    """
+    term = terminal(cols=44, rows=12)
+    term.run_source(
+        program(
+            "for row in range(2, 10):\n"
+            '    buffer.write(row, 0, "background " * 4)\n'
+            "window = tkcurses.Toplevel(root, width=30, height=8)\n"
+            'window.title("Wide")\n'
+            'window.geometry("30x8+8+2")\n'
+            "root.update_layout()"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("Wide")
+    term.wait_for(
+        lambda t: t.text_at(2, 37, 1) == "\u2510", message="the window's far corner"
+    )
+
+    term.resize(20, 12)
+    # Waited out rather than watched for: the harness narrows its own screen
+    # the moment it asks for the resize, so every assertion about a narrow
+    # terminal is true before the application has even been told.
+    term.wait_for_idle(quiet=0.4, timeout=8)
+
+    term.resize(44, 12)
+    term.wait_for(
+        lambda t: t.text_at(2, 37, 1) == "\u2510",
+        message="the window's far corner, back again",
+    )
+    assert term.text_at(3, 8, 30) == "\u2502" + " " * 28 + "\u2502", (
+        f"the window is not whole again:\n{term.describe()}"
+    )
+
+
+def test_moving_a_container_takes_its_children_with_it(terminal, tmp_path):
+    """A container that moves without resizing must relocate its children.
+
+    Nothing in the widget tree is wrong when this fails: the child's geometry
+    is an offset from its master and the master moved, so the offset still
+    holds and the container's layout has no reason to run again. Only the
+    curses window is left behind, which makes this visible on the terminal
+    and nowhere else - the child stays drawn where its container used to be.
+    """
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        program(
+            "frame = tkcurses.Frame(root, width=10, height=3)\n"
+            "frame.pack_propagate(False)\n"
+            'tkcurses.Label(frame, text="Z").pack()\n'
+            "frame.place(x=0, y=2)\n"
+            "root.update_layout()\n"
+            "def shift():\n"
+            "    frame.place(x=20, y=2)\n"
+            "    root.update_layout()\n"
+            '    buffer.write(0, 0, "moved")\n'
+            "    root.tk.screen.refresh()\n"
+            "root.after(60, shift)"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("moved")
+    term.wait_for(
+        lambda t: t.find_text("Z") is not None and t.find_text("Z")[1] >= 20,
+        message="the label at its new column",
+    )
+    assert sum(row.count("Z") for row in term.display) == 1, (
+        f"the label is drawn twice over:\n{term.describe()}"
+    )
+
+
 # ------------------------------------------------------ callback exceptions
 
 

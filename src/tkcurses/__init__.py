@@ -1903,16 +1903,38 @@ class BaseWidget(Misc):
             # container laid out before its own parent keeps children sized
             # against a region it no longer has.
             self.tk.layout.invalidate(self)
+        if not self._sync_window():
+            return
+        # The widget's window has gone somewhere else on the screen, and its
+        # descendants' windows have not: their rects are offsets from this
+        # one and so did not change, which is exactly why nothing above tells
+        # them anything. A container that moves without changing size does
+        # not lay its children out again, so without this the children stay
+        # drawn where the container used to be.
+        for widget in self._subtree():
+            # A subtree is typed as Misc, and only a widget has a window; the
+            # root is the one Misc that is not a widget, and it is nobody's
+            # descendant.
+            if widget is not self and isinstance(widget, BaseWidget):
+                widget._sync_window()
+
+    def _sync_window(self) -> bool:
+        """Put this widget's curses window where its geometry now says.
+
+        Returns:
+            True if the window moved or was rebuilt, so anything positioned
+            relative to it has to be seen to as well.
+        """
         stack = self.tk.panels
         if stack is None:
-            return
-        if rect.is_empty:
+            return False
+        if self._rect.is_empty:
             self._destroy_window()
-            return
+            return False
         if self._panel is None:
             if self._mapped:
                 self._create_window()
-            return
+            return False
         # Compared against where the panel actually is, not against the
         # widget's previous rect: a rect is an offset from the master, so an
         # ancestor moving relocates the panel without changing it.
@@ -1921,16 +1943,19 @@ class BaseWidget(Misc):
             # Entirely off screen. The widget keeps its geometry and gets its
             # window back when it comes into view again.
             self._destroy_window()
-            return
+            return False
         current = self._panel.rect
         if (target.width, target.height) != (current.width, current.height):
             # Curses cannot resize a window in place, and replacing it is also
             # what keeps a shrink from leaving the vacated cells behind.
             stack.replace_window(self._panel, target)
             self._redraw()
-        elif (target.x, target.y) != (current.x, current.y):
+            return True
+        if (target.x, target.y) != (current.x, current.y):
             stack.move(self._panel, target.x, target.y)
             self._redraw()
+            return True
+        return False
 
     def _map(self) -> None:
         """Put the widget on screen, creating its window if it has none.
@@ -3307,12 +3332,33 @@ class Tk(BaseWidget, Wm):
         terminal actually is, which is what handle_resize() does.
         """
         size = self._screen.handle_resize()
+        # The screen is cleared and written again from scratch, so the panels
+        # over it have to be written again too - otherwise every widget that
+        # happens to keep its geometry through the resize simply vanishes.
+        if self.tk.panels is not None:
+            self.tk.panels.touch_all()
         self._rect = Rect(0, 0, size.width, size.height)
         # The root's rect is set directly rather than through _allocate, which
         # would give the root a panel it does not want - so its layout has to
         # be told separately. Without this, everything sized against the
         # terminal keeps the size the terminal used to be.
         self.tk.layout.invalidate(self)
+        # Laid out here rather than left to the next idle pass, because the
+        # windows are put right immediately below and that has to happen
+        # against the geometry the new size gives, not the old one.
+        self.update_layout()
+        # A window is clipped to the screen rather than allowed off the edge,
+        # so a widget that was on screen at the old size may be clipped, gone
+        # or restorable at the new one. The layout only re-allocates what it
+        # manages, and a toplevel is not that: without this a toplevel keeps
+        # whatever window the smallest terminal it ever saw left it with.
+        # The children's subtrees, not the root's: the root deliberately has
+        # no window of its own, and giving it one puts an opaque full-screen
+        # panel over everything drawn on the screen behind the widgets.
+        for child in list(self.children.values()):
+            for widget in child._subtree():
+                if isinstance(widget, BaseWidget):
+                    widget._sync_window()
         self.event_generate("<Configure>", width=size.width, height=size.height)
 
     def _update_display(self) -> None:

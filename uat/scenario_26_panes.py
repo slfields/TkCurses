@@ -106,6 +106,9 @@ def build(root, screen):
     root.bind_all("<Key-F3>", fewer)
     root.bind_all("<Key-F4>", turn)
     root.bind_all("<ButtonRelease-1>", lambda event: root.after_idle(report))
+    # The widths on line 2 are measured, so they go stale the moment the
+    # terminal changes size - which is exactly when someone is reading them.
+    root.bind("<Configure>", lambda event: root.after_idle(report), add="+")
     root.after(100, report)
 
 

@@ -389,9 +389,32 @@ class CursesScreen:
         """
         buffer = self.buffer
         size = os.get_terminal_size()
-        self._dispatcher.call(curses.resize_term, size.lines, size.columns)
+        self._dispatcher.call(self._resize_term, size.lines, size.columns)
         buffer.resize(size.columns, size.lines)
+        # Not only the cells the buffer thinks changed: the screen is being
+        # cleared underneath us, so everything has to be written again.
+        buffer.touch_all()
         return Size(size.columns, size.lines)
+
+    def _resize_term(self, lines: int, columns: int) -> None:
+        """Resize curses and discard its record of the physical screen.
+
+        A terminal that shrinks scrolls its own content up to keep the cursor
+        on screen, and ``resize_term()`` leaves curses' copy of the physical
+        screen exactly as it was. The two then disagree everywhere: curses
+        believes a cell already holds the character about to be written
+        there, writes nothing, and the scrolled fragment of the old layout
+        stays on the terminal. Nothing can read the terminal back to settle
+        it, so the only answer is to stop believing the copy - ``clearok()``
+        makes the next update clear the screen and write every cell.
+
+        Growing gets the same treatment: the rows and columns that appear
+        have never been painted, and a terminal that scrolled on the way down
+        does not scroll back on the way up.
+        """
+        stdscr = self.stdscr
+        curses.resize_term(lines, columns)
+        stdscr.clearok(True)
 
     def refresh(self) -> int:
         """Paint every dirty region and return the number of cells written.

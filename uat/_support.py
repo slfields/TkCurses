@@ -29,6 +29,14 @@ class Screen:
     def __init__(self, root: tkcurses.Tk) -> None:
         self._root = root
         self._buffer = root.tk.screen.buffer
+        #: Every line written, so a resize can put them back. A widget lays
+        #: itself out again when the terminal changes size; text written
+        #: straight to the buffer has nobody to do that for it, so the last
+        #: thing written to each row is kept here and written again. The row
+        #: is None for the footer, whose row depends on the height and so
+        #: cannot be worked out until it is written.
+        self._writes: list[tuple[int | None, int, str]] = []
+        root.bind("<Configure>", self._resized, add="+")
 
     @property
     def height(self) -> int:
@@ -42,11 +50,13 @@ class Screen:
 
     def clear(self) -> None:
         """Blank the screen."""
+        self._writes.clear()
         self._buffer.clear()
 
     def line(self, row: int, text: str, *, col: int = 0) -> None:
         """Write one line, padded so it overwrites whatever was there."""
-        self._buffer.write(row, col, text.ljust(self.width - col)[: self.width - col])
+        self._remember(row, col, text)
+        self._write(row, col, text)
 
     def lines(self, row: int, texts: Sequence[str]) -> None:
         """Write several lines from ``row`` down."""
@@ -55,7 +65,39 @@ class Screen:
 
     def footer(self, text: str) -> None:
         """Write the last line, where the instructions live."""
-        self.line(self.height - 1, text)
+        self._remember(None, 0, text)
+        self._write(self.height - 1, 0, text)
+
+    def _remember(self, row: int | None, col: int, text: str) -> None:
+        """Keep one write, in the order it was made, for a later replay.
+
+        An earlier write to the same row is dropped rather than kept, so a
+        scenario that rewrites a status line on every keypress does not
+        accumulate a copy of each - and the survivor keeps its place in the
+        order, which is what decides who wins where two writes overlap.
+        """
+        self._writes = [write for write in self._writes if write[0] != row]
+        self._writes.append((row, col, text))
+
+    def _write(self, row: int, col: int, text: str) -> None:
+        """Put one line in the buffer, clipped and padded to the width."""
+        if not 0 <= row < self.height or col >= self.width:
+            return
+        self._buffer.write(row, col, text.ljust(self.width - col)[: self.width - col])
+
+    def _resized(self, event: Any = None) -> None:
+        """Write the instruction text again for the size the terminal now is.
+
+        Both halves matter. Text written when the terminal was narrow was
+        clipped as it went in, so it has to be written again from the
+        original string rather than left as the stub it became; and the
+        footer belongs on the last row, which is not the row it was on.
+        """
+        self._buffer = self._root.tk.screen.buffer
+        self._buffer.clear()
+        for row, col, text in self._writes:
+            self._write(self.height - 1 if row is None else row, col, text)
+        self.refresh()
 
     def refresh(self) -> None:
         """Push everything written since the last call."""

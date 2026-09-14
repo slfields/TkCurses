@@ -91,9 +91,10 @@ itself worth watching.
       crashes nor draws nonsense
 - [ ] Make it large again and check the layout recovers exactly
 
-> **Known and already filed:** shrinking a long way can leave fragments of the
-> previous layout on screen until you grow the terminal back. That is
-> **TkCurses-by3**, not a new fault.
+> **Known and already filed:** at a size too small for everything to fit, a
+> box that should be off screen can still be drawn, on top of one that should
+> be there. That is **TkCurses-pxk**, not a new fault. Fragments of the
+> previous layout surviving a shrink were **TkCurses-by3**, now fixed.
 
 ---
 
