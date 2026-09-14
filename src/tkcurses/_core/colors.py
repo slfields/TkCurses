@@ -35,7 +35,9 @@ from __future__ import annotations
 
 import contextlib
 import curses
+import os
 from dataclasses import dataclass
+from enum import IntEnum
 from typing import TYPE_CHECKING
 
 from tkcurses._core.dispatcher import CursesDispatcher
@@ -43,7 +45,108 @@ from tkcurses._core.dispatcher import CursesDispatcher
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-__all__ = ["ColorManager", "ResolvedColor", "palette_rgb", "parse_color", "rgb_for"]
+__all__ = [
+    "ColorDepth",
+    "ColorManager",
+    "ResolvedColor",
+    "detect_depth",
+    "palette_rgb",
+    "parse_color",
+    "rgb_for",
+    "truecolor_hinted",
+]
+
+
+class ColorDepth(IntEnum):
+    """How much colour a terminal has, which is not one thing.
+
+    Terminfo answers this, and the numbers are its own: ``tigetnum("colors")``
+    gives -1 where there is no colour at all, then 8, 16, 256, and 16777216
+    for a terminal that takes a colour number as an RGB triple. The names here
+    are ordered, so ``depth >= ColorDepth.EXTENDED`` asks the useful question.
+    """
+
+    #: No colour. Bold, reverse and underline are all there is.
+    NONE = 0
+    #: The original eight. A bright *foreground* is reachable with A_BOLD; a
+    #: bright background is not reachable at all, which is why every bright
+    #: colour in this library is a duplicate of its dark form below this tier.
+    BASIC = 8
+    #: The eight and their bright forms as real colours, 8 to 15. From here
+    #: up, a bright background is a colour rather than an attribute.
+    BRIGHT = 16
+    #: The xterm cube: 16 named, a 6x6x6 cube, and 24 greys.
+    EXTENDED = 256
+    #: Colour numbers are 0xRRGGBB. ncurses does this for a terminal whose
+    #: terminfo carries the RGB flag, and nothing special is needed to use it.
+    DIRECT = 1 << 24
+
+
+#: Values of COLORTERM that mean 24-bit colour. The convention exists because
+#: terminfo under-reports: this very terminal is xterm-256color and does
+#: truecolor, and xterm-direct is a TERM almost nobody sets.
+TRUECOLOR_ENV = frozenset({"truecolor", "24bit"})
+
+
+def detect_depth(colors: int | None = None, direct: bool = False) -> ColorDepth:
+    """Work out what a terminal can do, from what terminfo says about it.
+
+    Args:
+        colors: ``tigetnum("colors")``, or None to ask terminfo now.
+        direct: ``tigetflag("RGB")``, which marks a terminal whose colour
+            numbers are RGB triples.
+
+    Returns:
+        The nearest tier at or below what the terminal reported. An
+        unrecognised number rounds *down* - 88-colour rxvt comes back as 16 -
+        because asking for a colour the terminal has not got puts the wrong
+        colour on the screen, while asking for one fewer costs only accuracy.
+
+    ``COLORTERM`` is deliberately not consulted here. It is the convention by
+    which a truecolor terminal admits to being one when terminfo does not,
+    but what it promises is that *escape sequences* will be understood - not
+    that ncurses is in direct mode. Acting on it here would send colour
+    numbers of 0xRRGGBB to a terminal whose curses expects 0 to 255. See
+    :func:`truecolor_hinted` and TkCurses-b2b.
+    """
+    if colors is None:
+        colors = _terminfo_number("colors")
+    if direct or colors >= ColorDepth.DIRECT:
+        return ColorDepth.DIRECT
+    depth = ColorDepth.NONE
+    for tier in (ColorDepth.BASIC, ColorDepth.BRIGHT, ColorDepth.EXTENDED):
+        if colors >= tier:
+            depth = tier
+    return depth
+
+
+def truecolor_hinted(colorterm: str | None = None) -> bool:
+    """True if ``COLORTERM`` says the terminal understands 24-bit colour.
+
+    Separate from :func:`detect_depth` because it is a promise about escape
+    sequences rather than about curses. A terminal can be
+    ``TERM=xterm-256color`` with ``COLORTERM=truecolor`` - as the one this was
+    written on is - which means terminfo reports 256, curses can only be
+    asked for 256, and exact colour is reachable only by writing past curses
+    entirely.
+    """
+    if colorterm is None:
+        colorterm = os.environ.get("COLORTERM", "")
+    return colorterm.strip().lower() in TRUECOLOR_ENV
+
+
+def _terminfo_number(capability: str) -> int:
+    """One numeric terminfo capability, or -1 if it cannot be read."""
+    with contextlib.suppress(curses.error, ValueError, TypeError):
+        return int(curses.tigetnum(capability))
+    return -1
+
+
+def _terminfo_flag(capability: str) -> bool:
+    """One boolean terminfo capability, false if it cannot be read."""
+    with contextlib.suppress(curses.error, ValueError, TypeError):
+        return curses.tigetflag(capability) > 0
+    return False
 
 
 @dataclass(frozen=True, slots=True)

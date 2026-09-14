@@ -26,7 +26,15 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from tkcurses._core.colors import ColorManager, ResolvedColor, parse_color, rgb_for
+from tkcurses._core.colors import (
+    ColorDepth,
+    ColorManager,
+    ResolvedColor,
+    detect_depth,
+    parse_color,
+    rgb_for,
+    truecolor_hinted,
+)
 from tkcurses._core.dispatcher import CursesDispatcher
 
 # ------------------------------------------------------------ named colours
@@ -297,3 +305,71 @@ def test_preallocate_counts_new_pairs(manager):
     assert created == 2
     # Asking again allocates nothing further.
     assert manager.preallocate([("red", "black")]) == 0
+
+
+# ----------------------------------------------------------- colour depth
+
+
+@pytest.mark.parametrize(
+    ("terminal", "colors", "direct", "expected"),
+    [
+        # Measured with tigetnum("colors") and tigetflag("RGB"), one process
+        # per terminal - setupterm does not re-read on a second call in the
+        # same process, so a loop reports the first terminal's answers for
+        # all of them.
+        ("vt100", -1, False, ColorDepth.NONE),
+        ("dumb", -1, False, ColorDepth.NONE),
+        ("xterm", 8, False, ColorDepth.BASIC),
+        ("linux", 8, False, ColorDepth.BASIC),
+        ("xterm-16color", 16, False, ColorDepth.BRIGHT),
+        ("xterm-256color", 256, False, ColorDepth.EXTENDED),
+        ("screen-256color", 256, False, ColorDepth.EXTENDED),
+        ("xterm-direct", 16777216, True, ColorDepth.DIRECT),
+    ],
+)
+def test_the_tier_comes_from_terminfo(terminal, colors, direct, expected):
+    assert detect_depth(colors, direct) is expected
+
+
+def test_an_unknown_count_rounds_down():
+    """88-colour rxvt is the real case. Asking for a colour the terminal has
+    not got puts the wrong colour on the screen; asking for one fewer costs
+    only accuracy."""
+    assert detect_depth(88, False) is ColorDepth.BRIGHT
+    assert detect_depth(7, False) is ColorDepth.NONE
+    assert detect_depth(255, False) is ColorDepth.BRIGHT
+
+
+def test_the_rgb_flag_is_enough_on_its_own():
+    """Whatever the count says beside it."""
+    assert detect_depth(256, True) is ColorDepth.DIRECT
+
+
+def test_the_tiers_are_ordered_so_they_can_be_compared():
+    assert ColorDepth.NONE < ColorDepth.BASIC < ColorDepth.BRIGHT
+    assert ColorDepth.BRIGHT < ColorDepth.EXTENDED < ColorDepth.DIRECT
+
+
+# ------------------------------------------------------- the COLORTERM hint
+
+
+@pytest.mark.parametrize("value", ["truecolor", "24bit", "TrueColor", " truecolor "])
+def test_colorterm_says_a_terminal_understands_24_bit(value):
+    assert truecolor_hinted(value) is True
+
+
+@pytest.mark.parametrize("value", ["", "yes", "256color", "8bit"])
+def test_anything_else_says_nothing(value):
+    assert truecolor_hinted(value) is False
+
+
+def test_the_hint_does_not_change_the_tier():
+    """It is a promise about escape sequences, not about curses.
+
+    A terminal can be xterm-256color with COLORTERM=truecolor - the one this
+    was written on is - which means terminfo reports 256, curses can only be
+    asked for 256, and acting on the hint here would send colour numbers of
+    0xRRGGBB to a curses that expects 0 to 255.
+    """
+    assert detect_depth(256, False) is ColorDepth.EXTENDED
+    assert truecolor_hinted("truecolor") is True
