@@ -6249,8 +6249,13 @@ class Text(_Drawable):
         insert = self._buffer.mark_index("insert") or Index(1, 0)
         if isinstance(where, tuple):
             kind, count = where
-            rows = self._view_size()[1]
-            target = self._by_row(insert, count * (rows if kind == "page" else 1))
+            if kind == "word":
+                target = self._by_word(insert, count)
+            elif kind in ("rowstart", "rowend"):
+                target = self._row_edge(insert, end=kind == "rowend")
+            else:
+                rows = self._view_size()[1]
+                target = self._by_row(insert, count * (rows if kind == "page" else 1))
         else:
             target = self._resolve(where)
         if extend and self._anchor is None:
@@ -6264,6 +6269,44 @@ class Text(_Drawable):
         self.see("insert")
         self._redraw()
         self._report_view()
+
+    def _row_edge(self, index: Index, *, end: bool) -> Index:
+        """The start or end of the display row an index is on.
+
+        The end stops before the space that caused the wrap, which is where
+        Tk puts it: the space belongs to the row but pressing End should not
+        land past the last word on it.
+        """
+        rows = self._display_lines()
+        line, start, stop = rows[self._row_of(index, rows)]
+        if not end:
+            return self._buffer.clamp(Index(line, start))
+        text = self._buffer.lines[line - 1] if line <= len(self._buffer.lines) else ""
+        while stop > start and text[stop - 1 : stop] == " ":
+            stop -= 1
+        return self._buffer.clamp(Index(line, stop))
+
+    def _by_word(self, index: Index, direction: int) -> Index:
+        """The start of the next or previous word, as Control-arrow moves.
+
+        Forwards means the beginning of the word after this one, not the end
+        of this one - which is what Tk does and what makes repeated presses
+        walk the words rather than alternate between their two ends.
+        """
+        offset = self._buffer.offset_of(index)
+        text = self._buffer.text
+        limit = len(text) - 1
+        if direction > 0:
+            while offset < limit and _is_word(text[offset]):
+                offset += 1
+            while offset < limit and not _is_word(text[offset]):
+                offset += 1
+        else:
+            while offset > 0 and not _is_word(text[offset - 1]):
+                offset -= 1
+            while offset > 0 and _is_word(text[offset - 1]):
+                offset -= 1
+        return self._buffer.index_of(offset)
 
     def _by_row(self, index: Index, distance: int) -> Index:
         """The index ``distance`` display rows away, at the same column.
@@ -6680,13 +6723,31 @@ class Text(_Drawable):
 _TEXT_MOTION: dict[str, Any] = {
     "Left": "insert -1c",
     "Right": "insert +1c",
-    "Home": "insert linestart",
-    "End": "insert lineend",
+    # Home and End move within the *display* line, not the logical one: on a
+    # wrapped paragraph they go to the beginning and end of the row on
+    # screen. Checked against Tk 9.0.2, which answers 1.17 for Home pressed
+    # at 1.20 on a line whose second row starts there.
+    "Home": ("rowstart", 0),
+    "End": ("rowend", 0),
     "Prior": ("page", -1),
     "Next": ("page", 1),
     "Up": ("row", -1),
     "Down": ("row", 1),
 }
+
+#: The same keys with Control held, which in Tk move by word and to the ends
+#: of the whole document rather than of a line.
+_TEXT_CONTROL_MOTION: dict[str, Any] = {
+    "Home": "1.0",
+    "End": "end -1c",
+    "Left": ("word", -1),
+    "Right": ("word", 1),
+}
+
+
+def _is_word(character: str) -> bool:
+    """True for the characters Tk counts as part of a word."""
+    return character.isalnum() or character == "_"
 
 
 def _text_key(event: Event) -> str | None:
@@ -6701,6 +6762,9 @@ def _text_key(event: Event) -> str | None:
     keysym = event.keysym
     extend = bool(event.state & MOD_SHIFT)
 
+    if event.state & MOD_CTRL and keysym in _TEXT_CONTROL_MOTION:
+        text._move(_TEXT_CONTROL_MOTION[keysym], extend=extend)
+        return "break"
     if keysym in _TEXT_MOTION:
         text._move(_TEXT_MOTION[keysym], extend=extend)
         return "break"

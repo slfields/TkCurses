@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from tkcurses import Misc, TclError, Text
-from tkcurses._core.events import MOD_SHIFT, KeyEvent, MouseEvent
+from tkcurses._core.events import MOD_CTRL, MOD_SHIFT, KeyEvent, MouseEvent
 from tkcurses._core.geometry import Rect
 from tkcurses._core.panels import PanelStack
 from tkcurses._core.textbuffer import Index
@@ -644,3 +644,87 @@ def test_down_from_the_start_of_a_wrapped_line_lands_on_the_next_row(root):
     widget._handle(KeyEvent(keysym="Down"))
     assert widget.index("insert") == "1.10"
     assert widget._display_position(Index(1, 10))[0] == 1
+
+
+# ------------------------------------------------------- parity with real Tk
+#
+# The expected values below were taken from Tk 9.0.2 itself, driving a real
+# tkinter.Text of the same width and wrap mode with event_generate. They are
+# recorded rather than derived, so that "this is what Tk does" is a fact in
+# the suite instead of a claim in a comment.
+
+TK_PARAGRAPH = "alpha beta gamma delta epsilon zeta eta theta\nSECOND\nTHIRD\n"
+
+
+@pytest.fixture
+def tk_alike(root):
+    """A Text matching the tkinter.Text the expectations were taken from."""
+    widget = Text(root, name="p", width=20, height=4, wrap="word", relief="flat")
+    widget._allocate(Rect(0, 0, 20, 4))
+    widget._map()
+    widget.insert("1.0", TK_PARAGRAPH)
+    return widget
+
+
+def press(widget, keysym, **kw):
+    widget._handle(KeyEvent(keysym=keysym, **kw))
+    return widget.index("insert")
+
+
+def test_the_paragraph_wraps_where_tk_wraps_it(tk_alike):
+    """Three display rows, the second starting at character 17."""
+    rows = [
+        (start, stop) for line, start, stop in tk_alike._display_lines() if line == 1
+    ]
+    assert len(rows) == 3
+    assert rows[1][0] == 17
+
+
+@pytest.mark.parametrize(
+    ("start", "keysym", "expected"),
+    [
+        ("1.0", "Down", "1.17"),
+        ("1.17", "Down", "1.36"),
+        ("1.17", "Up", "1.0"),
+        ("1.20", "Home", "1.17"),
+        ("1.2", "End", "1.16"),
+    ],
+)
+def test_motion_matches_tk(tk_alike, start, keysym, expected):
+    tk_alike.mark_set("insert", start)
+    assert press(tk_alike, keysym) == expected
+
+
+@pytest.mark.parametrize(
+    ("start", "keysym", "expected"),
+    [
+        ("1.20", "Home", "1.0"),
+        ("1.0", "End", "4.0"),
+        ("1.20", "Right", "1.23"),
+        ("1.0", "Left", "1.0"),
+    ],
+)
+def test_control_motion_matches_tk(tk_alike, start, keysym, expected):
+    tk_alike.mark_set("insert", start)
+    assert press(tk_alike, keysym, modifiers=MOD_CTRL) == expected
+
+
+def test_shift_home_selects_to_the_display_line_start(tk_alike):
+    """Tk answers 1.17 for Shift-Home pressed at 1.20."""
+    tk_alike.mark_set("insert", "1.20")
+    assert press(tk_alike, "Home", modifiers=MOD_SHIFT) == "1.17"
+    assert tk_alike.get("sel.first", "sel.last") == tk_alike.get("1.17", "1.20")
+
+
+def test_control_right_walks_word_by_word(tk_alike):
+    """Each press reaches the next word's start, not this word's end."""
+    tk_alike.mark_set("insert", "1.0")
+    assert press(tk_alike, "Right", modifiers=MOD_CTRL) == "1.6"
+    assert press(tk_alike, "Right", modifiers=MOD_CTRL) == "1.11"
+    assert press(tk_alike, "Right", modifiers=MOD_CTRL) == "1.17"
+
+
+def test_control_left_walks_back_word_by_word(tk_alike):
+    tk_alike.mark_set("insert", "1.17")
+    assert press(tk_alike, "Left", modifiers=MOD_CTRL) == "1.11"
+    assert press(tk_alike, "Left", modifiers=MOD_CTRL) == "1.6"

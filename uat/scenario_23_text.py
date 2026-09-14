@@ -1,18 +1,25 @@
 """Text: editing past the edges, wrapping, tags, attributes and selection.
 
-What to do: type. Use the arrows, Home, End, Page Up and Page Down. Select
-with Shift and the arrows, and by dragging with the mouse. Press F2 to cycle
-the wrap mode, F3 to add a very long line, F4 to highlight the word under the
-cursor, F5 to clear the highlights.
+What to do: type. Use the arrows, Home, End, Page Up and Page Down, and the
+same keys with Control held. Select with Shift and the arrows, and by
+dragging with the mouse. Press F2 to cycle the wrap mode, F3 to add a very
+long line, F4 to highlight the word under the cursor, F5 to clear the
+highlights.
 What to look for: the first paragraph is tagged to show what a tag can do -
 bold, underline, italic, a colour, and a highlight. Those are ranges, not
 characters: type in front of one and it moves with the text under it.
 
 The cursor is visible only while the widget has the focus, and the view
 follows it in both directions - down past the last visible line, and sideways
-when wrapping is off. Up and Down move by what is on *screen*, so on a
-wrapped paragraph they go to the row above or below rather than to the next
-paragraph. Two lines report the mouse, and between them they say where any fault is.
+when wrapping is off.
+
+Up, Down, Home and End all work on the line *as it appears on screen*, not on
+the paragraph. On a wrapped paragraph, Down goes to the row below rather than
+to the next paragraph, and Home goes to the start of the row rather than of
+the paragraph. That is what Tk does - the behaviour here was checked against
+Tk 9.0.2 and the same numbers are asserted in the test suite - and Control
+with those keys is what reaches further: Control-Home and Control-End for the
+whole document, Control-Left and Control-Right by word. Two lines report the mouse, and between them they say where any fault is.
 `curses:` is the raw report ncurses produced and what this library decoded it
 to; `mouse:` is what actually reached the widget. While you drag, `curses:`
 should keep changing and end in `->drag`. If it never changes, the terminal
@@ -93,7 +100,7 @@ def build(root, screen):
         )
         screen.line(3, "  Type. Shift+arrows or drag to select. Tags: bold, underline,")
         screen.line(
-            4, "  italic, colour, highlight.  F2 wrap  F3 long line  F4 tag  F5 clear"
+            4, "  italic, colour, highlight.  Ctrl+arrows by word.  F2 F3 F4 F5"
         )
         screen.footer(" Escape quits ")
         screen.refresh()

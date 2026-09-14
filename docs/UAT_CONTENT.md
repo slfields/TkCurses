@@ -47,7 +47,13 @@ manager to drag things back into view.
 - [ ] `F2` re-flows text that is already in the buffer, all three ways
 - [ ] No line ever runs over the widget's border, in any wrap mode
 - [ ] Up and Down move by what is on **screen**: on a wrapped line, to the row
-      above, not the paragraph above
+      above, not the paragraph above — this is Tk's behaviour, checked against
+      Tk 9.0.2, not a shortcut
+- [ ] Home and End likewise go to the start and end of the **row**, not of the
+      paragraph
+- [ ] `Control-Home` and `Control-End` reach the two ends of the whole document
+- [ ] `Control-Left` and `Control-Right` walk word by word, landing on each
+      word's start rather than alternating between its two ends
 - [ ] `Shift` with the arrows selects, and a plain arrow drops the selection
 - [ ] Dragging with the mouse selects the same range
 - [ ] Typing over a selection replaces it
@@ -118,6 +124,14 @@ anywhere · `F3` for a menu taller than the terminal
 ---
 
 ## What this found
+
+- **Home and End moved by paragraph, where Tk moves by display row.** Asked
+  whether Down landing on the next row of the same paragraph was correct, the
+  question was settled by driving a real `tkinter.Text` and reading the
+  answers back: Down was right, and Home and End were not. `Control-Home`,
+  `Control-End` and word motion on `Control-Left`/`Right` were missing
+  entirely. The numbers Tk 9.0.2 gave are now expectations in the suite, so
+  "this is what Tk does" is a recorded fact rather than a claim in a comment.
 
 - **Dragging never selected anything, on any real terminal.** Three separate
   faults, found one at a time because each hid the next:
