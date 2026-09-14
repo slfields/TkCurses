@@ -246,11 +246,13 @@ turn it on its side
   the end of the row above, and painted the first character of the next row
   there as well. A boundary is the end of one display row *and* the start of
   the next; it has to resolve to the later one.
-- **`<Key>` does not match a key held with a modifier.** Tk requires a
-  pattern's modifiers to be a subset of the event's, so `<Key>` sees
-  everything; this library requires them to match exactly. Deliberate once,
-  but it disagrees with Tk and it means the obvious "tell me about every key"
-  binding stops working the moment Shift is held. **TkCurses-qxl**.
+- **`<Key>` did not match a key held with a modifier.** Tk requires a
+  pattern's modifiers to be a *subset* of the event's, so `<Key>` sees
+  everything and `<Button-1>` fires for a shift-click; this library required
+  them to be equal, so the obvious "tell me about every key" binding stopped
+  working the moment Shift was held. Fixed, along with the rule that goes with
+  it: where several patterns match, the most specific one on each binding tag
+  runs, and a detail outranks any number of modifiers. **TkCurses-qxl**.
 
 - **Clicking a square raised an exception, and selections never cleared.**
   Two faults from one cause. Hit-testing went by an item's *bounding box*, so

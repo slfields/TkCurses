@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tkcurses import Frame, Misc, Widget
+from tkcurses import Misc, Widget
 from tkcurses._core.geometry import Rect, Size
 from tkcurses._core.panels import PanelStack
 

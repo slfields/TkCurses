@@ -130,12 +130,64 @@ def test_a_canonical_sequence_survives_a_round_trip(sequence):
 # ---------------------------------------------------------------- matching
 
 
-def test_modifiers_must_match_exactly():
+def test_a_patterns_modifiers_need_only_be_a_subset():
+    """Tk's rule, and not an obvious one.
+
+    A binding fires when everything it asks for is held, whatever else is
+    held alongside. Requiring equality - which this did - meant <Key> never
+    fired for a key held with Shift, so the obvious binding for "tell me
+    about every key" stopped working the moment a modifier was involved.
+    """
     bound = parse_sequence("<Control-a>")
     assert bound.matches(EventPattern(type="Key", detail="a", modifiers=MOD_CTRL))
-    assert not bound.matches(EventPattern(type="Key", detail="a"))
-    assert not bound.matches(
+    assert bound.matches(
         EventPattern(type="Key", detail="a", modifiers=MOD_CTRL | MOD_SHIFT)
+    )
+    assert not bound.matches(EventPattern(type="Key", detail="a"))
+    assert not bound.matches(EventPattern(type="Key", detail="a", modifiers=MOD_SHIFT))
+
+
+def test_a_bare_pattern_matches_a_modified_event():
+    bound = parse_sequence("<Key>")
+    assert bound.matches(EventPattern(type="Key", detail="Down"))
+    assert bound.matches(EventPattern(type="Key", detail="Down", modifiers=MOD_SHIFT))
+
+
+def test_a_bare_button_matches_a_modified_click():
+    bound = parse_sequence("<Button-1>")
+    assert bound.matches(EventPattern(type="Button", detail="1", modifiers=MOD_SHIFT))
+
+
+# ------------------------------------------------------------- specificity
+#
+# The order below is Tk 9.0.2's, read off a real tkinter.Frame with several
+# patterns bound at once and event_generate driving it. Recorded rather than
+# reasoned about: "more specific" is a phrase, and this is what it means.
+
+
+def test_a_detail_outranks_any_number_of_modifiers():
+    """<Key-A> beats <Shift-Key> for a shifted A."""
+    assert (
+        parse_sequence("<Key-A>").specificity
+        > parse_sequence("<Shift-Key>").specificity
+    )
+
+
+def test_more_modifiers_wins_when_the_detail_is_the_same():
+    assert (
+        parse_sequence("<Shift-Key-A>").specificity
+        > parse_sequence("<Key-A>").specificity
+    )
+    assert (
+        parse_sequence("<Shift-Key>").specificity > parse_sequence("<Key>").specificity
+    )
+
+
+def test_any_is_not_counted_as_a_modifier():
+    """It waives the comparison rather than demanding anything."""
+    assert (
+        parse_sequence("<Any-Key-a>").specificity
+        == parse_sequence("<Key-a>").specificity
     )
 
 
@@ -416,3 +468,94 @@ def test_an_unrelated_pattern_raises_nothing(virtuals):
 def test_a_malformed_virtual_name_is_refused(virtuals):
     with pytest.raises(ValueError):
         virtuals.add("<Paste>", parse_sequence("<Control-v>"))
+
+
+# --------------------------------------------------- choosing between matches
+#
+# Also recorded from Tk 9.0.2: with several patterns bound at once, which one
+# actually runs. Tk picks the most specific match within each binding tag and
+# then moves on to the next tag, so a widget binding and a class binding both
+# get their turn even when one is more specific than the other.
+
+
+def _table_firing(patterns: list[str], tags: list[str] | None = None):
+    """A table with one recording callback per pattern, and what fires."""
+    table = BindingTable()
+    fired: list[str] = []
+    for index, sequence in enumerate(patterns):
+        tag = (tags or ["w"] * len(patterns))[index]
+        table.bind(
+            tag,
+            parse_sequence(sequence),
+            (lambda name: lambda event: fired.append(name))(sequence),
+        )
+    return table, fired
+
+
+def test_the_most_specific_pattern_on_a_tag_wins():
+    table, fired = _table_firing(["<Key>", "<Shift-Key>"])
+    table.dispatch(
+        ["w"], None, [EventPattern(type="Key", detail="Down", modifiers=MOD_SHIFT)]
+    )
+    assert fired == ["<Shift-Key>"]
+
+
+def test_the_bare_pattern_runs_when_nothing_more_specific_matches():
+    table, fired = _table_firing(["<Key>", "<Shift-Key>"])
+    table.dispatch(["w"], None, [EventPattern(type="Key", detail="Down")])
+    assert fired == ["<Key>"]
+
+
+def test_a_detail_beats_a_modifier_on_the_same_tag():
+    table, fired = _table_firing(["<Key-A>", "<Shift-Key>"])
+    table.dispatch(
+        ["w"], None, [EventPattern(type="Key", detail="A", modifiers=MOD_SHIFT)]
+    )
+    assert fired == ["<Key-A>"]
+
+
+def test_a_shifted_button_binding_beats_the_plain_one():
+    table, fired = _table_firing(["<Button-1>", "<Shift-Button-1>"])
+    table.dispatch(
+        ["w"], None, [EventPattern(type="Button", detail="1", modifiers=MOD_SHIFT)]
+    )
+    assert fired == ["<Shift-Button-1>"]
+
+
+def test_every_tag_gets_its_own_turn():
+    """A widget's <Key> and a class's <Shift-Key> both fire, in tag order."""
+    table, fired = _table_firing(["<Key>", "<Shift-Key>"], tags=["w", "Class"])
+    table.dispatch(
+        ["w", "Class"],
+        None,
+        [EventPattern(type="Key", detail="Down", modifiers=MOD_SHIFT)],
+    )
+    assert fired == ["<Key>", "<Shift-Key>"]
+
+
+def test_a_virtual_event_still_fires_beside_the_physical_one():
+    """They are two events, not two patterns competing for one."""
+    table = BindingTable()
+    fired: list[str] = []
+    table.bind("w", parse_sequence("<Key-v>"), lambda event: fired.append("physical"))
+    table.bind("w", parse_sequence("<<Paste>>"), lambda event: fired.append("virtual"))
+    table.dispatch(
+        ["w"],
+        None,
+        [
+            EventPattern(type="Key", detail="v"),
+            EventPattern(type="Virtual", detail="Paste"),
+        ],
+    )
+    assert sorted(fired) == ["physical", "virtual"]
+
+
+def test_handlers_added_to_one_pattern_all_run_in_order():
+    table = BindingTable()
+    fired: list[str] = []
+    table.bind("w", parse_sequence("<Key>"), lambda event: fired.append("first"))
+    table.bind(
+        "w", parse_sequence("<Key>"), lambda event: fired.append("second"), add=True
+    )
+    table.dispatch(["w"], None, [EventPattern(type="Key", detail="q")])
+    assert fired == ["first", "second"]
