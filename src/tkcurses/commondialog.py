@@ -47,7 +47,7 @@ from tkcurses._core.geometry import BORDER_WIDTH
 if TYPE_CHECKING:
     from tkcurses import Misc, Toplevel
 
-__all__ = ["Dialog"]
+__all__ = ["Dialog", "fit"]
 
 #: Cells left between the dialog's border and its content on each side.
 PADDING = 1
@@ -56,6 +56,36 @@ PADDING = 1
 #: title has nowhere to go and the buttons collide.
 MINIMUM_WIDTH = 16
 MINIMUM_HEIGHT = 5
+
+
+def fit(window: Toplevel) -> None:
+    """Size a dialog to its content and centre it on the screen.
+
+    A terminal has no window manager to do either, and a dialog that needs
+    moving or resizing by hand is not a dialog. Clamped to the screen,
+    because a window curses will not make is worse than a small one: the
+    request is not a promise.
+
+    Shared rather than private, because all three dialog shapes need it -
+    this module's, simpledialog's Toplevel subclass, and SimpleDialog - and
+    they have no base class in common to inherit it from.
+    """
+    window.update_layout()
+    screen_width = window.winfo_screenwidth()
+    screen_height = window.winfo_screenheight()
+    # A toplevel reports the room its *contents* need, not its own outer
+    # size, so the border it draws round them has to be added back on.
+    # Without that the dialog is two cells too small and clips its own
+    # content by exactly the border.
+    edge = 2 * BORDER_WIDTH if window._border_drawn else 0
+    wanted_width = max(window.winfo_reqwidth() + edge, MINIMUM_WIDTH)
+    wanted_height = max(window.winfo_reqheight() + edge, MINIMUM_HEIGHT)
+    width = min(wanted_width, screen_width)
+    height = min(wanted_height, screen_height)
+    x = max(0, (screen_width - width) // 2)
+    y = max(0, (screen_height - height) // 2)
+    window.geometry(f"{width}x{height}+{x}+{y}")
+    window.update_layout()
 
 
 class Dialog:
@@ -152,8 +182,7 @@ class Dialog:
         window.title(str(self.options.get("title") or ""))
         window.transient(master)
         focus = self.body(window)
-        window.update_layout()
-        self._fit(window)
+        fit(window)
         # The grab goes on after the window is sized and placed, so that a
         # click during the build cannot reach it at a position it is about
         # to leave.
@@ -162,30 +191,6 @@ class Dialog:
         window.bind("<Escape>", lambda event: self.finish(None))  # noqa: ARG005
         window.protocol("WM_DELETE_WINDOW", lambda: self.finish(None))
         return window
-
-    def _fit(self, window: Toplevel) -> None:
-        """Size the window to its content and centre it on the screen.
-
-        A terminal has no window manager to do either, and a dialog that
-        needs moving or resizing by hand is not a dialog. Clamped to the
-        screen, because a window curses will not make is worse than a small
-        one: the request is not a promise.
-        """
-        screen_width = window.winfo_screenwidth()
-        screen_height = window.winfo_screenheight()
-        # A toplevel reports the room its *contents* need, not its own outer
-        # size, so the border it draws round them has to be added back on.
-        # Without that the dialog is two cells too small and clips its own
-        # content by exactly the border.
-        edge = 2 * BORDER_WIDTH if window._border_drawn else 0
-        wanted_width = max(window.winfo_reqwidth() + edge, MINIMUM_WIDTH)
-        wanted_height = max(window.winfo_reqheight() + edge, MINIMUM_HEIGHT)
-        width = min(wanted_width, screen_width)
-        height = min(wanted_height, screen_height)
-        x = max(0, (screen_width - width) // 2)
-        y = max(0, (screen_height - height) // 2)
-        window.geometry(f"{width}x{height}+{x}+{y}")
-        window.update_layout()
 
     def _close(self) -> None:
         """Take the dialog down. Safe to call more than once."""
