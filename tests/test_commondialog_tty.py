@@ -155,7 +155,12 @@ def test_the_screen_behind_comes_back_unmarked(terminal, tmp_path):
     """A dialog that leaves anything behind is worse than no dialog."""
     term = terminal(cols=56, rows=14)
     run(term, tmp_path)
+    # Settled first: "ready" is written in the same refresh as the
+    # background, and seeing one is no guarantee the other has arrived.
+    # Capturing a half-painted screen gives something that never recurs.
+    term.wait_for_idle()
     before = list(term.display[2:12])
+    assert all("background" in line for line in before), term.describe()
     open_dialog(term)
     term.send_keys("<Escape>")
     term.wait_for_text("answer=None")
