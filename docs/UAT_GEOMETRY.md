@@ -10,7 +10,7 @@ doing nothing for the right reason, whether a resize leaves the screen tidy.
 
 ```bash
 cd /path/to/TkCurses
-python3 -m uat 10          # and 11, 12, 13
+python3 -m uat 10          # and 11, 12, 13, 28
 ```
 
 From anywhere else: `python3 /path/to/TkCurses/uat 10`. Every scenario exits
@@ -69,6 +69,44 @@ column.
 - [ ] `m` keeps a two-cell margin on both sides at every width
 - [ ] `c` moves the box around the anchor point rather than moving the point
 - [ ] The reported geometry on line 3 matches where the box actually is
+
+## 28. Geometry options — change one, keep the rest
+
+`python3 -m uat 28` · `p` pack side · `g` grid column · `x` place x ·
+`w` place width · `f` forget all three · `r` reset
+
+Three strips, one per manager, each with a box in it. The line above each
+strip is what the manager reports — `pack_info()`, `grid_info()`,
+`place_info()` — so what it believes can be read against where the box is.
+
+> **What this is for.** The fault it checks was invisible to anyone reading
+> the call: `pack_configure(fill='x')` looks like it changes the fill, and what
+> it used to do was reset the side, the padding and the anchor too. `w`, which
+> asks the placed box only to get *wider*, also sent it to the corner.
+
+- [ ] `p` changes `side` from `left` to `right` and back — the pack box moves
+      to the other edge, and `fill`, `padx` and `anchor` are unchanged on the
+      line and on screen
+- [ ] `g` moves the grid box between column 3 and column 1 — it lines up with
+      the numbered markers below it, and `row`, `sticky` and `padx` do not move
+- [ ] `x` moves the placed box sideways and leaves its `y` and `width` alone
+- [ ] `w` makes the placed box **wider without moving it** — the left edge
+      stays where it was
+- [ ] Each line agrees with the box under it, every time
+- [ ] `r` puts all three back exactly as they started
+
+### Where the defaults do come back, correctly
+
+`f` forgets all three widgets and adds them again with no options at all.
+Forgetting is what discards a widget's options in Tk, so the defaults here are
+the right answer and **not** a fault. Checked against Tk 9.0.2.
+
+- [ ] After `f`: pack reports `side='top'`, `fill='none'`, `padx=0`,
+      `anchor='center'`, and the box sits centred at the top of its strip
+- [ ] After `f`: grid reports `row=0`, `column=0`, `sticky=''`, `padx=0`, and
+      the box sits above the column markers rather than on top of them
+- [ ] After `f`: place reports `x=0`, `y=0`, no width, `anchor='nw'`
+- [ ] `r` afterwards brings the starting options back
 
 ## 13. Layout under resize
 
