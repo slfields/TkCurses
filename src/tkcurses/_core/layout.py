@@ -94,6 +94,15 @@ class Layout(Protocol):
         """The widgets this manager is laying out in ``container``."""
         ...
 
+    def remove(self, widget: Any) -> None:
+        """Stop laying ``widget`` out. Not an error if it was never here.
+
+        Part of the protocol because a widget can be moved from one
+        container to another, and the one it is leaving has to be told -
+        whichever manager that one happens to be using.
+        """
+        ...
+
 
 class LayoutEngine:
     """Keeps a widget tree's geometry up to date.

@@ -10,7 +10,7 @@ doing nothing for the right reason, whether a resize leaves the screen tidy.
 
 ```bash
 cd /path/to/TkCurses
-python3 -m uat 10          # and 11, 12, 13
+python3 -m uat 10          # and 11, 12, 13, 28
 ```
 
 From anywhere else: `python3 /path/to/TkCurses/uat 10`. Every scenario exits
@@ -70,6 +70,73 @@ column.
 - [ ] `c` moves the box around the anchor point rather than moving the point
 - [ ] The reported geometry on line 3 matches where the box actually is
 
+## 28. Geometry options — change one, keep the rest
+
+`python3 -m uat 28` · `p` pack side · `g` grid column · `x` place x ·
+`w` place width · `e` push them past the edges · `f` forget all three ·
+`r` reset
+
+Three strips, one per manager, each with a box in it. The line above each
+strip is what the manager reports — `pack_info()`, `grid_info()`,
+`place_info()` — so what it believes can be read against where the box is.
+
+> **What this is for.** The fault it checks was invisible to anyone reading
+> the call: `pack_configure(fill='x')` looks like it changes the fill, and what
+> it used to do was reset the side, the padding and the anchor too. `w`, which
+> asks the placed box only to get *wider*, also sent it to the corner.
+
+- [ ] `p` changes `side` from `left` to `right` and back — the pack box moves
+      to the other edge, and `fill`, `padx` and `anchor` are unchanged on the
+      line and on screen
+- [ ] `g` moves the grid box between column 3 and column 1 — it lines up with
+      the numbered markers below it, and `row`, `sticky` and `padx` do not move
+- [ ] `x` moves the placed box sideways and leaves its `y` and `width` alone
+- [ ] `w` makes the placed box **wider without moving it** — the left edge
+      stays where it was
+- [ ] Each line agrees with the box under it, every time
+- [ ] `r` puts all three back exactly as they started
+
+### Where the defaults do come back, correctly
+
+`f` forgets all three widgets and adds them again with no options at all.
+Forgetting is what discards a widget's options in Tk, so the defaults here are
+the right answer and **not** a fault. Checked against Tk 9.0.2.
+
+- [ ] After `f`: pack reports `side='top'`, `fill='none'`, `padx=0`,
+      `anchor='center'`, and the box sits centred at the top of its strip
+- [ ] After `f`: grid reports `row=0`, `column=0`, `sticky=''`, `padx=0`, and
+      the box sits above the column markers rather than on top of them
+- [ ] After `f`: place reports `x=0`, `y=0`, no width, `anchor='nw'`
+- [ ] `r` afterwards brings the starting options back
+
+### Where the screen edge cuts a widget in half
+
+`e` pushes all three boxes hard against an edge. A widget the edge cuts can
+only have a window holding the part that fits — curses refuses one that runs
+off the screen — so the drawing has to **stop** at the edge.
+
+> **A box with no right-hand edge is correct** for a box that continues off
+> the screen. The same box with its border running on into the line below is
+> the fault: that is the overflow being wrapped instead of dropped.
+
+- [ ] After `e`, the pack box sits against the right edge **whole** — it fits,
+      so it keeps both of its sides
+- [ ] After `e`, the grid box runs off the right: a top edge, a left edge, a
+      bottom edge, and **no right edge and no corners** on that side
+- [ ] After `e`, the placed box does the same
+- [ ] **Nothing wraps.** No row holds the tail of the row above it, and the
+      report lines and the column markers are exactly where they were
+- [ ] `r` brings all three back whole
+- [ ] Now shrink the terminal, narrower and shorter, a few cells at a time.
+      Every box is cut off cleanly at whichever edge reaches it, and the ones
+      that no longer fit at all simply are not drawn
+- [ ] Grow it back and all three are whole again, with nothing left behind
+
+> **Known and already filed:** the shared border and label writers clip, and
+> the per-widget content writers — `Text`, `Listbox`, `Canvas`, `Scale`,
+> `Scrollbar`, `Menu`, `Entry` — do not yet, so one of those cut in half can
+> still wrap a row of its own content. **TkCurses-4jd.5**.
+
 ## 13. Layout under resize
 
 `python3 -m uat 13` · `d` nests a pair inside B, then resize the terminal
@@ -91,10 +158,12 @@ itself worth watching.
       crashes nor draws nonsense
 - [ ] Make it large again and check the layout recovers exactly
 
-> **Known and already filed:** at a size too small for everything to fit, a
-> box that should be off screen can still be drawn, on top of one that should
-> be there. That is **TkCurses-pxk**, not a new fault. Fragments of the
-> previous layout surviving a shrink were **TkCurses-by3**, now fixed.
+> **Known and already filed:** a widget the screen edge cuts in half draws all
+> of itself into the smaller window it was given, so the overflow wraps onto
+> the next row instead of being dropped — a box border that runs on into the
+> line below. That is **TkCurses-4jd.3**, not a new fault. A box that should
+> be off screen being drawn anyway was **TkCurses-pxk**, and fragments of the
+> previous layout surviving a shrink were **TkCurses-by3**; both are fixed.
 
 ---
 

@@ -403,6 +403,150 @@ def test_a_toplevel_clipped_by_a_small_terminal_comes_back_whole(terminal, tmp_p
     )
 
 
+def test_a_widget_cut_off_by_an_edge_is_clipped_not_wrapped(terminal, tmp_path):
+    """Curses wraps a write that runs past the right edge; we must not.
+
+    A widget the screen edge cuts in half gets a window holding only the part
+    that fits, because curses will not make one that runs off the screen.
+    Drawing the whole widget into it wrapped the overflow onto the next row -
+    a border that ran on into the line below - instead of losing it.
+    """
+    term = terminal(cols=12, rows=8)
+    term.run_source(
+        program(
+            "wide = tkcurses.Frame(root, width=30, height=3, relief='solid')\n"
+            "wide.place(x=0, y=1)\n"
+            "tall = tkcurses.Frame(root, width=8, height=30, relief='solid')\n"
+            "tall.place(x=0, y=5)\n"
+            "root.update_layout()"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda t: "\u250c" in t.display[1], message="the wide frame")
+
+    # Cut off at the right: a top edge across the screen and no corner, since
+    # the corner is off it. Row 2 is the frame's own middle row, which holds
+    # its two vertical edges - and the right one is off screen too.
+    assert term.row(1) == "\u250c" + "\u2500" * 11, term.describe()
+    assert term.row(2) == "\u2502", term.describe()
+
+    # Cut off at the bottom: the top edge and then sides all the way down,
+    # and no bottom edge, because it belongs 25 rows below the screen.
+    assert term.row(5) == "\u250c" + "\u2500" * 6 + "\u2510", term.describe()
+    below = "\n".join(term.display[6:])
+    assert "\u2514" not in below, (
+        f"a bottom edge was drawn for a frame whose bottom is off screen:"
+        f"\n{term.describe()}"
+    )
+    assert below.count("\u2502") == 4, (
+        f"the sides should run to the bottom of the screen:\n{term.describe()}"
+    )
+
+
+def test_a_widget_resized_inside_an_unchanged_window_is_redrawn(terminal, tmp_path):
+    """The window can stay the same while the widget changes size.
+
+    A widget clipped by the screen edge has a window the size of the visible
+    part, and shrinking the widget to that same size leaves the window
+    untouched - so nothing looked as though it had changed, and the border
+    stayed drawn for the size the widget used to be. On screen that is a box
+    with no right-hand edge, which is what a widget running off the screen is
+    supposed to look like, on one that now fits perfectly.
+    """
+    term = terminal(cols=12, rows=8)
+    term.run_source(
+        program(
+            "box = tkcurses.Frame(root, width=30, height=3, relief='solid')\n"
+            "box.place(x=0, y=1)\n"
+            "root.update_layout()\n"
+            "def shrink(event):\n"
+            "    box.place(width=12)\n"
+            "    root.update_layout()\n"
+            '    buffer.write(0, 0, "narrow")\n'
+            "    root.tk.screen.refresh()\n"
+            'root.bind("<Key-n>", shrink)'
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda t: "\u250c" in t.display[1], message="the frame")
+    assert term.row(1) == "\u250c" + "\u2500" * 11, "it starts off screen"
+
+    term.send(b"n")
+    term.wait_for_text("narrow")
+    term.wait_for(
+        lambda t: t.row(1) == "\u250c" + "\u2500" * 10 + "\u2510",
+        message="the frame drawn at the size it now is",
+    )
+
+
+def test_a_container_going_off_screen_takes_its_children_with_it(terminal, tmp_path):
+    """A window dropped for being off screen must drop its children's too.
+
+    Nothing lays the children out again: their rects are offsets from the
+    container's and did not change, and the container itself is not laid out
+    at all once it is off screen. Only the curses windows are wrong, so this
+    is visible on the terminal and nowhere else - the child stays drawn where
+    it was, on top of whatever is in that place now.
+
+    Found in uat/scenario_11_grid at 34x9, where the fifth box is off the
+    bottom and its label was drawn over the third box's, hiding it.
+    """
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        program(
+            "keep = tkcurses.Frame(root, width=12, height=4, relief='solid')\n"
+            "tkcurses.Label(keep, text='K').place(x=1, y=1)\n"
+            "keep.place(x=0, y=2)\n"
+            "gone = tkcurses.Frame(root, width=12, height=4)\n"
+            "tkcurses.Label(gone, text='G').place(x=1, y=1)\n"
+            "gone.place(x=0, y=6)\n"
+            "root.update_layout()\n"
+            "def banish(event):\n"
+            "    gone.place(y=40)\n"
+            "    root.update_layout()\n"
+            '    buffer.write(0, 0, "moved")\n'
+            "    root.tk.screen.refresh()\n"
+            'root.bind("<Key-b>", banish)'
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda t: t.contains("G"), message="the label to start with")
+    term.send(b"b")
+    term.wait_for_text("moved")
+    term.wait_for(
+        lambda t: not t.contains("G"), message="the label of the banished frame to go"
+    )
+    assert term.contains("K"), (
+        f"the frame that stayed put lost its label too:\n{term.describe()}"
+    )
+
+
+def test_a_container_coming_back_brings_its_children_with_it(terminal, tmp_path):
+    """The other direction: a window made again has to make its children's."""
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        program(
+            "box = tkcurses.Frame(root, width=12, height=4, relief='solid')\n"
+            "tkcurses.Label(box, text='G').place(x=1, y=1)\n"
+            "box.place(x=0, y=40)\n"
+            "root.update_layout()\n"
+            "def bring_back(event):\n"
+            "    box.place(y=3)\n"
+            "    root.update_layout()\n"
+            '    buffer.write(0, 0, "moved")\n'
+            "    root.tk.screen.refresh()\n"
+            'buffer.write(0, 0, "ready")\n'
+            'root.bind("<Key-b>", bring_back)'
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("ready")
+    assert not term.contains("G"), "the frame starts off screen"
+    term.send(b"b")
+    term.wait_for_text("moved")
+    term.wait_for(lambda t: t.contains("G"), message="the label to come back")
+
+
 def test_moving_a_container_takes_its_children_with_it(terminal, tmp_path):
     """A container that moves without resizing must relocate its children.
 

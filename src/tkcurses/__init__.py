@@ -372,8 +372,9 @@ class Misc:
 
     ``_layout_manager`` is the manager laying out this widget's *children*,
     which is a different thing from the manager that placed the widget itself
-    - that one is named by ``winfo_manager()``. A widget can be packed into
-    its parent while gridding its own children.
+    - that one is named by ``winfo_manager()``, and the container holding its
+    options is ``_manager_container``. A widget can be packed into its parent
+    while gridding its own children.
     """
 
     #: True for Tk and Toplevel. Bindings, focus history and coordinate
@@ -416,6 +417,11 @@ class Misc:
         self._rect = Rect(0, 0, 0, 0)
         self._requested = Size(0, 0)
         self._manager = ""
+        #: The container whose geometry manager is laying this widget out.
+        #: Usually the master, but ``in_`` allows another - and either way
+        #: it is where the widget's own options live, which is what a later
+        #: reconfigure has to merge into.
+        self._manager_container: Misc | None = None
         #: The geometry manager laying out this widget's children, and
         #: whether this widget resizes itself to fit them.
         self._layout_manager: Layout | None = None
@@ -1286,6 +1292,36 @@ class Misc:
                 return False
         return True
 
+    def _leave_layout(self, container: Misc) -> None:
+        """Take this widget out of one container's layout.
+
+        Called when a geometry call moves the widget somewhere else.
+        Without it the container being left goes on laying the widget out:
+        a widget moved with ``in_`` is then managed twice over, and drawn
+        wherever the first of the two decides.
+        """
+        layout = container._layout_manager
+        if layout is None:
+            return
+        layout.remove(self)
+        container.tk.layout.invalidate(container)
+
+    def _managed_layout(self, name: str) -> Layout | None:
+        """The layout currently laying this widget out, if ``name`` is it.
+
+        Tk merges every geometry reconfigure into the options the widget
+        already has, and keeps doing so when it moves to a different
+        container: ``place_configure(in_=other, x=5)`` leaves the anchor and
+        the width alone. Only ``forget`` resets them - checked against Tk
+        9.0.2, where a place after ``place_forget`` comes back with
+        ``anchor=nw``. Those options live with the container doing the
+        laying out, which ``in_`` allows to be something other than the
+        master, so this is where a reconfigure goes looking for them.
+        """
+        if self._manager != name or self._manager_container is None:
+            return None
+        return self._manager_container._layout_manager
+
     def winfo_manager(self) -> str:
         """The geometry manager handling this widget, or an empty string."""
         return self._manager
@@ -1929,9 +1965,8 @@ class BaseWidget(Misc):
         curses refuses.
         """
         previous, self._rect = self._rect, rect
-        if (rect.width, rect.height) != (previous.width, previous.height) and (
-            self._layout_manager is not None
-        ):
+        resized = (rect.width, rect.height) != (previous.width, previous.height)
+        if resized and self._layout_manager is not None:
             # A container given a new size has to place its children again.
             # Propagation travels upward - what a widget needs - and this is
             # the other direction: what it was actually given. Without it a
@@ -1939,13 +1974,20 @@ class BaseWidget(Misc):
             # against a region it no longer has.
             self.tk.layout.invalidate(self)
         if not self._sync_window():
+            if resized and self._panel is not None:
+                # The window did not change, because the screen edge was
+                # already clipping it to the same few cells - but the widget
+                # is a different size now and draws itself differently, so
+                # the border it puts at its own right edge moves even though
+                # nothing about the window did.
+                self._redraw()
             return
-        # The widget's window has gone somewhere else on the screen, and its
-        # descendants' windows have not: their rects are offsets from this
-        # one and so did not change, which is exactly why nothing above tells
-        # them anything. A container that moves without changing size does
-        # not lay its children out again, so without this the children stay
-        # drawn where the container used to be.
+        # The widget's window has changed and its descendants' have not:
+        # their rects are offsets from this one and so did not change, which
+        # is exactly why nothing above tells them anything. A container that
+        # moves without changing size does not lay its children out again,
+        # and one that goes off screen is not laid out at all - so without
+        # this the children stay drawn where the container used to be.
         for widget in self._subtree():
             # A subtree is typed as Misc, and only a widget has a window; the
             # root is the one Misc that is not a widget, and it is nobody's
@@ -1957,18 +1999,23 @@ class BaseWidget(Misc):
         """Put this widget's curses window where its geometry now says.
 
         Returns:
-            True if the window moved or was rebuilt, so anything positioned
-            relative to it has to be seen to as well.
+            True if the window changed at all - made, dropped, moved or
+            rebuilt - so that anything positioned relative to it has to be
+            seen to as well. A widget that goes off screen counts: its own
+            window is dropped, and the descendants whose windows are drawn
+            over the same cells would otherwise stay exactly where they
+            were, which is a label left behind on top of whatever is now in
+            its place.
         """
         stack = self.tk.panels
         if stack is None:
             return False
         if self._rect.is_empty:
-            self._destroy_window()
-            return False
+            return self._drop_window()
         if self._panel is None:
             if self._mapped:
                 self._create_window()
+                return self._panel is not None
             return False
         # Compared against where the panel actually is, not against the
         # widget's previous rect: a rect is an offset from the master, so an
@@ -1977,8 +2024,7 @@ class BaseWidget(Misc):
         if target.is_empty:
             # Entirely off screen. The widget keeps its geometry and gets its
             # window back when it comes into view again.
-            self._destroy_window()
-            return False
+            return self._drop_window()
         current = self._panel.rect
         if (target.width, target.height) != (current.width, current.height):
             # Curses cannot resize a window in place, and replacing it is also
@@ -1991,6 +2037,12 @@ class BaseWidget(Misc):
             self._redraw()
             return True
         return False
+
+    def _drop_window(self) -> bool:
+        """Release this widget's window and say whether there was one."""
+        had_one = self._panel is not None
+        self._destroy_window()
+        return had_one
 
     def _map(self) -> None:
         """Put the widget on screen, creating its window if it has none.
@@ -2116,9 +2168,12 @@ class Pack:
         # is visible and the mixin still type-checks on its own.
         master: Misc | None
         _manager: str
+        _manager_container: Misc | None
 
         def _map(self) -> None: ...
         def _unmap(self) -> None: ...
+        def _managed_layout(self, name: str) -> Layout | None: ...
+        def _leave_layout(self, container: Misc) -> None: ...
 
     def pack_configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
         """Pack this widget into its container.
@@ -2142,8 +2197,18 @@ class Pack:
         after = options.pop("after", None)
 
         layout = _pack_layout_of(container)
-        layout.add(self, _pack_options(options), before=before, after=after)
+        current = self._managed_layout("pack")
+        remembered = (
+            current.options_for(self) if isinstance(current, PackLayout) else None
+        )
+        # A geometry call naming a different container is a move, and the
+        # container being left has to stop laying this widget out.
+        previous = self._manager_container
+        if previous is not None and previous is not container:
+            self._leave_layout(previous)
+        layout.add(self, _pack_options(options, remembered), before=before, after=after)
         self._manager = "pack"
+        self._manager_container = container
         self._map()
         container.tk.layout.invalidate(container)
 
@@ -2155,7 +2220,7 @@ class Pack:
         Its packing options are forgotten, which is what will separate this
         from ``grid_remove``: packing it again starts from the defaults.
         """
-        container = self.master
+        container = self._manager_container or self.master
         if container is None:
             return
         manager = container._layout_manager
@@ -2163,6 +2228,7 @@ class Pack:
             manager.remove(self)
             container.tk.layout.invalidate(container)
         self._manager = ""
+        self._manager_container = None
         self._unmap()
 
     forget = pack_forget
@@ -2174,7 +2240,7 @@ class Pack:
             TclError: If it is not packed. Tk reports that rather than
                 returning defaults, which would read as though it were.
         """
-        container = self.master
+        container = self._manager_container or self.master
         manager = container._layout_manager if container is not None else None
         options = manager.options_for(self) if isinstance(manager, PackLayout) else None
         if options is None:
@@ -2225,15 +2291,25 @@ def _pack_layout_of(container: Misc) -> PackLayout:
     return manager
 
 
-def _pack_options(given: dict[str, Any]) -> PackOptions:
+def _pack_options(
+    given: dict[str, Any], remembered: PackOptions | None = None
+) -> PackOptions:
     """Build and check one widget's packing options.
+
+    Args:
+        given: The options named in this call.
+        remembered: The options the widget already has, which everything not
+            named keeps. None starts from the defaults, which is what a
+            widget not currently packed gets.
 
     Raises:
         TclError: If an option is unknown or its value is not one Tk accepts.
             Checked here rather than left to produce a strange layout later: a
             misspelled ``fill`` is otherwise invisible.
     """
-    options = PackOptions()
+    options = (
+        PackOptions(**vars(remembered)) if remembered is not None else PackOptions()
+    )
     for name, value in given.items():
         if not hasattr(options, name):
             raise TclError(f'unknown option "-{name}"')
@@ -2267,9 +2343,12 @@ class Grid:
     if TYPE_CHECKING:
         master: Misc | None
         _manager: str
+        _manager_container: Misc | None
 
         def _map(self) -> None: ...
         def _unmap(self) -> None: ...
+        def _managed_layout(self, name: str) -> Layout | None: ...
+        def _leave_layout(self, container: Misc) -> None: ...
 
     def grid_configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
         """Place this widget in its container's grid.
@@ -2292,12 +2371,23 @@ class Grid:
         if container is None:
             raise TclError("cannot grid the root window")
         layout = _grid_layout_of(container)
-        remembered = layout.remembered(self)
+        # Two sources, and the live one wins: a widget being reconfigured
+        # merges into the options it has now, while one that grid_remove()
+        # hid merges into the ones that were kept for it.
+        current = self._managed_layout("grid")
+        held = current.options_for(self) if isinstance(current, GridLayout) else None
+        remembered = held or layout.remembered(self)
+        # A geometry call naming a different container is a move, and the
+        # container being left has to stop laying this widget out.
+        previous = self._manager_container
+        if previous is not None and previous is not container:
+            self._leave_layout(previous)
         if not options and remembered is not None:
             layout.add(self, remembered)
         else:
             layout.add(self, _grid_options(options, remembered))
         self._manager = "grid"
+        self._manager_container = container
         self._map()
         container.tk.layout.invalidate(container)
 
@@ -2317,7 +2407,7 @@ class Grid:
 
     def _ungrid(self, *, keep: bool) -> None:
         """Shared implementation of grid_forget and grid_remove."""
-        container = self.master
+        container = self._manager_container or self.master
         if container is None:
             return
         manager = container._layout_manager
@@ -2325,6 +2415,7 @@ class Grid:
             manager.remove(self, keep=keep)
             container.tk.layout.invalidate(container)
         self._manager = ""
+        self._manager_container = None
         self._unmap()
 
     def grid_info(self) -> dict[str, Any]:
@@ -2333,7 +2424,7 @@ class Grid:
         Raises:
             TclError: If it is not gridded.
         """
-        container = self.master
+        container = self._manager_container or self.master
         manager = container._layout_manager if container is not None else None
         options = manager.options_for(self) if isinstance(manager, GridLayout) else None
         if options is None:
@@ -2417,9 +2508,12 @@ class Place:
     if TYPE_CHECKING:
         master: Misc | None
         _manager: str
+        _manager_container: Misc | None
 
         def _map(self) -> None: ...
         def _unmap(self) -> None: ...
+        def _managed_layout(self, name: str) -> Layout | None: ...
+        def _leave_layout(self, container: Misc) -> None: ...
 
     def place_configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
         """Place this widget in its container.
@@ -2440,8 +2534,18 @@ class Place:
         if container is None:
             raise TclError("cannot place the root window")
         layout = _place_layout_of(container)
-        layout.add(self, _place_options(options))
+        current = self._managed_layout("place")
+        remembered = (
+            current.options_for(self) if isinstance(current, PlaceLayout) else None
+        )
+        # A geometry call naming a different container is a move, and the
+        # container being left has to stop laying this widget out.
+        previous = self._manager_container
+        if previous is not None and previous is not container:
+            self._leave_layout(previous)
+        layout.add(self, _place_options(options, remembered))
         self._manager = "place"
+        self._manager_container = container
         self._map()
         container.tk.layout.invalidate(container)
 
@@ -2449,7 +2553,7 @@ class Place:
 
     def place_forget(self) -> None:
         """Stop placing this widget and take it off the screen."""
-        container = self.master
+        container = self._manager_container or self.master
         if container is None:
             return
         manager = container._layout_manager
@@ -2457,6 +2561,7 @@ class Place:
             manager.remove(self)
             container.tk.layout.invalidate(container)
         self._manager = ""
+        self._manager_container = None
         self._unmap()
 
     def place_info(self) -> dict[str, Any]:
@@ -2465,7 +2570,7 @@ class Place:
         Raises:
             TclError: If it is not placed.
         """
-        container = self.master
+        container = self._manager_container or self.master
         manager = container._layout_manager if container is not None else None
         options = (
             manager.options_for(self) if isinstance(manager, PlaceLayout) else None
@@ -2495,13 +2600,22 @@ def _place_layout_of(container: Misc) -> PlaceLayout:
     return manager
 
 
-def _place_options(given: dict[str, Any]) -> PlaceOptions:
+def _place_options(
+    given: dict[str, Any], remembered: PlaceOptions | None = None
+) -> PlaceOptions:
     """Build and check one widget's placement options.
+
+    Args:
+        given: The options named in this call.
+        remembered: The options the widget already has, which everything not
+            named keeps. None starts from the defaults.
 
     Raises:
         TclError: If an option is unknown or its value is not one Tk accepts.
     """
-    options = PlaceOptions()
+    options = (
+        PlaceOptions(**vars(remembered)) if remembered is not None else PlaceOptions()
+    )
     for name, value in given.items():
         if not hasattr(options, name):
             raise TclError(f'unknown option "-{name}"')
@@ -4048,24 +4162,58 @@ class _Drawable(Widget):
         """
         style = style_for_relief(str(self._options["relief"]) or FLAT)
         attribute |= style.attr
-        with contextlib.suppress(curses.error):
-            dispatcher.call(window.addstr, 0, 0, style.top(width), attribute)
-            for row in range(1, height - 1):
-                dispatcher.call(window.addstr, row, 0, style.vertical, attribute)
-                dispatcher.call(
-                    window.addstr, row, width - 1, style.vertical, attribute
+        # The window can be smaller than the widget: one clipped by a screen
+        # edge gets only the part of itself that fits, because curses will
+        # not make a window that runs off the screen. Drawing the whole
+        # widget into it wraps the overflow onto the next row instead of
+        # losing it, which is a border that runs on into the line below.
+        rows, columns = dispatcher.call(window.getmaxyx)
+        right = width - 1
+        self._write_line(dispatcher, window, 0, 0, style.top(width), attribute)
+        for row in range(1, min(height - 1, rows)):
+            self._write_line(dispatcher, window, row, 0, style.vertical, attribute)
+            if right < columns:
+                self._write_line(
+                    dispatcher, window, row, right, style.vertical, attribute
                 )
-            # The last cell of the bottom row is inserted rather than added:
-            # writing it with addstr would scroll a window whose cursor has
-            # nowhere left to go, which curses refuses. insstr rather than
-            # insch because a box-drawing character is multibyte and does not
-            # fit in the single chtype insch takes.
-            dispatcher.call(
-                window.addstr, height - 1, 0, style.bottom(width)[:-1], attribute
+        if height - 1 < rows:
+            self._write_line(
+                dispatcher, window, height - 1, 0, style.bottom(width), attribute
             )
-            dispatcher.call(
-                window.insstr, height - 1, width - 1, style.bottom_right, attribute
-            )
+
+    @staticmethod
+    def _write_line(
+        dispatcher: CursesDispatcher,
+        window: Any,
+        row: int,
+        column: int,
+        text: str,
+        attribute: int,
+    ) -> None:
+        """Write ``text`` at one position, clipped to what the window holds.
+
+        Two things curses will not do for us. It wraps a write that runs past
+        the right edge onto the next row rather than dropping it, so anything
+        too wide has to be cut here; and it refuses a write that fills the
+        last cell of the last row, because that would scroll a window with
+        nowhere to scroll to - so that one cell is inserted instead, which
+        puts the character there without advancing. insstr rather than insch
+        because a box-drawing character is multibyte and does not fit in the
+        single chtype insch takes.
+        """
+        rows, columns = dispatcher.call(window.getmaxyx)
+        if not 0 <= row < rows or not 0 <= column < columns:
+            return
+        text = text[: columns - column]
+        if not text:
+            return
+        with contextlib.suppress(curses.error):
+            if column + len(text) >= columns:
+                if text[:-1]:
+                    dispatcher.call(window.addstr, row, column, text[:-1], attribute)
+                dispatcher.call(window.insstr, row, columns - 1, text[-1], attribute)
+            else:
+                dispatcher.call(window.addstr, row, column, text, attribute)
 
 
 class Frame(_Drawable):
@@ -4332,8 +4480,10 @@ class _TextWidget(_Drawable):
             column += align_offset(len(line), block_width, justify)
             column = max(column, area.x)
             text = clip_text(line, area.x + area.width - column)
-            with contextlib.suppress(curses.error):
-                dispatcher.call(window.addstr, row, column, text, attribute)
+            # Through _write_line, which clips again to the window: the area
+            # is the widget's, and a widget the screen edge cuts in half has
+            # a window smaller than that.
+            self._write_line(dispatcher, window, row, column, text, attribute)
         self._draw_underline(dispatcher, window, area, lines, attribute)
 
     def _text_area(self) -> Rect:

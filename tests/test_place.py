@@ -284,3 +284,114 @@ def test_mixing_place_with_pack_is_refused(root):
     Box(root, "a").pack()
     with pytest.raises(TclError, match="already has slaves managed by pack"):
         Box(root, "b").place(x=0)
+
+
+# ------------------------------------------------- reconfiguring one option
+
+
+def test_configuring_one_option_leaves_the_others_alone(root):
+    """Tk merges a reconfigure into what the widget already has.
+
+    Values checked against Tk 9.0.2: a widget placed at x=10, y=30 with
+    width=60 and anchor="se", then place_configure(x=200), reports
+    ``200,30 anchor=se width=60``. Ours rebuilt the options from scratch and
+    sent the widget to y=0 with the default anchor, so changing a width moved
+    the widget - and every call written against that had to name every option
+    it wanted kept.
+    """
+    box = Box(root, "b")
+    box.place(x=10, y=30, width=60, anchor="se")
+    assert box.place_info()["y"] == 30
+
+    box.place_configure(x=200)
+    info = box.place_info()
+    assert (info["x"], info["y"]) == (200, 30)
+    assert info["anchor"] == "se"
+    assert info["width"] == 60
+
+
+def test_place_is_place_configure_so_a_second_place_merges_too(root):
+    """The two names are one function in Tk, and both reconfigure."""
+    box = Box(root, "b")
+    box.place(x=4, y=5, relwidth=0.5, bordermode="outside")
+    box.place(y=9)
+    info = box.place_info()
+    assert (info["x"], info["y"]) == (4, 9)
+    assert info["relwidth"] == 0.5
+    assert info["bordermode"] == "outside"
+
+
+def test_forgetting_is_what_brings_the_defaults_back(root):
+    """place_forget() resets; nothing else does.
+
+    Tk 9.0.2: after place_forget(), a place(x=1, y=1) comes back with
+    anchor="nw" and no width, not with the anchor and width it had.
+    """
+    box = Box(root, "b")
+    box.place(x=10, y=30, width=60, anchor="se")
+    box.place_forget()
+    box.place(x=1, y=1)
+    info = box.place_info()
+    assert (info["x"], info["y"]) == (1, 1)
+    assert info["anchor"] == "nw"
+    assert info["width"] is None
+
+
+def test_a_widget_that_was_never_placed_starts_from_the_defaults(root):
+    box = Box(root, "b")
+    box.place(x=3)
+    info = box.place_info()
+    assert (info["x"], info["y"], info["anchor"]) == (3, 0, "nw")
+
+
+def test_a_bad_option_in_a_reconfigure_leaves_the_widget_as_it_was(root):
+    """A rejected call must not half-apply, or a typo moves the widget."""
+    box = Box(root, "b")
+    box.place(x=10, y=30, anchor="se")
+    with pytest.raises(TclError):
+        box.place_configure(x=99, anchor="nowhere")
+    info = box.place_info()
+    assert (info["x"], info["y"], info["anchor"]) == (10, 30, "se")
+
+
+# ------------------------------------------------------ placing somewhere else
+
+
+def test_in_moves_the_widget_out_of_its_old_container(root):
+    """Placed in two containers at once, it was drawn wherever the first
+    of them decided - and the second had no say at all."""
+    holder = Box(root, "holder", width=20, height=6)
+    box = Box(root, "b")
+    box.place(x=3, y=1)
+    assert box in root.place_slaves()
+
+    box.place_configure(in_=holder, x=5)
+    assert box not in root.place_slaves()
+    assert holder.place_slaves() == [box]
+
+
+def test_moving_to_another_container_keeps_the_options(root):
+    """Tk 9.0.2: place_configure(in_=other, x=5) keeps the anchor and the
+    width. Only place_forget() resets them."""
+    holder = Box(root, "holder", width=20, height=6)
+    box = Box(root, "b")
+    box.place(x=3, y=1, anchor="se", width=6)
+    box.place_configure(in_=holder, x=5)
+    info = box.place_info()
+    assert (info["x"], info["anchor"], info["width"]) == (5, "se", 6)
+
+
+def test_place_info_names_the_container_doing_the_work(root):
+    holder = Box(root, "holder", width=20, height=6)
+    box = Box(root, "b")
+    box.place(in_=holder, x=1)
+    assert box.place_info()["in"] is holder
+
+
+def test_forgetting_removes_it_from_the_container_that_held_it(root):
+    holder = Box(root, "holder", width=20, height=6)
+    box = Box(root, "b")
+    box.place(in_=holder, x=1)
+    box.place_forget()
+    assert holder.place_slaves() == []
+    assert box.winfo_manager() == ""

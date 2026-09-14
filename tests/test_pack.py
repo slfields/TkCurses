@@ -461,3 +461,123 @@ def test_packing_into_another_container(root):
     box = Box(root, "a")
     box.pack(in_=frame)
     assert frame.pack_slaves() == [box]
+
+
+# ------------------------------------------------- reconfiguring one option
+
+
+def test_configuring_one_option_leaves_the_others_alone(root):
+    """Tk merges a reconfigure into what the widget already has.
+
+    Values checked against Tk 9.0.2: a widget packed with side="left",
+    fill="both", padx=7, ipadx=3 and anchor="n", then
+    pack_configure(side="right"), keeps all four of the others. Ours rebuilt
+    the options from scratch, so asking for the other side also threw away
+    the fill, the padding and the anchor.
+    """
+    box = Box(root, "b")
+    box.pack(side="left", fill="both", padx=7, ipadx=3, anchor="n")
+    box.pack_configure(side="right")
+    info = box.pack_info()
+    assert info["side"] == "right"
+    assert info["fill"] == "both"
+    assert (info["padx"], info["ipadx"]) == (7, 3)
+    assert info["anchor"] == "n"
+
+
+def test_pack_is_pack_configure_so_a_second_pack_merges_too(root):
+    box = Box(root, "b")
+    box.pack(side="bottom", expand=True, pady=2)
+    box.pack(fill="x")
+    info = box.pack_info()
+    assert info["side"] == "bottom"
+    assert info["expand"] is True
+    assert info["pady"] == 2
+    assert info["fill"] == "x"
+
+
+def test_forgetting_is_what_brings_the_defaults_back(root):
+    """Tk 9.0.2 after pack_forget(): side="top", fill="none", padx=0,
+    ipadx=0, anchor="center"."""
+    box = Box(root, "b")
+    box.pack(side="left", fill="both", padx=7, ipadx=3, anchor="n")
+    box.pack_forget()
+    box.pack()
+    info = box.pack_info()
+    assert info["side"] == "top"
+    assert info["fill"] == "none"
+    assert (info["padx"], info["ipadx"]) == (0, 0)
+    assert info["anchor"] == "center"
+
+
+def test_a_bad_option_in_a_reconfigure_leaves_the_widget_as_it_was(root):
+    box = Box(root, "b")
+    box.pack(side="left", fill="both")
+    with pytest.raises(TclError):
+        box.pack_configure(side="sideways")
+    info = box.pack_info()
+    assert (info["side"], info["fill"]) == ("left", "both")
+
+
+# ----------------------------------------------------- packing somewhere else
+
+
+def test_in_moves_the_widget_out_of_its_old_container(root):
+    """A widget can only be laid out by one container at a time.
+
+    Tk 9.0.2: after pack_configure(in_=second), the first container has no
+    slaves and the second has the widget. Ours added it to the new container
+    without taking it out of the old, so both went on laying it out and
+    whichever ran first decided where it went.
+    """
+    first = Box(root, "first", width=20, height=6)
+    second = Box(root, "second", width=20, height=6)
+    box = Box(root, "b")
+    box.pack(in_=first, side="left", fill="both", padx=2)
+    assert first.pack_slaves() == [box]
+
+    box.pack_configure(in_=second)
+    assert first.pack_slaves() == []
+    assert second.pack_slaves() == [box]
+
+
+def test_moving_to_another_container_keeps_the_options(root):
+    """Tk merges across a container change too - only forget resets."""
+    first = Box(root, "first", width=20, height=6)
+    second = Box(root, "second", width=20, height=6)
+    box = Box(root, "b")
+    box.pack(in_=first, side="left", fill="both", padx=2)
+    box.pack_configure(in_=second)
+    info = box.pack_info()
+    assert (info["side"], info["fill"], info["padx"]) == ("left", "both", 2)
+
+
+def test_pack_info_names_the_container_doing_the_work(root):
+    """It read the master, which for a widget packed with in_ is not it."""
+    holder = Box(root, "holder", width=20, height=6)
+    box = Box(root, "b")
+    box.pack(in_=holder)
+    assert box.pack_info()["in"] is holder
+
+
+def test_forgetting_removes_it_from_the_container_that_held_it(root):
+    holder = Box(root, "holder", width=20, height=6)
+    box = Box(root, "b")
+    box.pack(in_=holder)
+    box.pack_forget()
+    assert holder.pack_slaves() == []
+    assert box.winfo_manager() == ""
+
+
+def test_gridding_a_packed_widget_elsewhere_takes_it_out_of_the_pack(root):
+    """Tk 9.0.2 allows the move and leaves the old container empty; asking
+    the widget for its packing afterwards is an error, because it has none."""
+    packer = Box(root, "packer", width=20, height=6)
+    gridder = Box(root, "gridder", width=20, height=6)
+    box = Box(root, "b")
+    box.pack(in_=packer, side="left")
+    box.grid(in_=gridder, row=1, column=2)
+    assert packer.pack_slaves() == []
+    assert box.winfo_manager() == "grid"
+    with pytest.raises(TclError):
+        box.pack_info()
