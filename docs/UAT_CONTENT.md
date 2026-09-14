@@ -154,6 +154,14 @@ turn it on its side
 
 ## What this found
 
+- **A punctuation key could not be bound by name.** `<Key-period>` is how
+  every piece of tkinter documentation binds a full stop, and here it went
+  looking for a keysym called `period` that no event would ever report — so
+  the binding simply never fired. X11's names now resolve to their characters
+  when a sequence is parsed, so `<Key-period>` and `<Key-.>` are one binding.
+  Tk was asked which way round to canonicalise: a binding written with the
+  name fires there, and the event reaching it reports `.`. **TkCurses-82n**.
+
 - **An unmapped menu kept the keyboard, so Escape stopped closing the
   application.** `unpost` gave the focus back only when something had held it
   *before* the menu opened — and for an application whose first action is

@@ -559,3 +559,69 @@ def test_handlers_added_to_one_pattern_all_run_in_order():
     )
     table.dispatch(["w"], None, [EventPattern(type="Key", detail="q")])
     assert fired == ["first", "second"]
+
+
+# ------------------------------------------------------ punctuation keysyms
+#
+# X11's names are what every piece of tkinter documentation uses to bind a
+# punctuation key: <Key-period>, not <Key-.>. Tk resolves the name when it
+# parses the binding - verified against Tk 9.0.2, where a binding written
+# <Key-period> fires and the event that reaches it reports keysym '.'.
+
+
+@pytest.mark.parametrize(
+    ("name", "character"),
+    [
+        ("period", "."),
+        ("comma", ","),
+        ("minus", "-"),
+        ("plus", "+"),
+        ("slash", "/"),
+        ("backslash", "\\"),
+        ("semicolon", ";"),
+        ("colon", ":"),
+        ("question", "?"),
+        ("exclam", "!"),
+        ("bracketleft", "["),
+        ("braceright", "}"),
+        ("underscore", "_"),
+        ("asciitilde", "~"),
+        ("at", "@"),
+        ("numbersign", "#"),
+    ],
+)
+def test_an_x11_name_and_its_character_are_the_same_binding(name, character):
+    assert parse_sequence(f"<Key-{name}>") == parse_sequence(f"<Key-{character}>")
+
+
+def test_a_named_punctuation_binding_fires_for_the_key():
+    """The whole point: without this the binding could never match.
+
+    The event carries the character, so a pattern holding the name went
+    looking for a keysym nothing would ever report.
+    """
+    bound = parse_sequence("<Key-period>")
+    assert bound.matches(EventPattern(type="Key", detail="."))
+
+
+def test_a_modified_punctuation_binding_works_too():
+    assert parse_sequence("<Control-period>") == EventPattern(
+        type="Key", detail=".", modifiers=MOD_CTRL
+    )
+
+
+def test_space_keeps_its_name():
+    """Tk's own exception: a bare space cannot be told from a separator."""
+    assert parse_sequence("<Key-space>").detail == "space"
+    assert parse_sequence(" ").detail == "space"
+
+
+def test_letters_and_digits_are_left_alone():
+    assert parse_sequence("<Key-a>").detail == "a"
+    assert parse_sequence("<Key-Z>").detail == "Z"
+    assert parse_sequence("<Key-5>").detail == "5"
+
+
+def test_named_keys_are_left_alone():
+    assert parse_sequence("<Key-Return>").detail == "Return"
+    assert parse_sequence("<Key-F1>").detail == "F1"

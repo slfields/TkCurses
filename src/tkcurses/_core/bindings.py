@@ -35,6 +35,7 @@ from tkcurses._core.events import (
     KeyEvent,
     MouseEvent,
     ResizeEvent,
+    canonical_keysym,
 )
 
 if TYPE_CHECKING:
@@ -296,7 +297,11 @@ def _parse_fields(sequence: str, fields: list[str]) -> EventPattern:
         elif field_text in _TYPES and not event_type:
             event_type = _TYPES[field_text]
         elif index == len(fields) - 1:
-            detail = field_text
+            # <Key-period> and <Key-.> are the same binding: X11's names for
+            # the punctuation keys are what tkinter documentation uses, and
+            # without resolving them here such a binding could never fire,
+            # because the event carries the character.
+            detail = canonical_keysym(field_text)
         else:
             raise ValueError(
                 f"cannot parse binding sequence {sequence!r}: {field_text!r} is "

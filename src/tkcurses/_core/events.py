@@ -21,11 +21,13 @@ __all__ = [
     "MOD_CTRL",
     "MOD_META",
     "MOD_SHIFT",
+    "PUNCTUATION_KEYSYMS",
     "Event",
     "KeyEvent",
     "MouseEvent",
     "MouseState",
     "ResizeEvent",
+    "canonical_keysym",
     "keysym_for",
     "modifier_names",
     "shift_held",
@@ -158,6 +160,66 @@ _CONTROL_KEYSYMS: dict[int, str] = {
     27: "Escape",
     127: "BackSpace",
 }
+
+#: X11's names for the punctuation keys, and the characters they produce.
+#: Tk resolves these when it parses a binding, so ``<Key-period>`` is how a
+#: full stop is bound and ``<Key-.>`` is not - the name is the spelling every
+#: piece of tkinter documentation uses. Everything here keeps the character
+#: as the canonical form, because that is what Tk 9.0.2 reports back in
+#: ``event.keysym`` for the same key; the names are resolved to it rather
+#: than the other way round, so a binding written either way finds the same
+#: event. Space is the exception Tk itself makes: it is named, not literal,
+#: because a bare space in a sequence cannot be told from a separator.
+PUNCTUATION_KEYSYMS: dict[str, str] = {
+    "space": " ",
+    "exclam": "!",
+    "quotedbl": '"',
+    "numbersign": "#",
+    "dollar": "$",
+    "percent": "%",
+    "ampersand": "&",
+    "apostrophe": "'",
+    "quoteright": "'",
+    "parenleft": "(",
+    "parenright": ")",
+    "asterisk": "*",
+    "plus": "+",
+    "comma": ",",
+    "minus": "-",
+    "period": ".",
+    "slash": "/",
+    "colon": ":",
+    "semicolon": ";",
+    "less": "<",
+    "equal": "=",
+    "greater": ">",
+    "question": "?",
+    "at": "@",
+    "bracketleft": "[",
+    "backslash": "\\",
+    "bracketright": "]",
+    "asciicircum": "^",
+    "underscore": "_",
+    "grave": "`",
+    "quoteleft": "`",
+    "braceleft": "{",
+    "bar": "|",
+    "braceright": "}",
+    "asciitilde": "~",
+}
+
+
+def canonical_keysym(name: str) -> str:
+    """The form a keysym is stored in, resolving X11's punctuation names.
+
+    ``period`` and ``.`` are the same key, and a binding may be written
+    either way; both end up as ``.`` so they match the same event. Space
+    stays ``space``, as it does in Tk.
+    """
+    if name == "space":
+        return "space"
+    return PUNCTUATION_KEYSYMS.get(name, name)
+
 
 #: Curses key codes that map to a named tkinter keysym.
 _SPECIAL_KEYSYMS: dict[int, str] = {
