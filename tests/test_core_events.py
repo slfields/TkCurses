@@ -6,6 +6,7 @@ import curses
 
 import pytest
 
+from tkcurses._core import events
 from tkcurses._core.events import (
     MOD_ALT,
     MOD_CTRL,
@@ -16,9 +17,31 @@ from tkcurses._core.events import (
     MouseEvent,
     ResizeEvent,
     keysym_for,
+    modified_key,
     modifier_names,
     shift_held,
 )
+
+
+@pytest.fixture
+def fake_keyname(monkeypatch):
+    """Give key codes the names ncurses would, without a terminal.
+
+    ``curses.keyname`` refuses to answer before ``initscr``, and the codes
+    that matter here are allocated at run time anyway, so there is no real
+    code to look up. The fixture hands out codes and answers for them.
+    """
+    names: dict[int, bytes] = {}
+    monkeypatch.setattr(events, "_modified_keys", {})
+    monkeypatch.setattr(curses, "keyname", lambda code: names[code])
+
+    def register(name: str) -> int:
+        keycode = 4000 + len(names)
+        names[keycode] = name.encode()
+        return keycode
+
+    return register
+
 
 # ------------------------------------------------------------------ events
 
@@ -179,3 +202,64 @@ def test_a_shifted_arrow_is_the_plain_keysym(keycode, expected):
 def test_a_plain_arrow_is_not_shifted():
     assert not shift_held(curses.KEY_DOWN)
     assert keysym_for(curses.KEY_DOWN) == "Down"
+
+
+# ------------------------------------------------- Control and Alt with a key
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        # xterm's modifier parameter is one more than a three-bit set:
+        # bit 0 Shift, bit 1 Alt, bit 2 Control.
+        ("kDN2", ("Down", MOD_SHIFT)),
+        ("kDN3", ("Down", MOD_ALT)),
+        ("kDN4", ("Down", MOD_SHIFT | MOD_ALT)),
+        ("kDN5", ("Down", MOD_CTRL)),
+        ("kDN6", ("Down", MOD_SHIFT | MOD_CTRL)),
+        ("kDN7", ("Down", MOD_ALT | MOD_CTRL)),
+        ("kDN8", ("Down", MOD_SHIFT | MOD_ALT | MOD_CTRL)),
+        ("kUP5", ("Up", MOD_CTRL)),
+        ("kLFT5", ("Left", MOD_CTRL)),
+        ("kRIT6", ("Right", MOD_SHIFT | MOD_CTRL)),
+        ("kHOM5", ("Home", MOD_CTRL)),
+        ("kEND5", ("End", MOD_CTRL)),
+        ("kPRV5", ("Prior", MOD_CTRL)),
+        ("kNXT5", ("Next", MOD_CTRL)),
+        ("kDC5", ("Delete", MOD_CTRL)),
+        ("kIC5", ("Insert", MOD_CTRL)),
+    ],
+)
+def test_an_extended_key_name_carries_its_modifiers(name, expected, fake_keyname):
+    """ncurses puts the modifier in the name, having nowhere else to put it.
+
+    These codes are not constants: ncurses allocates one per combination at
+    run time from the terminal's extended capabilities, so the only way to
+    learn that 534 means Control-Down is to ask what it is called.
+    """
+    keycode = fake_keyname(name)
+    assert modified_key(keycode) == expected
+    assert keysym_for(keycode) == expected[0]
+
+
+@pytest.mark.parametrize("name", ["kDN", "kDN1", "kdn5", "KEY_DOWN", "kFOO5", "^A"])
+def test_a_name_that_is_not_a_modified_key_is_left_alone(name, fake_keyname):
+    keycode = fake_keyname(name)
+    assert modified_key(keycode) is None
+    assert keysym_for(keycode) == f"keycode-{keycode}"
+
+
+def test_an_unnamed_key_is_not_remembered_as_unnamed(monkeypatch):
+    """Before initscr there is no terminal to ask, and no answer to keep.
+
+    Caching the refusal would make every modified key report itself as
+    unknown for the life of the process, because the first lookup happens
+    while curses is still being set up.
+    """
+    monkeypatch.setattr(events, "_modified_keys", {})
+    monkeypatch.setattr(
+        curses, "keyname", lambda code: (_ for _ in ()).throw(curses.error("no screen"))
+    )
+    assert modified_key(4242) is None
+    monkeypatch.setattr(curses, "keyname", lambda code: b"kDN5")
+    assert modified_key(4242) == ("Down", MOD_CTRL)

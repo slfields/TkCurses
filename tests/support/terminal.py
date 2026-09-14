@@ -732,6 +732,17 @@ _KEYS: dict[str, bytes] = {
     "<Control-Down>": b"\x1b[1;5B",
     "<Control-Right>": b"\x1b[1;5C",
     "<Control-Left>": b"\x1b[1;5D",
+    "<Control-Home>": b"\x1b[1;5H",
+    "<Control-End>": b"\x1b[1;5F",
+    # The modifier parameter is one more than a three-bit set - 6 is Shift
+    # and Control together - and ncurses gives each combination a key code
+    # of its own, named for the combination.
+    "<Control-Shift-Up>": b"\x1b[1;6A",
+    "<Control-Shift-Down>": b"\x1b[1;6B",
+    "<Control-Shift-Right>": b"\x1b[1;6C",
+    "<Control-Shift-Left>": b"\x1b[1;6D",
+    "<Alt-Up>": b"\x1b[1;3A",
+    "<Alt-Down>": b"\x1b[1;3B",
     "<Return>": b"\r",
     "<Enter>": b"\r",
     "<Tab>": b"\t",

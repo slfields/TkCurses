@@ -87,6 +87,30 @@ def test_control_keys_carry_the_control_modifier(terminal, tmp_path):
     term.wait_for_text("sym=a mods=2")
 
 
+def test_control_and_shift_with_an_arrow_carry_their_modifiers(terminal, tmp_path):
+    """ncurses reports these as codes of its own, named for the combination.
+
+    Shift alone has classic codes - KEY_SF and friends - but Control-Down and
+    Control-Shift-Down are extended capabilities that ncurses numbers at run
+    time, so the only record of which key and which modifiers is the name it
+    gives the code.
+    """
+    term = terminal(cols=40, rows=10)
+    run(
+        term,
+        tmp_path,
+        'buffer.write(row, 0, "sym=%s mods=%d" % (event.keysym, event.modifiers));'
+        " row += 1",
+    )
+    # MOD_SHIFT is 0x01 and MOD_CTRL 0x02.
+    term.send_keys("<Control-Down>")
+    term.wait_for_text("sym=Down mods=2")
+    term.send_keys("<Control-Shift-Right>")
+    term.wait_for_text("sym=Right mods=3")
+    term.send_keys("<Control-Home>")
+    term.wait_for_text("sym=Home mods=2")
+
+
 def test_return_is_not_treated_as_a_control_key(terminal, tmp_path):
     """Return arrives in the control range but is a key in its own right."""
     term = terminal(cols=40, rows=8)

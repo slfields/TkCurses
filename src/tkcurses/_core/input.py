@@ -33,6 +33,7 @@ from tkcurses._core.events import (
     MouseState,
     ResizeEvent,
     keysym_for,
+    modified_key,
     shift_held,
 )
 
@@ -517,6 +518,9 @@ class InputHandler:
             char = chr(code)
         if shift_held(code):
             modifiers |= MOD_SHIFT
+        modified = modified_key(code)
+        if modified is not None:
+            modifiers |= modified[1]
         return KeyEvent(
             keycode=code,
             keysym=keysym_for(code),
