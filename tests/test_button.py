@@ -98,10 +98,18 @@ def test_a_click_invokes_the_button(root):
     assert calls == [1]
 
 
-def test_pressing_takes_the_focus(root):
+def test_pressing_leaves_the_focus_alone(root):
+    """Clicking one of these leaves the focus alone, as it does in Tk.
+
+    Checked against Tk 9.0.2: a click gives the focus to an entry, spinbox,
+    text or listbox - widgets that then want the keyboard - and not to a
+    button, checkbutton, radiobutton, scale or menubutton. Taking it here
+    would be worse than merely unfaithful: a button binds Space and Return to invoke
+    itself, so every later Space would press the last button clicked.
+    """
     button = Button(root, name="b", text="OK")
     button._handle(MouseEvent(button=1, state="pressed"))
-    assert button.focus_get() is button
+    assert button.focus_get() is None
 
 
 def test_a_release_without_a_press_does_nothing(root):

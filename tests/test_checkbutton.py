@@ -195,10 +195,18 @@ def test_a_click_toggles_the_button(root):
     assert variable.get() == 1
 
 
-def test_pressing_takes_the_focus(root):
+def test_pressing_leaves_the_focus_alone(root):
+    """Clicking one of these leaves the focus alone, as it does in Tk.
+
+    Checked against Tk 9.0.2: a click gives the focus to an entry, spinbox,
+    text or listbox - widgets that then want the keyboard - and not to a
+    button, checkbutton, radiobutton, scale or menubutton. Taking it here
+    would be worse than merely unfaithful: a checkbutton binds Space to toggle
+    itself, so every later Space would toggle the last box clicked.
+    """
     box = Checkbutton(root, name="c", text="Wrap")
     box._handle(MouseEvent(button=1, state="pressed"))
-    assert box.focus_get() is box
+    assert box.focus_get() is None
 
 
 def test_a_press_that_leaves_the_widget_changes_nothing(root):

@@ -33,6 +33,54 @@ def test_a_button_shows_its_text_in_a_box(terminal, tmp_path):
     assert "└" in term.display[row + 1]
 
 
+def test_clicking_a_button_does_not_take_space_and_return(terminal, tmp_path):
+    """The keyboard has to keep working after a button is clicked.
+
+    A button binds Space and Return to invoke itself, so a button that took
+    the focus when clicked would swallow both from whatever had them - and
+    quietly, since nothing on screen says where the focus went. Every later
+    Space would press the last button clicked instead of reaching the
+    application. Reported from scenario 27: after clicking the button that
+    raises, Space and Return stopped being registered and each one raised
+    the exception again.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "presses = []\n"
+            "def note(event):\n"
+            "    presses.append(event.keysym)\n"
+            '    buffer.write(6, 0, "keys=%s   " % ",".join(presses))\n'
+            "    root.tk.screen.refresh()\n"
+            "invoked = []\n"
+            "def pressed():\n"
+            "    invoked.append(1)\n"
+            '    buffer.write(7, 0, "invoked=%d" % len(invoked))\n'
+            "    root.tk.screen.refresh()\n"
+            "b = tkcurses.Button(root, text='OK', command=pressed)\n"
+            "b.place(x=2, y=2)\n"
+            'root.bind("<Key>", note)\n'
+            'root.bind("<Key-Return>", note)'
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("OK")
+    term.wait_for_idle()
+    row = next(i for i, line in enumerate(term.display) if "OK" in line)
+    term.click(term.display[row].index("OK"), row)
+    term.wait_for_text("invoked=1")
+
+    term.send(b" ")
+    term.wait_for_text("keys=space")
+    term.send(b"\r")
+    term.wait_for_text("keys=space,Return")
+    term.wait_for_idle()
+    assert "invoked=1" in "\n".join(term.display), (
+        f"the button was pressed again by a key it should never have seen:\n"
+        f"{term.describe()}"
+    )
+
+
 def test_focus_is_visible(terminal, tmp_path):
     """A button nobody can see the focus on cannot be used from the keyboard."""
     term = terminal(cols=40, rows=12)

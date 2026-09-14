@@ -58,8 +58,10 @@ def test_a_click_moves_the_choice(terminal, tmp_path):
         program(GROUP + "root.after(100, lambda: v.set('small'))"), workdir=tmp_path
     )
     term.wait_for_text("(•) Small")
+    # Round brackets still: a click chooses without taking the focus, which
+    # is what Tk does - angle brackets are the focus marker.
     term.click(3, 6)
-    term.wait_for_text("<•> Large")
+    term.wait_for_text("(•) Large")
     term.wait_for_idle()
     assert "( ) Small" in "\n".join(term.display)
 
@@ -108,7 +110,8 @@ def test_clicking_the_chosen_one_leaves_it_chosen(terminal, tmp_path):
     )
     term.wait_for_text("(•) Small")
     term.click(3, 2)
-    term.wait_for_text("<•> Small")
+    term.wait_for_idle()
+    assert "(•) Small" in "\n".join(term.display)
 
 
 def test_a_group_packs_into_a_frame(terminal, tmp_path):
@@ -144,8 +147,8 @@ def test_buttons_without_a_variable_still_form_one_group(terminal, tmp_path):
     )
     term.wait_for_text("( ) Yes")
     term.click(3, 2)
-    term.wait_for_text("<•> Yes")
+    term.wait_for_text("(•) Yes")
     term.click(3, 4)
-    term.wait_for_text("<•> No")
+    term.wait_for_text("(•) No")
     term.wait_for_idle()
     assert "( ) Yes" in "\n".join(term.display)

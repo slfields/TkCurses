@@ -48,10 +48,10 @@ def test_a_click_ticks_the_box(terminal, tmp_path):
         workdir=tmp_path,
     )
     term.wait_for_text("[ ] Wrap")
-    # Angle brackets, not square: the click takes the focus as well as
-    # ticking the box, and focus is what changes the brackets.
+    # Square brackets still: the box ticks, and the focus stays where it
+    # was, which is what Tk does - angle brackets are the focus marker.
     term.click(3, 2)
-    term.wait_for_text("<x> Wrap")
+    term.wait_for_text("[x] Wrap")
 
 
 def test_a_second_click_unticks_it(terminal, tmp_path):
@@ -62,9 +62,9 @@ def test_a_second_click_unticks_it(terminal, tmp_path):
     )
     term.wait_for_text("[ ] Wrap")
     term.click(3, 2)
-    term.wait_for_text("<x> Wrap")
+    term.wait_for_text("[x] Wrap")
     term.click(3, 2)
-    term.wait_for_text("< > Wrap")
+    term.wait_for_text("[ ] Wrap")
 
 
 def test_focus_is_visible(terminal, tmp_path):
@@ -130,10 +130,8 @@ def test_two_boxes_over_one_variable_move_together(terminal, tmp_path):
     )
     term.wait_for_text("[ ] One")
     term.wait_for_text("[ ] Two")
-    # Only the one clicked on has the focus, so only its brackets change;
-    # both are ticked, which is the thing being tested.
     term.click(3, 2)
-    term.wait_for_text("<x> One")
+    term.wait_for_text("[x] One")
     term.wait_for_text("[x] Two")
 
 

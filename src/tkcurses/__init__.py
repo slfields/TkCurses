@@ -4510,15 +4510,23 @@ class Button(_TextWidget):
 
 
 def _button_press(event: Event) -> None:
-    """Take the focus and show the button held down.
+    """Show the button held down.
 
     Shared with Checkbutton, which presses and releases the same way and
     differs only in what invoking it does.
+
+    The focus is deliberately left where it was, which is what Tk does -
+    checked against Tk 9.0.2, where clicking a button, checkbutton,
+    radiobutton, scale or menubutton leaves the focus alone and only an
+    entry, spinbox, text or listbox takes it. The rule is worth stating,
+    because taking the focus here is superficially helpful and actively
+    harmful: a button binds Space and Return to invoke itself, so a button
+    that took the focus on being clicked would quietly swallow both from
+    whatever had them, and every later Space would press it again.
     """
     button = event.widget
     if button._disabled:
         return
-    button.focus_set()
     button._pressed = True
     button._redraw()
 
@@ -5564,10 +5572,8 @@ class Menubutton(_TextWidget):
 
 
 def _menubutton_post(event: Event) -> None:
-    """Take the focus and open the menu."""
-    button = event.widget
-    button.focus_set()
-    button.post_menu()
+    """Open the menu, leaving the focus where it was, as Tk does."""
+    event.widget.post_menu()
 
 
 def _menubutton_key(event: Event) -> str:
@@ -9627,7 +9633,16 @@ def _paned_refresh(event: Event) -> None:
 
 
 def _paned_press(event: Event) -> None:
-    """Take the focus, and start dragging a sash if one was clicked."""
+    """Take the focus, and start dragging a sash if one was clicked.
+
+    The one widget here that does take the focus on a click, and the one
+    with no Tk counterpart to be faithful to: Tk's panedwindow has no
+    takefocus option at all and no keyboard bindings, so its sashes are
+    mouse-only. Ours can be moved with the arrows, which is the only way to
+    resize a pane without a mouse, and the focus has to arrive somehow. It
+    costs nothing, because this widget binds neither Space nor Return and
+    passes on every key it does not use.
+    """
     paned = event.widget
     paned.focus_set()
     found = paned.identify(event.x, event.y)
@@ -10399,11 +10414,14 @@ class Scale(_Drawable):
 
 
 def _scale_press(event: Event) -> None:
-    """Take the focus and jump the handle to where the trough was clicked."""
+    """Jump the handle to where the trough was clicked.
+
+    The focus stays where it was, as it does in Tk: the arrows move a scale
+    that has the focus, and a click is already a way of setting the value.
+    """
     scale = event.widget
     if scale._disabled:
         return
-    scale.focus_set()
     scale._dragging = True
     _scale_move_to(scale, event)
 

@@ -92,6 +92,9 @@ character and the modifiers the terminal reported.
 ### After something goes wrong
 
 - [ ] Clicking the button raises, and the application keeps running
+- [ ] **Space and Return still work afterwards**, and reach the log rather
+      than pressing the button again — a click must not move the keyboard to
+      the button, which would swallow both
 - [ ] **The display is untouched** — no traceback on the screen, nothing
       scrolled, the history exactly where it was
 - [ ] Pressing keys afterwards still works
@@ -113,6 +116,13 @@ character and the modifiers the terminal reported.
 ---
 
 ## What this found
+
+- **Clicking a button stole Space and Return.** `_button_press` took the
+  focus, and a button binds both keys to invoke itself — so after clicking
+  the button that raises, every later Space raised the exception again and
+  nothing else saw the key. Checked against Tk 9.0.2: a click gives the focus
+  to an entry, spinbox, text or listbox, and never to a button, checkbutton,
+  radiobutton, scale or menubutton. **TkCurses-gyo.5**.
 
 - **Control and Alt with an arrow could not be bound at all.** They arrived as
   `keycode-534` and `keycode-535` with no modifiers, so `<Control-Down>` and

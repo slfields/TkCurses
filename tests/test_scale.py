@@ -260,10 +260,18 @@ def test_a_click_on_the_trough_moves_the_handle(root):
     assert scale.get() == 10
 
 
-def test_a_click_takes_the_focus(root):
+def test_a_click_leaves_the_focus_alone(root):
+    """Clicking one of these leaves the focus alone, as it does in Tk.
+
+    Checked against Tk 9.0.2: a click gives the focus to an entry, spinbox,
+    text or listbox - widgets that then want the keyboard - and not to a
+    button, checkbutton, radiobutton, scale or menubutton. Taking it here
+    would be worse than merely unfaithful: the arrows move a scale that has the
+    focus, and a click already sets the value without needing them.
+    """
     scale = horizontal(root)
     scale._handle(MouseEvent(button=1, state="pressed", x=2, y=0))
-    assert scale.focus_get() is scale
+    assert scale.focus_get() is None
 
 
 def test_a_drag_follows_the_pointer(root):
