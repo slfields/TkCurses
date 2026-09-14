@@ -45,6 +45,12 @@ from typing import TYPE_CHECKING, Any
 
 from tkcurses._core.events import (
     MOD_ALT,
+    MOD_BUTTON1,
+    MOD_BUTTON2,
+    MOD_BUTTON3,
+    MOD_BUTTON4,
+    MOD_BUTTON5,
+    MOD_BUTTONS,
     MOD_CTRL,
     MOD_META,
     MOD_SHIFT,
@@ -73,14 +79,25 @@ __all__ = [
 BREAK = "break"
 
 #: The ``Any`` modifier, which makes a pattern ignore modifier state. It sits
-#: above the ``MOD_*`` bits in :mod:`tkcurses._core.events` rather than
-#: alongside them: those describe a key that was actually pressed, this one
-#: describes how to match, and no input event ever carries it.
-MOD_ANY = 0x100
+#: clear of every ``MOD_*`` bit in :mod:`tkcurses._core.events` rather than
+#: alongside them: those describe a key or button that was really held, this
+#: one describes how to match, and no input event ever carries it.
+MOD_ANY = 0x8000
 
 #: Modifier names accepted in a sequence, including the aliases tkinter takes
 #: from macOS and X11 so that code written for either binds the same thing.
 _MODIFIERS: dict[str, int] = {
+    # B1 to B5: a mouse button held down. <B1-Motion> is Tk's drag idiom.
+    "B1": MOD_BUTTON1,
+    "B2": MOD_BUTTON2,
+    "B3": MOD_BUTTON3,
+    "B4": MOD_BUTTON4,
+    "B5": MOD_BUTTON5,
+    "Button1": MOD_BUTTON1,
+    "Button2": MOD_BUTTON2,
+    "Button3": MOD_BUTTON3,
+    "Button4": MOD_BUTTON4,
+    "Button5": MOD_BUTTON5,
     "Control": MOD_CTRL,
     "Ctrl": MOD_CTRL,
     "Shift": MOD_SHIFT,
@@ -234,6 +251,11 @@ _CANONICAL_MODIFIERS: tuple[tuple[int, str], ...] = (
     (MOD_ALT, "Alt"),
     (MOD_SHIFT, "Shift"),
     (MOD_META, "Meta"),
+    (MOD_BUTTON1, "B1"),
+    (MOD_BUTTON2, "B2"),
+    (MOD_BUTTON3, "B3"),
+    (MOD_BUTTON4, "B4"),
+    (MOD_BUTTON5, "B5"),
 )
 
 
@@ -369,12 +391,18 @@ def _mouse_pattern(event: MouseEvent) -> EventPattern:
             repeat=_MOUSE_PRESS_STATES[event.state],
         )
     if event.state == "released":
+        # The button being released is still held as far as the modifier is
+        # concerned, which is what makes <B1-ButtonRelease-1> - the pattern
+        # dnd builds to catch the end of a drag - match anything at all.
         return EventPattern(
             type="ButtonRelease",
             detail=str(event.button),
-            modifiers=event.modifiers,
+            modifiers=event.modifiers | MOD_BUTTONS.get(event.button, 0),
         )
-    return EventPattern(type="Motion", modifiers=event.modifiers)
+    modifiers = event.modifiers
+    if event.state == "drag":
+        modifiers |= MOD_BUTTONS.get(event.button, 0)
+    return EventPattern(type="Motion", modifiers=modifiers)
 
 
 @dataclass

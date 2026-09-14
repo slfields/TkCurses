@@ -155,6 +155,19 @@ known-first-party = ["tkcurses"]
 [tool.ruff.lint.per-file-ignores]
 # The public API deliberately mirrors tkinter's names and re-export surface.
 "src/tkcurses/__init__.py" = ["F401", "F403"]
+# filedialog's whole contract is os.path: it takes and returns path *strings*,
+# splits them with os.path.split, compares against os.sep, os.curdir and
+# os.pardir, and hands the result to callers written against tkinter's own
+# module. Rewriting it round pathlib would mean converting at every boundary
+# to produce the same strings, which is more code for the same behaviour and
+# a worse match for what the module is.
+"src/tkcurses/filedialog.py" = ["PTH"]
+# The same, for the tests that check its path handling: they have to speak
+# the os.path the module speaks to be checking anything.
+"tests/test_filedialog.py" = ["PTH"]
+# And for the scenario that drives it, which passes the file dialogs the
+# os.path strings they take.
+"uat/scenario_30_choosers.py" = ["PTH"]
 "tests/*" = ["ARG001", "ARG002", "ARG005"]
 # Binding callbacks take an event whether or not they read it, and a trace
 # takes three arguments it rarely wants all of. Same reason as the tests.

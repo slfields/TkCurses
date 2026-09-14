@@ -221,6 +221,17 @@ class Application:
         #: Values behind ``getvar``/``setvar`` and the Variable classes.
         self.variables: dict[str, Any] = {}
 
+        #: The drag in progress, if any. tkinter keeps this on the root as a
+        #: name-mangled attribute; it belongs with the rest of the per-tree
+        #: state, and being here is what lets a second dnd_start find it.
+        self.dnd: Any = None
+
+        #: Named fonts, by name, as tkcurses.font creates them. Tk keeps
+        #: these in the interpreter and widgets name one in their ``font``
+        #: option; this is where a widget looks the name up to find out
+        #: what styling it stands for.
+        self.fonts: dict[str, dict[str, Any]] = {}
+
         #: Variable objects the library itself owns, by name. A Variable
         #: forgets its value when the last reference to it goes, so a
         #: default shared by several widgets - Tk's ``selectedButton``

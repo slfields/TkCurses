@@ -680,3 +680,61 @@ def test_binding_and_unbinding_report_a_change():
     assert len(changes) == 2
     table.unbind(".b")
     assert len(changes) == 3
+
+
+# ------------------------------------------------------- held mouse buttons
+
+
+@pytest.mark.parametrize(
+    "sequence",
+    ["<B1-Motion>", "<B2-Motion>", "<B3-Motion>", "<B4-Motion>", "<B5-Motion>"],
+)
+def test_a_held_button_is_a_modifier(sequence):
+    """Tk's B1..B5, and <B1-Motion> is how every Tk program drags something.
+
+    It did not parse at all before, so any application written against
+    tkinter that drags anything failed at bind time.
+    """
+    assert str(parse_sequence(sequence)) == sequence
+
+
+def test_the_long_spelling_is_accepted_too():
+    assert parse_sequence("<Button1-Motion>") == parse_sequence("<B1-Motion>")
+
+
+def test_a_held_button_combines_with_the_keyboard_modifiers():
+    assert str(parse_sequence("<Control-B3-Motion>")) == "<Control-B3-Motion>"
+
+
+def test_dragging_carries_the_button_it_is_dragging_with():
+    pattern = pattern_for_event(MouseEvent(state="drag", button=1, x=1, y=1))
+    assert pattern == parse_sequence("<B1-Motion>")
+
+
+def test_a_release_carries_the_button_being_released():
+    """Which is what makes <B1-ButtonRelease-1> match anything at all - the
+    pattern tkinter.dnd builds to catch the end of a drag."""
+    pattern = pattern_for_event(MouseEvent(state="released", button=1, x=1, y=1))
+    assert parse_sequence("<B1-ButtonRelease-1>").matches(pattern)
+
+
+def test_plain_motion_still_sees_a_drag():
+    """A <Motion> binding asks for no modifiers, and the subset rule means it
+    matches a drag too - which is what Tk does."""
+    drag = pattern_for_event(MouseEvent(state="drag", button=1, x=1, y=1))
+    assert parse_sequence("<Motion>").matches(drag)
+
+
+def test_a_drag_binding_does_not_fire_for_a_bare_motion():
+    motion = pattern_for_event(MouseEvent(state="motion", button=0, x=1, y=1))
+    assert not parse_sequence("<B1-Motion>").matches(motion)
+
+
+def test_a_drag_with_one_button_does_not_match_another():
+    drag = pattern_for_event(MouseEvent(state="drag", button=1, x=1, y=1))
+    assert not parse_sequence("<B3-Motion>").matches(drag)
+
+
+def test_an_ordinary_release_still_matches_its_plain_pattern():
+    release = pattern_for_event(MouseEvent(state="released", button=1, x=1, y=1))
+    assert parse_sequence("<ButtonRelease-1>").matches(release)
