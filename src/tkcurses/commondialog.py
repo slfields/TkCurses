@@ -47,7 +47,7 @@ from tkcurses._core.geometry import BORDER_WIDTH
 if TYPE_CHECKING:
     from tkcurses import Misc, Toplevel
 
-__all__ = ["Dialog", "fit"]
+__all__ = ["Dialog", "fit", "restore_focus_grab", "take_focus_grab"]
 
 #: Cells left between the dialog's border and its content on each side.
 PADDING = 1
@@ -88,6 +88,32 @@ def fit(window: Toplevel) -> None:
     window.update_layout()
 
 
+def take_focus_grab(window: Toplevel) -> tuple[Misc | None, Misc | None]:
+    """Give ``window`` the grab, and hand back what it displaced.
+
+    Tk keeps a stack of these - ``tk::SetFocusGrab`` and
+    ``tk::RestoreFocusGrab`` - because grab_release does not put anything
+    back: it releases, full stop. Without the pair, a dialog opened from
+    inside another leaves the outer one with no keyboard when it closes, and
+    the application looks wedged while a window is plainly sitting there.
+    """
+    displaced = (window.tk.grab, window.tk.focus)
+    window.grab_set()
+    return displaced
+
+
+def restore_focus_grab(
+    window: Toplevel, displaced: tuple[Misc | None, Misc | None]
+) -> None:
+    """Release ``window``'s grab and give back what :func:`take_focus_grab` took."""
+    grab, focus = displaced
+    window.grab_release()
+    if grab is not None and grab.winfo_exists():
+        grab.grab_set()
+    if focus is not None and focus.winfo_exists():
+        focus.focus_set()
+
+
 class Dialog:
     """A modal window that returns a value.
 
@@ -115,6 +141,7 @@ class Dialog:
         #: What the dialog will return, set by finish().
         self._result: Any = None
         self._window: Toplevel | None = None
+        self._displaced: tuple[Misc | None, Misc | None] = (None, None)
 
     # ----------------------------------------------------------- the hooks
 
@@ -185,8 +212,10 @@ class Dialog:
         fit(window)
         # The grab goes on after the window is sized and placed, so that a
         # click during the build cannot reach it at a position it is about
-        # to leave.
-        window.grab_set()
+        # to leave. What it displaces is kept, to be handed back on the way
+        # out - a dialog opened from inside another has to leave the outer
+        # one holding the keyboard, or nothing works afterwards.
+        self._displaced = take_focus_grab(window)
         (focus or window).focus_set()
         window.bind("<Escape>", lambda event: self.finish(None))  # noqa: ARG005
         window.protocol("WM_DELETE_WINDOW", lambda: self.finish(None))
@@ -197,5 +226,5 @@ class Dialog:
         window, self._window = self._window, None
         if window is None or not window.winfo_exists():
             return
-        window.grab_release()
+        restore_focus_grab(window, self._displaced)
         window.destroy()

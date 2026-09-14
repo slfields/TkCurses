@@ -200,6 +200,68 @@ def test_the_application_beneath_cannot_be_reached_while_it_is_up(terminal, tmp_
     term.send_keys("<Escape>")
 
 
+def test_the_outer_dialog_keeps_the_keyboard_after_an_inner_one_closes(
+    terminal, tmp_path
+):
+    """grab_release puts nothing back: it releases, full stop.
+
+    So a dialog opened from inside another has to hand the grab and the focus
+    back to the one it displaced, the way Tk's SetFocusGrab and
+    RestoreFocusGrab do. Without it the outer dialog is left sitting there
+    with no keyboard, and the application looks wedged - which is exactly
+    what a save dialog's overwrite question does to it.
+    """
+    term = terminal(cols=60, rows=16)
+    term.run_source(
+        """
+import tkcurses
+from tkcurses.commondialog import Dialog
+
+
+class Inner(Dialog):
+    def body(self, window):
+        tkcurses.Label(window, text="inner").pack()
+        return None
+
+
+class Outer(Dialog):
+    def body(self, window):
+        tkcurses.Label(window, text="outer").pack()
+        window.bind("<Key-i>", lambda event: Inner(window, title="in").show())
+        return None
+
+
+root = tkcurses.Tk()
+buffer = root.tk.screen.buffer
+buffer.write(0, 0, "ready")
+root.tk.screen.refresh()
+
+
+def ask(event):
+    buffer.write(1, 0, "answer=%r      " % (Outer(root, title="out").show(),))
+    root.tk.screen.refresh()
+
+
+root.bind("<Key-a>", ask)
+root.after(8000, root.quit)
+root.mainloop()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("ready")
+    term.send(b"a")
+    term.wait_for_text("outer")
+
+    term.send(b"i")
+    term.wait_for_text("inner")
+    term.send_keys("<Escape>")
+    term.wait_for(lambda t: not t.contains("inner"), message="the inner one to go")
+
+    # The outer dialog is still up, and must still answer its own keys.
+    term.send_keys("<Escape>")
+    term.wait_for_text("answer=None")
+
+
 def test_a_dialog_can_be_opened_from_inside_another(terminal, tmp_path):
     """Which is what a save-before-quit prompt is."""
     term = terminal(cols=60, rows=16)

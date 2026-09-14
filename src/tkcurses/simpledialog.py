@@ -45,7 +45,7 @@ from typing import TYPE_CHECKING, Any
 
 import tkcurses
 from tkcurses import messagebox
-from tkcurses.commondialog import fit
+from tkcurses.commondialog import fit, restore_focus_grab, take_focus_grab
 
 if TYPE_CHECKING:
     from tkcurses import Event, Misc
@@ -96,7 +96,9 @@ class Dialog(tkcurses.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self.cancel)
         fit(self)
         self.initial_focus.focus_set()
-        self.grab_set()
+        # Kept so that closing hands the keyboard back to whatever had it,
+        # which matters when this dialog was opened from inside another.
+        self._displaced = take_focus_grab(self)
         self.wait_window(self)
 
     # --------------------------------------------------- construction hooks
@@ -158,8 +160,8 @@ class Dialog(tkcurses.Toplevel):
         """Keep the answer, usually on ``self.result``. Override this."""
 
     def destroy(self) -> None:
-        """Take the window down, releasing the grab it holds."""
-        self.grab_release()
+        """Take the window down, handing back the grab it displaced."""
+        restore_focus_grab(self, getattr(self, "_displaced", (None, None)))
         super().destroy()
 
 
@@ -226,8 +228,8 @@ class SimpleDialog:
 
     def go(self) -> int | None:
         """Wait for a button, then take the dialog down and return its index."""
-        self.root.grab_set()
         self.root.focus_set()
+        self._displaced = take_focus_grab(self.root)
         self.root.wait_window(self.root)
         return self.num
 
@@ -248,7 +250,7 @@ class SimpleDialog:
     def done(self, num: int) -> None:
         """Answer with one button's index and close."""
         self.num = num
-        self.root.grab_release()
+        restore_focus_grab(self.root, getattr(self, "_displaced", (None, None)))
         self.root.destroy()
 
 
