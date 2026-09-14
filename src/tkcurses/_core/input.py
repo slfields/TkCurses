@@ -232,6 +232,8 @@ class InputHandler:
         dispatcher: CursesDispatcher | None = None,
         click_interval: int = DEFAULT_CLICK_INTERVAL,
         stream: Any = None,
+        report_motion: bool = True,
+        report_hover: bool = False,
     ) -> None:
         self._stdscr = stdscr
         self._dispatcher = dispatcher or CursesDispatcher.get()
@@ -239,6 +241,9 @@ class InputHandler:
         self._decoder = MouseDecoder(click_interval)
         self._mouse_available = False
         self._click_interval = click_interval
+        self._report_motion = report_motion
+        self._report_hover = report_hover
+        self._motion_mode = b""
         self._configure()
 
     def _configure(self) -> None:
@@ -267,6 +272,44 @@ class InputHandler:
             # MouseDecoder does the counting; its docstring says what
             # ncurses' own version cost.
             self._dispatcher.call(curses.mouseinterval, 0)
+            self._enable_motion()
+
+    def _enable_motion(self) -> None:
+        """Ask the terminal itself to report the mouse moving.
+
+        ncurses will not. ``mousemask`` accepts REPORT_MOUSE_POSITION and
+        reports it granted, but the only thing it sends the terminal is
+        ``ESC [ ? 1006 ; 1000 h`` - SGR encoding and *normal* tracking, which
+        is press and release and nothing else. Its built-in xterm string
+        hard-codes 1000, and only a terminfo entry with an ``XM`` capability
+        of its own would change that.
+
+        So the mode is set here. 1002 reports motion while a button is held,
+        which is what a drag is; 1003 reports every movement, which is what
+        hovering needs and what floods an application that does not. Written
+        through ncurses' own output so it cannot overtake what curses has
+        buffered.
+        """
+        if self._report_hover:
+            self._motion_mode = b"\x1b[?1003h"
+        elif self._report_motion:
+            self._motion_mode = b"\x1b[?1002h"
+        else:
+            return
+        with contextlib.suppress(curses.error):
+            self._dispatcher.call(curses.putp, self._motion_mode)
+
+    def disable_mouse(self) -> None:
+        """Stop the terminal reporting the mouse, on the way out.
+
+        A terminal left in 1002 or 1003 goes on sending mouse reports to
+        whatever runs next, which sees them as garbage input.
+        """
+        if not self._motion_mode:
+            return
+        self._motion_mode = b""
+        with contextlib.suppress(curses.error):
+            self._dispatcher.call(curses.putp, b"\x1b[?1003l\x1b[?1002l")
 
     # ------------------------------------------------------------- state
 

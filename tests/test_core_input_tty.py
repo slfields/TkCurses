@@ -382,3 +382,89 @@ def test_a_drag_reports_both_ends(terminal, tmp_path):
     term.wait_for_text("drag b1 @8,4")
     term.send_mouse(15, 6, action="release")
     term.wait_for_text("released b1 @15,6 end=15,6")
+
+
+def test_the_terminal_is_asked_to_report_drags(terminal, tmp_path):
+    """ncurses will not ask for it, whatever mousemask says.
+
+    mousemask accepts REPORT_MOUSE_POSITION and reports it granted, but the
+    only thing ncurses sends the terminal is normal tracking - press and
+    release. Nothing caught this because the harness sends motion whether
+    the application asked for it or not; a real terminal does not.
+    """
+    term = terminal(cols=30, rows=6)
+    term.run_source(
+        "import tkcurses\n"
+        "root = tkcurses.Tk()\n"
+        "root.tk.screen.buffer.write(0, 0, 'up')\n"
+        "root.tk.screen.refresh()\n"
+        "root.after(1500, root.quit)\n"
+        "root.mainloop()\n"
+        "root.destroy()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("up")
+    assert b"\x1b[?1002h" in term.received
+
+
+def test_hover_reporting_is_off_unless_it_is_asked_for(terminal, tmp_path):
+    """1003 sends an event for every cell the pointer crosses."""
+    term = terminal(cols=30, rows=6)
+    term.run_source(
+        "import tkcurses\n"
+        "root = tkcurses.Tk()\n"
+        "root.tk.screen.buffer.write(0, 0, 'up')\n"
+        "root.tk.screen.refresh()\n"
+        "root.after(1500, root.quit)\n"
+        "root.mainloop()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("up")
+    assert b"\x1b[?1003h" not in term.received
+
+
+def test_hover_reporting_can_be_turned_on(terminal, tmp_path):
+    term = terminal(cols=30, rows=6, env={"TKCURSES_MOUSE_REPORT_HOVER": "1"})
+    term.run_source(
+        "import tkcurses\n"
+        "root = tkcurses.Tk()\n"
+        "root.tk.screen.buffer.write(0, 0, 'up')\n"
+        "root.tk.screen.refresh()\n"
+        "root.after(1500, root.quit)\n"
+        "root.mainloop()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("up")
+    assert b"\x1b[?1003h" in term.received
+
+
+def test_motion_reporting_can_be_turned_off(terminal, tmp_path):
+    term = terminal(cols=30, rows=6, env={"TKCURSES_MOUSE_REPORT_MOTION": "0"})
+    term.run_source(
+        "import tkcurses\n"
+        "root = tkcurses.Tk()\n"
+        "root.tk.screen.buffer.write(0, 0, 'up')\n"
+        "root.tk.screen.refresh()\n"
+        "root.after(1500, root.quit)\n"
+        "root.mainloop()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("up")
+    assert b"\x1b[?1002h" not in term.received
+
+
+def test_the_terminal_is_put_back_on_the_way_out(terminal, tmp_path):
+    """A terminal left reporting the mouse sends garbage to whatever runs next."""
+    term = terminal(cols=30, rows=6)
+    term.run_source(
+        "import tkcurses\n"
+        "root = tkcurses.Tk()\n"
+        "root.tk.screen.buffer.write(0, 0, 'up')\n"
+        "root.tk.screen.refresh()\n"
+        "root.after(300, root.quit)\n"
+        "root.mainloop()\n"
+        "root.destroy()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_exit(timeout=10)
+    assert b"\x1b[?1002l" in term.received

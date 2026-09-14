@@ -50,6 +50,7 @@ from tkcurses._core.canvas import (
 )
 from tkcurses._core.clipboard import CLIPBOARD, PRIMARY
 from tkcurses._core.colors import ColorManager, palette_rgb, parse_color, rgb_for
+from tkcurses._core.config import TkCursesConfig
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.editing import TextField
 from tkcurses._core.errors import TclError, TkCursesError
@@ -3103,7 +3104,13 @@ class Tk(BaseWidget, Wm):
             # nothing and makes the key usable.
             with contextlib.suppress(AttributeError, curses.error):
                 curses.set_escdelay(_ESCAPE_DELAY_MS)
-            self._input = InputHandler(self._screen.stdscr)
+            mouse = TkCursesConfig.load().mouse
+            self._input = InputHandler(
+                self._screen.stdscr,
+                click_interval=mouse.click_interval,
+                report_motion=mouse.report_motion,
+                report_hover=mouse.report_hover,
+            )
             colors = ColorManager()
             if colors.start():
                 # Cells are painted through this; without colour support the
@@ -3356,6 +3363,8 @@ class Tk(BaseWidget, Wm):
         self.tk.panels = None
         self.tk.screen = None
         self.tk.colors = None
+        if self._input is not None:
+            self._input.disable_mouse()
         self._input = None
         with contextlib.suppress(Exception):
             self._screen.stop()

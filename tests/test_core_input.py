@@ -203,13 +203,24 @@ class FakeScreen:
         return self.codes.pop(0) if self.codes else curses.ERR
 
 
+#: What the handler asked the terminal for, filled in by the stub below.
+PUT: list[bytes] = []
+
+
 @pytest.fixture
 def curses_stub(monkeypatch):
-    """Neutralise the curses calls the handler makes during setup."""
+    """Neutralise the curses calls the handler makes during setup.
+
+    putp included: it writes straight to the terminal, so without a stub
+    these tests set the developer's own terminal reporting the mouse and
+    leave it that way.
+    """
+    PUT.clear()
     monkeypatch.setattr(curses, "noecho", lambda: None)
     monkeypatch.setattr(curses, "cbreak", lambda: None)
     monkeypatch.setattr(curses, "mousemask", lambda mask: (mask, 0))
     monkeypatch.setattr(curses, "mouseinterval", lambda ms: None)
+    monkeypatch.setattr(curses, "putp", PUT.append)
     return monkeypatch
 
 
@@ -336,3 +347,42 @@ def test_button_masks_of_this_platform_cover_the_main_buttons():
     masks = button_masks()
     assert {1, 2, 3} <= set(masks)
     assert "pressed" in masks[1]
+
+
+# --------------------------------------------------------- motion reporting
+
+
+def test_the_handler_asks_the_terminal_for_drags(curses_stub):
+    """ncurses asks only for press and release, whatever mousemask grants."""
+    make_handler(FakeScreen())
+    assert b"\x1b[?1002h" in PUT
+
+
+def test_hover_reporting_is_not_asked_for_by_default(curses_stub):
+    make_handler(FakeScreen())
+    assert b"\x1b[?1003h" not in PUT
+
+
+def test_hover_reporting_is_asked_for_when_wanted(curses_stub):
+    make_handler(FakeScreen(), report_hover=True)
+    assert b"\x1b[?1003h" in PUT
+    assert b"\x1b[?1002h" not in PUT
+
+
+def test_nothing_is_asked_for_when_motion_is_off(curses_stub):
+    make_handler(FakeScreen(), report_motion=False)
+    assert PUT == []
+
+
+def test_the_terminal_is_put_back(curses_stub):
+    handler = make_handler(FakeScreen())
+    handler.disable_mouse()
+    assert b"\x1b[?1003l\x1b[?1002l" in PUT
+
+
+def test_putting_it_back_twice_is_harmless(curses_stub):
+    handler = make_handler(FakeScreen())
+    handler.disable_mouse()
+    before = len(PUT)
+    handler.disable_mouse()
+    assert len(PUT) == before

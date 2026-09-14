@@ -58,10 +58,11 @@ manager to drag things back into view.
       highlight
 - [ ] A tag moves with the text: type in front of a tagged word and the tag
       goes with it
-- [ ] `Shift` with the arrows selects — the `mouse:` line reports the last
-      mouse event the widget saw, so if dragging does not select, `drag`
-      appearing there means the terminal is reporting motion and the fault is
-      the library's; nothing appearing means the terminal is not sending it
+- [ ] `Shift` with the arrows selects
+- [ ] Dragging with the mouse selects — the `mouse:` line should show `drag`
+      while the button is held. Nothing there means the terminal is not
+      reporting motion, which `TKCURSES_MOUSE_REPORT_MOTION=0` would also
+      cause
 - [ ] The scrollbar's thumb matches where the view actually is
 - [ ] `end` reads one line past the last — Tk's rule, not a fault
 - [ ] Resizing the terminal re-wraps without losing the cursor
@@ -117,6 +118,18 @@ anywhere · `F3` for a menu taller than the terminal
 ---
 
 ## What this found
+
+- **The terminal was never asked to report mouse motion, so no drag ever
+  happened outside the test harness.** `mousemask` accepts
+  `REPORT_MOUSE_POSITION` and reports it granted — but the only thing ncurses
+  writes to the terminal is `ESC [ ? 1006 ; 1000 h`: SGR encoding plus
+  *normal* tracking, which is press and release and nothing else. Its built-in
+  xterm string hard-codes 1000. The application has to set mode 1002 itself,
+  and put it back on the way out. Every drag test passed because the harness
+  sends motion whether it was asked for or not — the one thing a harness
+  cannot check by imitating a terminal is what the terminal was *asked to do*,
+  so it now records the bytes the application sends and the tests assert on
+  those. **TkCurses-bj4**.
 
 - **Shift with the arrows did not select anything, on any terminal.** ncurses
   decodes a shifted arrow into a key code of its own — Shift-Down is `KEY_SF`,

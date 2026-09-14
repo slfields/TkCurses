@@ -220,6 +220,10 @@ class TerminalHarness:
         self._pid: int | None = None
         self._exit_status: int | None = None
         self._stderr = bytearray()
+        #: Every byte the child has sent. Kept so a test can assert what the
+        #: application asked the *terminal* for - mouse modes, cursor
+        #: visibility - which the rendered screen cannot show.
+        self._received = bytearray()
         self._workdir: Path | None = None
 
     # ------------------------------------------------------------ lifecycle
@@ -411,6 +415,7 @@ class TerminalHarness:
                 if not data:
                     continue
                 if fd == self._master:
+                    self._received.extend(data)
                     self._note_modes(data)
                     self._stream.feed(data)
                     got = True
@@ -560,6 +565,12 @@ class TerminalHarness:
     def display(self) -> list[str]:
         """The screen as a list of row strings, padded to the full width."""
         return list(self._screen.display)
+
+    @property
+    def received(self) -> bytes:
+        """Every byte the child has written to the terminal so far."""
+        self._drain(0.0)
+        return bytes(self._received)
 
     @property
     def stderr(self) -> str:
