@@ -1956,6 +1956,12 @@ class BaseWidget(Misc):
         self._mapped = False
         if self._panel is not None:
             self.tk.panels.hide(self._panel)  # type: ignore[union-attr]
+        if self.tk.focus is self:
+            # A widget that is no longer on screen must not keep the
+            # keyboard. Left holding it, every key afterwards is delivered to
+            # something nobody can see and every binding further out - the
+            # Escape that closes the application, most of all - stops firing.
+            self.tk.focus = None
         self.event_generate("<Unmap>")
 
     def _create_window(self) -> None:
@@ -8364,13 +8370,17 @@ class Menu(_Drawable):
         self._unmap()
         parent = self._parent_menu
         self._parent_menu = None
+        previous = self._focus_before
+        self._focus_before = None
         if parent is not None and parent._posted:
             parent._open_cascade = None
             parent.grab_set()
             parent.focus_set()
-        elif self._focus_before is not None and self._focus_before.winfo_exists():
-            self._focus_before.focus_set()
-        self._focus_before = None
+        elif previous is not None and previous.winfo_exists():
+            previous.focus_set()
+        # Nothing to give the focus back to: _unmap has already taken it off
+        # this menu, and leaving it there is what stopped Escape closing the
+        # application after a menu had been opened once.
 
     def tk_popup(self, x: int, y: int, entry: Any = None) -> None:
         """Post the menu at a point, optionally with one entry active."""

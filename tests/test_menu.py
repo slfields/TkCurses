@@ -508,3 +508,44 @@ def test_clicking_away_from_a_bar_dropdown_closes_it(root):
     bar.invoke(0)
     dropdown._handle(MouseEvent(button=1, state="pressed", x=55, y=20))
     assert not dropdown._posted
+
+
+def test_dismissing_a_menu_does_not_keep_the_keyboard(root):
+    """Reported from UAT 25: Escape stopped closing the application.
+
+    When nothing held the focus before a menu was posted there was nothing
+    to give it back to, and the focus was left on the menu - which by then
+    was unmapped. Every key afterwards went to a widget nobody could see,
+    so bindings further out, including the Escape that quits, never fired.
+    """
+    menu = Menu(root, name="m")
+    menu.add_command(label="One")
+    assert root.focus_get() is None
+    menu.post(0, 0)
+    assert menu.focus_get() is menu
+    menu.unpost()
+    assert root.focus_get() is None
+
+
+def test_dismissing_gives_the_focus_back_to_whoever_had_it(root):
+    holder = Menu(root, name="other")
+    holder.add_command(label="x")
+    holder.focus_set()
+    menu = Menu(root, name="m")
+    menu.add_command(label="One")
+    menu.post(0, 0)
+    menu.unpost()
+    assert root.focus_get() is holder
+
+
+def test_clicking_away_from_a_bar_dropdown_frees_the_keyboard(root):
+    bar = Menu(root, name="b")
+    bar._as_menubar = True
+    dropdown = Menu(root, name="d")
+    dropdown.add_command(label="Quit")
+    bar.add_cascade(label="File", menu=dropdown)
+    bar._apply_requested_size()
+    bar._allocate(Rect(0, 0, bar._requested.width, 1))
+    bar.invoke(0)
+    dropdown._handle(MouseEvent(button=1, state="pressed", x=55, y=20))
+    assert root.focus_get() is None

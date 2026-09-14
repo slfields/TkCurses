@@ -117,6 +117,9 @@ anywhere · `F3` for a menu taller than the terminal
 - [ ] `Ctrl+N`, `Ctrl+O` and `Ctrl+Q` all work from anywhere — including
       `Ctrl+Q`, which a tty normally swallows as flow control
 - [ ] `Ctrl+C` still interrupts the scenario, as it always did
+- [ ] **After opening and dismissing a menu — by clicking away, or with
+      Escape — `Escape` still quits the scenario.** A menu that kept the
+      keyboard on its way out left every later key going somewhere invisible
 - [ ] The checkbutton and radiobutton entries show their state, and the radio
       group shows exactly one dot
 - [ ] **A popup near the bottom right corner is moved so all of it is on
@@ -150,6 +153,15 @@ turn it on its side
 ---
 
 ## What this found
+
+- **An unmapped menu kept the keyboard, so Escape stopped closing the
+  application.** `unpost` gave the focus back only when something had held it
+  *before* the menu opened — and for an application whose first action is
+  opening a menu, nothing had. The focus stayed on the menu, which by then was
+  off screen, so every later key went to a widget nobody could see and every
+  binding further out stopped firing. Fixed in `_unmap` rather than in `Menu`,
+  because the fault is general: any widget that leaves the screen holding the
+  focus strands the keyboard the same way. **TkCurses-gyo.2**.
 
 - **A pane was laid out and never mapped**, so the panes were in exactly the
   right places and nothing at all was drawn. A geometry manager does two

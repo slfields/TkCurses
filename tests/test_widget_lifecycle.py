@@ -6,9 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from tkcurses import Misc, Widget
+from tkcurses import Frame, Misc, Widget
 from tkcurses._core.geometry import Rect, Size
 from tkcurses._core.panels import PanelStack
+
+
+def _stub_window(rect):
+    return SimpleNamespace(rect=rect)
 
 
 class Frame(Widget):
@@ -346,3 +350,34 @@ def test_resizing_a_container_relays_out_its_children(root):
     parent._allocate(Rect(0, 0, 30, 8))
     root.update_layout()
     assert child.winfo_width() == 30
+
+
+def test_unmapping_a_widget_takes_the_keyboard_off_it():
+    """A widget that is no longer on screen must not keep the focus.
+
+    Left holding it, every key afterwards goes somewhere nobody can see and
+    every binding further out stops firing - which is how Escape stopped
+    closing an application once a menu had been opened.
+    """
+    root = Misc()
+    root.tk.panels = PanelStack(window_factory=_stub_window, panel_factory=None)
+    widget = Frame(root, name="f")
+    widget._allocate(Rect(0, 0, 4, 2))
+    widget._map()
+    widget.focus_set()
+    assert root.focus_get() is widget
+    widget._unmap()
+    assert root.focus_get() is None
+
+
+def test_unmapping_something_else_leaves_the_focus_alone():
+    root = Misc()
+    root.tk.panels = PanelStack(window_factory=_stub_window, panel_factory=None)
+    kept = Frame(root, name="kept")
+    other = Frame(root, name="other")
+    for widget in (kept, other):
+        widget._allocate(Rect(0, 0, 4, 2))
+        widget._map()
+    kept.focus_set()
+    other._unmap()
+    assert root.focus_get() is kept
