@@ -23,6 +23,14 @@ A terminal cannot say that Shift was held over a printable key - it sends the
 capital and nothing else - so <Shift-Key> is reachable only through the keys
 that have their own shifted code: Shift with an arrow, Home, End, Page Up or
 Page Down, Delete or Insert.
+
+Three keys never arrive at all, and their absence from the history is the
+correct result rather than a fault. A tty turns Ctrl-C, Ctrl-\\ and Ctrl-Z
+into signals - interrupt, quit and suspend - before any byte reaches the
+application, so no binding can see them. Ctrl-C ending this scenario is
+exactly that, and is what scenario 09 checks on purpose. Ctrl-S and Ctrl-Q
+would have gone the same way as flow control; the library asks the tty for
+those two back, which is why they *do* appear.
 """
 
 from __future__ import annotations
@@ -104,7 +112,11 @@ def build(root, screen):
             "  Named: " + "  ".join(PATTERNS[4:]),
         ],
     )
-    screen.line(7, "  Click to raise. Then shrink the terminal hard and grow it back.")
+    screen.line(
+        7,
+        "  Click to raise, then resize hard.  Ctrl-C, Ctrl-\\ and Ctrl-Z are"
+        " signals, not keys.",
+    )
     record("press a key")
 
 

@@ -89,6 +89,29 @@ character and the modifiers the terminal reported.
       recognise the key at all, and is worth reporting with the terminal you
       saw it on
 
+### The keys the terminal keeps for itself
+
+A tty turns three keys into signals before any byte reaches the application,
+so no binding can ever see them. Their **absence from the history is the
+right answer**, not a missing feature — but check they do what a terminal
+says they should.
+
+- [ ] `Ctrl-C` ends the scenario, and the terminal is usable afterwards —
+      interrupt, and the escape hatch for anything wedged
+- [ ] `Ctrl-\` ends it too — quit
+- [ ] `Ctrl-Z` suspends it, and `fg` brings it back with the screen intact
+- [ ] **`Ctrl-S` and `Ctrl-Q` *do* appear in the history.** They would have
+      been swallowed as flow control; the library asks the tty for those two
+      back, and a terminal where they go missing is worth reporting
+- [ ] Every other `Ctrl` combination your terminal sends appears, named as
+      the plain letter with `Control` held
+
+> **`<Control-c>`, `<Control-z>` and `<Control-backslash>` cannot be bound
+> here**, though they can in tkinter — which matters for anything wanting
+> Ctrl-C for Copy or Ctrl-Z for Undo. Giving them back means giving up the
+> interrupt that stops a wedged application, so it has to be something an
+> application asks for rather than the default. Filed as **TkCurses-53u**.
+
 ### After something goes wrong
 
 - [ ] Clicking the button raises, and the application keeps running
