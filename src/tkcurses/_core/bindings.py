@@ -388,12 +388,51 @@ class BindingTable:
     caller's business; this table only stores and dispatches.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, on_change: Callable[[], None] | None = None) -> None:
+        """
+        Args:
+            on_change: Called after anything is bound or unbound. The one
+                thing outside this table that depends on *what* is bound
+                rather than on what fires is the terminal: a key it would
+                otherwise turn into a signal has to be claimed back while a
+                binding wants it.
+        """
         self._tags: dict[str, dict[EventPattern, list[Binding]]] = {}
         # Maps a funcid back to where it lives, so unbind() by id does not
         # have to scan every tag.
         self._located: dict[str, tuple[str, EventPattern]] = {}
         self._ids = itertools.count(1)
+        self._on_change = on_change
+
+    def _changed(self) -> None:
+        """Tell whoever is listening that the set of bindings has moved."""
+        if self._on_change is not None:
+            self._on_change()
+
+    def details_bound_with(self, modifiers: int, type: str = "Key") -> set[str]:
+        """Details bound on ``type`` events that ask for exactly ``modifiers``.
+
+        Args:
+            modifiers: The modifier set a pattern must require, ``MOD_ANY``
+                aside. ``<Control-c>`` asks for Control and matches here;
+                ``<Key-c>`` asks for nothing and does not.
+            type: Event type to look at.
+
+        Returns:
+            Every such pattern's detail, across every tag. Answers "is
+            anything, anywhere, waiting for this key" - which is the
+            question, since a binding on any widget is reason enough to stop
+            the terminal eating the key.
+        """
+        return {
+            pattern.detail
+            for patterns in self._tags.values()
+            for pattern, bindings in patterns.items()
+            if bindings
+            and pattern.type == type
+            and pattern.detail
+            and pattern.modifiers & ~MOD_ANY == modifiers
+        }
 
     def bind(
         self,
@@ -418,6 +457,7 @@ class BindingTable:
         binding = Binding(f"bind#{next(self._ids)}", func, pattern)
         existing.append(binding)
         self._located[binding.funcid] = (tag, pattern)
+        self._changed()
         return binding.funcid
 
     def unbind(
@@ -432,10 +472,12 @@ class BindingTable:
         """
         if funcid is not None:
             self._unbind_id(funcid)
+            self._changed()
             return
         if pattern is None:
             for bindings in self._tags.pop(tag, {}).values():
                 self._forget_ids(bindings)
+            self._changed()
             return
         patterns = self._tags.get(tag)
         if patterns is None:
@@ -443,6 +485,7 @@ class BindingTable:
         self._forget_ids(patterns.pop(pattern, []))
         if not patterns:
             del self._tags[tag]
+        self._changed()
 
     def bindings(self, tag: str, pattern: EventPattern | None = None) -> list[Binding]:
         """Bindings on ``tag``, or only those on ``pattern`` if given.

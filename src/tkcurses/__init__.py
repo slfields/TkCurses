@@ -3151,6 +3151,10 @@ class Tk(BaseWidget, Wm):
                 report_motion=mouse.report_motion,
                 report_hover=mouse.report_hover,
             )
+            # Bindings are almost always made before mainloop(), so the
+            # terminal has to be told what they wanted once it exists.
+            self.tk.input = self._input
+            self.tk.refresh_signal_keys()
             colors = ColorManager()
             if colors.start():
                 # Cells are painted through this; without colour support the
@@ -3436,6 +3440,7 @@ class Tk(BaseWidget, Wm):
         if self._input is not None:
             self._input.restore()
         self._input = None
+        self.tk.input = None
         with contextlib.suppress(Exception):
             self._screen.stop()
             self._flush_held_reports()

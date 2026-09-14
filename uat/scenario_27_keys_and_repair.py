@@ -24,13 +24,18 @@ capital and nothing else - so <Shift-Key> is reachable only through the keys
 that have their own shifted code: Shift with an arrow, Home, End, Page Up or
 Page Down, Delete or Insert.
 
-Three keys never arrive at all, and their absence from the history is the
-correct result rather than a fault. A tty turns Ctrl-C, Ctrl-\\ and Ctrl-Z
-into signals - interrupt, quit and suspend - before any byte reaches the
-application, so no binding can see them. Ctrl-C ending this scenario is
-exactly that, and is what scenario 09 checks on purpose. Ctrl-S and Ctrl-Q
-would have gone the same way as flow control; the library asks the tty for
-those two back, which is why they *do* appear.
+A tty turns Ctrl-C, Ctrl-\\ and Ctrl-Z into signals - interrupt, quit and
+suspend - before any byte can reach an application, so none of the three is
+an ordinary key here the way it is in tkinter. Binding one takes it back:
+this scenario binds Ctrl-C and Ctrl-Z, which therefore appear in the history
+like any other key, and deliberately leaves Ctrl-\\ alone, which therefore
+still quits. That is the whole point of doing it one control character at a
+time rather than by turning signals off: an application can have the key it
+wants and a person keeps a way of stopping it.
+
+Ctrl-S and Ctrl-Q are a milder version of the same thing - flow control
+rather than signals - and the library takes those two back for everyone,
+since nothing is lost by it.
 """
 
 from __future__ import annotations
@@ -53,6 +58,10 @@ PATTERNS = [
     "<Key-F1>",
     "<Key-semicolon>",
     "<Key-,>",
+    # Keys the terminal would otherwise turn into signals. Binding them is
+    # what stops it: Ctrl-\\ is left unbound on purpose, and still quits.
+    "<Control-c>",
+    "<Control-z>",
 ]
 
 MODIFIERS = [(0x01, "Shift"), (0x02, "Control"), (0x04, "Alt"), (0x08, "Meta")]
@@ -114,8 +123,8 @@ def build(root, screen):
     )
     screen.line(
         7,
-        "  Click to raise, then resize hard.  Ctrl-C, Ctrl-\\ and Ctrl-Z are"
-        " signals, not keys.",
+        "  Click to raise, then resize hard.  Ctrl-C and Ctrl-Z are bound;"
+        " Ctrl-\\ still quits.",
     )
     record("press a key")
 

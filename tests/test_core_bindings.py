@@ -625,3 +625,41 @@ def test_letters_and_digits_are_left_alone():
 def test_named_keys_are_left_alone():
     assert parse_sequence("<Key-Return>").detail == "Return"
     assert parse_sequence("<Key-F1>").detail == "F1"
+
+
+# ------------------------------------------------- what is bound, not what fires
+
+
+def test_details_bound_with_finds_patterns_needing_exactly_those_modifiers():
+    """Asks what is waiting for a key, which is not the same as what fires.
+
+    The terminal has to know whether anything anywhere wants Control-C
+    before it will stop turning it into an interrupt, and that is a question
+    about the table's contents rather than about any one event.
+    """
+    table = BindingTable()
+    table.bind("all", parse_sequence("<Control-c>"), lambda event: None)
+    table.bind(".b", parse_sequence("<Control-z>"), lambda event: None)
+    table.bind(".b", parse_sequence("<Key-c>"), lambda event: None)
+    table.bind(".b", parse_sequence("<Control-Shift-q>"), lambda event: None)
+    table.bind(".b", parse_sequence("<Control-Button-1>"), lambda event: None)
+    assert table.details_bound_with(MOD_CTRL) == {"c", "z"}
+
+
+def test_details_bound_with_forgets_what_has_been_unbound():
+    table = BindingTable()
+    funcid = table.bind(".b", parse_sequence("<Control-c>"), lambda event: None)
+    assert table.details_bound_with(MOD_CTRL) == {"c"}
+    table.unbind(".b", funcid=funcid)
+    assert table.details_bound_with(MOD_CTRL) == set()
+
+
+def test_binding_and_unbinding_report_a_change():
+    changes = []
+    table = BindingTable(on_change=lambda: changes.append(1))
+    funcid = table.bind(".b", parse_sequence("<Control-c>"), lambda event: None)
+    assert len(changes) == 1
+    table.unbind(".b", funcid=funcid)
+    assert len(changes) == 2
+    table.unbind(".b")
+    assert len(changes) == 3

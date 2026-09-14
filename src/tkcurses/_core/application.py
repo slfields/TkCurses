@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 
 from tkcurses._core.bindings import BindingTable, VirtualEvents
 from tkcurses._core.clipboard import Selections
+from tkcurses._core.events import MOD_CTRL
+from tkcurses._core.input import SIGNAL_KEYS
 from tkcurses._core.layout import LayoutEngine
 from tkcurses._core.timers import AfterQueue
 
@@ -28,6 +30,7 @@ if TYPE_CHECKING:
 
     from tkcurses import Misc
     from tkcurses._core.colors import ColorManager
+    from tkcurses._core.input import InputHandler
     from tkcurses._core.panels import PanelStack
     from tkcurses._core.screen import CursesScreen
 
@@ -190,7 +193,7 @@ class Application:
     """
 
     def __init__(self) -> None:
-        self.bindings = BindingTable()
+        self.bindings = BindingTable(on_change=self.refresh_signal_keys)
         self.virtual_events = VirtualEvents()
         self.timers = AfterQueue()
         self.selections = Selections()
@@ -229,6 +232,12 @@ class Application:
         #: environment when no screen is up, so they work before mainloop().
         self.screen: CursesScreen | None = None
 
+        #: The running input handler, once Tk() has started one. Held here
+        #: so that binding a key the terminal would otherwise swallow can
+        #: reach the tty, which is the one thing the binding table's
+        #: contents - rather than the events it dispatches - decide.
+        self.input: InputHandler | None = None
+
         #: The z-ordered windows, once Tk() has started curses. None until
         #: then: a panel is a curses window, and there are none before
         #: initscr(). Widgets track where they would be laid out regardless,
@@ -260,6 +269,26 @@ class Application:
         #: on the root widget so that quit() works from any widget, as it
         #: does in tkinter.
         self.quit_requested = False
+
+    def refresh_signal_keys(self) -> None:
+        """Take back from the tty exactly the signal keys something binds.
+
+        Binding ``<Control-c>`` is itself the request: a tkinter developer
+        writes the binding and expects it to fire, and there is no second
+        switch to find. The terminal gives up only the key actually bound,
+        so an application that binds Control-C still answers Control-
+        backslash if it stops responding - and unbinding gives the signal
+        straight back.
+
+        Called whenever anything is bound or unbound, and again when the
+        input handler arrives, since bindings are usually made before there
+        is a terminal to tell.
+        """
+        handler = self.input
+        if handler is None:
+            return
+        wanted = self.bindings.details_bound_with(MOD_CTRL) & set(SIGNAL_KEYS)
+        handler.claim_signal_keys(wanted)
 
     def next_name(self, class_name: str) -> str:
         """An unused automatic widget name for ``class_name``.

@@ -159,6 +159,14 @@ _CONTROL_KEYSYMS: dict[int, str] = {
     10: "Return",  # line feed, what the tty delivers for Enter
     13: "Return",  # carriage return
     27: "Escape",
+    # The four control codes past Control-Z, which are not letters and so
+    # fall outside the 1..26 arithmetic. Tk names them by the character on
+    # the key - checked against Tk 9.0.2, which reports Control-backslash as
+    # keysym "\\" and not as "backslash".
+    28: "\\",
+    29: "]",
+    30: "^",
+    31: "_",
     127: "BackSpace",
 }
 
