@@ -551,3 +551,45 @@ def test_a_bad_option_in_a_reconfigure_leaves_the_widget_as_it_was(root):
         box.grid_configure(column="sideways")
     info = box.grid_info()
     assert (info["row"], info["column"], info["sticky"]) == (2, 3, "ew")
+
+
+# ----------------------------------------------------- gridding somewhere else
+
+
+def test_in_moves_the_widget_out_of_its_old_container(root):
+    first = Box(root, "first", width=20, height=6)
+    second = Box(root, "second", width=20, height=6)
+    box = Box(root, "b")
+    box.grid(in_=first, row=1, column=2, sticky="ew")
+    assert first.grid_slaves() == [box]
+
+    box.grid_configure(in_=second)
+    assert first.grid_slaves() == []
+    assert second.grid_slaves() == [box]
+
+
+def test_moving_to_another_container_keeps_the_options(root):
+    first = Box(root, "first", width=20, height=6)
+    second = Box(root, "second", width=20, height=6)
+    box = Box(root, "b")
+    box.grid(in_=first, row=1, column=2, sticky="ew", padx=3)
+    box.grid_configure(in_=second)
+    info = box.grid_info()
+    assert (info["row"], info["column"]) == (1, 2)
+    assert (info["sticky"], info["padx"]) == ("ew", 3)
+
+
+def test_grid_info_names_the_container_doing_the_work(root):
+    holder = Box(root, "holder", width=20, height=6)
+    box = Box(root, "b")
+    box.grid(in_=holder, row=1)
+    assert box.grid_info()["in"] is holder
+
+
+def test_forgetting_removes_it_from_the_container_that_held_it(root):
+    holder = Box(root, "holder", width=20, height=6)
+    box = Box(root, "b")
+    box.grid(in_=holder, row=1)
+    box.grid_forget()
+    assert holder.grid_slaves() == []
+    assert box.winfo_manager() == ""

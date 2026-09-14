@@ -1292,6 +1292,20 @@ class Misc:
                 return False
         return True
 
+    def _leave_layout(self, container: Misc) -> None:
+        """Take this widget out of one container's layout.
+
+        Called when a geometry call moves the widget somewhere else.
+        Without it the container being left goes on laying the widget out:
+        a widget moved with ``in_`` is then managed twice over, and drawn
+        wherever the first of the two decides.
+        """
+        layout = container._layout_manager
+        if layout is None:
+            return
+        layout.remove(self)
+        container.tk.layout.invalidate(container)
+
     def _managed_layout(self, name: str) -> Layout | None:
         """The layout currently laying this widget out, if ``name`` is it.
 
@@ -2143,6 +2157,7 @@ class Pack:
         def _map(self) -> None: ...
         def _unmap(self) -> None: ...
         def _managed_layout(self, name: str) -> Layout | None: ...
+        def _leave_layout(self, container: Misc) -> None: ...
 
     def pack_configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
         """Pack this widget into its container.
@@ -2170,6 +2185,11 @@ class Pack:
         remembered = (
             current.options_for(self) if isinstance(current, PackLayout) else None
         )
+        # A geometry call naming a different container is a move, and the
+        # container being left has to stop laying this widget out.
+        previous = self._manager_container
+        if previous is not None and previous is not container:
+            self._leave_layout(previous)
         layout.add(self, _pack_options(options, remembered), before=before, after=after)
         self._manager = "pack"
         self._manager_container = container
@@ -2184,7 +2204,7 @@ class Pack:
         Its packing options are forgotten, which is what will separate this
         from ``grid_remove``: packing it again starts from the defaults.
         """
-        container = self.master
+        container = self._manager_container or self.master
         if container is None:
             return
         manager = container._layout_manager
@@ -2204,7 +2224,7 @@ class Pack:
             TclError: If it is not packed. Tk reports that rather than
                 returning defaults, which would read as though it were.
         """
-        container = self.master
+        container = self._manager_container or self.master
         manager = container._layout_manager if container is not None else None
         options = manager.options_for(self) if isinstance(manager, PackLayout) else None
         if options is None:
@@ -2312,6 +2332,7 @@ class Grid:
         def _map(self) -> None: ...
         def _unmap(self) -> None: ...
         def _managed_layout(self, name: str) -> Layout | None: ...
+        def _leave_layout(self, container: Misc) -> None: ...
 
     def grid_configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
         """Place this widget in its container's grid.
@@ -2340,6 +2361,11 @@ class Grid:
         current = self._managed_layout("grid")
         held = current.options_for(self) if isinstance(current, GridLayout) else None
         remembered = held or layout.remembered(self)
+        # A geometry call naming a different container is a move, and the
+        # container being left has to stop laying this widget out.
+        previous = self._manager_container
+        if previous is not None and previous is not container:
+            self._leave_layout(previous)
         if not options and remembered is not None:
             layout.add(self, remembered)
         else:
@@ -2365,7 +2391,7 @@ class Grid:
 
     def _ungrid(self, *, keep: bool) -> None:
         """Shared implementation of grid_forget and grid_remove."""
-        container = self.master
+        container = self._manager_container or self.master
         if container is None:
             return
         manager = container._layout_manager
@@ -2382,7 +2408,7 @@ class Grid:
         Raises:
             TclError: If it is not gridded.
         """
-        container = self.master
+        container = self._manager_container or self.master
         manager = container._layout_manager if container is not None else None
         options = manager.options_for(self) if isinstance(manager, GridLayout) else None
         if options is None:
@@ -2471,6 +2497,7 @@ class Place:
         def _map(self) -> None: ...
         def _unmap(self) -> None: ...
         def _managed_layout(self, name: str) -> Layout | None: ...
+        def _leave_layout(self, container: Misc) -> None: ...
 
     def place_configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
         """Place this widget in its container.
@@ -2495,6 +2522,11 @@ class Place:
         remembered = (
             current.options_for(self) if isinstance(current, PlaceLayout) else None
         )
+        # A geometry call naming a different container is a move, and the
+        # container being left has to stop laying this widget out.
+        previous = self._manager_container
+        if previous is not None and previous is not container:
+            self._leave_layout(previous)
         layout.add(self, _place_options(options, remembered))
         self._manager = "place"
         self._manager_container = container
@@ -2505,7 +2537,7 @@ class Place:
 
     def place_forget(self) -> None:
         """Stop placing this widget and take it off the screen."""
-        container = self.master
+        container = self._manager_container or self.master
         if container is None:
             return
         manager = container._layout_manager
@@ -2522,7 +2554,7 @@ class Place:
         Raises:
             TclError: If it is not placed.
         """
-        container = self.master
+        container = self._manager_container or self.master
         manager = container._layout_manager if container is not None else None
         options = (
             manager.options_for(self) if isinstance(manager, PlaceLayout) else None

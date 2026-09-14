@@ -352,3 +352,46 @@ def test_a_bad_option_in_a_reconfigure_leaves_the_widget_as_it_was(root):
         box.place_configure(x=99, anchor="nowhere")
     info = box.place_info()
     assert (info["x"], info["y"], info["anchor"]) == (10, 30, "se")
+
+
+# ------------------------------------------------------ placing somewhere else
+
+
+def test_in_moves_the_widget_out_of_its_old_container(root):
+    """Placed in two containers at once, it was drawn wherever the first
+    of them decided - and the second had no say at all."""
+    holder = Box(root, "holder", width=20, height=6)
+    box = Box(root, "b")
+    box.place(x=3, y=1)
+    assert box in root.place_slaves()
+
+    box.place_configure(in_=holder, x=5)
+    assert box not in root.place_slaves()
+    assert holder.place_slaves() == [box]
+
+
+def test_moving_to_another_container_keeps_the_options(root):
+    """Tk 9.0.2: place_configure(in_=other, x=5) keeps the anchor and the
+    width. Only place_forget() resets them."""
+    holder = Box(root, "holder", width=20, height=6)
+    box = Box(root, "b")
+    box.place(x=3, y=1, anchor="se", width=6)
+    box.place_configure(in_=holder, x=5)
+    info = box.place_info()
+    assert (info["x"], info["anchor"], info["width"]) == (5, "se", 6)
+
+
+def test_place_info_names_the_container_doing_the_work(root):
+    holder = Box(root, "holder", width=20, height=6)
+    box = Box(root, "b")
+    box.place(in_=holder, x=1)
+    assert box.place_info()["in"] is holder
+
+
+def test_forgetting_removes_it_from_the_container_that_held_it(root):
+    holder = Box(root, "holder", width=20, height=6)
+    box = Box(root, "b")
+    box.place(in_=holder, x=1)
+    box.place_forget()
+    assert holder.place_slaves() == []
+    assert box.winfo_manager() == ""
