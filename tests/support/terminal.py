@@ -203,11 +203,18 @@ class TerminalHarness:
         *,
         timeout: float = DEFAULT_TIMEOUT,
         env: dict[str, str] | None = None,
+        stderr_to_terminal: bool = False,
     ) -> None:
         self.cols = cols
         self.rows = rows
         self.timeout = timeout
         self._extra_env = dict(env or {})
+        #: Send the child's stderr to the pty rather than to a pipe of its
+        #: own. Off by default, because a traceback written into the terminal
+        #: corrupts the very output under assertion - which is the point of
+        #: the option: some behaviour only exists when stderr *is* the screen,
+        #: and nothing could test it while the harness always separated them.
+        self._stderr_to_terminal = stderr_to_terminal
 
         self._screen = _Screen(cols, rows)
         self._stream = _ByteStream(self._screen)
@@ -282,7 +289,7 @@ class TerminalHarness:
             fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
             os.dup2(slave, 0)
             os.dup2(slave, 1)
-            os.dup2(err_w, 2)
+            os.dup2(slave if self._stderr_to_terminal else err_w, 2)
             for fd in (master, slave, err_r, err_w):
                 if fd > 2:
                     os.close(fd)

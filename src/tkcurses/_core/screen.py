@@ -251,6 +251,20 @@ class ScreenBuffer:
             start_row = row if span is not None else None
         return regions
 
+    def touch_all(self) -> None:
+        """Mark every cell dirty, so the next refresh repaints the lot.
+
+        Needed whenever something other than this buffer has written to the
+        terminal, because the buffer's idea of what is on screen is then
+        wrong everywhere and painting only what it thinks changed leaves the
+        damage in place. A traceback written to the same terminal does
+        exactly that.
+        """
+        for row in range(self._height):
+            for cell in self._cells[row]:
+                cell.dirty = True
+            self._spans[row] = (0, self._width - 1)
+
     def clear_dirty(self) -> None:
         """Mark everything clean, after the dirty regions have been painted."""
         for row in range(self._height):
@@ -391,6 +405,17 @@ class CursesScreen:
         painted = self._dispatcher.call(self._paint, buffer)
         buffer.clear_dirty()
         return painted
+
+    def repaint(self) -> int:
+        """Repaint every cell, whatever the buffer thinks has changed.
+
+        For putting the screen back after something else has written to the
+        terminal underneath it.
+        """
+        if not self.started:
+            return 0
+        self.buffer.touch_all()
+        return self.refresh()
 
     def _paint(self, buffer: ScreenBuffer) -> int:
         """Write the dirty cells to curses. Runs on the dispatcher's thread."""

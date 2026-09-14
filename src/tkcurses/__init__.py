@@ -3085,6 +3085,9 @@ class Tk(BaseWidget, Wm):
         self._mouse_owner: Misc | None = None
         self._input: InputHandler | None = None
         self._motion_asserted = False
+        #: Tracebacks that would have landed on the screen, kept until the
+        #: terminal is handed back.
+        self._held_reports: list[str] = []
         self._started = False
         self._running = False
 
@@ -3136,6 +3139,7 @@ class Tk(BaseWidget, Wm):
             self._started = True
         except BaseException:
             self._screen.stop()
+            self._flush_held_reports()
             raise
 
     def _install_default_bindings(self) -> None:
@@ -3388,6 +3392,7 @@ class Tk(BaseWidget, Wm):
         self._input = None
         with contextlib.suppress(Exception):
             self._screen.stop()
+            self._flush_held_reports()
         CursesDispatcher.reset()
 
     def __enter__(self) -> Tk:
@@ -3422,24 +3427,64 @@ class Tk(BaseWidget, Wm):
     def report_callback_exception(self, exc: Any, val: Any, tb: Any) -> None:
         """Report an exception that escaped a callback.
 
-        Writes to stderr, which in a curses program is usually a redirect or
-        the scrollback after exit rather than the screen. Override it to put
-        the report somewhere the application can show.
+        Held back while the screen is up and stderr is the same terminal,
+        and printed once the screen has been given back. A traceback written
+        to a terminal curses is drawing on lands on top of the display, and
+        the buffer repaints only what it knows has changed - so the damage
+        stays until something else happens to write over it.
 
-        Line endings are rewritten while the screen is up. curses clears
-        ONLCR, so the terminal stops turning a newline into a carriage return
-        and line feed: a traceback written with bare newlines comes out as a
-        staircase, each line starting where the last one ended. Nothing else
-        in the library writes to the terminal directly, so the translation
-        belongs here rather than in a wrapper around stderr.
+        Written immediately when stderr is a redirect or a pipe, because
+        then it cannot damage anything and a developer watching a log wants
+        it now.
+
+        The screen is repainted either way. An override that draws its own
+        report into the buffer survives that, since a repaint paints from
+        the buffer; only writes that went straight to the terminal are
+        undone, which is exactly the damage worth undoing.
         """
         text = "".join(traceback.format_exception(exc, val, tb))
         screen = self.tk.screen
+        if screen is not None and screen.started and _stderr_is_a_terminal():
+            self._held_reports.append(text)
+        else:
+            _write_to_stderr(text)
         if screen is not None and screen.started:
-            text = text.replace("\n", "\r\n")
-        with contextlib.suppress(OSError, ValueError):
-            sys.stderr.write(text)
-            sys.stderr.flush()
+            with contextlib.suppress(curses.error):
+                screen.repaint()
+
+    def _flush_held_reports(self) -> None:
+        """Print anything held back, now that the screen has been given up."""
+        held, self._held_reports = self._held_reports, []
+        for text in held:
+            _write_to_stderr(text)
+
+
+def _stderr_is_a_terminal() -> bool:
+    """True when writing to stderr would land on a terminal.
+
+    Which is the question that decides whether a report can be printed now:
+    a redirect or a pipe cannot be damaged, a terminal curses is drawing on
+    can.
+    """
+    stream = sys.stderr
+    try:
+        return bool(stream is not None and stream.isatty())
+    except (OSError, ValueError):
+        return False
+
+
+def _write_to_stderr(text: str) -> None:
+    """Write a report out.
+
+    No line-ending translation, and none needed. curses clears ONLCR, so a
+    traceback printed while the screen is up comes out as a staircase with
+    each line starting where the last one ended - which is why one is never
+    printed then: it either goes to a stream curses has no say over, or it
+    waits until curses has given the terminal back.
+    """
+    with contextlib.suppress(OSError, ValueError):
+        sys.stderr.write(text)
+        sys.stderr.flush()
 
 
 class Toplevel(BaseWidget, Wm):
