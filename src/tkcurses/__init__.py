@@ -9357,6 +9357,12 @@ class PanedWindow(_Drawable):
         bind("PanedWindow", "<Motion>", _paned_motion)
         bind("PanedWindow", "<ButtonRelease-1>", _paned_release)
         bind("PanedWindow", "<Any-Key>", _paned_key)
+        # The sash marks itself as the focused thing, so it has to be
+        # repainted when the focus arrives and again when it leaves. A click
+        # repainted it as a side effect of starting a drag; Tab had nothing
+        # to trigger a repaint, so the focus moved in silence.
+        bind("PanedWindow", "<FocusIn>", _paned_refresh)
+        bind("PanedWindow", "<FocusOut>", _paned_refresh)
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, re-laying the panes out as the change requires."""
@@ -9613,6 +9619,11 @@ class PanedWindow(_Drawable):
             return self.getboolean(self._options["showhandle"])
         except TclError:
             return True
+
+
+def _paned_refresh(event: Event) -> None:
+    """Repaint after the focus moved in or out."""
+    event.widget._redraw()
 
 
 def _paned_press(event: Event) -> None:

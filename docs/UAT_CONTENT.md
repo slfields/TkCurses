@@ -146,6 +146,10 @@ turn it on its side
 - [ ] A pane never shrinks below its minimum, however hard the sash is pushed
 - [ ] The widths at the top always add up to the window, sashes included
 - [ ] `Tab` reaches a paned window and the arrows move its sash
+- [ ] **A paned window that has the focus says so**: its sash is highlighted
+      the moment `Tab` reaches it, whether or not it was ever clicked, and
+      the highlight goes when `Tab` moves on. Without it a keyboard user has
+      no way to know the arrows will now move a sash
 - [ ] The nested vertical panes work the same way inside the horizontal ones
 - [ ] `F4` turns the whole thing on its side and the panes come with it
 - [ ] Shrinking the terminal squeezes the panes rather than losing them
@@ -153,6 +157,13 @@ turn it on its side
 ---
 
 ## What this found
+
+- **A paned window tabbed to showed no sign of having the focus.** The sash
+  is the only thing that marks it, and it was repainted on a click - as a
+  side effect of starting a drag - but not when the focus arrived any other
+  way. Every other focusable widget binds `<FocusIn>` and `<FocusOut>` to a
+  repaint; this one did not, so the people it failed were exactly those with
+  no mouse, who have no other way to resize a pane. **TkCurses-gyo.4**.
 
 - **A punctuation key could not be bound by name.** `<Key-period>` is how
   every piece of tkinter documentation binds a full stop, and here it went
