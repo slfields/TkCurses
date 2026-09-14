@@ -44,7 +44,12 @@ dev = [
     # minor releases, so an open floor lets CI run a stricter checker than the
     # developer did and fail on code that was clean locally - which is exactly
     # how SIM910 reached master.
-    "mypy>=1.19,<2",
+    #
+    # mypy said <2, which is a *major* series and not what the paragraph
+    # above describes: CI installed 1.20.2 against a developer's 1.19, and
+    # failed on narrowing the older one did not do. The comment was right and
+    # the constraint did not match it.
+    "mypy>=1.19,<1.20",
     "ruff>=0.16,<0.17",
 ]
 

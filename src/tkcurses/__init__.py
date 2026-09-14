@@ -8381,10 +8381,13 @@ class Menu(_Drawable):
     def _open(self, at: int) -> None:
         """Post the submenu of a cascade entry, beside its own row."""
         entry = self._entries[at]
-        submenu = entry.options.get("menu")
+        submenu: Menu | None = entry.options.get("menu")
         if submenu is None:
             return
-        if self._open_cascade is submenu and submenu._posted:
+        # `_posted` first: comparing against _open_cascade, which is
+        # `Menu | None`, widens submenu back to include None for a type
+        # checker, and the two tests are independent anyway.
+        if submenu._posted and self._open_cascade is submenu:
             return
         if self._open_cascade is not None:
             self._open_cascade.unpost()
