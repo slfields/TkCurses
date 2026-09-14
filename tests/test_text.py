@@ -10,6 +10,7 @@ from tkcurses import Misc, TclError, Text
 from tkcurses._core.events import MOD_SHIFT, KeyEvent, MouseEvent
 from tkcurses._core.geometry import Rect
 from tkcurses._core.panels import PanelStack
+from tkcurses._core.textbuffer import Index
 
 
 def stub_window(rect):
@@ -605,3 +606,41 @@ def test_see_tells_the_scrollbar_where_the_view_went(text):
     assert seen and seen[-1] > 0.0
     text.see("1.0")
     assert seen[-1] == 0.0
+
+
+def test_an_index_at_a_wrap_boundary_belongs_to_the_later_row(root):
+    """Reported from UAT 23: Down from the start of a wrapped line.
+
+    A wrap boundary is the end of one display row and the start of the next,
+    and resolving it to the earlier one drew the cursor a cell past the end
+    of that row - painting the first character of the next row there too.
+    """
+    widget = Text(root, name="w", width=10, height=6, wrap="char")
+    widget._allocate(Rect(0, 0, 12, 8))
+    widget._map()
+    widget.insert("1.0", "abcdefghijklmnopqrst")
+    rows = widget._display_lines()
+    assert rows[0][2] == 10  # the first row ends at character 10
+    row, column = widget._display_position(Index(1, 10), rows)
+    assert (row, column) == (1, 0)
+
+
+def test_the_end_of_a_line_belongs_to_its_last_row(root):
+    widget = Text(root, name="w", width=10, height=6, wrap="char")
+    widget._allocate(Rect(0, 0, 12, 8))
+    widget._map()
+    widget.insert("1.0", "abcdefghijklmno")
+    rows = widget._display_lines()
+    row, column = widget._display_position(Index(1, 15), rows)
+    assert (row, column) == (1, 5)
+
+
+def test_down_from_the_start_of_a_wrapped_line_lands_on_the_next_row(root):
+    widget = Text(root, name="w", width=10, height=6, wrap="char")
+    widget._allocate(Rect(0, 0, 12, 8))
+    widget._map()
+    widget.insert("1.0", "abcdefghijklmnopqrst")
+    widget.mark_set("insert", "1.0")
+    widget._handle(KeyEvent(keysym="Down"))
+    assert widget.index("insert") == "1.10"
+    assert widget._display_position(Index(1, 10))[0] == 1

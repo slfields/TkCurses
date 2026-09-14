@@ -344,3 +344,63 @@ def test_a_tag_colour_replaces_the_widget_colour(terminal, tmp_path):
     start = term.display[row].index("red")
     assert term.attrs_at(row, start)["fg"] == "red"
     assert term.attrs_at(row, start - 2)["fg"] == "green"
+
+
+def test_shift_with_the_arrows_selects(terminal, tmp_path):
+    """Reported from UAT 23, and blamed on the terminal - wrongly.
+
+    ncurses decodes Shift-Down into KEY_SF and Shift-Right into KEY_SRIGHT,
+    and nothing mapped either, so a shifted arrow was indistinguishable from
+    a plain one and no keyboard selection was possible at all.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "t = tkcurses.Text(root, width=20, height=4)\n"
+            "t.place(x=2, y=2)\n"
+            "t.insert('1.0', 'hello world')\n"
+            "t.mark_set('insert', '1.0')\n"
+            "t.focus_set()\n"
+            "def report(event=None):\n"
+            "    try:\n"
+            "        got = t.get('sel.first', 'sel.last')\n"
+            "    except Exception:\n"
+            "        got = ''\n"
+            "    buffer.write(11, 0, 'sel=%-12s' % got)\n"
+            "    root.tk.screen.refresh()\n"
+            "t.bind('<Any-Key>', lambda e: root.after_idle(report), add=True)\n"
+            "report()"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("hello world")
+    for _ in range(5):
+        term.send_keys("<Shift-Right>")
+    term.wait_for_text("sel=hello")
+
+
+def test_shift_down_selects_a_whole_line(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "t = tkcurses.Text(root, width=20, height=4)\n"
+            "t.place(x=2, y=2)\n"
+            "t.insert('1.0', 'first\\nsecond')\n"
+            "t.mark_set('insert', '1.0')\n"
+            "t.focus_set()\n"
+            "def report(event=None):\n"
+            "    buffer.write(11, 0, 'insert=%-8s' % t.index('insert'))\n"
+            "    try:\n"
+            "        buffer.write(10, 0, 'sel=%-12s' % len(t.get('sel.first', 'sel.last')))\n"
+            "    except Exception:\n"
+            "        buffer.write(10, 0, 'sel=%-12s' % 0)\n"
+            "    root.tk.screen.refresh()\n"
+            "t.bind('<Any-Key>', lambda e: root.after_idle(report), add=True)\n"
+            "report()"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("insert=1.0")
+    term.send_keys("<Shift-Down>")
+    term.wait_for_text("insert=2.0")
+    term.wait_for_text("sel=6")

@@ -700,6 +700,20 @@ _CURSOR_KEYS: dict[str, tuple[bytes, bytes]] = {
 
 #: Key symbols to the bytes a terminal sends for them.
 _KEYS: dict[str, bytes] = {
+    # Modified cursor keys use the CSI 1 ; modifier form, where the modifier
+    # is 1 plus the bits: Shift is 2, Control 5, both 6. ncurses decodes
+    # these through terminfo into single key codes - Shift-Down is KEY_SF,
+    # Shift-Up is KEY_SR - rather than reporting a modifier separately.
+    "<Shift-Up>": b"\x1b[1;2A",
+    "<Shift-Down>": b"\x1b[1;2B",
+    "<Shift-Right>": b"\x1b[1;2C",
+    "<Shift-Left>": b"\x1b[1;2D",
+    "<Shift-Home>": b"\x1b[1;2H",
+    "<Shift-End>": b"\x1b[1;2F",
+    "<Control-Up>": b"\x1b[1;5A",
+    "<Control-Down>": b"\x1b[1;5B",
+    "<Control-Right>": b"\x1b[1;5C",
+    "<Control-Left>": b"\x1b[1;5D",
     "<Return>": b"\r",
     "<Enter>": b"\r",
     "<Tab>": b"\t",

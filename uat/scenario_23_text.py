@@ -1,15 +1,20 @@
-"""Text: editing past the edges of the window, wrapping, tags and selection.
+"""Text: editing past the edges, wrapping, tags, attributes and selection.
 
 What to do: type. Use the arrows, Home, End, Page Up and Page Down. Select
 with Shift and the arrows, and by dragging with the mouse. Press F2 to cycle
-the wrap mode, F3 to add a very long line, F4 to tag the word under the
-cursor. Resize the terminal.
-What to look for: the cursor is visible only while the widget has the focus,
-and the view follows it in both directions - down past the last visible line,
-and sideways when wrapping is off. Changing the wrap mode re-flows text that
-is already in the buffer, and no line ever runs over the border. The index at
-the top is line.char counting from 1, and `end` is one line past the last,
-which is Tk's rule and not a fault.
+the wrap mode, F3 to add a very long line, F4 to highlight the word under the
+cursor, F5 to clear the highlights.
+What to look for: the first paragraph is tagged to show what a tag can do -
+bold, underline, italic, a colour, and a highlight. Those are ranges, not
+characters: type in front of one and it moves with the text under it.
+
+The cursor is visible only while the widget has the focus, and the view
+follows it in both directions - down past the last visible line, and sideways
+when wrapping is off. Up and Down move by what is on *screen*, so on a
+wrapped paragraph they go to the row above or below rather than to the next
+paragraph. The `mouse:` line reports the last mouse event the widget saw,
+which is what to look at if dragging does not select: `drag` there means the
+terminal is reporting motion, and nothing at all means it is not.
 """
 
 from __future__ import annotations
@@ -29,10 +34,19 @@ PARAGRAPH = (
     "This is a second paragraph, so that Up and Down have somewhere to go.\n"
 )
 
+#: Tag name, what it does, and the words in the first paragraph to put it on.
+SAMPLES = (
+    ("bold", {"font": "bold"}, "Text widget"),
+    ("underline", {"underline": True}, "window"),
+    ("italic", {"font": "italic"}, "bigger than itself"),
+    ("coloured", {"foreground": "cyan"}, "line.char"),
+    ("highlight", {"background": "yellow", "foreground": "black"}, "Marks"),
+)
+
 
 def build(root, screen):
-    area = _support.content_area(root, top=4)
-    state = {"wrap": 0}
+    area = _support.content_area(root, top=5)
+    state = {"wrap": 0, "mouse": "-"}
 
     row = tkcurses.Frame(area)
     row.pack(side="top", fill="both", expand=True, padx=1)
@@ -43,7 +57,17 @@ def build(root, screen):
     text.configure(yscrollcommand=bar.set)
 
     text.insert("1.0", PARAGRAPH * 3)
-    text.tag_configure("found", background="yellow", foreground="black")
+
+    # Tag the sample words where they first appear, so the attributes are
+    # visible without anyone having to do anything first.
+    whole = text.get("1.0", "end")
+    for name, options, phrase in SAMPLES:
+        text.tag_configure(name, **options)
+        at = whole.find(phrase)
+        if at >= 0:
+            start = text.index(f"1.0 +{at}c")
+            text.tag_add(name, start, f"{start} +{len(phrase)}c")
+
     text.mark_set("insert", "1.0")
     text.see("1.0")
 
@@ -52,14 +76,18 @@ def build(root, screen):
             selection = text.get("sel.first", "sel.last")
         except Exception:
             selection = ""
+        marked = len(text.tag_ranges("highlight")) // 2
         screen.line(0, f" {TITLE} ")
         screen.line(
             1,
             f"  insert={text.index('insert')}  end={text.index('end')}  "
             f"wrap={WRAPS[state['wrap']]!r}  selected={len(selection)} chars",
         )
-        screen.line(2, "  Type. Shift+arrows or drag to select.")
-        screen.line(3, "  F2 wrap mode   F3 add a long line   F4 tag the word")
+        screen.line(2, f"  mouse: {state['mouse']}   highlights: {marked}")
+        screen.line(3, "  Type. Shift+arrows or drag to select. Tags: bold, underline,")
+        screen.line(
+            4, "  italic, colour, highlight.  F2 wrap  F3 long line  F4 tag  F5 clear"
+        )
         screen.footer(" Escape quits ")
         screen.refresh()
 
@@ -77,16 +105,30 @@ def build(root, screen):
         return "break"
 
     def tag_word(event):
-        text.tag_add("found", "insert wordstart", "insert wordend")
+        text.tag_add("highlight", "insert wordstart", "insert wordend")
         report()
         return "break"
 
-    text.bind("<Key>", lambda event: root.after_idle(report), add=True)
-    text.bind("<Button-1>", lambda event: root.after_idle(report), add=True)
-    text.bind("<Motion>", lambda event: root.after_idle(report), add=True)
+    def clear_tags(event):
+        text.tag_remove("highlight", "1.0", "end")
+        report()
+        return "break"
+
+    def note_mouse(event):
+        state["mouse"] = f"{event.type} at {event.x},{event.y}"
+        root.after_idle(report)
+
+    # <Any-Key> rather than <Key>: a pattern with no modifier does not match
+    # a key held with one, so a shifted arrow would never reach this and the
+    # line above would stop reporting exactly when it mattered most.
+    text.bind("<Any-Key>", lambda event: root.after_idle(report), add=True)
+    text.bind("<Button-1>", note_mouse, add=True)
+    text.bind("<Motion>", note_mouse, add=True)
+    text.bind("<ButtonRelease-1>", note_mouse, add=True)
     root.bind_all("<Key-F2>", next_wrap)
     root.bind_all("<Key-F3>", add_long_line)
     root.bind_all("<Key-F4>", tag_word)
+    root.bind_all("<Key-F5>", clear_tags)
     text.focus_set()
     report()
 

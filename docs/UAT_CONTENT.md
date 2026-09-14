@@ -51,8 +51,17 @@ manager to drag things back into view.
 - [ ] `Shift` with the arrows selects, and a plain arrow drops the selection
 - [ ] Dragging with the mouse selects the same range
 - [ ] Typing over a selection replaces it
-- [ ] `F4` highlights the word under the cursor, and the highlight moves with
-      the text when you type before it
+- [ ] The first paragraph shows five tags at once: **bold**, underlined,
+      italic, a colour, and a highlight — italic may do nothing on terminals
+      that have no italic, which is theirs to decide, not the library's
+- [ ] `F4` highlights the word under the cursor, and `F5` clears every
+      highlight
+- [ ] A tag moves with the text: type in front of a tagged word and the tag
+      goes with it
+- [ ] `Shift` with the arrows selects — the `mouse:` line reports the last
+      mouse event the widget saw, so if dragging does not select, `drag`
+      appearing there means the terminal is reporting motion and the fault is
+      the library's; nothing appearing means the terminal is not sending it
 - [ ] The scrollbar's thumb matches where the view actually is
 - [ ] `end` reads one line past the last — Tk's rule, not a fault
 - [ ] Resizing the terminal re-wraps without losing the cursor
@@ -108,6 +117,21 @@ anywhere · `F3` for a menu taller than the terminal
 ---
 
 ## What this found
+
+- **Shift with the arrows did not select anything, on any terminal.** ncurses
+  decodes a shifted arrow into a key code of its own — Shift-Down is `KEY_SF`,
+  Shift-Right is `KEY_SRIGHT` — and nothing mapped any of them, so a shifted
+  arrow was indistinguishable from a plain one and keyboard selection was
+  unreachable. Reported as a possible GNOME problem; it was not, it was ours.
+- **The cursor was drawn on the wrong row at a wrap boundary**, one cell past
+  the end of the row above, and painted the first character of the next row
+  there as well. A boundary is the end of one display row *and* the start of
+  the next; it has to resolve to the later one.
+- **`<Key>` does not match a key held with a modifier.** Tk requires a
+  pattern's modifiers to be a subset of the event's, so `<Key>` sees
+  everything; this library requires them to match exactly. Deliberate once,
+  but it disagrees with Tk and it means the obvious "tell me about every key"
+  binding stops working the moment Shift is held. **TkCurses-qxl**.
 
 - **Clicking a square raised an exception, and selections never cleared.**
   Two faults from one cause. Hit-testing went by an item's *bounding box*, so

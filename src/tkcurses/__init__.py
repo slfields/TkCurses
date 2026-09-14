@@ -6344,8 +6344,17 @@ class Text(_Drawable):
     ) -> tuple[int, int]:
         """Where an index sits, as ``(row, column within that row)``."""
         rows = self._display_lines() if rows is None else rows
+        # A wrap boundary belongs to both rows: it is the end of one and the
+        # start of the next. It has to resolve to the *later* one, or the
+        # cursor is drawn one cell past the end of the row above - painting
+        # the first character of the next row there into the bargain.
         for row, (line, start, stop) in enumerate(rows):
-            if line == index.line and start <= index.char <= stop:
+            if line == index.line and start <= index.char < stop:
+                return row, index.char - start
+        # Nothing contains it, so it is at the end of a line: the last row of
+        # that line is where it goes.
+        for row, (line, start, stop) in enumerate(rows):
+            if line == index.line and index.char == stop:
                 return row, index.char - start
         # `end` on a buffer whose last line has text is a line past every
         # display row, so it has none of its own; it belongs at the end of

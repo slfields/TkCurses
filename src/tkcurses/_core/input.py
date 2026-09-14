@@ -32,6 +32,7 @@ from tkcurses._core.events import (
     MouseState,
     ResizeEvent,
     keysym_for,
+    shift_held,
 )
 
 if TYPE_CHECKING:
@@ -378,6 +379,8 @@ class InputHandler:
                 modifiers |= MOD_CTRL
         elif 32 <= code <= 126:
             char = chr(code)
+        if shift_held(code):
+            modifiers |= MOD_SHIFT
         return KeyEvent(
             keycode=code,
             keysym=keysym_for(code),
