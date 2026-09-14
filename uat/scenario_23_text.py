@@ -12,9 +12,12 @@ The cursor is visible only while the widget has the focus, and the view
 follows it in both directions - down past the last visible line, and sideways
 when wrapping is off. Up and Down move by what is on *screen*, so on a
 wrapped paragraph they go to the row above or below rather than to the next
-paragraph. The `mouse:` line reports the last mouse event the widget saw,
-which is what to look at if dragging does not select: `drag` there means the
-terminal is reporting motion, and nothing at all means it is not.
+paragraph. Two lines report the mouse, and between them they say where any fault is.
+`curses:` is the raw report ncurses produced and what this library decoded it
+to; `mouse:` is what actually reached the widget. While you drag, `curses:`
+should keep changing and end in `->drag`. If it never changes, the terminal
+is not reporting motion at all. If it changes but says `->pressed`, the
+terminal is reporting and the library is misreading it.
 """
 
 from __future__ import annotations
@@ -46,7 +49,7 @@ SAMPLES = (
 
 def build(root, screen):
     area = _support.content_area(root, top=5)
-    state = {"wrap": 0, "mouse": "-"}
+    state = {"wrap": 0, "mouse": "-", "raw": "-"}
 
     row = tkcurses.Frame(area)
     row.pack(side="top", fill="both", expand=True, padx=1)
@@ -83,7 +86,11 @@ def build(root, screen):
             f"  insert={text.index('insert')}  end={text.index('end')}  "
             f"wrap={WRAPS[state['wrap']]!r}  selected={len(selection)} chars",
         )
-        screen.line(2, f"  mouse: {state['mouse']}   highlights: {marked}")
+        screen.line(
+            2,
+            f"  mouse: {state['mouse']}   curses: {state['raw']}   "
+            f"highlights: {marked}",
+        )
         screen.line(3, "  Type. Shift+arrows or drag to select. Tags: bold, underline,")
         screen.line(
             4, "  italic, colour, highlight.  F2 wrap  F3 long line  F4 tag  F5 clear"
@@ -117,6 +124,30 @@ def build(root, screen):
     def note_mouse(event):
         state["mouse"] = f"{event.type} at {event.x},{event.y}"
         root.after_idle(report)
+
+    def tap_the_decoder():
+        """Record what curses reported, not only what the widget made of it.
+
+        If dragging does nothing, this is the line that says why: no report
+        at all means the terminal is not sending motion, and a report that
+        decodes to `pressed` rather than `drag` means it is the library.
+        """
+        handler = getattr(root, "_input", None)
+        if handler is None:
+            return
+        decoder = handler.decoder
+        original = decoder.decode
+
+        def tap(x, y, bstate):
+            events = original(x, y, bstate)
+            kinds = ",".join(event.state for event in events) or "-"
+            state["raw"] = f"0x{bstate:x}@{x},{y}->{kinds}"
+            root.after_idle(report)
+            return events
+
+        decoder.decode = tap
+
+    tap_the_decoder()
 
     # <Any-Key> rather than <Key>: a pattern with no modifier does not match
     # a key held with one, so a shifted arrow would never reach this and the

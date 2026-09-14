@@ -386,3 +386,38 @@ def test_putting_it_back_twice_is_harmless(curses_stub):
     before = len(PUT)
     handler.disable_mouse()
     assert len(PUT) == before
+
+
+def test_a_drag_reported_with_the_button_bit_is_still_a_drag(curses_stub):
+    """Some ncurses builds set both, and reading it as a press is fatal.
+
+    Every motion of the drag would look like a fresh press, re-anchoring the
+    selection where the pointer is - so a drag would select nothing while
+    press and release went on working perfectly.
+    """
+    handler = make_handler(FakeScreen())
+    decoder = handler.decoder
+    pressed = decoder.decode(4, 4, curses.BUTTON1_PRESSED)
+    assert [event.state for event in pressed] == ["pressed"]
+    dragged = decoder.decode(
+        9, 4, curses.BUTTON1_PRESSED | curses.REPORT_MOUSE_POSITION
+    )
+    assert [event.state for event in dragged] == ["drag"]
+    assert dragged[0].button == 1
+
+
+def test_motion_with_no_button_held_is_not_a_drag(curses_stub):
+    handler = make_handler(FakeScreen())
+    events = handler.decoder.decode(3, 3, curses.REPORT_MOUSE_POSITION)
+    assert [event.state for event in events] == ["motion"]
+
+
+def test_a_press_after_a_release_is_a_press_again(curses_stub):
+    handler = make_handler(FakeScreen())
+    decoder = handler.decoder
+    decoder.decode(1, 1, curses.BUTTON1_PRESSED)
+    decoder.decode(1, 1, curses.BUTTON1_RELEASED)
+    events = decoder.decode(
+        2, 2, curses.BUTTON1_PRESSED | curses.REPORT_MOUSE_POSITION
+    )
+    assert [event.state for event in events] == ["pressed"]

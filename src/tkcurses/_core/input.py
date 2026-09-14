@@ -163,15 +163,14 @@ class MouseDecoder:
         button. It is empty when the report says nothing actionable.
         """
         modifiers = decode_modifiers(bstate)
-        events: list[MouseEvent] = []
-        for button, states in _MASKS.items():
-            event = self._decode_button(button, bstate, x, y, modifiers, states)
-            if event is not None:
-                events.append(event)
-        if events:
-            return events
-        if self._button:
-            # Motion with a button held is a drag, which curses does not name.
+        position = bool(bstate & getattr(curses, "REPORT_MOUSE_POSITION", 0))
+        # Motion while a button is held is a drag, and curses has no name for
+        # one. It has to be decided before the button masks are looked at:
+        # some ncurses builds report a drag as REPORT_MOUSE_POSITION *and*
+        # the button's own pressed bit, and reading that as another press
+        # would re-anchor the selection at every step of the drag - so a drag
+        # would select nothing at all, while press and release looked fine.
+        if position and self._button:
             return [
                 MouseEvent(
                     x=x,
@@ -182,7 +181,25 @@ class MouseDecoder:
                     drag_start=self._start,
                 )
             ]
-        if bstate & getattr(curses, "REPORT_MOUSE_POSITION", 0):
+        events: list[MouseEvent] = []
+        for button, states in _MASKS.items():
+            event = self._decode_button(button, bstate, x, y, modifiers, states)
+            if event is not None:
+                events.append(event)
+        if events:
+            return events
+        if self._button:
+            return [
+                MouseEvent(
+                    x=x,
+                    y=y,
+                    button=self._button,
+                    state="drag",
+                    modifiers=modifiers,
+                    drag_start=self._start,
+                )
+            ]
+        if position:
             return [MouseEvent(x=x, y=y, button=0, state="motion", modifiers=modifiers)]
         return []
 
