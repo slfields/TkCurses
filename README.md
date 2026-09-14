@@ -52,6 +52,23 @@ character grid back through [pyte](https://github.com/selectel/pyte).
 mapping, class hierarchy, rendering rules, input handling, configuration, and a
 complete tkinter-to-TkCurses API reference.
 
+## Author
+
+Scott L. Fields.
+
 ## License
 
-GPL-3.0-only. See [LICENSE](LICENSE).
+Copyright (C) 2026 Scott L. Fields.
+
+TkCurses is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License **version 3** as published by the Free
+Software Foundation.
+
+It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+PURPOSE. See the GNU General Public License for more details, in
+[LICENSE](LICENSE) or at <https://www.gnu.org/licenses/gpl-3.0.html>.
+
+`GPL-3.0-only`, not `-or-later`: every source file carries the notice in that
+form, and `tkcurses.NOTICE` is the short version for a program to show when it
+starts.
