@@ -1965,9 +1965,8 @@ class BaseWidget(Misc):
         curses refuses.
         """
         previous, self._rect = self._rect, rect
-        if (rect.width, rect.height) != (previous.width, previous.height) and (
-            self._layout_manager is not None
-        ):
+        resized = (rect.width, rect.height) != (previous.width, previous.height)
+        if resized and self._layout_manager is not None:
             # A container given a new size has to place its children again.
             # Propagation travels upward - what a widget needs - and this is
             # the other direction: what it was actually given. Without it a
@@ -1975,6 +1974,13 @@ class BaseWidget(Misc):
             # against a region it no longer has.
             self.tk.layout.invalidate(self)
         if not self._sync_window():
+            if resized and self._panel is not None:
+                # The window did not change, because the screen edge was
+                # already clipping it to the same few cells - but the widget
+                # is a different size now and draws itself differently, so
+                # the border it puts at its own right edge moves even though
+                # nothing about the window did.
+                self._redraw()
             return
         # The widget's window has changed and its descendants' have not:
         # their rects are offsets from this one and so did not change, which
@@ -4156,24 +4162,58 @@ class _Drawable(Widget):
         """
         style = style_for_relief(str(self._options["relief"]) or FLAT)
         attribute |= style.attr
-        with contextlib.suppress(curses.error):
-            dispatcher.call(window.addstr, 0, 0, style.top(width), attribute)
-            for row in range(1, height - 1):
-                dispatcher.call(window.addstr, row, 0, style.vertical, attribute)
-                dispatcher.call(
-                    window.addstr, row, width - 1, style.vertical, attribute
+        # The window can be smaller than the widget: one clipped by a screen
+        # edge gets only the part of itself that fits, because curses will
+        # not make a window that runs off the screen. Drawing the whole
+        # widget into it wraps the overflow onto the next row instead of
+        # losing it, which is a border that runs on into the line below.
+        rows, columns = dispatcher.call(window.getmaxyx)
+        right = width - 1
+        self._write_line(dispatcher, window, 0, 0, style.top(width), attribute)
+        for row in range(1, min(height - 1, rows)):
+            self._write_line(dispatcher, window, row, 0, style.vertical, attribute)
+            if right < columns:
+                self._write_line(
+                    dispatcher, window, row, right, style.vertical, attribute
                 )
-            # The last cell of the bottom row is inserted rather than added:
-            # writing it with addstr would scroll a window whose cursor has
-            # nowhere left to go, which curses refuses. insstr rather than
-            # insch because a box-drawing character is multibyte and does not
-            # fit in the single chtype insch takes.
-            dispatcher.call(
-                window.addstr, height - 1, 0, style.bottom(width)[:-1], attribute
+        if height - 1 < rows:
+            self._write_line(
+                dispatcher, window, height - 1, 0, style.bottom(width), attribute
             )
-            dispatcher.call(
-                window.insstr, height - 1, width - 1, style.bottom_right, attribute
-            )
+
+    @staticmethod
+    def _write_line(
+        dispatcher: CursesDispatcher,
+        window: Any,
+        row: int,
+        column: int,
+        text: str,
+        attribute: int,
+    ) -> None:
+        """Write ``text`` at one position, clipped to what the window holds.
+
+        Two things curses will not do for us. It wraps a write that runs past
+        the right edge onto the next row rather than dropping it, so anything
+        too wide has to be cut here; and it refuses a write that fills the
+        last cell of the last row, because that would scroll a window with
+        nowhere to scroll to - so that one cell is inserted instead, which
+        puts the character there without advancing. insstr rather than insch
+        because a box-drawing character is multibyte and does not fit in the
+        single chtype insch takes.
+        """
+        rows, columns = dispatcher.call(window.getmaxyx)
+        if not 0 <= row < rows or not 0 <= column < columns:
+            return
+        text = text[: columns - column]
+        if not text:
+            return
+        with contextlib.suppress(curses.error):
+            if column + len(text) >= columns:
+                if text[:-1]:
+                    dispatcher.call(window.addstr, row, column, text[:-1], attribute)
+                dispatcher.call(window.insstr, row, columns - 1, text[-1], attribute)
+            else:
+                dispatcher.call(window.addstr, row, column, text, attribute)
 
 
 class Frame(_Drawable):
@@ -4440,8 +4480,10 @@ class _TextWidget(_Drawable):
             column += align_offset(len(line), block_width, justify)
             column = max(column, area.x)
             text = clip_text(line, area.x + area.width - column)
-            with contextlib.suppress(curses.error):
-                dispatcher.call(window.addstr, row, column, text, attribute)
+            # Through _write_line, which clips again to the window: the area
+            # is the widget's, and a widget the screen edge cuts in half has
+            # a window smaller than that.
+            self._write_line(dispatcher, window, row, column, text, attribute)
         self._draw_underline(dispatcher, window, area, lines, attribute)
 
     def _text_area(self) -> Rect:

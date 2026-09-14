@@ -18,8 +18,9 @@
 """Changing one geometry option, and what happens to the rest.
 
 What to do: press p, g, x and w to change exactly one option of one manager.
-Press f to forget all three and add them again with nothing set, and r to put
-the starting options back.
+Press e to push all three hard against the screen's edges, f to forget them
+and add them again with nothing set, and r to put the starting options back.
+Then shrink the terminal.
 What to look for: the option you changed changes, and **nothing else moves**.
 The line above each strip is what the manager reports - pack_info(),
 grid_info(), place_info() - so it can be read against where the box actually
@@ -35,6 +36,13 @@ widget once and asked where it went.
 f is the exception that is not a fault. Forgetting a widget is what discards
 its options in Tk, so adding it back with nothing set is supposed to give the
 defaults - side=top, sticky='', anchor=nw. Checked against Tk 9.0.2.
+
+e asks a different question. A widget the screen edge cuts in half can only
+have a window holding the part that fits, because curses refuses one that
+runs off the screen - so the drawing has to stop at the edge rather than
+wrap round onto the next row. A box with no right-hand edge is what a box
+continuing off the screen should look like; the same box with its border
+running on into the line below is the fault.
 """
 
 from __future__ import annotations
@@ -99,7 +107,7 @@ def build(root, screen):
         screen.line(
             1,
             "  p pack side   g grid column   x place x   w place width"
-            "   f forget all   r reset",
+            "   e edges   f forget   r reset",
         )
         for name, row in ROWS.items():
             info = getattr(boxes[name], f"{name}_info")()
@@ -132,11 +140,21 @@ def build(root, screen):
         root.after_idle(report)
         return "break"
 
+    def to_the_edges(event):
+        """Push each box past an edge, so the clipping can be seen."""
+        width = root.winfo_width()
+        apply("pack", side="right", padx=0)
+        apply("grid", column=9, padx=0)
+        apply("place", x=max(0, width - 6), y=2, width=20)
+        root.after_idle(report)
+        return "break"
+
     reset()
     root.bind("<Key-p>", toggle("pack", "side", "left", "right"))
     root.bind("<Key-g>", toggle("grid", "column", 3, 1))
     root.bind("<Key-x>", toggle("place", "x", 2, 20))
     root.bind("<Key-w>", toggle("place", "width", 8, 16))
+    root.bind("<Key-e>", to_the_edges)
     root.bind("<Key-f>", forget_all)
     root.bind("<Key-r>", restore)
     root.after(100, report)

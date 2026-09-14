@@ -73,7 +73,8 @@ column.
 ## 28. Geometry options — change one, keep the rest
 
 `python3 -m uat 28` · `p` pack side · `g` grid column · `x` place x ·
-`w` place width · `f` forget all three · `r` reset
+`w` place width · `e` push them past the edges · `f` forget all three ·
+`r` reset
 
 Three strips, one per manager, each with a box in it. The line above each
 strip is what the manager reports — `pack_info()`, `grid_info()`,
@@ -107,6 +108,34 @@ the right answer and **not** a fault. Checked against Tk 9.0.2.
       the box sits above the column markers rather than on top of them
 - [ ] After `f`: place reports `x=0`, `y=0`, no width, `anchor='nw'`
 - [ ] `r` afterwards brings the starting options back
+
+### Where the screen edge cuts a widget in half
+
+`e` pushes all three boxes hard against an edge. A widget the edge cuts can
+only have a window holding the part that fits — curses refuses one that runs
+off the screen — so the drawing has to **stop** at the edge.
+
+> **A box with no right-hand edge is correct** for a box that continues off
+> the screen. The same box with its border running on into the line below is
+> the fault: that is the overflow being wrapped instead of dropped.
+
+- [ ] After `e`, the pack box sits against the right edge **whole** — it fits,
+      so it keeps both of its sides
+- [ ] After `e`, the grid box runs off the right: a top edge, a left edge, a
+      bottom edge, and **no right edge and no corners** on that side
+- [ ] After `e`, the placed box does the same
+- [ ] **Nothing wraps.** No row holds the tail of the row above it, and the
+      report lines and the column markers are exactly where they were
+- [ ] `r` brings all three back whole
+- [ ] Now shrink the terminal, narrower and shorter, a few cells at a time.
+      Every box is cut off cleanly at whichever edge reaches it, and the ones
+      that no longer fit at all simply are not drawn
+- [ ] Grow it back and all three are whole again, with nothing left behind
+
+> **Known and already filed:** the shared border and label writers clip, and
+> the per-widget content writers — `Text`, `Listbox`, `Canvas`, `Scale`,
+> `Scrollbar`, `Menu`, `Entry` — do not yet, so one of those cut in half can
+> still wrap a row of its own content. **TkCurses-4jd.5**.
 
 ## 13. Layout under resize
 
