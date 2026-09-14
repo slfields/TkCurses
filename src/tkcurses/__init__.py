@@ -86,6 +86,7 @@ from tkcurses._core.menus import (
     visible_window,
 )
 from tkcurses._core.pack import FILLS, SIDES, PackLayout, PackOptions, parse_anchor
+from tkcurses._core.paned import SASH_WIDTH, PanedLayout, PaneOptions
 from tkcurses._core.panels import PanelStack
 from tkcurses._core.place import BORDERMODES, PlaceLayout, PlaceOptions
 from tkcurses._core.screen import CursesScreen
@@ -125,10 +126,13 @@ __all__ = [
     "LabelFrame",
     "Listbox",
     "Menu",
+    "Menubutton",
     "Message",
     "Misc",
     "NoDefaultRoot",
+    "OptionMenu",
     "Pack",
+    "PanedWindow",
     "Place",
     "Radiobutton",
     "Scale",
@@ -2129,6 +2133,7 @@ _MANAGER_NAMES = {
     "PackLayout": "pack",
     "GridLayout": "grid",
     "PlaceLayout": "place",
+    "PanedLayout": "paned",
 }
 
 
@@ -5323,6 +5328,238 @@ def _entry_refresh(event: Event) -> None:
     event.widget._redraw()
 
 
+class Menubutton(_TextWidget):
+    """A button that posts a menu instead of running a command.
+
+    Everything a Label is, plus a ``menu`` and the gestures that open it: a
+    click, Return, the space bar, or Down. It is what sits in a toolbar where
+    a menubar would be too much, and what :class:`OptionMenu` is built from.
+
+    ``direction`` says which side of the button the menu appears on. The menu
+    itself decides whether there is room - a menubutton near the bottom of the
+    terminal posts upwards whatever it was asked for, because a menu that
+    runs off the screen cannot be read.
+    """
+
+    #: Drawn at the right when ``indicatoron`` is true, so a menubutton can
+    #: be told from an ordinary button without opening it.
+    _INDICATOR = "▾"
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "direction": "below",
+        "indicatoron": False,
+        "menu": None,
+        "relief": "raised",
+        "takefocus": True,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``menu``, ``direction``, ``indicatoron``, plus everything a
+                Label takes.
+        """
+        super().__init__(master, cnf, name=name, **kw)
+        self._install_class_bindings()
+
+    def _install_class_bindings(self) -> None:
+        """Register the gestures that post a menubutton's menu.
+
+        Under this widget's own class name, not the literal "Menubutton":
+        binding tags name one class rather than a chain of them, so an
+        OptionMenu - which is a Menubutton - would otherwise match none of
+        these and never open. The same trap Spinbox meets with Entry.
+        """
+        name = self.winfo_class()
+        if name in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add(name)
+        bind = self.bind_class
+        bind(name, "<Button-1>", _menubutton_post)
+        bind(name, "<Key-Return>", _menubutton_key)
+        bind(name, "<Key-space>", _menubutton_key)
+        bind(name, "<Key-Down>", _menubutton_key)
+        bind(name, "<FocusIn>", _button_refresh)
+        bind(name, "<FocusOut>", _button_refresh)
+
+    @property
+    def _indicator_on(self) -> bool:
+        """True while the little arrow is drawn."""
+        try:
+            return self.getboolean(self._options["indicatoron"])
+        except TclError:
+            return False
+
+    def post_menu(self) -> None:
+        """Open the menu where ``direction`` says, if there is one."""
+        menu = self._options["menu"]
+        if menu is None or self._disabled:
+            return
+        left, top = self.winfo_rootx(), self.winfo_rooty()
+        width, height = self._rect.width, self._rect.height
+        direction = str(self._options["direction"])
+        if direction == "above" or direction == "left":
+            where = (left, top)
+        elif direction == "right":
+            where = (left + width, top)
+        elif direction == "flush":
+            where = (left, top)
+        else:
+            where = (left, top + height)
+        menu.post(*where)
+
+    # -------------------------------------------------------------- painting
+
+    def _apply_requested_size(self) -> None:
+        """Ask for the text's room, plus the indicator if it is showing."""
+        super()._apply_requested_size()
+        if self._indicator_on:
+            self._request_size(self._requested.width + 2, self._requested.height)
+
+    def _text_area(self) -> Rect:
+        """Where the text goes, less the indicator's cells."""
+        area = super()._text_area()
+        if not self._indicator_on:
+            return area
+        return Rect(area.x, area.y, max(0, area.width - 2), area.height)
+
+    def _redraw(self) -> None:
+        """Paint the button, then its indicator and focus marker."""
+        super()._redraw()
+        self._draw_indicator()
+
+    def _draw_indicator(self) -> None:
+        """Draw the arrow at the right, and underline the text when focused.
+
+        Focus is shown by underlining rather than by a marker, because a
+        menubutton is usually one of several in a row and markers either side
+        would make the row twice as wide.
+        """
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        area = super()._text_area()
+        if area.is_empty:
+            return
+        attribute = self._background_attribute() | self._text_attribute()
+        if self.focus_get() is self:
+            attribute |= curses.A_UNDERLINE
+        dispatcher = CursesDispatcher.get()
+        if self._indicator_on and area.width >= 2:
+            with contextlib.suppress(curses.error):
+                dispatcher.call(
+                    window.addstr,
+                    area.y + (area.height - 1) // 2,
+                    area.x + area.width - 1,
+                    self._INDICATOR,
+                    attribute,
+                )
+
+
+def _menubutton_post(event: Event) -> None:
+    """Take the focus and open the menu."""
+    button = event.widget
+    button.focus_set()
+    button.post_menu()
+
+
+def _menubutton_key(event: Event) -> str:
+    """Open the menu from the keyboard, and keep the key to ourselves."""
+    event.widget.post_menu()
+    return "break"
+
+
+class OptionMenu(Menubutton):
+    """A menubutton showing the current value of a variable.
+
+    The menu is built for you: one radiobutton entry per value, all sharing
+    the variable, so choosing one both sets the variable and changes what the
+    button says. That is the whole widget - tkinter's is a Menubutton with a
+    constructor that does this, and so is this one.
+
+    The menu is reachable as ``widget["menu"]``, which is how tkinter code
+    adds to it or replaces it after the fact.
+    """
+
+    def __init__(
+        self,
+        master: Misc | None,
+        variable: Variable,
+        value: Any = None,
+        *values: Any,
+        command: Callable[[Any], Any] | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget.
+            variable: The variable the choice is written to, and the one the
+                button's text follows.
+            value: The value to start on. Included in the menu.
+            *values: The rest of the choices.
+            command: Called with the chosen value, after the variable is set.
+            **kw: Anything else a Menubutton takes.
+
+        Raises:
+            TclError: If no values were given at all.
+        """
+        choices = [] if value is None else [value, *values]
+        if not choices:
+            raise TclError("OptionMenu needs at least one value")
+        kw.setdefault("indicatoron", True)
+        kw.setdefault("textvariable", variable)
+        super().__init__(master, **kw)
+        self._variable = variable
+        self._command = command
+        self._options["menu"] = Menu(self, name="menu")
+        self.set_menu(*choices)
+
+    def set_menu(self, *values: Any, current: Any = None) -> None:
+        """Replace the choices, as ttk's OptionMenu does.
+
+        ``current`` is the only way the variable is written from here.
+        Building the menu does not touch it, which is what tkinter does: an
+        OptionMenu over an empty variable shows nothing until something is
+        chosen, and one over a variable that already holds a value leaves it
+        alone. Checked against Tk 9.0.2.
+        """
+        menu = self._options["menu"]
+        menu.delete(0, "end")
+        for choice in values:
+            # Command entries, as tkinter builds them - not radiobuttons.
+            # A tick beside the current choice would read better in a
+            # terminal, but code that asks the menu what type its entries
+            # are would get a different answer than it does under Tk.
+            menu.add_command(
+                label=str(choice),
+                command=lambda chosen=choice: self._chose(chosen),
+            )
+        if current is not None:
+            self._variable.set(current)
+
+    def _chose(self, value: Any) -> None:
+        """Set the variable, then run the command with what was chosen."""
+        self._variable.set(value)
+        if self._command is not None:
+            self._command(value)
+
+    def __getitem__(self, key: str) -> Any:
+        """``widget["menu"]`` reaches the menu, as it does in tkinter."""
+        if key == "menu":
+            return self._options["menu"]
+        return super().__getitem__(key)
+
+
 class Message(_TextWidget):
     """A run of text that chooses its own line length.
 
@@ -8094,7 +8331,16 @@ class Menu(_Drawable):
         screen_width, screen_height = self._screen_size()
         x, y, height = place_popup(x, y, width, height, screen_width, screen_height)
         self._posted = True
-        self._allocate(Rect(x, y, width, height))
+        # place_popup works in screen cells; _allocate takes coordinates
+        # relative to the master, as every geometry manager hands it. They
+        # are the same thing only for a menu whose master is the root, which
+        # is why nothing noticed until an OptionMenu made its menu a child of
+        # the button - Tk builds it that way too - and the menu was allocated
+        # at an offset and posted off the screen.
+        master = self.master
+        origin_x = master.winfo_rootx() if master is not None else 0
+        origin_y = master.winfo_rooty() if master is not None else 0
+        self._allocate(Rect(x - origin_x, y - origin_y, width, height))
         self._map()
         self._restack_panels()
         self._focus_before = self.tk.focus
@@ -8944,6 +9190,366 @@ def _listbox_wheel(event: Event) -> None:
 def _listbox_refresh(event: Event) -> None:
     """Repaint after the focus moved, so the active row shows or stops."""
     event.widget._redraw()
+
+
+class PanedWindow(_Drawable):
+    """A container whose children are divided by sashes a person can drag.
+
+    It is the only widget here that is also a geometry manager: children are
+    added with :meth:`add` rather than packed or gridded, and
+    :class:`~tkcurses._core.paned.PanedLayout` arranges them. The difference
+    from pack is that the arrangement is *stateful* - a sash someone dragged
+    stays where they put it, and a later resize works from there rather than
+    starting again from what the children ask for.
+
+    Drag a sash with the mouse, or move it with the arrows once the paned
+    window has the focus: a terminal user with no mouse would otherwise have
+    no way to resize a pane at all.
+    """
+
+    #: The sash, drawn along the whole division.
+    _SASH: ClassVar[dict[str, str]] = {"horizontal": "│", "vertical": "─"}
+
+    #: Drawn in the middle of the sash when ``showhandle`` is on, so a sash
+    #: can be told from a border.
+    _HANDLE: ClassVar[dict[str, str]] = {"horizontal": "┃", "vertical": "━"}
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "orient": "horizontal",
+        "relief": "flat",
+        "sashwidth": 1,
+        "showhandle": True,
+        "takefocus": True,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``orient``, ``showhandle``, and the standard options.
+        """
+        self._active_sash: int | None = None
+        super().__init__(master, cnf, name=name, **kw)
+        self._paned = PanedLayout(str(self._options["orient"]))
+        self._layout_manager = self._paned
+        self._install_class_bindings()
+
+    def _install_class_bindings(self) -> None:
+        """Register sash dragging and the keys that move one."""
+        if "PanedWindow" in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add("PanedWindow")
+        bind = self.bind_class
+        bind("PanedWindow", "<Button-1>", _paned_press)
+        bind("PanedWindow", "<Motion>", _paned_motion)
+        bind("PanedWindow", "<ButtonRelease-1>", _paned_release)
+        bind("PanedWindow", "<Any-Key>", _paned_key)
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, re-laying the panes out as the change requires."""
+        given = {**(cnf or {}), **kw}
+        result = super().configure(cnf, **kw)
+        if "orient" in given:
+            self._paned.orient = str(self._options["orient"])
+        if given:
+            self._invalidate_layout()
+            self._redraw()
+        return result
+
+    config = configure
+
+    # ------------------------------------------------------------------ panes
+
+    def add(self, child: Widget, **kw: Any) -> None:
+        """Add a pane at the end.
+
+        Args:
+            child: The widget to put in it. Must be a child of this window.
+            **kw: ``minsize``, ``sticky``, ``width`` or ``height``.
+        """
+        self._paned.add(child, self._pane_options(kw))
+        self._manage(child)
+
+    def insert(self, index: Any, child: Widget, **kw: Any) -> None:
+        """Add a pane at a position rather than at the end."""
+        self._paned.insert(self._pane_index(index), child, self._pane_options(kw))
+        self._manage(child)
+
+    def _manage(self, child: Widget) -> None:
+        """Take a child on, the way pack and grid take one on.
+
+        A geometry manager does two things beyond deciding where a child
+        goes: it records that it is the one managing it, so a second manager
+        cannot also claim it, and it maps the child so there is a window to
+        draw into. Adding a pane without this laid the panes out correctly
+        and drew nothing at all.
+        """
+        child._manager = "paned"
+        child._map()
+        self._invalidate_layout()
+        self._redraw()
+
+    def forget(self, child: Widget | None = None) -> None:
+        """Take a pane out and unmap its child.
+
+        With no argument this is the ``forget`` every widget has, which stops
+        *this* window being managed by its own parent. Tk's PanedWindow has
+        the same overloading, for the same reason: both meanings are wanted
+        and there is only one name for them.
+        """
+        if child is None:
+            super().forget()
+            return
+        self._paned.remove(child)
+        child._unmap()
+        self._invalidate_layout()
+        self._redraw()
+
+    def remove(self, child: Widget) -> None:
+        """Take a pane out, the spelling Tk also accepts."""
+        self.forget(child)
+
+    def panes(self) -> list[str]:
+        """The panes' widget paths, in order, as Tk reports them."""
+        return [child._w for child in self._paned.slaves()]
+
+    def _pane_options(self, given: dict[str, Any]) -> PaneOptions:
+        """Turn the keywords one pane was given into its options.
+
+        Raises:
+            TclError: If an option is not one a pane takes.
+        """
+        allowed = {"minsize", "sticky", "width", "height"}
+        unknown = set(given) - allowed
+        if unknown:
+            raise TclError(f'unknown option "-{sorted(unknown)[0]}"')
+        along = "height" if self._paned.vertical else "width"
+        size = given.get(along)
+        return PaneOptions(
+            minsize=int(given.get("minsize", 0)),
+            sticky=str(given.get("sticky", "nsew")),
+            size=None if size is None else int(size),
+        )
+
+    def _pane_index(self, index: Any) -> int:
+        """Where a pane goes, taking a number, a widget or a widget path."""
+        if isinstance(index, int):
+            return index
+        children = self._paned.slaves()
+        for position, child in enumerate(children):
+            if child is index or child._w == str(index):
+                return position
+        return len(children)
+
+    def panecget(self, child: Widget, option: str) -> Any:
+        """One option of one pane.
+
+        Raises:
+            TclError: If the widget is not a pane here, or the option is not
+                one a pane takes.
+        """
+        options = self._paned.options_for(child)
+        if options is None:
+            raise TclError(f'not managed by this window: "{child}"')
+        if option == "minsize":
+            return options.minsize
+        if option == "sticky":
+            return options.sticky
+        if option in ("width", "height"):
+            return options.size
+        raise TclError(f'unknown option "-{option}"')
+
+    def paneconfigure(self, child: Widget, **kw: Any) -> None:
+        """Change one pane's options.
+
+        Raises:
+            TclError: If the widget is not a pane here.
+        """
+        if self._paned.options_for(child) is None:
+            raise TclError(f'not managed by this window: "{child}"')
+        self._paned.add(child, self._pane_options(kw))
+        self._invalidate_layout()
+        self._redraw()
+
+    paneconfig = paneconfigure
+
+    # ------------------------------------------------------------------ sashes
+
+    def sash_coord(self, index: int) -> tuple[int, int]:
+        """Where a sash begins, in cells relative to this widget."""
+        area = self._content_area()
+        offset = self._paned.sash_position(index)
+        if self._paned.vertical:
+            return (area.x, area.y + offset)
+        return (area.x + offset, area.y)
+
+    def sash_place(self, index: int, x: int, y: int) -> None:
+        """Put a sash at a position, in cells relative to this widget."""
+        area = self._content_area()
+        position = (y - area.y) if self._paned.vertical else (x - area.x)
+        self._paned.move_sash(index, position, self._screen_area())
+        self._apply_panes()
+
+    def identify(self, x: int, y: int) -> tuple[int, str] | tuple[()]:
+        """Which sash is at a position within this widget, if any.
+
+        Returns ``(index, "sash")`` as Tk does, or ``()`` for anywhere that
+        is not on one.
+        """
+        area = self._content_area()
+        offset = (y - area.y) if self._paned.vertical else (x - area.x)
+        for index in range(max(0, len(self._paned.slaves()) - 1)):
+            at = self._paned.sash_position(index)
+            if at <= offset < at + SASH_WIDTH:
+                return (index, "sash")
+        return ()
+
+    def _screen_area(self) -> Rect:
+        """The region the panes are laid out in, in screen cells."""
+        return self._content_rect()
+
+    def _content_area(self) -> Rect:
+        """The region the panes occupy, relative to this widget's window."""
+        edge = BORDER_WIDTH if self._border_drawn else 0
+        padx, pady = int(self._options["padx"]), int(self._options["pady"])
+        return Rect(
+            edge + padx,
+            edge + pady,
+            max(0, self._rect.width - 2 * (edge + padx)),
+            max(0, self._rect.height - 2 * (edge + pady)),
+        )
+
+    def _apply_panes(self) -> None:
+        """Re-place the panes after a sash moved, without a full relayout.
+
+        A sash drag must not go through the engine: the engine would ask the
+        children what they want and undo the drag, which is the whole reason
+        the sizes are remembered.
+        """
+        self._paned.apply(self, self._screen_area())
+        for child in self._paned.slaves():
+            child._map()
+        self._redraw()
+
+    def _move_sash_by(self, distance: int) -> None:
+        """Nudge the active sash, for the keyboard."""
+        index = self._active_sash if self._active_sash is not None else 0
+        if index >= max(0, len(self._paned.slaves()) - 1):
+            return
+        self._active_sash = index
+        self._paned.move_sash(
+            index, self._paned.sash_position(index) + distance, self._screen_area()
+        )
+        self._apply_panes()
+
+    # -------------------------------------------------------------- painting
+
+    def _redraw(self) -> None:
+        """Paint the background, any border, and the sashes between panes."""
+        window = self._window
+        if window is None or self.tk.screen is None:
+            return
+        dispatcher = CursesDispatcher.get()
+        attribute = self._background_attribute() | self._font_attribute()
+        area = self._content_area()
+        with contextlib.suppress(curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            if self._border_drawn:
+                self._draw_border(
+                    dispatcher, window, self._rect.width, self._rect.height, attribute
+                )
+            self._draw_sashes(dispatcher, window, area, attribute)
+
+    def _draw_sashes(
+        self, dispatcher: CursesDispatcher, window: Any, area: Rect, attribute: int
+    ) -> None:
+        """Draw a line down each division, with a handle in the middle of it."""
+        if area.is_empty:
+            return
+        kind = "vertical" if self._paned.vertical else "horizontal"
+        line, handle = self._SASH[kind], self._HANDLE[kind]
+        show = self._showhandle
+        for index in range(max(0, len(self._paned.slaves()) - 1)):
+            offset = self._paned.sash_position(index)
+            focused = self.focus_get() is self and index == (self._active_sash or 0)
+            style = attribute | (curses.A_REVERSE if focused else 0)
+            if self._paned.vertical:
+                if not 0 <= offset < area.height:
+                    continue
+                middle = area.x + area.width // 2
+                for column in range(area.width):
+                    glyph = handle if show and column == middle else line
+                    dispatcher.call(
+                        window.addstr, area.y + offset, area.x + column, glyph, style
+                    )
+            else:
+                if not 0 <= offset < area.width:
+                    continue
+                middle = area.y + area.height // 2
+                for row in range(area.height):
+                    glyph = handle if show and row == middle else line
+                    dispatcher.call(
+                        window.addstr, area.y + row, area.x + offset, glyph, style
+                    )
+
+    @property
+    def _showhandle(self) -> bool:
+        """True while the sash shows a handle in its middle."""
+        try:
+            return self.getboolean(self._options["showhandle"])
+        except TclError:
+            return True
+
+
+def _paned_press(event: Event) -> None:
+    """Take the focus, and start dragging a sash if one was clicked."""
+    paned = event.widget
+    paned.focus_set()
+    found = paned.identify(event.x, event.y)
+    paned._active_sash = found[0] if found else None
+    paned._redraw()
+
+
+def _paned_motion(event: Event) -> None:
+    """Move the sash being dragged to the pointer."""
+    paned = event.widget
+    if paned._active_sash is None:
+        return
+    paned.sash_place(paned._active_sash, event.x, event.y)
+
+
+def _paned_release(event: Event) -> None:
+    """Stop dragging, leaving the sash where it was let go."""
+    event.widget._redraw()
+
+
+def _paned_key(event: Event) -> str | None:
+    """Move the active sash with the arrows.
+
+    Along the window's own direction only: the other two arrows would have
+    nothing to move, and swallowing them would trap a keyboard user.
+    """
+    paned = event.widget
+    back, forward = ("Up", "Down") if paned._paned.vertical else ("Left", "Right")
+    if event.keysym == back:
+        paned._move_sash_by(-1)
+    elif event.keysym == forward:
+        paned._move_sash_by(1)
+    elif event.keysym == "Tab" or len(event.keysym) > 1:
+        return None
+    else:
+        return None
+    return "break"
 
 
 class Scrollbar(_Drawable):
