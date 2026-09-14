@@ -211,6 +211,52 @@ def test_resize_updates_curses_and_the_buffer(terminal, tmp_path):
     term.send_keys("q")
 
 
+def test_shrinking_leaves_no_fragment_of_the_old_screen(terminal, tmp_path):
+    """A shrinking terminal scrolls its own content and curses is not told.
+
+    Nothing the application paints changes between the two frames, which is
+    the whole difficulty: curses believes every cell already holds what is
+    about to be written and so writes nothing, while the terminal has moved
+    that content up the screen. Unless curses' record of the physical screen
+    is discarded, the display keeps the scrolled fragment - here the bottom
+    half of the old screen, showing rows that no longer exist.
+    """
+    term = terminal(cols=24, rows=12)
+    term.run_source(
+        """
+        import curses
+        from tkcurses._core.screen import CursesScreen
+
+        screen = CursesScreen()
+        buffer = screen.start()
+
+        def paint():
+            for row in range(buffer.height):
+                buffer.write(row, 0, ("row %02d" % row)[: buffer.width])
+            screen.refresh()
+
+        try:
+            screen.stdscr.keypad(True)
+            paint()
+            while True:
+                ch = screen.stdscr.getch()
+                if ch == ord("q"):
+                    break
+                if ch == curses.KEY_RESIZE:
+                    screen.handle_resize()
+                    paint()
+        finally:
+            screen.stop()
+        """,
+        workdir=tmp_path,
+    )
+    term.wait_for_text("row 11")
+    term.resize(24, 6)
+    term.wait_for(lambda t: t.row(0) == "row 00", message="the repainted first row")
+    assert term.display[:6] == [f"row {row:02d}".ljust(24) for row in range(6)]
+    term.send_keys("q")
+
+
 def test_starting_twice_is_rejected(terminal, tmp_path):
     term = terminal(cols=30, rows=6)
     term.run_source(

@@ -1903,16 +1903,38 @@ class BaseWidget(Misc):
             # container laid out before its own parent keeps children sized
             # against a region it no longer has.
             self.tk.layout.invalidate(self)
+        if not self._sync_window():
+            return
+        # The widget's window has gone somewhere else on the screen, and its
+        # descendants' windows have not: their rects are offsets from this
+        # one and so did not change, which is exactly why nothing above tells
+        # them anything. A container that moves without changing size does
+        # not lay its children out again, so without this the children stay
+        # drawn where the container used to be.
+        for widget in self._subtree():
+            # A subtree is typed as Misc, and only a widget has a window; the
+            # root is the one Misc that is not a widget, and it is nobody's
+            # descendant.
+            if widget is not self and isinstance(widget, BaseWidget):
+                widget._sync_window()
+
+    def _sync_window(self) -> bool:
+        """Put this widget's curses window where its geometry now says.
+
+        Returns:
+            True if the window moved or was rebuilt, so anything positioned
+            relative to it has to be seen to as well.
+        """
         stack = self.tk.panels
         if stack is None:
-            return
-        if rect.is_empty:
+            return False
+        if self._rect.is_empty:
             self._destroy_window()
-            return
+            return False
         if self._panel is None:
             if self._mapped:
                 self._create_window()
-            return
+            return False
         # Compared against where the panel actually is, not against the
         # widget's previous rect: a rect is an offset from the master, so an
         # ancestor moving relocates the panel without changing it.
@@ -1921,16 +1943,19 @@ class BaseWidget(Misc):
             # Entirely off screen. The widget keeps its geometry and gets its
             # window back when it comes into view again.
             self._destroy_window()
-            return
+            return False
         current = self._panel.rect
         if (target.width, target.height) != (current.width, current.height):
             # Curses cannot resize a window in place, and replacing it is also
             # what keeps a shrink from leaving the vacated cells behind.
             stack.replace_window(self._panel, target)
             self._redraw()
-        elif (target.x, target.y) != (current.x, current.y):
+            return True
+        if (target.x, target.y) != (current.x, current.y):
             stack.move(self._panel, target.x, target.y)
             self._redraw()
+            return True
+        return False
 
     def _map(self) -> None:
         """Put the widget on screen, creating its window if it has none.
@@ -1956,6 +1981,12 @@ class BaseWidget(Misc):
         self._mapped = False
         if self._panel is not None:
             self.tk.panels.hide(self._panel)  # type: ignore[union-attr]
+        if self.tk.focus is self:
+            # A widget that is no longer on screen must not keep the
+            # keyboard. Left holding it, every key afterwards is delivered to
+            # something nobody can see and every binding further out - the
+            # Escape that closes the application, most of all - stops firing.
+            self.tk.focus = None
         self.event_generate("<Unmap>")
 
     def _create_window(self) -> None:
@@ -3079,6 +3110,9 @@ class Tk(BaseWidget, Wm):
         self._mouse_owner: Misc | None = None
         self._input: InputHandler | None = None
         self._motion_asserted = False
+        #: Tracebacks that would have landed on the screen, kept until the
+        #: terminal is handed back.
+        self._held_reports: list[str] = []
         self._started = False
         self._running = False
 
@@ -3117,6 +3151,10 @@ class Tk(BaseWidget, Wm):
                 report_motion=mouse.report_motion,
                 report_hover=mouse.report_hover,
             )
+            # Bindings are almost always made before mainloop(), so the
+            # terminal has to be told what they wanted once it exists.
+            self.tk.input = self._input
+            self.tk.refresh_signal_keys()
             colors = ColorManager()
             if colors.start():
                 # Cells are painted through this; without colour support the
@@ -3130,6 +3168,7 @@ class Tk(BaseWidget, Wm):
             self._started = True
         except BaseException:
             self._screen.stop()
+            self._flush_held_reports()
             raise
 
     def _install_default_bindings(self) -> None:
@@ -3297,12 +3336,33 @@ class Tk(BaseWidget, Wm):
         terminal actually is, which is what handle_resize() does.
         """
         size = self._screen.handle_resize()
+        # The screen is cleared and written again from scratch, so the panels
+        # over it have to be written again too - otherwise every widget that
+        # happens to keep its geometry through the resize simply vanishes.
+        if self.tk.panels is not None:
+            self.tk.panels.touch_all()
         self._rect = Rect(0, 0, size.width, size.height)
         # The root's rect is set directly rather than through _allocate, which
         # would give the root a panel it does not want - so its layout has to
         # be told separately. Without this, everything sized against the
         # terminal keeps the size the terminal used to be.
         self.tk.layout.invalidate(self)
+        # Laid out here rather than left to the next idle pass, because the
+        # windows are put right immediately below and that has to happen
+        # against the geometry the new size gives, not the old one.
+        self.update_layout()
+        # A window is clipped to the screen rather than allowed off the edge,
+        # so a widget that was on screen at the old size may be clipped, gone
+        # or restorable at the new one. The layout only re-allocates what it
+        # manages, and a toplevel is not that: without this a toplevel keeps
+        # whatever window the smallest terminal it ever saw left it with.
+        # The children's subtrees, not the root's: the root deliberately has
+        # no window of its own, and giving it one puts an opaque full-screen
+        # panel over everything drawn on the screen behind the widgets.
+        for child in list(self.children.values()):
+            for widget in child._subtree():
+                if isinstance(widget, BaseWidget):
+                    widget._sync_window()
         self.event_generate("<Configure>", width=size.width, height=size.height)
 
     def _update_display(self) -> None:
@@ -3380,8 +3440,10 @@ class Tk(BaseWidget, Wm):
         if self._input is not None:
             self._input.restore()
         self._input = None
+        self.tk.input = None
         with contextlib.suppress(Exception):
             self._screen.stop()
+            self._flush_held_reports()
         CursesDispatcher.reset()
 
     def __enter__(self) -> Tk:
@@ -3416,24 +3478,64 @@ class Tk(BaseWidget, Wm):
     def report_callback_exception(self, exc: Any, val: Any, tb: Any) -> None:
         """Report an exception that escaped a callback.
 
-        Writes to stderr, which in a curses program is usually a redirect or
-        the scrollback after exit rather than the screen. Override it to put
-        the report somewhere the application can show.
+        Held back while the screen is up and stderr is the same terminal,
+        and printed once the screen has been given back. A traceback written
+        to a terminal curses is drawing on lands on top of the display, and
+        the buffer repaints only what it knows has changed - so the damage
+        stays until something else happens to write over it.
 
-        Line endings are rewritten while the screen is up. curses clears
-        ONLCR, so the terminal stops turning a newline into a carriage return
-        and line feed: a traceback written with bare newlines comes out as a
-        staircase, each line starting where the last one ended. Nothing else
-        in the library writes to the terminal directly, so the translation
-        belongs here rather than in a wrapper around stderr.
+        Written immediately when stderr is a redirect or a pipe, because
+        then it cannot damage anything and a developer watching a log wants
+        it now.
+
+        The screen is repainted either way. An override that draws its own
+        report into the buffer survives that, since a repaint paints from
+        the buffer; only writes that went straight to the terminal are
+        undone, which is exactly the damage worth undoing.
         """
         text = "".join(traceback.format_exception(exc, val, tb))
         screen = self.tk.screen
+        if screen is not None and screen.started and _stderr_is_a_terminal():
+            self._held_reports.append(text)
+        else:
+            _write_to_stderr(text)
         if screen is not None and screen.started:
-            text = text.replace("\n", "\r\n")
-        with contextlib.suppress(OSError, ValueError):
-            sys.stderr.write(text)
-            sys.stderr.flush()
+            with contextlib.suppress(curses.error):
+                screen.repaint()
+
+    def _flush_held_reports(self) -> None:
+        """Print anything held back, now that the screen has been given up."""
+        held, self._held_reports = self._held_reports, []
+        for text in held:
+            _write_to_stderr(text)
+
+
+def _stderr_is_a_terminal() -> bool:
+    """True when writing to stderr would land on a terminal.
+
+    Which is the question that decides whether a report can be printed now:
+    a redirect or a pipe cannot be damaged, a terminal curses is drawing on
+    can.
+    """
+    stream = sys.stderr
+    try:
+        return bool(stream is not None and stream.isatty())
+    except (OSError, ValueError):
+        return False
+
+
+def _write_to_stderr(text: str) -> None:
+    """Write a report out.
+
+    No line-ending translation, and none needed. curses clears ONLCR, so a
+    traceback printed while the screen is up comes out as a staircase with
+    each line starting where the last one ended - which is why one is never
+    printed then: it either goes to a stream curses has no say over, or it
+    waits until curses has given the terminal back.
+    """
+    with contextlib.suppress(OSError, ValueError):
+        sys.stderr.write(text)
+        sys.stderr.flush()
 
 
 class Toplevel(BaseWidget, Wm):
@@ -4413,15 +4515,23 @@ class Button(_TextWidget):
 
 
 def _button_press(event: Event) -> None:
-    """Take the focus and show the button held down.
+    """Show the button held down.
 
     Shared with Checkbutton, which presses and releases the same way and
     differs only in what invoking it does.
+
+    The focus is deliberately left where it was, which is what Tk does -
+    checked against Tk 9.0.2, where clicking a button, checkbutton,
+    radiobutton, scale or menubutton leaves the focus alone and only an
+    entry, spinbox, text or listbox takes it. The rule is worth stating,
+    because taking the focus here is superficially helpful and actively
+    harmful: a button binds Space and Return to invoke itself, so a button
+    that took the focus on being clicked would quietly swallow both from
+    whatever had them, and every later Space would press it again.
     """
     button = event.widget
     if button._disabled:
         return
-    button.focus_set()
     button._pressed = True
     button._redraw()
 
@@ -5467,10 +5577,8 @@ class Menubutton(_TextWidget):
 
 
 def _menubutton_post(event: Event) -> None:
-    """Take the focus and open the menu."""
-    button = event.widget
-    button.focus_set()
-    button.post_menu()
+    """Open the menu, leaving the focus where it was, as Tk does."""
+    event.widget.post_menu()
 
 
 def _menubutton_key(event: Event) -> str:
@@ -8364,13 +8472,17 @@ class Menu(_Drawable):
         self._unmap()
         parent = self._parent_menu
         self._parent_menu = None
+        previous = self._focus_before
+        self._focus_before = None
         if parent is not None and parent._posted:
             parent._open_cascade = None
             parent.grab_set()
             parent.focus_set()
-        elif self._focus_before is not None and self._focus_before.winfo_exists():
-            self._focus_before.focus_set()
-        self._focus_before = None
+        elif previous is not None and previous.winfo_exists():
+            previous.focus_set()
+        # Nothing to give the focus back to: _unmap has already taken it off
+        # this menu, and leaving it there is what stopped Escape closing the
+        # application after a menu had been opened once.
 
     def tk_popup(self, x: int, y: int, entry: Any = None) -> None:
         """Post the menu at a point, optionally with one entry active."""
@@ -9256,6 +9368,12 @@ class PanedWindow(_Drawable):
         bind("PanedWindow", "<Motion>", _paned_motion)
         bind("PanedWindow", "<ButtonRelease-1>", _paned_release)
         bind("PanedWindow", "<Any-Key>", _paned_key)
+        # The sash marks itself as the focused thing, so it has to be
+        # repainted when the focus arrives and again when it leaves. A click
+        # repainted it as a side effect of starting a drag; Tab had nothing
+        # to trigger a repaint, so the focus moved in silence.
+        bind("PanedWindow", "<FocusIn>", _paned_refresh)
+        bind("PanedWindow", "<FocusOut>", _paned_refresh)
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, re-laying the panes out as the change requires."""
@@ -9514,8 +9632,22 @@ class PanedWindow(_Drawable):
             return True
 
 
+def _paned_refresh(event: Event) -> None:
+    """Repaint after the focus moved in or out."""
+    event.widget._redraw()
+
+
 def _paned_press(event: Event) -> None:
-    """Take the focus, and start dragging a sash if one was clicked."""
+    """Take the focus, and start dragging a sash if one was clicked.
+
+    The one widget here that does take the focus on a click, and the one
+    with no Tk counterpart to be faithful to: Tk's panedwindow has no
+    takefocus option at all and no keyboard bindings, so its sashes are
+    mouse-only. Ours can be moved with the arrows, which is the only way to
+    resize a pane without a mouse, and the focus has to arrive somehow. It
+    costs nothing, because this widget binds neither Space nor Return and
+    passes on every key it does not use.
+    """
     paned = event.widget
     paned.focus_set()
     found = paned.identify(event.x, event.y)
@@ -10287,11 +10419,14 @@ class Scale(_Drawable):
 
 
 def _scale_press(event: Event) -> None:
-    """Take the focus and jump the handle to where the trough was clicked."""
+    """Jump the handle to where the trough was clicked.
+
+    The focus stays where it was, as it does in Tk: the arrows move a scale
+    that has the focus, and a click is already a way of setting the value.
+    """
     scale = event.widget
     if scale._disabled:
         return
-    scale.focus_set()
     scale._dragging = True
     _scale_move_to(scale, event)
 

@@ -206,6 +206,45 @@ def test_the_arrows_move_the_sash(terminal, tmp_path):
     term.wait_for_text(f"w={width}|")
 
 
+#: Something else to hold the focus, so it can be tabbed to and away from.
+OTHER_FOCUS = "b = tkcurses.Button(root, text='OTHER')\nb.place(x=0, y=8)\n"
+
+
+def test_tabbing_to_a_paned_window_marks_its_sash(terminal, tmp_path):
+    """The sash is the only thing that says a paned window has the focus.
+
+    A click marked it as a side effect of starting a drag, so the fault was
+    invisible to anyone using the mouse; Tab moved the focus with nothing to
+    repaint it, and the one keyboard user who might have moved a sash had no
+    way to tell they could.
+    """
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        program(OTHER_FOCUS + PANED),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("┃")
+    term.wait_for_idle()
+    row, column = next(
+        (r, c)
+        for r, line in enumerate(term.display)
+        for c, cell in enumerate(line)
+        if cell == "┃"
+    )
+    assert not term.attrs_at(row, column)["reverse"], "nothing has the focus yet"
+
+    term.send_keys("<Tab>", "<Tab>")
+    term.wait_for(
+        lambda t: t.attrs_at(row, column)["reverse"], message="the sash marked"
+    )
+
+    term.send_keys("<Tab>")
+    term.wait_for(
+        lambda t: not t.attrs_at(row, column)["reverse"],
+        message="the sash unmarked again",
+    )
+
+
 def test_panes_nest(terminal, tmp_path):
     term = terminal(cols=44, rows=12)
     term.run_source(

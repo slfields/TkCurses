@@ -33,13 +33,36 @@ from tkcurses._core.events import (
     MouseState,
     ResizeEvent,
     keysym_for,
+    modified_key,
     shift_held,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
-__all__ = ["DEFAULT_CLICK_INTERVAL", "InputHandler", "MouseDecoder", "button_masks"]
+__all__ = [
+    "DEFAULT_CLICK_INTERVAL",
+    "SIGNAL_KEYS",
+    "InputHandler",
+    "MouseDecoder",
+    "button_masks",
+]
+
+#: The keys a tty turns into a signal before the application can read them,
+#: and the control character each one occupies. Keysyms, so that they can be
+#: compared against a binding's detail directly: Control-C reports keysym
+#: ``c``, and Control-backslash reports ``\\``, as they do in Tk.
+SIGNAL_KEYS: dict[str, int] = {
+    "c": termios.VINTR,  # interrupt
+    "\\": termios.VQUIT,  # quit
+    "z": termios.VSUSP,  # suspend
+}
+
+#: What a control character is set to when it is to do nothing. POSIX names
+#: it _POSIX_VDISABLE; Python exposes it, but only on some platforms, and
+#: fpathconf can also answer per file descriptor. Zero is the value on every
+#: platform this library runs on, and is the documented fallback.
+_VDISABLE: int = getattr(termios, "_POSIX_VDISABLE", 0)
 
 #: Milliseconds within which clicks count as a double or triple click.
 #: Curses does not inherit the system's double-click timing, so a value has to
@@ -263,6 +286,8 @@ class InputHandler:
         self._report_hover = report_hover
         self._motion_mode = b""
         self._saved_termios: tuple[int, list[Any]] | None = None
+        #: Keysyms taken back from the tty's signal handling, by request.
+        self._signal_keys: set[str] = set()
         self._configure()
 
     def _configure(self) -> None:
@@ -276,15 +301,20 @@ class InputHandler:
         self._enable_mouse()
 
     def _disable_flow_control(self) -> None:
-        """Stop the tty swallowing Control-S and Control-Q.
+        """Take the tty's own keys back, as far as the application needs.
 
-        They are XOFF and XON: the line discipline uses them to pause and
-        resume output, and never passes either on - so an application that
-        binds Control-Q, as a menu with a Ctrl+Q accelerator invites, never
-        sees the key at all. curses' raw() would clear them, but it also
-        stops Control-C raising an interrupt, which is far too much to give
-        up for two keys; clearing the two input flags directly keeps signals
-        working.
+        Control-S and Control-Q are XOFF and XON: the line discipline uses
+        them to pause and resume output and never passes either on, so an
+        application that binds Control-Q - as a menu with a Ctrl+Q
+        accelerator invites - never sees the key at all. Those two are taken
+        back for everyone, because nothing is lost by it.
+
+        Control-C, Control-backslash and Control-Z are a different matter:
+        they are interrupt, quit and suspend, and giving one up costs a way
+        of stopping a wedged application. Those are taken back one at a time,
+        only while something is bound to them - see :meth:`claim_signal_keys`.
+        curses' raw() would clear all five at once, which is why it is not
+        used here.
         """
         stream = sys.__stdin__
         if stream is None:
@@ -295,17 +325,64 @@ class InputHandler:
         except (termios.error, ValueError, OSError, AttributeError):
             return
         self._saved_termios = (fd, saved)
+        self._apply_termios()
+
+    def claim_signal_keys(self, keysyms: Iterable[str]) -> set[str]:
+        """Stop the tty turning these keys into signals, and pass them on.
+
+        Args:
+            keysyms: The keysyms wanted, from :data:`SIGNAL_KEYS`. Anything
+                else is ignored, and the set replaces whatever was claimed
+                before - so a key no longer wanted gets its signal back.
+
+        Returns:
+            The keysyms now claimed.
+
+        Only the keys asked for are given up. An application that binds
+        Control-C keeps Control-backslash, which still kills it from the
+        keyboard if it stops responding - and that mattered enough to do
+        this per key rather than by clearing ISIG, which would take all
+        three at once.
+        """
+        wanted = {key for key in keysyms if key in SIGNAL_KEYS}
+        if wanted == self._signal_keys:
+            return set(wanted)
+        self._signal_keys = wanted
+        self._apply_termios()
+        return set(wanted)
+
+    @property
+    def signal_keys(self) -> set[str]:
+        """The keysyms currently taken back from the tty's signal handling."""
+        return set(self._signal_keys)
+
+    def _apply_termios(self) -> None:
+        """Write the tty settings this handler wants, over the saved ones.
+
+        Always built from the state found at start-up rather than from what
+        is there now, so claiming a key and letting it go again puts back
+        exactly what the terminal had - including a control character the
+        person had rebound for themselves.
+        """
+        if self._saved_termios is None:
+            return
+        fd, saved = self._saved_termios
         attributes = list(saved)
         attributes[0] &= ~(termios.IXON | termios.IXOFF | termios.IXANY)
+        control = list(attributes[6])
+        for keysym in self._signal_keys:
+            control[SIGNAL_KEYS[keysym]] = _VDISABLE
+        attributes[6] = control
         with contextlib.suppress(termios.error, OSError):
             termios.tcsetattr(fd, termios.TCSANOW, attributes)
 
     def _restore_flow_control(self) -> None:
-        """Put the tty's flow control back the way it was found."""
+        """Put the tty's own keys back the way they were found."""
         if self._saved_termios is None:
             return
         fd, saved = self._saved_termios
         self._saved_termios = None
+        self._signal_keys = set()
         with contextlib.suppress(termios.error, OSError, ValueError):
             termios.tcsetattr(fd, termios.TCSANOW, saved)
 
@@ -508,7 +585,11 @@ class InputHandler:
         """Build a key event, including any modifier the code implies."""
         modifiers = 0
         char = ""
-        if 1 <= code <= 26:
+        if code == 0 or 28 <= code <= 31:
+            # NUL is Control-Space, and 28 to 31 are Control with the four
+            # keys past Z: backslash, bracketright, asciicircum, underscore.
+            modifiers |= MOD_CTRL
+        elif 1 <= code <= 26:
             # Control-A through Control-Z arrive as 1..26. Tab, Return and
             # Escape fall in that range too but are keys in their own right.
             if code not in (9, 10, 13):
@@ -517,6 +598,9 @@ class InputHandler:
             char = chr(code)
         if shift_held(code):
             modifiers |= MOD_SHIFT
+        modified = modified_key(code)
+        if modified is not None:
+            modifiers |= modified[1]
         return KeyEvent(
             keycode=code,
             keysym=keysym_for(code),

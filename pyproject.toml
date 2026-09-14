@@ -88,6 +88,12 @@ timeout = 60
 [tool.mypy]
 python_version = "3.10"
 files = ["src/tkcurses"]
+# Everything strict mode turns on, because measuring it cost nothing - the
+# library already passed with no errors at all. The individual flags below
+# were the subset chosen at the time, and the rest have been available for
+# free ever since: disallow_any_generics, disallow_untyped_calls,
+# disallow_subclassing_any and extra_checks are what strict adds to them.
+strict = true
 warn_return_any = true
 warn_unused_configs = true
 warn_redundant_casts = true

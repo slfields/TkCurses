@@ -153,10 +153,13 @@ Run it four times, ending it differently each time: `q`, `c`, `x`, and Ctrl-C.
 
 - [ ] `q` — quits cleanly, terminal usable
 - [ ] `c` — the callback raises and **the application keeps running**
-- [ ] the traceback reads normally: every line starts at the left edge, not
+- [ ] **the display is untouched** — the count on screen is the only sign
+      anything went wrong, because the traceback is held back while curses
+      owns the terminal
+- [ ] pressing `c` several times still leaves the display intact
+- [ ] every traceback appears **after** the application exits, one per press
+- [ ] each of them reads normally: every line starts at the left edge, not
       stepping further right down the screen
-- [ ] the traceback lands on top of the display and is *not* cleaned up
-      afterwards — expected for now, tracked as **TkCurses-k0k**
 - [ ] `x` — the application ends, terminal usable
 - [ ] Ctrl-C — the application ends, terminal usable
 - [ ] After all four: prompt back, cursor visible, typing echoed, no `reset`

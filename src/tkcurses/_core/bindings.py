@@ -35,6 +35,7 @@ from tkcurses._core.events import (
     KeyEvent,
     MouseEvent,
     ResizeEvent,
+    canonical_keysym,
 )
 
 if TYPE_CHECKING:
@@ -157,12 +158,18 @@ class EventPattern:
     def matches(self, event: EventPattern) -> bool:
         """True if a binding on this pattern should fire for ``event``.
 
-        Three asymmetries make this a one-way test rather than equality. An
-        empty ``detail`` is a wildcard, so ``<Key>`` catches every key.
-        :data:`MOD_ANY` waives the modifier comparison entirely. And a
-        single-click pattern also fires on a double or triple click, matching
-        Tk, where ``<Button-1>`` still runs while ``<Double-Button-1>`` is
-        also bound.
+        Asymmetries all the way down, which is what makes this a one-way test
+        rather than equality. An empty ``detail`` is a wildcard, so ``<Key>``
+        catches every key. A single-click pattern also fires on a double or
+        triple click, matching Tk.
+
+        And the modifiers need only be a **subset** of the event's, which is
+        Tk's rule and not an obvious one: ``<Key>`` fires for a key held with
+        Shift, and ``<Button-1>`` fires for a shift-click. Requiring them to
+        be equal - which this did - meant the obvious binding for "tell me
+        about every key" silently stopped working the moment a modifier was
+        held. Where several patterns match, :meth:`specificity` decides which
+        of them actually runs.
         """
         if self.type != event.type:
             return False
@@ -172,7 +179,22 @@ class EventPattern:
             return False
         if self.modifiers & MOD_ANY:
             return True
-        return self.modifiers == event.modifiers & ~MOD_ANY
+        wanted = self.modifiers & ~MOD_ANY
+        return wanted & event.modifiers == wanted
+
+    @property
+    def specificity(self) -> tuple[int, int, int]:
+        """How particular this pattern is, for choosing between matches.
+
+        Ordered the way Tk orders them, checked against Tk 9.0.2: a named
+        detail outranks any number of modifiers - ``<Key-A>`` beats
+        ``<Shift-Key>`` - and among patterns with the same detail, more
+        modifiers wins. ``Any`` is not counted: it waives the comparison
+        rather than demanding anything, so a pattern using it is the least
+        particular of all.
+        """
+        modifiers = self.modifiers & ~MOD_ANY
+        return (int(bool(self.detail)), int(modifiers).bit_count(), self.repeat)
 
     def __str__(self) -> str:
         """The canonical sequence string for this pattern."""
@@ -275,7 +297,11 @@ def _parse_fields(sequence: str, fields: list[str]) -> EventPattern:
         elif field_text in _TYPES and not event_type:
             event_type = _TYPES[field_text]
         elif index == len(fields) - 1:
-            detail = field_text
+            # <Key-period> and <Key-.> are the same binding: X11's names for
+            # the punctuation keys are what tkinter documentation uses, and
+            # without resolving them here such a binding could never fire,
+            # because the event carries the character.
+            detail = canonical_keysym(field_text)
         else:
             raise ValueError(
                 f"cannot parse binding sequence {sequence!r}: {field_text!r} is "
@@ -362,12 +388,51 @@ class BindingTable:
     caller's business; this table only stores and dispatches.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, on_change: Callable[[], None] | None = None) -> None:
+        """
+        Args:
+            on_change: Called after anything is bound or unbound. The one
+                thing outside this table that depends on *what* is bound
+                rather than on what fires is the terminal: a key it would
+                otherwise turn into a signal has to be claimed back while a
+                binding wants it.
+        """
         self._tags: dict[str, dict[EventPattern, list[Binding]]] = {}
         # Maps a funcid back to where it lives, so unbind() by id does not
         # have to scan every tag.
         self._located: dict[str, tuple[str, EventPattern]] = {}
         self._ids = itertools.count(1)
+        self._on_change = on_change
+
+    def _changed(self) -> None:
+        """Tell whoever is listening that the set of bindings has moved."""
+        if self._on_change is not None:
+            self._on_change()
+
+    def details_bound_with(self, modifiers: int, type: str = "Key") -> set[str]:
+        """Details bound on ``type`` events that ask for exactly ``modifiers``.
+
+        Args:
+            modifiers: The modifier set a pattern must require, ``MOD_ANY``
+                aside. ``<Control-c>`` asks for Control and matches here;
+                ``<Key-c>`` asks for nothing and does not.
+            type: Event type to look at.
+
+        Returns:
+            Every such pattern's detail, across every tag. Answers "is
+            anything, anywhere, waiting for this key" - which is the
+            question, since a binding on any widget is reason enough to stop
+            the terminal eating the key.
+        """
+        return {
+            pattern.detail
+            for patterns in self._tags.values()
+            for pattern, bindings in patterns.items()
+            if bindings
+            and pattern.type == type
+            and pattern.detail
+            and pattern.modifiers & ~MOD_ANY == modifiers
+        }
 
     def bind(
         self,
@@ -392,6 +457,7 @@ class BindingTable:
         binding = Binding(f"bind#{next(self._ids)}", func, pattern)
         existing.append(binding)
         self._located[binding.funcid] = (tag, pattern)
+        self._changed()
         return binding.funcid
 
     def unbind(
@@ -406,10 +472,12 @@ class BindingTable:
         """
         if funcid is not None:
             self._unbind_id(funcid)
+            self._changed()
             return
         if pattern is None:
             for bindings in self._tags.pop(tag, {}).values():
                 self._forget_ids(bindings)
+            self._changed()
             return
         patterns = self._tags.get(tag)
         if patterns is None:
@@ -417,6 +485,7 @@ class BindingTable:
         self._forget_ids(patterns.pop(pattern, []))
         if not patterns:
             del self._tags[tag]
+        self._changed()
 
     def bindings(self, tag: str, pattern: EventPattern | None = None) -> list[Binding]:
         """Bindings on ``tag``, or only those on ``pattern`` if given.
@@ -438,18 +507,40 @@ class BindingTable:
         return list(self._tags)
 
     def matching(self, tag: str, patterns: Iterable[EventPattern]) -> Iterator[Binding]:
-        """Bindings on ``tag`` that fire for any of ``patterns``.
+        """Bindings on ``tag`` for the most particular pattern that fires.
 
-        Yields in registration order within a pattern, so handlers added with
-        ``add=True`` run in the order they were added.
+        One pattern per tag, not every pattern that matches. With ``<Key>``
+        and ``<Shift-Key>`` both bound on a widget, a shifted key runs the
+        second and not the first - Tk chooses the most specific match within
+        a tag and then moves on to the next tag, so a widget binding and a
+        class binding both still get their turn.
+
+        Yields in registration order within that pattern, so handlers added
+        with ``add=True`` run in the order they were added.
         """
         registered = self._tags.get(tag)
         if not registered:
             return
         wanted = list(patterns)
+        # Grouped by event type, because a physical event and the virtual
+        # event it triggers are two different events and Tk delivers both.
+        # Specificity chooses between patterns for the *same* event, so
+        # <Key> and <Shift-Key> compete while <Key> and <<Paste>> do not.
+        best: dict[str, tuple[int, int, int]] = {}
+        chosen: dict[str, list[Binding]] = {}
         for pattern, bindings in list(registered.items()):
-            if any(pattern.matches(candidate) for candidate in wanted):
-                yield from bindings
+            if not any(pattern.matches(candidate) for candidate in wanted):
+                continue
+            kind, rank = pattern.type, pattern.specificity
+            if kind not in best or rank > best[kind]:
+                best[kind], chosen[kind] = rank, list(bindings)
+            elif rank == best[kind]:
+                # Two different patterns, equally particular, both matching:
+                # rare, and no reason to prefer whichever was registered
+                # first, so both run.
+                chosen[kind].extend(bindings)
+        for kind in chosen:
+            yield from chosen[kind]
 
     def dispatch(
         self, tags: Iterable[str], event: Any, patterns: Iterable[EventPattern]

@@ -7,11 +7,13 @@ What to look for: after every one of the four, the terminal is usable - prompt
 back, cursor visible, typing echoed, no leftover raw mode. A callback that
 raises must NOT end the application; the other three must.
 
-The traceback from 'c' is written to stderr, which is this same terminal, so
-it lands on top of the display. Every line of it should start at the left
-edge; a traceback that steps further right down the screen means the line
-endings are wrong for a terminal in curses mode. The display is left damaged
-underneath it, which is known and tracked as TkCurses-k0k.
+The traceback from 'c' is held back while the screen is up, because stderr
+here is the same terminal curses is drawing on. The display should be
+untouched - the count on screen is the only sign anything went wrong - and
+every traceback should appear after the application exits, one per press,
+each line starting at the left edge. A traceback that steps further right
+down the screen means the line endings are wrong for a terminal that has
+just left curses mode.
 """
 
 from __future__ import annotations

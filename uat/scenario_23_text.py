@@ -158,10 +158,11 @@ def build(root, screen):
 
     tap_the_decoder()
 
-    # <Any-Key> rather than <Key>: a pattern with no modifier does not match
-    # a key held with one, so a shifted arrow would never reach this and the
-    # line above would stop reporting exactly when it mattered most.
-    text.bind("<Any-Key>", lambda event: root.after_idle(report), add=True)
+    # <Key> is enough: a pattern's modifiers need only be a subset of the
+    # event's, so this sees a shifted arrow too. It did not always - which is
+    # why this line once used <Any-Key> and stopped reporting exactly when it
+    # mattered most.
+    text.bind("<Key>", lambda event: root.after_idle(report), add=True)
     text.bind("<Button-1>", note_mouse, add=True)
     text.bind("<Motion>", note_mouse, add=True)
     text.bind("<ButtonRelease-1>", note_mouse, add=True)

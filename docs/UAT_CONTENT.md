@@ -117,6 +117,9 @@ anywhere · `F3` for a menu taller than the terminal
 - [ ] `Ctrl+N`, `Ctrl+O` and `Ctrl+Q` all work from anywhere — including
       `Ctrl+Q`, which a tty normally swallows as flow control
 - [ ] `Ctrl+C` still interrupts the scenario, as it always did
+- [ ] **After opening and dismissing a menu — by clicking away, or with
+      Escape — `Escape` still quits the scenario.** A menu that kept the
+      keyboard on its way out left every later key going somewhere invisible
 - [ ] The checkbutton and radiobutton entries show their state, and the radio
       group shows exactly one dot
 - [ ] **A popup near the bottom right corner is moved so all of it is on
@@ -143,6 +146,10 @@ turn it on its side
 - [ ] A pane never shrinks below its minimum, however hard the sash is pushed
 - [ ] The widths at the top always add up to the window, sashes included
 - [ ] `Tab` reaches a paned window and the arrows move its sash
+- [ ] **A paned window that has the focus says so**: its sash is highlighted
+      the moment `Tab` reaches it, whether or not it was ever clicked, and
+      the highlight goes when `Tab` moves on. Without it a keyboard user has
+      no way to know the arrows will now move a sash
 - [ ] The nested vertical panes work the same way inside the horizontal ones
 - [ ] `F4` turns the whole thing on its side and the panes come with it
 - [ ] Shrinking the terminal squeezes the panes rather than losing them
@@ -150,6 +157,30 @@ turn it on its side
 ---
 
 ## What this found
+
+- **A paned window tabbed to showed no sign of having the focus.** The sash
+  is the only thing that marks it, and it was repainted on a click - as a
+  side effect of starting a drag - but not when the focus arrived any other
+  way. Every other focusable widget binds `<FocusIn>` and `<FocusOut>` to a
+  repaint; this one did not, so the people it failed were exactly those with
+  no mouse, who have no other way to resize a pane. **TkCurses-gyo.4**.
+
+- **A punctuation key could not be bound by name.** `<Key-period>` is how
+  every piece of tkinter documentation binds a full stop, and here it went
+  looking for a keysym called `period` that no event would ever report — so
+  the binding simply never fired. X11's names now resolve to their characters
+  when a sequence is parsed, so `<Key-period>` and `<Key-.>` are one binding.
+  Tk was asked which way round to canonicalise: a binding written with the
+  name fires there, and the event reaching it reports `.`. **TkCurses-82n**.
+
+- **An unmapped menu kept the keyboard, so Escape stopped closing the
+  application.** `unpost` gave the focus back only when something had held it
+  *before* the menu opened — and for an application whose first action is
+  opening a menu, nothing had. The focus stayed on the menu, which by then was
+  off screen, so every later key went to a widget nobody could see and every
+  binding further out stopped firing. Fixed in `_unmap` rather than in `Menu`,
+  because the fault is general: any widget that leaves the screen holding the
+  focus strands the keyboard the same way. **TkCurses-gyo.2**.
 
 - **A pane was laid out and never mapped**, so the panes were in exactly the
   right places and nothing at all was drawn. A geometry manager does two
@@ -234,11 +265,13 @@ turn it on its side
   the end of the row above, and painted the first character of the next row
   there as well. A boundary is the end of one display row *and* the start of
   the next; it has to resolve to the later one.
-- **`<Key>` does not match a key held with a modifier.** Tk requires a
-  pattern's modifiers to be a subset of the event's, so `<Key>` sees
-  everything; this library requires them to match exactly. Deliberate once,
-  but it disagrees with Tk and it means the obvious "tell me about every key"
-  binding stops working the moment Shift is held. **TkCurses-qxl**.
+- **`<Key>` did not match a key held with a modifier.** Tk requires a
+  pattern's modifiers to be a *subset* of the event's, so `<Key>` sees
+  everything and `<Button-1>` fires for a shift-click; this library required
+  them to be equal, so the obvious "tell me about every key" binding stopped
+  working the moment Shift was held. Fixed, along with the rule that goes with
+  it: where several patterns match, the most specific one on each binding tag
+  runs, and a detail outranks any number of modifiers. **TkCurses-qxl**.
 
 - **Clicking a square raised an exception, and selections never cleared.**
   Two faults from one cause. Hit-testing went by an item's *bounding box*, so

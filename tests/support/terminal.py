@@ -203,11 +203,18 @@ class TerminalHarness:
         *,
         timeout: float = DEFAULT_TIMEOUT,
         env: dict[str, str] | None = None,
+        stderr_to_terminal: bool = False,
     ) -> None:
         self.cols = cols
         self.rows = rows
         self.timeout = timeout
         self._extra_env = dict(env or {})
+        #: Send the child's stderr to the pty rather than to a pipe of its
+        #: own. Off by default, because a traceback written into the terminal
+        #: corrupts the very output under assertion - which is the point of
+        #: the option: some behaviour only exists when stderr *is* the screen,
+        #: and nothing could test it while the harness always separated them.
+        self._stderr_to_terminal = stderr_to_terminal
 
         self._screen = _Screen(cols, rows)
         self._stream = _ByteStream(self._screen)
@@ -282,7 +289,7 @@ class TerminalHarness:
             fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
             os.dup2(slave, 0)
             os.dup2(slave, 1)
-            os.dup2(err_w, 2)
+            os.dup2(slave if self._stderr_to_terminal else err_w, 2)
             for fd in (master, slave, err_r, err_w):
                 if fd > 2:
                     os.close(fd)
@@ -725,6 +732,17 @@ _KEYS: dict[str, bytes] = {
     "<Control-Down>": b"\x1b[1;5B",
     "<Control-Right>": b"\x1b[1;5C",
     "<Control-Left>": b"\x1b[1;5D",
+    "<Control-Home>": b"\x1b[1;5H",
+    "<Control-End>": b"\x1b[1;5F",
+    # The modifier parameter is one more than a three-bit set - 6 is Shift
+    # and Control together - and ncurses gives each combination a key code
+    # of its own, named for the combination.
+    "<Control-Shift-Up>": b"\x1b[1;6A",
+    "<Control-Shift-Down>": b"\x1b[1;6B",
+    "<Control-Shift-Right>": b"\x1b[1;6C",
+    "<Control-Shift-Left>": b"\x1b[1;6D",
+    "<Alt-Up>": b"\x1b[1;3A",
+    "<Alt-Down>": b"\x1b[1;3B",
     "<Return>": b"\r",
     "<Enter>": b"\r",
     "<Tab>": b"\t",

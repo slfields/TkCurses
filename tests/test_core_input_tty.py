@@ -87,6 +87,30 @@ def test_control_keys_carry_the_control_modifier(terminal, tmp_path):
     term.wait_for_text("sym=a mods=2")
 
 
+def test_control_and_shift_with_an_arrow_carry_their_modifiers(terminal, tmp_path):
+    """ncurses reports these as codes of its own, named for the combination.
+
+    Shift alone has classic codes - KEY_SF and friends - but Control-Down and
+    Control-Shift-Down are extended capabilities that ncurses numbers at run
+    time, so the only record of which key and which modifiers is the name it
+    gives the code.
+    """
+    term = terminal(cols=40, rows=10)
+    run(
+        term,
+        tmp_path,
+        'buffer.write(row, 0, "sym=%s mods=%d" % (event.keysym, event.modifiers));'
+        " row += 1",
+    )
+    # MOD_SHIFT is 0x01 and MOD_CTRL 0x02.
+    term.send_keys("<Control-Down>")
+    term.wait_for_text("sym=Down mods=2")
+    term.send_keys("<Control-Shift-Right>")
+    term.wait_for_text("sym=Right mods=3")
+    term.send_keys("<Control-Home>")
+    term.wait_for_text("sym=Home mods=2")
+
+
 def test_return_is_not_treated_as_a_control_key(terminal, tmp_path):
     """Return arrives in the control range but is a key in its own right."""
     term = terminal(cols=40, rows=8)
@@ -555,6 +579,146 @@ def test_control_c_still_interrupts(terminal, tmp_path):
     term.wait_for_text("ready")
     term.send(b"\x03")
     assert term.wait_for_exit(timeout=10) == 7
+
+
+SIGNAL_APP = """
+import tkcurses
+
+root = tkcurses.Tk()
+buffer = root.tk.screen.buffer
+hits = []
+
+
+def note(event):
+    hits.append("%s/%s" % (event.keysym, event.state))
+    buffer.write(2, 0, "hits=%s          " % " ".join(hits))
+    root.tk.screen.refresh()
+
+
+{bindings}
+buffer.write(0, 0, "ready")
+buffer.write(1, 0, "claimed=%s" % sorted(root.tk.input.signal_keys))
+root.tk.screen.refresh()
+root.after(8000, root.quit)
+root.mainloop()
+root.destroy()
+"""
+
+
+def test_binding_a_signal_key_takes_it_back_from_the_terminal(terminal, tmp_path):
+    """Binding the key is the request: there is no second switch to find.
+
+    A tty turns Control-C, Control-backslash and Control-Z into SIGINT,
+    SIGQUIT and SIGTSTP before the application can read them, so all three
+    are unreachable by default although tkinter binds them like any other
+    key. Binding one now disables that one control character for as long as
+    the binding lasts.
+    """
+    term = terminal(cols=50, rows=8)
+    term.run_source(
+        SIGNAL_APP.format(
+            bindings='root.bind("<Control-c>", note)\n'
+            'root.bind("<Control-backslash>", note)\n'
+            'root.bind("<Control-z>", note)'
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("ready")
+    term.send(b"\x03")
+    term.wait_for_text("hits=c/2")
+    term.send(b"\x1c")
+    term.wait_for_text("hits=c/2 \\/2")
+    term.send(b"\x1a")
+    term.wait_for_text("hits=c/2 \\/2 z/2")
+    assert term.exit_status is None, "the application should have survived all three"
+
+
+def test_an_unbound_signal_key_still_signals(terminal, tmp_path):
+    """The default must not move: Control-C stops a wedged application.
+
+    Only the key actually bound is given up, so a program that binds none of
+    them - which is nearly all of them - keeps every one of its signals.
+    """
+    term = terminal(cols=50, rows=8)
+    term.run_source(
+        SIGNAL_APP.format(bindings='root.bind("<Key-a>", note)'), workdir=tmp_path
+    )
+    # Waited for, not read once: "ready" and the claimed line are written in
+    # the same refresh, and nothing says which of the two reaches the
+    # terminal first.
+    term.wait_for_text("claimed=[]")
+    term.send(b"\x03")
+    assert term.wait_for_exit(timeout=10) != 0, "Control-C should have interrupted"
+
+
+def test_one_signal_key_is_given_up_without_the_others(terminal, tmp_path):
+    """Per key, not all three: the point of doing it through the control
+    characters rather than by clearing ISIG.
+
+    An application that wants Control-C for Copy still answers Control-
+    backslash, which is what a person reaches for when it stops responding.
+    """
+    term = terminal(cols=50, rows=8)
+    term.run_source(
+        SIGNAL_APP.format(bindings='root.bind("<Control-c>", note)'),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("claimed=['c']")
+    term.send(b"\x03")
+    term.wait_for_text("hits=c/2")
+    term.send(b"\x1c")
+    assert term.wait_for_exit(timeout=10) != 0, "Control-backslash should still quit"
+
+
+def test_unbinding_gives_the_signal_back(terminal, tmp_path):
+    """A key is taken only while something wants it."""
+    term = terminal(cols=50, rows=8)
+    term.run_source(
+        SIGNAL_APP.format(
+            bindings='root.bind("<Control-c>", note)\n'
+            "def drop(event):\n"
+            '    root.unbind("<Control-c>")\n'
+            '    buffer.write(3, 0, "now=%s   " % sorted(root.tk.input.signal_keys))\n'
+            "    root.tk.screen.refresh()\n"
+            'root.bind("<Key-u>", drop)'
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("ready")
+    term.send(b"\x03")
+    term.wait_for_text("hits=c/2")
+    term.send(b"u")
+    term.wait_for_text("now=[]")
+    term.send(b"\x03")
+    assert term.wait_for_exit(timeout=10) != 0, "the interrupt should be back"
+
+
+def test_a_claimed_signal_key_is_given_back_on_the_way_out(terminal, tmp_path):
+    """A terminal left with no interrupt is far worse than one left in cbreak.
+
+    Whatever the application did to the control characters has to be undone
+    when it ends, or the next program run in that terminal cannot be stopped
+    at all.
+    """
+    term = terminal(cols=40, rows=6)
+    term.run_source(
+        "import sys, termios, tkcurses\n"
+        "fd = sys.__stdin__.fileno()\n"
+        "before = termios.tcgetattr(fd)[6][termios.VINTR]\n"
+        "root = tkcurses.Tk()\n"
+        'root.bind("<Control-c>", lambda event: None)\n'
+        "during = termios.tcgetattr(fd)[6][termios.VINTR]\n"
+        "root.after(200, root.quit)\n"
+        "root.mainloop()\n"
+        "root.destroy()\n"
+        "after = termios.tcgetattr(fd)[6][termios.VINTR]\n"
+        "ok = before == b'\\x03' and during == b'\\x00' and after == before\n"
+        "print('before=%r during=%r after=%r' % (before, during, after),"
+        " file=sys.stderr)\n"
+        "raise SystemExit(0 if ok else 1)\n",
+        workdir=tmp_path,
+    )
+    assert term.wait_for_exit(timeout=10) == 0, term.stderr
 
 
 def test_the_terminal_flow_control_is_put_back(terminal, tmp_path):

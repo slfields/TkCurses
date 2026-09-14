@@ -13,6 +13,7 @@ where order is decided.
 
 from __future__ import annotations
 
+import contextlib
 import curses
 import curses.panel
 from typing import TYPE_CHECKING, Any
@@ -291,6 +292,28 @@ class PanelStack:
         )
 
     # -------------------------------------------------------------- output
+
+    def touch_all(self) -> None:
+        """Mark every visible panel as needing to be written out again.
+
+        A panel window keeps its own contents, but curses tracks what it
+        believes is already on the terminal and sends nothing for a window
+        that has not changed. When the screen has been cleared underneath the
+        stack - which is what a terminal resize does - that belief is wrong
+        for every panel at once, and only the ones that happened to change
+        would be drawn back.
+        """
+        if self._panel_factory is None:
+            return
+        self._dispatcher.call(self._touch)
+
+    def _touch(self) -> None:
+        """Run the curses side of :meth:`touch_all` on the dispatcher's thread."""
+        for panel in self._order:
+            if panel.hidden or panel._window is None:
+                continue
+            with contextlib.suppress(curses.error):
+                panel._window.touchwin()
 
     def update(self) -> None:
         """Push the stack to the terminal."""

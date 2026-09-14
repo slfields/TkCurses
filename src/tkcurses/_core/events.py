@@ -21,12 +21,15 @@ __all__ = [
     "MOD_CTRL",
     "MOD_META",
     "MOD_SHIFT",
+    "PUNCTUATION_KEYSYMS",
     "Event",
     "KeyEvent",
     "MouseEvent",
     "MouseState",
     "ResizeEvent",
+    "canonical_keysym",
     "keysym_for",
+    "modified_key",
     "modifier_names",
     "shift_held",
 ]
@@ -156,8 +159,76 @@ _CONTROL_KEYSYMS: dict[int, str] = {
     10: "Return",  # line feed, what the tty delivers for Enter
     13: "Return",  # carriage return
     27: "Escape",
+    # The four control codes past Control-Z, which are not letters and so
+    # fall outside the 1..26 arithmetic. Tk names them by the character on
+    # the key - checked against Tk 9.0.2, which reports Control-backslash as
+    # keysym "\\" and not as "backslash".
+    28: "\\",
+    29: "]",
+    30: "^",
+    31: "_",
     127: "BackSpace",
 }
+
+#: X11's names for the punctuation keys, and the characters they produce.
+#: Tk resolves these when it parses a binding, so ``<Key-period>`` is how a
+#: full stop is bound and ``<Key-.>`` is not - the name is the spelling every
+#: piece of tkinter documentation uses. Everything here keeps the character
+#: as the canonical form, because that is what Tk 9.0.2 reports back in
+#: ``event.keysym`` for the same key; the names are resolved to it rather
+#: than the other way round, so a binding written either way finds the same
+#: event. Space is the exception Tk itself makes: it is named, not literal,
+#: because a bare space in a sequence cannot be told from a separator.
+PUNCTUATION_KEYSYMS: dict[str, str] = {
+    "space": " ",
+    "exclam": "!",
+    "quotedbl": '"',
+    "numbersign": "#",
+    "dollar": "$",
+    "percent": "%",
+    "ampersand": "&",
+    "apostrophe": "'",
+    "quoteright": "'",
+    "parenleft": "(",
+    "parenright": ")",
+    "asterisk": "*",
+    "plus": "+",
+    "comma": ",",
+    "minus": "-",
+    "period": ".",
+    "slash": "/",
+    "colon": ":",
+    "semicolon": ";",
+    "less": "<",
+    "equal": "=",
+    "greater": ">",
+    "question": "?",
+    "at": "@",
+    "bracketleft": "[",
+    "backslash": "\\",
+    "bracketright": "]",
+    "asciicircum": "^",
+    "underscore": "_",
+    "grave": "`",
+    "quoteleft": "`",
+    "braceleft": "{",
+    "bar": "|",
+    "braceright": "}",
+    "asciitilde": "~",
+}
+
+
+def canonical_keysym(name: str) -> str:
+    """The form a keysym is stored in, resolving X11's punctuation names.
+
+    ``period`` and ``.`` are the same key, and a binding may be written
+    either way; both end up as ``.`` so they match the same event. Space
+    stays ``space``, as it does in Tk.
+    """
+    if name == "space":
+        return "space"
+    return PUNCTUATION_KEYSYMS.get(name, name)
+
 
 #: Curses key codes that map to a named tkinter keysym.
 _SPECIAL_KEYSYMS: dict[int, str] = {
@@ -205,6 +276,84 @@ def shift_held(keycode: int) -> bool:
     return keycode in _SHIFTED_KEYSYMS
 
 
+#: ncurses' names for the modified forms of the keys that have them, without
+#: the modifier digit. A terminal that reports Control-Down at all reports it
+#: through an *extended* capability, which ncurses numbers at run time from
+#: whatever the terminal description offers - so there is no constant to
+#: compare against and the code has to be asked what it is called.
+_EXTENDED_KEYSYMS: dict[str, str] = {
+    "kDN": "Down",
+    "kUP": "Up",
+    "kLFT": "Left",
+    "kRIT": "Right",
+    "kHOM": "Home",
+    "kEND": "End",
+    "kPRV": "Prior",
+    "kNXT": "Next",
+    "kDC": "Delete",
+    "kIC": "Insert",
+}
+
+#: The modifiers each of xterm's modifier parameters stands for. The
+#: parameter is one more than a three-bit set, so 6 is 5 - Shift and Control
+#: - and 8 is all three.
+_XTERM_MODIFIER_BITS: tuple[tuple[int, int], ...] = (
+    (0x1, MOD_SHIFT),
+    (0x2, MOD_ALT),
+    (0x4, MOD_CTRL),
+)
+
+_MISSING = object()
+
+_modified_keys: dict[int, tuple[str, int] | None] = {}
+
+
+def modified_key(keycode: int) -> tuple[str, int] | None:
+    """The key and modifiers behind one of ncurses' extended key codes.
+
+    Args:
+        keycode: A code from ``getch``.
+
+    Returns:
+        ``(keysym, modifiers)`` for a code ncurses names as a modified key -
+        ``kDN5`` is Down with Control - or None for anything else, which is
+        every ordinary key.
+
+    ncurses decodes the terminal's modified-key sequences for us but has
+    nowhere to put the modifier: it allocates a fresh code for each
+    combination and names it. The name is the only place the modifier
+    survives, so this reads it back out. Answers are cached because a key
+    press is on the hot path and a name does not change under a running
+    terminal - but a refusal is not cached, because before ``initscr`` there
+    is no terminal to ask and the answer afterwards is a different one.
+    """
+    cached = _modified_keys.get(keycode, _MISSING)
+    if cached is not _MISSING:
+        return cached  # type: ignore[return-value]
+    try:
+        name = curses.keyname(keycode).decode("ascii", "replace")
+    except (curses.error, ValueError):
+        return None
+    result = _parse_extended(name)
+    _modified_keys[keycode] = result
+    return result
+
+
+def _parse_extended(name: str) -> tuple[str, int] | None:
+    """Split one of ncurses' extended key names into a key and modifiers."""
+    prefix, digit = name[:-1], name[-1:]
+    if not digit.isdigit() or prefix not in _EXTENDED_KEYSYMS:
+        return None
+    parameter = int(digit)
+    if parameter < 2:
+        return None
+    modifiers = 0
+    for bit, flag in _XTERM_MODIFIER_BITS:
+        if (parameter - 1) & bit:
+            modifiers |= flag
+    return _EXTENDED_KEYSYMS[prefix], modifiers
+
+
 def keysym_for(keycode: int) -> str:
     """Return the tkinter-style keysym for a curses key code.
 
@@ -229,4 +378,7 @@ def keysym_for(keycode: int) -> str:
         return "space"  # tkinter names the space bar, it does not use " "
     if 33 <= keycode <= 126:
         return chr(keycode)
+    modified = modified_key(keycode)
+    if modified is not None:
+        return modified[0]
     return f"keycode-{keycode}"

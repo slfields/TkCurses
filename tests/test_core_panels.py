@@ -21,6 +21,36 @@ class FakeWindow:
 
     def __init__(self, rect: Rect) -> None:
         self.rect = rect
+        self.touched = 0
+
+    def touchwin(self) -> None:
+        self.touched += 1
+
+
+class FakePanel:
+    """Stands in for a curses panel, so the stack believes curses is there."""
+
+    def __init__(self, window: FakeWindow) -> None:
+        self.window = window
+        self.hidden = False
+
+    def top(self) -> None:
+        pass
+
+    def bottom(self) -> None:
+        pass
+
+    def hide(self) -> None:
+        self.hidden = True
+
+    def show(self) -> None:
+        self.hidden = False
+
+    def move(self, y: int, x: int) -> None:
+        pass
+
+    def replace(self, window: FakeWindow) -> None:
+        self.window = window
 
 
 @pytest.fixture
@@ -30,6 +60,16 @@ def stack():
         dispatcher=CursesDispatcher(owner_thread_id=threading.get_ident()),
         window_factory=FakeWindow,
         panel_factory=None,
+    )
+
+
+@pytest.fixture
+def touchable_stack():
+    """A stack that believes it has curses, for the output side."""
+    return PanelStack(
+        dispatcher=CursesDispatcher(owner_thread_id=threading.get_ident()),
+        window_factory=FakeWindow,
+        panel_factory=FakePanel,
     )
 
 
@@ -281,3 +321,17 @@ def test_clear_destroys_everything(stack):
 
 def test_update_without_curses_is_a_no_op(stack):
     stack.update()  # panel_factory is None; nothing to push
+
+
+def test_touch_all_without_curses_is_a_no_op(stack):
+    stack.touch_all()  # same: there is nothing behind the stack to touch
+
+
+def test_touch_all_marks_the_visible_panels(touchable_stack):
+    """After the screen is cleared, an unchanged panel must be written again."""
+    first, second, third = (make(touchable_stack) for _ in range(3))
+    touchable_stack.hide(second)
+    touchable_stack.touch_all()
+    assert first.window.touched == 1
+    assert third.window.touched == 1
+    assert second.window.touched == 0, "a hidden panel has nothing to put back"
