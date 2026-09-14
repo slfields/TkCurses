@@ -372,8 +372,9 @@ class Misc:
 
     ``_layout_manager`` is the manager laying out this widget's *children*,
     which is a different thing from the manager that placed the widget itself
-    - that one is named by ``winfo_manager()``. A widget can be packed into
-    its parent while gridding its own children.
+    - that one is named by ``winfo_manager()``, and the container holding its
+    options is ``_manager_container``. A widget can be packed into its parent
+    while gridding its own children.
     """
 
     #: True for Tk and Toplevel. Bindings, focus history and coordinate
@@ -416,6 +417,11 @@ class Misc:
         self._rect = Rect(0, 0, 0, 0)
         self._requested = Size(0, 0)
         self._manager = ""
+        #: The container whose geometry manager is laying this widget out.
+        #: Usually the master, but ``in_`` allows another - and either way
+        #: it is where the widget's own options live, which is what a later
+        #: reconfigure has to merge into.
+        self._manager_container: Misc | None = None
         #: The geometry manager laying out this widget's children, and
         #: whether this widget resizes itself to fit them.
         self._layout_manager: Layout | None = None
@@ -1286,6 +1292,22 @@ class Misc:
                 return False
         return True
 
+    def _managed_layout(self, name: str) -> Layout | None:
+        """The layout currently laying this widget out, if ``name`` is it.
+
+        Tk merges every geometry reconfigure into the options the widget
+        already has, and keeps doing so when it moves to a different
+        container: ``place_configure(in_=other, x=5)`` leaves the anchor and
+        the width alone. Only ``forget`` resets them - checked against Tk
+        9.0.2, where a place after ``place_forget`` comes back with
+        ``anchor=nw``. Those options live with the container doing the
+        laying out, which ``in_`` allows to be something other than the
+        master, so this is where a reconfigure goes looking for them.
+        """
+        if self._manager != name or self._manager_container is None:
+            return None
+        return self._manager_container._layout_manager
+
     def winfo_manager(self) -> str:
         """The geometry manager handling this widget, or an empty string."""
         return self._manager
@@ -2116,9 +2138,11 @@ class Pack:
         # is visible and the mixin still type-checks on its own.
         master: Misc | None
         _manager: str
+        _manager_container: Misc | None
 
         def _map(self) -> None: ...
         def _unmap(self) -> None: ...
+        def _managed_layout(self, name: str) -> Layout | None: ...
 
     def pack_configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
         """Pack this widget into its container.
@@ -2142,8 +2166,13 @@ class Pack:
         after = options.pop("after", None)
 
         layout = _pack_layout_of(container)
-        layout.add(self, _pack_options(options), before=before, after=after)
+        current = self._managed_layout("pack")
+        remembered = (
+            current.options_for(self) if isinstance(current, PackLayout) else None
+        )
+        layout.add(self, _pack_options(options, remembered), before=before, after=after)
         self._manager = "pack"
+        self._manager_container = container
         self._map()
         container.tk.layout.invalidate(container)
 
@@ -2163,6 +2192,7 @@ class Pack:
             manager.remove(self)
             container.tk.layout.invalidate(container)
         self._manager = ""
+        self._manager_container = None
         self._unmap()
 
     forget = pack_forget
@@ -2225,15 +2255,25 @@ def _pack_layout_of(container: Misc) -> PackLayout:
     return manager
 
 
-def _pack_options(given: dict[str, Any]) -> PackOptions:
+def _pack_options(
+    given: dict[str, Any], remembered: PackOptions | None = None
+) -> PackOptions:
     """Build and check one widget's packing options.
+
+    Args:
+        given: The options named in this call.
+        remembered: The options the widget already has, which everything not
+            named keeps. None starts from the defaults, which is what a
+            widget not currently packed gets.
 
     Raises:
         TclError: If an option is unknown or its value is not one Tk accepts.
             Checked here rather than left to produce a strange layout later: a
             misspelled ``fill`` is otherwise invisible.
     """
-    options = PackOptions()
+    options = (
+        PackOptions(**vars(remembered)) if remembered is not None else PackOptions()
+    )
     for name, value in given.items():
         if not hasattr(options, name):
             raise TclError(f'unknown option "-{name}"')
@@ -2267,9 +2307,11 @@ class Grid:
     if TYPE_CHECKING:
         master: Misc | None
         _manager: str
+        _manager_container: Misc | None
 
         def _map(self) -> None: ...
         def _unmap(self) -> None: ...
+        def _managed_layout(self, name: str) -> Layout | None: ...
 
     def grid_configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
         """Place this widget in its container's grid.
@@ -2292,12 +2334,18 @@ class Grid:
         if container is None:
             raise TclError("cannot grid the root window")
         layout = _grid_layout_of(container)
-        remembered = layout.remembered(self)
+        # Two sources, and the live one wins: a widget being reconfigured
+        # merges into the options it has now, while one that grid_remove()
+        # hid merges into the ones that were kept for it.
+        current = self._managed_layout("grid")
+        held = current.options_for(self) if isinstance(current, GridLayout) else None
+        remembered = held or layout.remembered(self)
         if not options and remembered is not None:
             layout.add(self, remembered)
         else:
             layout.add(self, _grid_options(options, remembered))
         self._manager = "grid"
+        self._manager_container = container
         self._map()
         container.tk.layout.invalidate(container)
 
@@ -2325,6 +2373,7 @@ class Grid:
             manager.remove(self, keep=keep)
             container.tk.layout.invalidate(container)
         self._manager = ""
+        self._manager_container = None
         self._unmap()
 
     def grid_info(self) -> dict[str, Any]:
@@ -2417,9 +2466,11 @@ class Place:
     if TYPE_CHECKING:
         master: Misc | None
         _manager: str
+        _manager_container: Misc | None
 
         def _map(self) -> None: ...
         def _unmap(self) -> None: ...
+        def _managed_layout(self, name: str) -> Layout | None: ...
 
     def place_configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
         """Place this widget in its container.
@@ -2440,8 +2491,13 @@ class Place:
         if container is None:
             raise TclError("cannot place the root window")
         layout = _place_layout_of(container)
-        layout.add(self, _place_options(options))
+        current = self._managed_layout("place")
+        remembered = (
+            current.options_for(self) if isinstance(current, PlaceLayout) else None
+        )
+        layout.add(self, _place_options(options, remembered))
         self._manager = "place"
+        self._manager_container = container
         self._map()
         container.tk.layout.invalidate(container)
 
@@ -2457,6 +2513,7 @@ class Place:
             manager.remove(self)
             container.tk.layout.invalidate(container)
         self._manager = ""
+        self._manager_container = None
         self._unmap()
 
     def place_info(self) -> dict[str, Any]:
@@ -2495,13 +2552,22 @@ def _place_layout_of(container: Misc) -> PlaceLayout:
     return manager
 
 
-def _place_options(given: dict[str, Any]) -> PlaceOptions:
+def _place_options(
+    given: dict[str, Any], remembered: PlaceOptions | None = None
+) -> PlaceOptions:
     """Build and check one widget's placement options.
+
+    Args:
+        given: The options named in this call.
+        remembered: The options the widget already has, which everything not
+            named keeps. None starts from the defaults.
 
     Raises:
         TclError: If an option is unknown or its value is not one Tk accepts.
     """
-    options = PlaceOptions()
+    options = (
+        PlaceOptions(**vars(remembered)) if remembered is not None else PlaceOptions()
+    )
     for name, value in given.items():
         if not hasattr(options, name):
             raise TclError(f'unknown option "-{name}"')

@@ -479,3 +479,75 @@ def test_mixing_the_other_way_round_is_refused_too(root):
     Box(root, "a").grid()
     with pytest.raises(TclError, match="already has slaves managed by grid"):
         Box(root, "b").pack()
+
+
+# ------------------------------------------------- reconfiguring one option
+
+
+def test_configuring_one_option_leaves_the_others_alone(root):
+    """Tk merges a reconfigure into what the widget already has.
+
+    Values checked against Tk 9.0.2: a widget gridded at row=2, column=3
+    with sticky="ew", padx=5 and rowspan=2, then grid_configure(column=1),
+    keeps the row, the sticky, the padding and the span. Ours rebuilt the
+    options from scratch and sent it to row 0 with no sticky at all.
+    """
+    box = Box(root, "b")
+    box.grid(row=2, column=3, sticky="ew", padx=5, rowspan=2)
+    box.grid_configure(column=1)
+    info = box.grid_info()
+    assert (info["row"], info["column"]) == (2, 1)
+    assert info["sticky"] == "ew"
+    assert info["padx"] == 5
+    assert info["rowspan"] == 2
+
+
+def test_grid_is_grid_configure_so_a_second_grid_merges_too(root):
+    box = Box(root, "b")
+    box.grid(row=1, column=1, columnspan=3, pady=4)
+    box.grid(sticky="ns")
+    info = box.grid_info()
+    assert (info["row"], info["column"]) == (1, 1)
+    assert info["columnspan"] == 3
+    assert info["pady"] == 4
+    assert info["sticky"] == "ns"
+
+
+def test_forgetting_is_what_brings_the_defaults_back(root):
+    """Tk 9.0.2 after grid_forget(): row=0, column=0, sticky="", padx=0,
+    rowspan=1."""
+    box = Box(root, "b")
+    box.grid(row=2, column=3, sticky="ew", padx=5, rowspan=2)
+    box.grid_forget()
+    box.grid()
+    info = box.grid_info()
+    assert (info["row"], info["column"]) == (0, 0)
+    assert info["sticky"] == ""
+    assert info["padx"] == 0
+    assert info["rowspan"] == 1
+
+
+def test_grid_remove_still_puts_the_widget_back_where_it_was(root):
+    """The one case that already merged, and must keep doing so.
+
+    grid_remove hides a widget and remembers where it was; a bare grid()
+    afterwards restores it. That is a different question from reconfiguring
+    a widget that is still gridded, and both now go through the same merge.
+    """
+    box = Box(root, "b")
+    box.grid(row=3, column=2, sticky="nsew", padx=6)
+    box.grid_remove()
+    box.grid()
+    info = box.grid_info()
+    assert (info["row"], info["column"]) == (3, 2)
+    assert info["sticky"] == "nsew"
+    assert info["padx"] == 6
+
+
+def test_a_bad_option_in_a_reconfigure_leaves_the_widget_as_it_was(root):
+    box = Box(root, "b")
+    box.grid(row=2, column=3, sticky="ew")
+    with pytest.raises(TclError):
+        box.grid_configure(column="sideways")
+    info = box.grid_info()
+    assert (info["row"], info["column"], info["sticky"]) == (2, 3, "ew")

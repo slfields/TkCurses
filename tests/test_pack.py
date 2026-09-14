@@ -461,3 +461,59 @@ def test_packing_into_another_container(root):
     box = Box(root, "a")
     box.pack(in_=frame)
     assert frame.pack_slaves() == [box]
+
+
+# ------------------------------------------------- reconfiguring one option
+
+
+def test_configuring_one_option_leaves_the_others_alone(root):
+    """Tk merges a reconfigure into what the widget already has.
+
+    Values checked against Tk 9.0.2: a widget packed with side="left",
+    fill="both", padx=7, ipadx=3 and anchor="n", then
+    pack_configure(side="right"), keeps all four of the others. Ours rebuilt
+    the options from scratch, so asking for the other side also threw away
+    the fill, the padding and the anchor.
+    """
+    box = Box(root, "b")
+    box.pack(side="left", fill="both", padx=7, ipadx=3, anchor="n")
+    box.pack_configure(side="right")
+    info = box.pack_info()
+    assert info["side"] == "right"
+    assert info["fill"] == "both"
+    assert (info["padx"], info["ipadx"]) == (7, 3)
+    assert info["anchor"] == "n"
+
+
+def test_pack_is_pack_configure_so_a_second_pack_merges_too(root):
+    box = Box(root, "b")
+    box.pack(side="bottom", expand=True, pady=2)
+    box.pack(fill="x")
+    info = box.pack_info()
+    assert info["side"] == "bottom"
+    assert info["expand"] is True
+    assert info["pady"] == 2
+    assert info["fill"] == "x"
+
+
+def test_forgetting_is_what_brings_the_defaults_back(root):
+    """Tk 9.0.2 after pack_forget(): side="top", fill="none", padx=0,
+    ipadx=0, anchor="center"."""
+    box = Box(root, "b")
+    box.pack(side="left", fill="both", padx=7, ipadx=3, anchor="n")
+    box.pack_forget()
+    box.pack()
+    info = box.pack_info()
+    assert info["side"] == "top"
+    assert info["fill"] == "none"
+    assert (info["padx"], info["ipadx"]) == (0, 0)
+    assert info["anchor"] == "center"
+
+
+def test_a_bad_option_in_a_reconfigure_leaves_the_widget_as_it_was(root):
+    box = Box(root, "b")
+    box.pack(side="left", fill="both")
+    with pytest.raises(TclError):
+        box.pack_configure(side="sideways")
+    info = box.pack_info()
+    assert (info["side"], info["fill"]) == ("left", "both")
