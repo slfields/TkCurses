@@ -1,3 +1,20 @@
+# TkCurses - a tkinter-compatible API layer that renders to curses
+# Copyright (C) 2026  Scott L. Fields
+#
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 3 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 """TkCurses - a tkinter-compatible API layer that renders to curses.
 
 TkCurses mirrors tkinter's module structure and public names so that
@@ -109,8 +126,23 @@ if TYPE_CHECKING:
     from tkcurses._core.panels import Panel
 
 __version__ = "0.1.0"
+__author__ = "Scott L. Fields"
+__copyright__ = "Copyright (C) 2026 Scott L. Fields"
+__license__ = "GPL-3.0-only"
+
+#: The notice the GNU GPL asks an interactive program to show. A library
+#: cannot show it itself - it has no startup of its own and no business
+#: writing over an application's screen - so it is offered here for a
+#: program that wants to, which is what ``tkcurses-demo`` does.
+NOTICE = f"""\
+TkCurses {__version__}  {__copyright__}
+This program comes with ABSOLUTELY NO WARRANTY.
+This is free software, and you are welcome to redistribute it
+under the terms of the GNU General Public License version 3.
+See <https://www.gnu.org/licenses/gpl-3.0.html> for the full terms."""
 
 __all__ = [
+    "NOTICE",
     "BaseWidget",
     "BooleanVar",
     "Button",
@@ -147,6 +179,9 @@ __all__ = [
     "Variable",
     "Widget",
     "Wm",
+    "__author__",
+    "__copyright__",
+    "__license__",
     "__version__",
 ]
 
