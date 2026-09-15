@@ -150,10 +150,115 @@ def test_clicking_the_trough_scrolls_a_page(bar):
     assert bar.calls == [("scroll", 1, "pages")]
 
 
-def test_clicking_the_thumb_moves_to_that_fraction(bar):
+def test_pressing_the_thumb_moves_nothing(bar):
+    """Measured against Tk 9.0: press the slider, release it without moving,
+    and the command is not called at all. A press only starts a drag."""
     bar.set(0.0, 0.5)
     bar._handle(MouseEvent(button=1, state="pressed", x=0, y=3))
-    assert bar.calls[0][0] == "moveto"
+    bar._handle(MouseEvent(button=1, state="released", x=0, y=3))
+    assert bar.calls == []
+
+
+# ------------------------------------------------------------- dragging
+
+
+def press(bar, y, x=0):
+    bar._handle(MouseEvent(button=1, state="pressed", x=x, y=y))
+
+
+def drag(bar, y, x=0):
+    bar._handle(MouseEvent(button=1, state="drag", x=x, y=y))
+
+
+def release(bar, y, x=0):
+    bar._handle(MouseEvent(button=1, state="released", x=x, y=y))
+
+
+def test_dragging_the_thumb_moves_by_the_distance_travelled(bar):
+    """Tk's arithmetic: where the view started, plus the drag as a fraction
+    of the trough. Ten cells of trough here, so two cells is 0.2."""
+    bar.set(0.0, 0.5)
+    press(bar, 3)
+    drag(bar, 5)
+    assert bar.calls == [("moveto", pytest.approx(0.2))]
+
+
+def test_the_view_follows_the_pointer_rather_than_jumping_to_it(bar):
+    """What moves is the distance travelled, so wherever within the thumb the
+    press landed stays under the pointer."""
+    bar.set(0.4, 0.9)
+    press(bar, 8)  # near the bottom of the thumb, not its top
+    drag(bar, 9)
+    assert bar.calls == [("moveto", pytest.approx(0.5))]
+
+
+def test_dragging_reports_every_step(bar):
+    bar.set(0.0, 0.5)
+    press(bar, 3)
+    drag(bar, 4)
+    drag(bar, 5)
+    drag(bar, 6)
+    assert [call[1] for call in bar.calls] == pytest.approx([0.1, 0.2, 0.3])
+
+
+def test_a_drag_past_the_end_stops_at_the_end(bar):
+    bar.set(0.0, 0.5)
+    press(bar, 3)
+    drag(bar, 40)
+    drag(bar, -40)
+    assert bar.calls == [("moveto", 1.0), ("moveto", 0.0)]
+
+
+def test_releasing_ends_the_drag(bar):
+    bar.set(0.0, 0.5)
+    press(bar, 3)
+    release(bar, 3)
+    drag(bar, 9)
+    assert bar.calls == []
+
+
+def test_a_drag_that_began_on_the_trough_does_not_move_the_thumb(bar):
+    """The trough press paged, and that is all it does - the pointer sliding
+    afterwards must not turn a page into a drag."""
+    bar.set(0.0, 0.2)
+    press(bar, 9)
+    bar.calls.clear()
+    drag(bar, 5)
+    assert bar.calls == []
+
+
+def test_a_horizontal_scrollbar_drags_along_its_own_axis(root):
+    calls: list[tuple] = []
+    bar = Scrollbar(
+        root,
+        name="sb",
+        orient="horizontal",
+        relief="flat",
+        command=lambda *args: calls.append(args),
+    )
+    bar._allocate(Rect(0, 0, 12, 1))
+    bar._map()
+    bar.set(0.0, 0.5)
+    bar._handle(MouseEvent(button=1, state="pressed", x=3, y=0))
+    bar._handle(MouseEvent(button=1, state="drag", x=5, y=0))
+    assert calls == [("moveto", pytest.approx(0.2))]
+    # Movement across the other axis is not movement at all.
+    calls.clear()
+    bar._handle(MouseEvent(button=1, state="drag", x=5, y=4))
+    assert calls == [("moveto", pytest.approx(0.2))]
+
+
+def test_delta_is_the_fraction_of_the_trough_a_distance_covers(bar):
+    assert bar.delta(0, 10) == pytest.approx(1.0)
+    assert bar.delta(0, 5) == pytest.approx(0.5)
+    assert bar.delta(5, 0) == 0.0, "a vertical bar does not move sideways"
+
+
+def test_delta_of_a_scrollbar_with_no_trough_is_nothing(root):
+    bar = Scrollbar(root, name="sb", relief="flat")
+    bar._allocate(Rect(0, 0, 1, 2))
+    bar._map()
+    assert bar.delta(0, 5) == 0.0
 
 
 def test_a_scrollbar_without_a_command_ignores_clicks(root):

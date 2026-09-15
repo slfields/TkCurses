@@ -2735,6 +2735,16 @@ Scroll control widget.
 | `get()` | ✓ | Get scroll position |
 | `set(first, last)` | ○ | Set scroll position |
 
+**Mouse behaviour** follows Tk's `scrlbar.tcl`, which binds three things:
+`<Button-1>` pages for a press on the trough, steps for a press on an arrow,
+and for a press on the thumb *does nothing at all* except remember where the
+press landed and where the view was; `<B1-Motion>` moves the view to that
+remembered position plus `delta()` of the distance travelled, so the view
+follows the pointer rather than jumping to it; `<ButtonRelease-1>` forgets
+the drag. The implicit grab is what makes a drag that wanders off the bar
+still arrive - with coordinates outside it, which is what the arithmetic
+wants.
+
 **Rendering:**
 ```
 Vertical:    Horizontal:
