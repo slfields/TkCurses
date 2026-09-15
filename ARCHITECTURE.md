@@ -3395,7 +3395,43 @@ Inherits from Text with integrated Scrollbar.
 
 ## Curses Compatibility Module
 
-`tkcurses.curses` provides a curses-compatible API.
+`tkcurses.curses` provides a curses-compatible API — a facade over
+`CursesScreen` and `ScreenBuffer`, not a reimplementation, so a curses
+program gets this layer's double-buffered painting, resize handling and
+colour depth detection without being written any differently.
+
+**Anything not defined there is forwarded to the standard library's curses**,
+which is where every constant comes from and how the list stays current.
+
+**`has_colors()` and `can_change_color()` tell the truth.** They were
+specified as "always True" and that was wrong: a terminal has one of five
+colour depths and a vt100 has none. A curses program asks those questions
+precisely so it can draw differently, and a compatibility layer that lies is
+worse than one that is missing.
+
+**Importing it is safe for the rest of the package**, and that took
+arranging. `tkcurses.curses` is a submodule, so importing it binds it as the
+attribute `curses` on the package — which is `tkcurses/__init__.py`'s own
+global namespace. Measured: a plain `import curses` there was silently
+replaced by the facade, and all fifty-one references in that file would have
+resolved against it. That module imports the standard library as `_curses`.
+
+#### The refresh rule
+
+A window has cells of its own; writing changes nothing on the terminal until
+`noutrefresh()` copies them and `doupdate()` paints. **A refresh copies the
+lines touched in that window and no others** — which is why refreshing
+stdscr erases an overlapping window in one program and leaves it standing in
+another, the difference being whether stdscr had been refreshed before. A
+new window starts wholly touched, so its first refresh paints its blank
+background over whatever was underneath.
+
+None of that was guessed. The tty tests run the same source twice — once
+importing `curses`, once importing `tkcurses.curses` — and compare the two
+screens; each rule above is a difference that comparison turned up.
+
+A subwindow shares its parent's cells at an offset, so writing into the child
+shows through the parent, as in curses.
 
 ### Module Functions
 
@@ -3414,8 +3450,8 @@ Inherits from Text with integrated Scrollbar.
 | `pair_number(attr)` | ✓ | Get pair number |
 | `pair_content(pair)` | ✓ | Get pair colors |
 | `color_content(color)` | ✓ | Get color RGB |
-| `has_colors()` | ✓ | Always True |
-| `can_change_color()` | ✓ | Always True |
+| `has_colors()` | ✓ | What the terminal really has — **not** always True |
+| `can_change_color()` | ✓ | Likewise; both delegate to curses |
 | `cbreak()` | ✓ | Cbreak mode |
 | `nocbreak()` | ✓ | Exit cbreak |
 | `echo()` | ✓ | Echo mode |
