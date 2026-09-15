@@ -75,8 +75,20 @@ if TYPE_CHECKING:
 
 __all__ = ["TerminalHarness", "TerminalTimeout"]
 
+#: How much longer than the base budget to wait. A shared CI runner is
+#: several times slower than a development machine, and every budget here was
+#: chosen on a development machine: measured, a single tty test that takes
+#: 2.9s alone takes 5.5s under twelve-way contention, and CI has timed out
+#: waiting for a child to exit on runs where nothing was wrong with the code.
+#:
+#: Scaling rather than raising the numbers outright keeps a real failure fast
+#: to report locally, which is where failures are read. A generous budget
+#: costs nothing when the wait is going to succeed - it only changes how long
+#: a wait that was always going to fail takes to say so.
+TIMEOUT_SCALE = float(os.environ.get("TKCURSES_TEST_TIMEOUT_SCALE", "1"))
+
 #: Default time budget, in seconds, for waiting on the child to render.
-DEFAULT_TIMEOUT = 5.0
+DEFAULT_TIMEOUT = 5.0 * TIMEOUT_SCALE
 
 
 def _utf8_locale() -> str:
@@ -334,6 +346,16 @@ class TerminalHarness:
             for leftover in self._workdir.glob(f"tkc_app_{os.getpid()}_{id(self)}.py"):
                 leftover.unlink(missing_ok=True)
 
+    def _budget(self, timeout: float | None) -> float:
+        """The seconds to allow for a wait.
+
+        A timeout named by a caller is scaled the same way the default is:
+        ``timeout=10`` means "generous on a development machine", and on a
+        runner several times slower it has to mean several times that or it
+        means nothing.
+        """
+        return self.timeout if timeout is None else timeout * TIMEOUT_SCALE
+
     def wait_for_exit(self, *, timeout: float | None = None) -> int:
         """Wait for the child to exit and return its exit code.
 
@@ -346,7 +368,7 @@ class TerminalHarness:
         """
         if self._pid is None:
             return self.exit_code
-        budget = self.timeout if timeout is None else timeout
+        budget = self._budget(timeout)
         deadline = time.monotonic() + budget
         while time.monotonic() < deadline:
             self._drain(0.05)
@@ -476,7 +498,7 @@ class TerminalHarness:
         Polling the emulated screen beats sleeping a fixed interval: it is both
         faster when the app is quick and reliable when it is slow.
         """
-        budget = self.timeout if timeout is None else timeout
+        budget = self._budget(timeout)
         deadline = time.monotonic() + budget
         while True:
             if predicate(self):
@@ -498,7 +520,7 @@ class TerminalHarness:
         self, quiet: float = 0.15, *, timeout: float | None = None
     ) -> None:
         """Wait until the child stops producing output for ``quiet`` seconds."""
-        budget = self.timeout if timeout is None else timeout
+        budget = self._budget(timeout)
         deadline = time.monotonic() + budget
         while time.monotonic() < deadline:
             if not self._drain(quiet):
@@ -669,7 +691,7 @@ class TerminalHarness:
         false failure roughly one CI run in ten, and only ever on the slowest
         machine in the matrix.
         """
-        budget = self.timeout if timeout is None else timeout
+        budget = self._budget(timeout)
         deadline = time.monotonic() + budget
         while True:
             faults = self._box_faults(top, left, height, width)

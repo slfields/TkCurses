@@ -30,10 +30,11 @@ with real names in it - a chooser tested against three files in a temporary
 folder is a chooser that has not been tested.
 
 The colour chooser is here for the same reason the file ones are: it offers
-what the device actually has rather than what a caller might ask for. There
-are sixteen colours and no mixer, and a name you type is answered with the
-colour the terminal will really draw - `red` comes back as #cd0000, not
-#ff0000.
+what the device actually has rather than what a caller might ask for. Its
+bars have as many steps as this terminal has intensities, and a name typed
+into `Selection:` is answered with the colour the terminal will really draw -
+`red` comes back as #cd0000, not #ff0000. There is more of it, across three
+terminals, in UAT 31.
 """
 
 from __future__ import annotations
@@ -52,7 +53,7 @@ CHOOSERS: list[tuple[str, str, str]] = [
     ("d", "askdirectory", "pick a directory, not a file"),
     ("l", "LoadFileDialog", "refuses a name that is not there"),
     ("w", "SaveFileDialog", "asks before overwriting"),
-    ("c", "askcolor", "sixteen swatches, or type a name"),
+    ("c", "askcolor", "three bars, or type one in"),
 ]
 
 

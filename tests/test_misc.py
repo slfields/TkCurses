@@ -22,6 +22,7 @@ from __future__ import annotations
 import pytest
 
 from tkcurses import Event, Misc, TclError
+from tkcurses._core.colors import ColorDepth
 from tkcurses._core.events import MOD_CTRL, KeyEvent, MouseEvent, ResizeEvent
 from tkcurses._core.geometry import Rect, Size
 
@@ -754,6 +755,12 @@ def test_winfo_rgb_reports_sixteen_bit_channels(root):
 def test_winfo_rgb_of_a_name_reports_what_the_terminal_shows(root):
     red = root.winfo_rgb("red")
     assert red[0] > red[1] and red[0] > red[2]
+
+
+def test_the_colour_depth_is_the_eight_before_there_is_a_screen(root):
+    """Nothing has been asked yet, so the answer is what colour resolution
+    assumes when it has nothing to go on."""
+    assert root.winfo_colordepth() is ColorDepth.BASIC
 
 
 def test_a_bare_number_is_already_in_cells(root):

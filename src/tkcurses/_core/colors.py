@@ -35,7 +35,9 @@ from __future__ import annotations
 
 import contextlib
 import curses
+import os
 from dataclasses import dataclass
+from enum import IntEnum
 from typing import TYPE_CHECKING
 
 from tkcurses._core.dispatcher import CursesDispatcher
@@ -43,7 +45,108 @@ from tkcurses._core.dispatcher import CursesDispatcher
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-__all__ = ["ColorManager", "ResolvedColor", "palette_rgb", "parse_color", "rgb_for"]
+__all__ = [
+    "ColorDepth",
+    "ColorManager",
+    "ResolvedColor",
+    "detect_depth",
+    "palette_rgb",
+    "parse_color",
+    "rgb_for",
+    "truecolor_hinted",
+]
+
+
+class ColorDepth(IntEnum):
+    """How much colour a terminal has, which is not one thing.
+
+    Terminfo answers this, and the numbers are its own: ``tigetnum("colors")``
+    gives -1 where there is no colour at all, then 8, 16, 256, and 16777216
+    for a terminal that takes a colour number as an RGB triple. The names here
+    are ordered, so ``depth >= ColorDepth.EXTENDED`` asks the useful question.
+    """
+
+    #: No colour. Bold, reverse and underline are all there is.
+    NONE = 0
+    #: The original eight. A bright *foreground* is reachable with A_BOLD; a
+    #: bright background is not reachable at all, which is why every bright
+    #: colour in this library is a duplicate of its dark form below this tier.
+    BASIC = 8
+    #: The eight and their bright forms as real colours, 8 to 15. From here
+    #: up, a bright background is a colour rather than an attribute.
+    BRIGHT = 16
+    #: The xterm cube: 16 named, a 6x6x6 cube, and 24 greys.
+    EXTENDED = 256
+    #: Colour numbers are 0xRRGGBB. ncurses does this for a terminal whose
+    #: terminfo carries the RGB flag, and nothing special is needed to use it.
+    DIRECT = 1 << 24
+
+
+#: Values of COLORTERM that mean 24-bit colour. The convention exists because
+#: terminfo under-reports: this very terminal is xterm-256color and does
+#: truecolor, and xterm-direct is a TERM almost nobody sets.
+TRUECOLOR_ENV = frozenset({"truecolor", "24bit"})
+
+
+def detect_depth(colors: int | None = None, direct: bool = False) -> ColorDepth:
+    """Work out what a terminal can do, from what terminfo says about it.
+
+    Args:
+        colors: ``tigetnum("colors")``, or None to ask terminfo now.
+        direct: ``tigetflag("RGB")``, which marks a terminal whose colour
+            numbers are RGB triples.
+
+    Returns:
+        The nearest tier at or below what the terminal reported. An
+        unrecognised number rounds *down* - 88-colour rxvt comes back as 16 -
+        because asking for a colour the terminal has not got puts the wrong
+        colour on the screen, while asking for one fewer costs only accuracy.
+
+    ``COLORTERM`` is deliberately not consulted here. It is the convention by
+    which a truecolor terminal admits to being one when terminfo does not,
+    but what it promises is that *escape sequences* will be understood - not
+    that ncurses is in direct mode. Acting on it here would send colour
+    numbers of 0xRRGGBB to a terminal whose curses expects 0 to 255. See
+    :func:`truecolor_hinted` and TkCurses-b2b.
+    """
+    if colors is None:
+        colors = _terminfo_number("colors")
+    if direct or colors >= ColorDepth.DIRECT:
+        return ColorDepth.DIRECT
+    depth = ColorDepth.NONE
+    for tier in (ColorDepth.BASIC, ColorDepth.BRIGHT, ColorDepth.EXTENDED):
+        if colors >= tier:
+            depth = tier
+    return depth
+
+
+def truecolor_hinted(colorterm: str | None = None) -> bool:
+    """True if ``COLORTERM`` says the terminal understands 24-bit colour.
+
+    Separate from :func:`detect_depth` because it is a promise about escape
+    sequences rather than about curses. A terminal can be
+    ``TERM=xterm-256color`` with ``COLORTERM=truecolor`` - as the one this was
+    written on is - which means terminfo reports 256, curses can only be
+    asked for 256, and exact colour is reachable only by writing past curses
+    entirely.
+    """
+    if colorterm is None:
+        colorterm = os.environ.get("COLORTERM", "")
+    return colorterm.strip().lower() in TRUECOLOR_ENV
+
+
+def _terminfo_number(capability: str) -> int:
+    """One numeric terminfo capability, or -1 if it cannot be read."""
+    with contextlib.suppress(curses.error, ValueError, TypeError):
+        return int(curses.tigetnum(capability))
+    return -1
+
+
+def _terminfo_flag(capability: str) -> bool:
+    """One boolean terminfo capability, false if it cannot be read."""
+    with contextlib.suppress(curses.error, ValueError, TypeError):
+        return curses.tigetflag(capability) > 0
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,27 +240,98 @@ def rgb_for(spec: str) -> tuple[int, int, int] | None:
     return red, green, blue
 
 
-def palette_rgb(resolved: ResolvedColor) -> tuple[int, int, int]:
+def palette_rgb(
+    resolved: ResolvedColor, depth: ColorDepth = ColorDepth.BASIC
+) -> tuple[int, int, int]:
     """The RGB a terminal actually renders for a resolved colour.
 
     The inverse of nearest-match, and necessarily lossy: several names
     collapse onto one palette entry, so this reports what will be seen rather
     than what was asked for. ``winfo_rgb`` needs it, since tkinter answers
     that question with real channel values.
+
+    Which entry a number stands for depends on the tier, so the tier has to
+    be given: colour 9 is bright red on a terminal that has sixteen, and is
+    nothing at all on one that has eight.
     """
-    for rgb, entry in _PALETTE_RGB:
+    if depth is ColorDepth.DIRECT:
+        return rgb_of_direct(resolved.color)
+    palette = _PALETTES.get(depth, _PALETTE_RGB)
+    for rgb, entry in palette:
         if entry == resolved:
             return rgb
     # A_DIM has no palette entry of its own: it darkens the base colour, so
     # report the base at half intensity rather than claiming no match.
     base = ResolvedColor(resolved.color)
-    for rgb, entry in _PALETTE_RGB:
+    for rgb, entry in palette:
         if entry == base:
             return tuple(value // 2 for value in rgb)  # type: ignore[return-value]
     return (0, 0, 0)
 
 
-def _nearest(rgb: tuple[int, int, int]) -> ResolvedColor:
+#: The six levels each channel takes in xterm's 6x6x6 cube. Not evenly
+#: spaced: the gap from 0 to 95 is wider than the rest, which is xterm's
+#: choice and has to be matched or every dark colour lands a step out.
+CUBE_LEVELS: tuple[int, ...] = (0, 95, 135, 175, 215, 255)
+
+#: Where the cube starts in the 256-colour palette, and where the greys do.
+CUBE_START = 16
+GREY_START = 232
+GREY_COUNT = 24
+
+
+def _extended_palette() -> tuple[tuple[tuple[int, int, int], ResolvedColor], ...]:
+    """The xterm 256: sixteen named, a 6x6x6 cube, then twenty-four greys.
+
+    Built rather than listed. A table of 256 triples is 256 chances to mistype
+    one, and the arithmetic is xterm's own and short.
+    """
+    entries: list[tuple[tuple[int, int, int], ResolvedColor]] = [
+        (rgb, ResolvedColor(number)) for number, (rgb, _) in enumerate(_PALETTE_RGB)
+    ]
+    for index in range(216):
+        red = CUBE_LEVELS[index // 36]
+        green = CUBE_LEVELS[(index // 6) % 6]
+        blue = CUBE_LEVELS[index % 6]
+        entries.append(((red, green, blue), ResolvedColor(CUBE_START + index)))
+    for index in range(GREY_COUNT):
+        level = 8 + index * 10
+        entries.append(((level, level, level), ResolvedColor(GREY_START + index)))
+    return tuple(entries)
+
+
+#: The sixteen as real colour numbers, for a terminal that has 8 to 15 rather
+#: than reaching them through A_BOLD.
+_BRIGHT_PALETTE: tuple[tuple[tuple[int, int, int], ResolvedColor], ...] = tuple(
+    (rgb, ResolvedColor(number)) for number, (rgb, _) in enumerate(_PALETTE_RGB)
+)
+
+_EXTENDED_PALETTE = _extended_palette()
+
+#: Which palette each tier approximates against. DIRECT has none: a colour
+#: number *is* the colour there, so nothing is approximated at all.
+_PALETTES: dict[ColorDepth, tuple[tuple[tuple[int, int, int], ResolvedColor], ...]] = {
+    ColorDepth.BASIC: _PALETTE_RGB,
+    ColorDepth.BRIGHT: _BRIGHT_PALETTE,
+    ColorDepth.EXTENDED: _EXTENDED_PALETTE,
+}
+
+
+def direct_color(rgb: tuple[int, int, int]) -> int:
+    """The colour number ncurses uses for an RGB triple in direct mode."""
+    red, green, blue = rgb
+    return (red << 16) | (green << 8) | blue
+
+
+def rgb_of_direct(number: int) -> tuple[int, int, int]:
+    """The RGB behind a direct-mode colour number."""
+    return ((number >> 16) & 0xFF, (number >> 8) & 0xFF, number & 0xFF)
+
+
+def _nearest(
+    rgb: tuple[int, int, int],
+    palette: tuple[tuple[tuple[int, int, int], ResolvedColor], ...] | None = None,
+) -> ResolvedColor:
     """Closest palette entry by weighted RGB distance.
 
     Green is weighted most and blue least, roughly matching how much each
@@ -169,30 +343,62 @@ def _nearest(rgb: tuple[int, int, int]) -> ResolvedColor:
         (pr, pg, pb), _ = entry
         return 2 * (red - pr) ** 2 + 4 * (green - pg) ** 2 + 3 * (blue - pb) ** 2
 
-    return min(_PALETTE_RGB, key=distance)[1]
+    return min(palette or _PALETTE_RGB, key=distance)[1]
 
 
-def parse_color(spec: str) -> ResolvedColor:
+def _resolve_rgb(rgb: tuple[int, int, int], depth: ColorDepth) -> ResolvedColor:
+    """An RGB triple as this tier expresses it.
+
+    Only :data:`ColorDepth.DIRECT` can say exactly what was asked for; every
+    other tier approximates against the palette it has.
+    """
+    if depth is ColorDepth.DIRECT:
+        return ResolvedColor(direct_color(rgb))
+    return _nearest(rgb, _PALETTES.get(depth, _PALETTE_RGB))
+
+
+def parse_color(spec: str, depth: ColorDepth = ColorDepth.BASIC) -> ResolvedColor:
     """Resolve a tkinter colour specification to a terminal colour.
+
+    Args:
+        spec: A name, or ``#rgb`` in any of the four widths tkinter takes.
+        depth: What the terminal can show. The default is the eight, which is
+            what a terminal reports when it has never been asked.
 
     Raises:
         ValueError: If ``spec`` is empty or a malformed hex string. An unknown
             *name* is approximated rather than rejected, since terminals cannot
             reproduce most X11 names exactly anyway.
+
+    At :data:`ColorDepth.BASIC` the named table is used as it always was, with
+    brightness expressed as an attribute. Above it, brightness is a colour
+    number and the attribute goes away - which is what makes a bright
+    *background* possible at all, since no attribute has ever brightened one.
     """
     if not spec or not spec.strip():
         raise ValueError("colour specification must not be empty")
     text = spec.strip().lower().replace(" ", "")
+    if depth is ColorDepth.NONE:
+        # No colour, but the attributes still work and are the only thing a
+        # monochrome terminal has to tell one thing from another with, so the
+        # eight-colour resolution is kept and only its colour thrown away.
+        return ResolvedColor(-1, parse_color(spec, ColorDepth.BASIC).attr)
     if text in _NAMED:
-        return _NAMED[text]
+        named = _NAMED[text]
+        if depth is ColorDepth.BASIC:
+            return named
+        # Above the eight, a name is resolved through the colour it renders
+        # as, so `red` stays #cd0000 whatever the tier - and its brightness
+        # becomes a colour number rather than an attribute.
+        return _resolve_rgb(palette_rgb(named), depth)
     if text.startswith("#"):
         rgb = rgb_for(text)
         if rgb is None:
             raise ValueError(f"malformed hex colour: {spec!r}")
-        return _nearest(rgb)
+        return _resolve_rgb(rgb, depth)
     known = _X11_RGB.get(text)
     if known is not None:
-        return _nearest(known)
+        return _resolve_rgb(known, depth)
     raise ValueError(f"unknown colour name: {spec!r}")
 
 
@@ -240,6 +446,7 @@ class ColorManager:
         self._has_colors = False
         self._max_pairs = 0
         self._exhausted = False
+        self._depth = ColorDepth.NONE
 
     # ---------------------------------------------------------- lifecycle
 
@@ -266,6 +473,11 @@ class ColorManager:
             # start_color() defines COLOR_PAIRS; read it defensively so a
             # curses build that omits it degrades rather than raising.
             self._max_pairs = getattr(curses, "COLOR_PAIRS", 0)
+            # start_color() sets COLORS to what the running ncurses will
+            # accept, which is the number that matters here. Terminfo is the
+            # same number in every case measured, but this one cannot be out
+            # of step with the library actually being called.
+            self._depth = detect_depth(getattr(curses, "COLORS", 0))
         return self._has_colors
 
     def reset(self) -> None:
@@ -275,11 +487,21 @@ class ColorManager:
         self._started = False
         self._has_colors = False
         self._exhausted = False
+        self._depth = ColorDepth.NONE
 
     @property
     def has_colors(self) -> bool:
         """True if the terminal reported colour support."""
         return self._has_colors
+
+    @property
+    def depth(self) -> ColorDepth:
+        """How many colours this terminal has, once :meth:`start` has run.
+
+        :data:`ColorDepth.NONE` before then, and on a terminal that has no
+        colour at all - the two are the same as far as painting goes.
+        """
+        return self._depth
 
     @property
     def allocated(self) -> int:
@@ -320,8 +542,8 @@ class ColorManager:
         This is the resolver :class:`~tkcurses._core.screen.CursesScreen`
         applies to every cell it paints.
         """
-        foreground = parse_color(fg)
-        background = parse_color(bg)
+        foreground = parse_color(fg, self._depth)
+        background = parse_color(bg, self._depth)
         # A background cannot be bright or dim in curses, so only the
         # foreground's brightness attribute survives.
         combined = attr | foreground.attr

@@ -91,3 +91,52 @@ def test_clicking_the_scrollbar_scrolls_the_list(terminal, tmp_path):
     term.wait_for(
         lambda t: "row 0" not in "\n".join(t.display), message="the list to scroll"
     )
+
+
+def thumb_rows(term):
+    return [i for i, line in enumerate(term.display) if "█" in line]
+
+
+def test_dragging_the_thumb_scrolls_the_list(terminal, tmp_path):
+    """What most people reach for first, and what the scrollbar could not do
+    until now: pick the thumb up and pull it down."""
+    term = terminal(cols=40, rows=12)
+    term.run_source(PAIR, workdir=tmp_path)
+    term.wait_for_text("row 0")
+    term.wait_for_idle()
+
+    rows = thumb_rows(term)
+    column = term.display[rows[0]].index("█")
+    term.send_mouse(column, rows[0], action="press")
+    term._drain(0.05)
+    for row in range(rows[-1] + 1, len(term.display) - 2):
+        term.send_mouse(column, row, action="move")
+        term._drain(0.03)
+    term.send_mouse(column, len(term.display) - 3, action="release")
+
+    term.wait_for(
+        lambda t: "row 0" not in "\n".join(t.display),
+        message="the list to scroll under the drag",
+    )
+    assert thumb_rows(term)[0] > rows[0], term.describe()
+
+
+def test_the_thumb_follows_the_pointer_rather_than_jumping_to_it(terminal, tmp_path):
+    """Pressing the thumb and letting go without moving scrolls nothing.
+
+    This is Tk's behaviour, measured: a press on the slider only remembers
+    where the drag began. The version before this one called moveto on the
+    press, so grabbing the thumb anywhere but its top row moved the view
+    before the hand did.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(PAIR, workdir=tmp_path)
+    term.wait_for_text("row 0")
+    term.wait_for_idle()
+
+    rows = thumb_rows(term)
+    column = term.display[rows[0]].index("█")
+    before = "\n".join(term.display)
+    term.click(column, rows[-1])
+    term.wait_for_idle()
+    assert "\n".join(term.display) == before, term.describe()

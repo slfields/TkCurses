@@ -66,7 +66,13 @@ from tkcurses._core.canvas import (
     rectangle_pixels,
 )
 from tkcurses._core.clipboard import CLIPBOARD, PRIMARY
-from tkcurses._core.colors import ColorManager, palette_rgb, parse_color, rgb_for
+from tkcurses._core.colors import (
+    ColorDepth,
+    ColorManager,
+    palette_rgb,
+    parse_color,
+    rgb_for,
+)
 from tkcurses._core.config import TkCursesConfig
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.editing import TextField
@@ -988,6 +994,27 @@ class Misc:
             ),
         )
 
+    def _outer_size(self, content: Size) -> Size:
+        """How big this widget must be to offer ``content`` cells inside it.
+
+        The inverse of :meth:`_content_rect`, and the thing a container has
+        to tell its parent: a geometry manager works out what the children
+        need, which is a *content* size, and the container is bigger than
+        that by its own border, padding and menubar. Without this a bordered
+        container sized to its children clips them by exactly its border.
+
+        ``_bordered`` rather than ``_border_drawn``, deliberately: whether a
+        border is drawn depends on the size the widget already has, and
+        asking that here would be circular - a frame one row tall draws no
+        border, so it would ask for no room for one, so it would stay one
+        row tall.
+        """
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        padx = 2 * int(self._options.get("padx", 0) or 0)
+        pady = 2 * int(self._options.get("pady", 0) or 0)
+        menu = 1 if self._options.get("menu") is not None else 0
+        return Size(content.width + edge + padx, content.height + edge + pady + menu)
+
     @property
     def _bordered(self) -> bool:
         """True if this widget draws a border, costing a cell on each edge.
@@ -1443,13 +1470,33 @@ class Misc:
         """A colour's channel values, 16 bits each, as tkinter reports them.
 
         For a name or a hex string the terminal cannot show exactly, this is
-        what will actually be rendered rather than what was asked for: there
-        are eight colours to choose from, and reporting the request back would
-        hide the approximation.
+        what will actually be rendered rather than what was asked for:
+        reporting the request back would hide the approximation, and how
+        close it gets depends on how many colours the terminal has.
         """
+        depth = self.winfo_colordepth()
         direct = rgb_for(color)
-        rgb = direct if direct is not None else palette_rgb(parse_color(color))
+        rgb = (
+            direct
+            if direct is not None
+            else palette_rgb(parse_color(color, depth), depth)
+        )
         return (rgb[0] * 257, rgb[1] * 257, rgb[2] * 257)
+
+    def winfo_colordepth(self) -> ColorDepth:
+        """How many colours this terminal has.
+
+        Not tkinter's - X has no equivalent question, because an X display
+        answers ``winfo_screendepth`` in bits per pixel and has the full
+        range either way. A terminal does not, and anything drawing a colour
+        ramp has to know which of the four tiers it is drawing on.
+        On a terminal with no colour at all this is :data:`ColorDepth.NONE`.
+        Before there is a screen to ask, it is :data:`ColorDepth.BASIC` - the
+        eight every colour terminal has, which is what colour resolution has
+        always assumed when it had nothing better to go on.
+        """
+        colors = self.tk.colors
+        return colors.depth if colors is not None else ColorDepth.BASIC
 
     def winfo_pixels(self, number: str | int | float) -> int:
         """Convert a screen distance to whole cells."""
@@ -3309,7 +3356,10 @@ class Tk(BaseWidget, Wm):
                 # Cells are painted through this; without colour support the
                 # screen keeps its attributes-only resolver.
                 self._screen.attribute_resolver = colors.attribute_for
-                self.tk.colors = colors
+            # Kept either way, since it is also what anything asking how many
+            # colours there are has to ask - and the answer on a terminal
+            # without any is a real answer rather than a missing one.
+            self.tk.colors = colors
             self.tk.screen = self._screen
             self.tk.panels = PanelStack()
             self._rect = Rect(0, 0, buffer.width, buffer.height)
@@ -9929,6 +9979,8 @@ class Scrollbar(_Drawable):
         """
         self._first = 0.0
         self._last = 1.0
+        self._drag_from: tuple[int, int] | None = None
+        self._drag_origin = 0.0
         super().__init__(master, cnf, name=name, **kw)
         self._apply_requested_size()
         self._install_class_bindings()
@@ -9938,7 +9990,14 @@ class Scrollbar(_Drawable):
         if "Scrollbar" in self.tk.bound_classes:
             return
         self.tk.bound_classes.add("Scrollbar")
-        self.bind_class("Scrollbar", "<Button-1>", _scrollbar_click)
+        bind = self.bind_class
+        bind("Scrollbar", "<Button-1>", _scrollbar_press)
+        # The three together are what makes the thumb draggable, and Tk binds
+        # exactly these three. The press holds the implicit grab, so a drag
+        # that wanders off the bar still arrives here - with coordinates
+        # outside it, which is what the arithmetic wants.
+        bind("Scrollbar", "<B1-Motion>", _scrollbar_drag)
+        bind("Scrollbar", "<ButtonRelease-1>", _scrollbar_release)
 
     @property
     def _vertical(self) -> bool:
@@ -9998,6 +10057,22 @@ class Scrollbar(_Drawable):
             return 0.0
         offset = y if self._vertical else x
         return min(max((offset - self._trough_start()) / area, 0.0), 1.0)
+
+    def delta(self, deltax: int, deltay: int) -> float:
+        """What fraction of the whole a movement of this many cells is.
+
+        tkinter's own method, and the one a drag is built on: the distance
+        the pointer has travelled since the press converts to a change in
+        the view's position, which is added to where the view started.
+
+        Args:
+            deltax: Cells moved across.
+            deltay: Cells moved down.
+        """
+        area = self._trough_bounds()
+        if area <= 0:
+            return 0.0
+        return (deltay if self._vertical else deltax) / area
 
     def identify(self, x: int, y: int) -> str:
         """Which part of the scrollbar is at a position within this widget.
@@ -10087,14 +10162,23 @@ class Scrollbar(_Drawable):
                 dispatcher.call(window.addstr, edge, edge, "".join(cells), attribute)
 
 
-def _scrollbar_click(event: Event) -> None:
-    """Scroll by whatever part of the scrollbar was clicked."""
+def _scrollbar_press(event: Event) -> None:
+    """Scroll by whatever part of the scrollbar was pressed.
+
+    A press on the thumb moves nothing. Tk remembers where the press landed
+    and where the view was, and waits for the pointer to move - measured
+    against Tk 9.0, where pressing the slider and releasing it without moving
+    calls the command not at all.
+    """
     bar = event.widget
     command = bar._options["command"]
     if command is None:
         return
     part = bar.identify(event.x, event.y)
-    if part == "arrow1":
+    if part == "slider":
+        bar._drag_from = (event.x, event.y)
+        bar._drag_origin = bar._first
+    elif part == "arrow1":
         command("scroll", -1, "units")
     elif part == "arrow2":
         command("scroll", 1, "units")
@@ -10102,8 +10186,27 @@ def _scrollbar_click(event: Event) -> None:
         command("scroll", -1, "pages")
     elif part == "trough2":
         command("scroll", 1, "pages")
-    else:
-        command("moveto", bar.fraction(event.x, event.y))
+
+
+def _scrollbar_drag(event: Event) -> None:
+    """Move the view by however far the thumb has been dragged.
+
+    The view follows the pointer rather than jumping to it: the offset within
+    the thumb where the press landed is preserved, because what moves is the
+    *distance* travelled rather than the position arrived at.
+    """
+    bar = event.widget
+    origin = bar._drag_from
+    command = bar._options["command"]
+    if origin is None or command is None:
+        return
+    moved = bar.delta(event.x - origin[0], event.y - origin[1])
+    command("moveto", min(max(bar._drag_origin + moved, 0.0), 1.0))
+
+
+def _scrollbar_release(event: Event) -> None:
+    """Forget the drag. Tk scrolls nothing further here unless -jump is set."""
+    event.widget._drag_from = None
 
 
 class Scale(_Drawable):

@@ -25,11 +25,13 @@ sat down to accept a release.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import sys
 
 import pytest
-from uat.__main__ import scenarios
+from uat.__main__ import scenarios, show
 
 from tests.conftest import PROJECT_ROOT
 
@@ -73,12 +75,20 @@ def test_a_scenario_starts_renders_and_exits_cleanly(uat_terminal, scenario):
     assert "Traceback" not in term.stderr
 
 
-#: Rows the whole listing needs: two lines per scenario, plus the header and
-#: the footer. Computed rather than guessed, because the listing grows every
-#: time a scenario is added and a fixed number quietly starts scrolling the
-#: top off instead of failing for a reason anyone can read.
 def _listing_rows() -> int:
-    return 2 * len(scenarios()) + 14
+    """Rows the whole listing needs, counted by running it.
+
+    Not a formula. It used to be ``2 * len(scenarios()) + 14``, which today
+    gives exactly the right answer and no more: the footer has grown since
+    that number was chosen, and one further line in it would have the top of
+    the listing scroll off, failing as a missing scenario rather than as a
+    terminal one row too short. Asking the listing how long it is cannot
+    drift.
+    """
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        show()
+    return printed.getvalue().count("\n") + 2
 
 
 def test_the_runner_lists_every_scenario(uat_terminal):
