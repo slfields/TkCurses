@@ -38,6 +38,21 @@ The entries are unaffected: any value from 0 to 255 can be typed at any
 depth, and a colour the terminal cannot show is approximated when it is
 drawn, exactly as it would be anywhere else.
 
+**The bars are fixed scales, and this is a deliberate departure from Tk.**
+Tk draws each strip with the *other* two channels at their current values, so
+moving green repaints the red and blue strips - measured against Tk 9.0.2,
+where raising green from 0 to 255 turned the red strip from a black-to-red
+ramp into a green-to-yellow one. On an X display that is a live preview of
+several million colours. Here it is destructive: a bar has between two and
+six steps, and with the other two channels at mid intensity the whole red bar
+collapses to *one* colour at eight and sixteen colours - every step
+identical, the scale gone. Measured, not guessed.
+
+So each bar is that channel alone, from nothing to full, and it never
+changes. What the cross-coupling was *for* - seeing the colour you are
+actually building - is the panel's job, and the panel does it without costing
+the bars their meaning.
+
 The return value is tkinter's, and it is a pair::
 
     rgb, name = askcolor()
@@ -97,6 +112,12 @@ BAR_WIDTH = 18
 #: draws its selector polygon beneath the color strip.
 MARKER = "▲"
 
+#: The panel showing the colour chosen, in cells. Tk's is a 100x68 pixel
+#: frame, which is a block rather than a line - the point of it is to be big
+#: enough to judge a colour by, so this is a block too.
+PANEL_WIDTH = 9
+PANEL_HEIGHT = 3
+
 
 def _hex(rgb: tuple[int, int, int]) -> str:
     """One RGB triplet as the ``#rrggbb`` tkinter speaks."""
@@ -142,21 +163,17 @@ class Chooser(Dialog):
         self._markers: dict[str, Label] = {}
         self._entries: dict[str, Entry] = {}
 
-        strips = tkcurses.Frame(window)
-        strips.pack(padx=1, pady=1)
+        top = tkcurses.Frame(window, name="top")
+        top.pack(padx=1, pady=1)
+
+        strips = tkcurses.Frame(top, name="strips")
+        strips.pack(side="left", anchor="n")
         for row, channel in enumerate(CHANNELS):
             self._build_channel(strips, row, channel)
 
-        chosen = tkcurses.Frame(window)
-        chosen.pack(padx=1, fill="x")
-        tkcurses.Label(chosen, text="Selection:").pack(side="left")
-        self.entry = tkcurses.Entry(chosen, name="selection", width=9, relief="flat")
-        self.entry.pack(side="left", padx=1)
-        self.entry.bind("<Return>", self._on_selection)
-        self.swatch = tkcurses.Label(chosen, text=" " * 8)
-        self.swatch.pack(side="left", padx=1)
+        self._build_selection(top)
 
-        buttons = tkcurses.Frame(window)
+        buttons = tkcurses.Frame(window, name="buttons")
         buttons.pack(pady=1)
         tkcurses.Button(buttons, text="OK", command=self.ok).pack(side="left", padx=1)
         tkcurses.Button(buttons, text="Cancel", command=lambda: self.finish(None)).pack(
@@ -165,6 +182,33 @@ class Chooser(Dialog):
 
         self._refresh()
         return self.entry
+
+    def _build_selection(self, top: Frame) -> None:
+        """The Selection entry, and the panel showing what it comes to.
+
+        Tk's shape: a column beside the bars, holding the entry above a panel
+        painted in the colour itself. The panel is what answers "what have I
+        actually chosen" - a question three numbers do not answer, and one a
+        person can only settle by looking at a block of the colour.
+        """
+        chosen = tkcurses.Frame(top, name="chosen")
+        chosen.pack(side="left", padx=2, anchor="n")
+        tkcurses.Label(chosen, text="Selection:", anchor="w").pack(fill="x")
+        self.entry = tkcurses.Entry(
+            chosen, name="selection", width=PANEL_WIDTH, relief="flat"
+        )
+        self.entry.pack()
+        self.entry.bind("<Return>", self._on_selection)
+        # Bordered, as Tk's sunken frame round its panel is: without an edge
+        # a pale colour and the dialog behind it run into one another and the
+        # panel stops looking like a thing.
+        panel = tkcurses.Frame(chosen, name="panel", relief="solid")
+        panel.pack()
+        self._panel = [
+            tkcurses.Label(panel, text=" " * PANEL_WIDTH) for _ in range(PANEL_HEIGHT)
+        ]
+        for band in self._panel:
+            band.pack()
 
     def _initial(self, window: Misc) -> list[int]:
         """The colour to start on, as three channels.
@@ -200,8 +244,18 @@ class Chooser(Dialog):
         bar = tkcurses.Frame(strips, name=f"{channel.lower()}bar")
         bar.grid(row=row * 2, column=2)
         steps = []
-        for _index in range(len(self.levels)):
-            step = tkcurses.Label(bar, text=" " * self.cells)
+        position = CHANNELS.index(channel)
+        for level in self.levels:
+            # This channel alone, from nothing to full. Painted here and
+            # never again: the scale does not depend on where the other two
+            # channels are, which is what keeps it a scale.
+            shown = [0, 0, 0]
+            shown[position] = level
+            step = tkcurses.Label(
+                bar,
+                text=" " * self.cells,
+                background=_hex((shown[0], shown[1], shown[2])),
+            )
             step.pack(side="left")
             # Press and drag both ask the bar where the pointer is, in screen
             # columns, rather than which step was hit: the press holds the
@@ -219,19 +273,15 @@ class Chooser(Dialog):
     # -------------------------------------------------------------- painting
 
     def _refresh(self) -> None:
-        """Redraw every bar, the marker, the entries and the swatch.
+        """Move the markers, and put the colour in the entries and the panel.
 
-        All three bars, not just the one that changed: a bar shows what the
-        colour becomes as its channel varies, so moving red changes what the
-        green and blue bars look like. Tk redraws all three too.
+        The bars themselves are not touched. They were painted when they were
+        built and mean the same thing however the colour moves - see the
+        module docstring for why that departs from Tk.
         """
         for position, channel in enumerate(CHANNELS):
             value = self.rgb[position]
             selected = _nearest_step(self.levels, value)
-            for index, step in enumerate(self._steps[channel]):
-                shown = list(self.rgb)
-                shown[position] = self.levels[index]
-                step.configure(background=_hex((shown[0], shown[1], shown[2])))
             # Padded out to the bar's full width: a label that shrank to its
             # text would be centred in the grid cell by the width it lost,
             # and the marker would drift away from the step it points at.
@@ -239,7 +289,8 @@ class Chooser(Dialog):
             self._markers[channel].configure(text=marker.ljust(self._bar_cells))
             self._set(self._entries[channel], str(value))
         self._set(self.entry, self.color)
-        self.swatch.configure(background=self.color)
+        for band in self._panel:
+            band.configure(background=self.color)
 
     @staticmethod
     def _set(entry: Entry, text: str) -> None:

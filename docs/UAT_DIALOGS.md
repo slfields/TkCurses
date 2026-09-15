@@ -137,10 +137,13 @@ files in a temporary folder has not been checked.
 ### The colour chooser
 
 Shaped like Tk's: three colour bars, three numeric entries, a `Selection:`
-box and a swatch. There is more about it, and about what changes between
-terminals, in [UAT_COLOUR.md](UAT_COLOUR.md) — this is the short form.
+box and a panel showing the colour chosen. There is more about it, and about
+what changes between terminals, in [UAT_COLOUR.md](UAT_COLOUR.md) — this is
+the short form.
 
 - [ ] Three bars labelled Red, Green and Blue, each with its own entry
+- [ ] A panel below `Selection:`, several rows tall, painted in the colour
+      chosen and following every change to it
 - [ ] Clicking a bar sets that channel, and dragging along it follows the
       pointer
 - [ ] Typing `red` into `Selection:` and pressing Return gives `#cd0000` —

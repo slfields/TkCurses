@@ -29,7 +29,13 @@ from __future__ import annotations
 import pytest
 
 from tkcurses._core.colors import ColorDepth
-from tkcurses.colorchooser import BAR_LEVELS, BAR_WIDTH, CHANNEL_WIDTH
+from tkcurses.colorchooser import (
+    BAR_LEVELS,
+    BAR_WIDTH,
+    CHANNEL_WIDTH,
+    PANEL_HEIGHT,
+    PANEL_WIDTH,
+)
 
 pytestmark = pytest.mark.tty
 
@@ -60,8 +66,15 @@ def open_chooser(terminal, tmp_path, extra="", term_name="xterm-256color"):
     term.run_source(PROGRAM.format(extra=extra), workdir=tmp_path)
     term.wait_for_text("ready")
     term.send(b"a")
-    term.wait_for_text("Selection:")
+    # "Red:" rather than "Selection:". Waiting on the longest label in the
+    # dialog means a dialog that came up too narrow to show it fails as a
+    # five-second timeout with no explanation, instead of as the assertion
+    # that is actually interested in the width.
+    term.wait_for_text("Red:")
     term.wait_for_idle()
+    assert term.contains("Selection:"), (
+        f"the dialog came up too narrow to show its own labels:\n{term.describe()}"
+    )
     return term
 
 
@@ -116,6 +129,42 @@ def marker_column(term, channel):
     return term.display[row_of(term, f"{channel}:") + 1].index("▲")
 
 
+def selection_entry(term):
+    """Where the Selection entry's text starts, as ``(row, column)``.
+
+    Under its label, which is the column Tk puts it in.
+    """
+    row = row_of(term, "Selection:") + 1
+    return row, term.display[row].index("#")
+
+
+def panel_bands(term):
+    """Every row of the result panel, as the colours of its cells.
+
+    Found from the panel's own top-left corner rather than by counting rows
+    down the dialog, so the assertions survive the layout moving.
+    """
+    top = row_of(term, "Selection:") + 2
+    left = term.display[top].index("┌") + 1
+    return [
+        [
+            term.attrs_at(top + 1 + band, left + cell)["bg"]
+            for cell in range(PANEL_WIDTH)
+        ]
+        for band in range(PANEL_HEIGHT)
+    ]
+
+
+def retype_selection(term, text):
+    """Clear the Selection entry and type something else into it."""
+    row, column = selection_entry(term)
+    term.click(column, row)
+    term.wait_for_idle()
+    term.send_keys("<End>")
+    term.send(b"\x7f" * 12)
+    term.send(text.encode())
+
+
 # ---------------------------------------------------------------- the shape
 
 
@@ -127,13 +176,30 @@ def test_there_is_a_bar_for_each_channel(terminal, tmp_path):
         assert len(bar(term, channel)) > 1, f"no bar for {channel}\n{term.describe()}"
 
 
-def test_there_is_a_selection_entry_and_a_result_swatch(terminal, tmp_path):
+def test_there_is_a_selection_entry_and_a_result_panel(terminal, tmp_path):
+    """Tk's shape: the entry above a panel painted in the colour itself.
+
+    A block rather than a line, because the point of it is to be big enough
+    to judge a colour by - three numbers do not answer "what have I actually
+    chosen" and a person can only settle that by looking at it.
+    """
     term = open_chooser(terminal, tmp_path, extra=', color="#ff8000"')
     assert term.contains("Selection:")
     assert term.contains("#ff8000"), term.describe()
-    row = row_of(term, "Selection:")
-    # The swatch sits after the entry, painted in the colour chosen.
-    assert "ff8700" in [term.attrs_at(row, c)["bg"] for c in range(term.cols)]
+    bands = panel_bands(term)
+    assert len(bands) == PANEL_HEIGHT
+    for band in bands:
+        assert band == ["ff8700"] * PANEL_WIDTH, term.describe()
+
+
+def test_the_result_panel_follows_the_colour(terminal, tmp_path):
+    term = open_chooser(terminal, tmp_path)
+    assert panel_bands(term)[0] == ["black"] * PANEL_WIDTH, term.describe()
+    retype_selection(term, "#ff8000\r")
+    term.wait_for(
+        lambda t: panel_bands(t)[0] == ["ff8700"] * PANEL_WIDTH,
+        message="the panel to follow the colour",
+    )
 
 
 def test_there_is_no_colour_name_lookup(terminal, tmp_path):
@@ -200,14 +266,34 @@ def test_every_step_of_a_bar_looks_different_from_its_neighbours(terminal, tmp_p
         )
 
 
-def test_a_bar_shows_the_colour_as_that_channel_varies(terminal, tmp_path):
-    """Not the channel on its own. Tk draws each strip with the other two
-    channels at their current values, so the bar shows what the colour
-    becomes rather than an abstract ramp."""
+def test_each_bar_is_its_own_channel_from_nothing_to_full(terminal, tmp_path):
+    """Whatever the other two are doing."""
     term = open_chooser(terminal, tmp_path, extra=', color="#ff8000"')
-    # Blue is 0, so the blue bar runs from the current colour to it plus blue.
-    assert steps(term, "Blue")[0] == "ff8700"
-    assert steps(term, "Blue")[-1] == "ff87ff"
+    assert steps(term, "Blue")[0] == "black"
+    assert steps(term, "Blue")[-1] == "0000ff"
+    assert steps(term, "Red")[-1] == "brightred"
+    assert steps(term, "Green")[-1] == "brightgreen"
+
+
+def test_a_bar_does_not_change_when_another_channel_moves(terminal, tmp_path):
+    """A deliberate departure from Tk, and the reason is the terminal.
+
+    Tk repaints the other two strips with the channel you moved - measured
+    against Tk 9.0.2. On an X display that is a live preview of millions of
+    colours. Here a bar has between two and six steps, and with the other
+    channels at mid intensity the whole of it collapses to one colour at
+    eight and sixteen, so the scale stops being a scale. The panel shows the
+    colour being built instead.
+    """
+    term = open_chooser(terminal, tmp_path)
+    before = {channel: steps(term, channel) for channel in ("Red", "Green", "Blue")}
+    retype_selection(term, "#808080\r")
+    term.wait_for(
+        lambda t: panel_bands(t)[0] == ["808080"] * PANEL_WIDTH,
+        message="the colour to move to mid grey",
+    )
+    after = {channel: steps(term, channel) for channel in ("Red", "Green", "Blue")}
+    assert after == before, term.describe()
 
 
 # ------------------------------------------------------------- the bars
@@ -294,28 +380,21 @@ def test_a_channel_value_that_is_not_a_number_becomes_zero(terminal, tmp_path):
 
 def test_typing_a_colour_into_the_selection_entry_sets_all_three(terminal, tmp_path):
     term = open_chooser(terminal, tmp_path)
-    row = row_of(term, "Selection:")
-    column = term.display[row].index("#")
-    term.click(column, row)
-    term.wait_for_idle()
-    term.send_keys("<End>")
-    term.send(b"\x7f" * 8)
-    term.send(b"#ff8000\r")
+    retype_selection(term, "#ff8000\r")
     term.wait_for(
-        lambda t: steps(t, "Blue")[0] == "ff8700", message="the bars to follow"
+        lambda t: panel_bands(t)[0] == ["ff8700"] * PANEL_WIDTH,
+        message="the colour to be taken",
     )
+    # All three markers moved, which is what "sets all three" means.
+    assert marker_column(term, "Red") > marker_column(term, "Blue"), term.describe()
+    assert marker_column(term, "Green") > marker_column(term, "Blue"), term.describe()
 
 
 def test_the_selection_entry_takes_a_name_as_tk_does(terminal, tmp_path):
     """Tk hands whatever is typed to winfo_rgb, and so does this. What
     neither has is a list of names to choose from."""
     term = open_chooser(terminal, tmp_path)
-    row = row_of(term, "Selection:")
-    term.click(term.display[row].index("#"), row)
-    term.wait_for_idle()
-    term.send_keys("<End>")
-    term.send(b"\x7f" * 8)
-    term.send(b"red\r")
+    retype_selection(term, "red\r")
     term.wait_for_text("#cd0000")
 
 
@@ -323,12 +402,7 @@ def test_a_selection_that_is_not_a_colour_is_put_back(terminal, tmp_path):
     """And must not take the application down: winfo_rgb raises ValueError
     for an unknown name, which a dialog has to catch rather than let out."""
     term = open_chooser(terminal, tmp_path, extra=', color="#ff8000"')
-    row = row_of(term, "Selection:")
-    term.click(term.display[row].index("#"), row)
-    term.wait_for_idle()
-    term.send_keys("<End>")
-    term.send(b"\x7f" * 8)
-    term.send(b"nosuchcolour\r")
+    retype_selection(term, "nosuchcolour\r")
     term.wait_for_idle()
     assert term.contains("#ff8000"), term.describe()
     assert "Traceback" not in term.stderr
@@ -349,12 +423,7 @@ def test_ok_takes_what_was_typed_and_not_yet_applied(terminal, tmp_path):
     pressing OK gets the one before it - which reads as the dialog ignoring
     what was typed. This applies it first."""
     term = open_chooser(terminal, tmp_path)
-    row = row_of(term, "Selection:")
-    term.click(term.display[row].index("#"), row)
-    term.wait_for_idle()
-    term.send_keys("<End>")
-    term.send(b"\x7f" * 8)
-    term.send(b"#ff8000")
+    retype_selection(term, "#ff8000")
     button = row_of(term, "OK")
     term.click(term.display[button].index("OK"), button)
     term.wait_for_text("picked=(255, 128, 0) #ff8000")

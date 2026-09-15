@@ -6,15 +6,21 @@ of the library that genuinely cannot be checked any other way: the test suite
 can prove that `#ff8000` resolved to colour 208, and only an eye can say
 whether 208 looks like orange on the screen in front of you.
 
-Three terminals matter, and all three are on any machine that has ncurses.
-Run the same scenario under each and compare:
+Four terminals matter, and all four are on any machine that has ncurses. Run
+the same scenario under each and compare:
 
 ```bash
 cd /path/to/TkCurses
 TERM=xterm           python3 -m uat 31     # eight colours
 TERM=xterm-16color   python3 -m uat 31     # sixteen
 TERM=xterm-256color  python3 -m uat 31     # 256
+TERM=xterm-direct    python3 -m uat 31     # 24-bit
 ```
+
+> `xterm-direct` is the only one the automated tests cannot cover. In direct
+> mode ncurses emits the colon-form escape (`ESC[38:2::r:g:bm`), which the
+> test emulator does not parse and prints as text; real terminals handle it.
+> So this tier is checked by eye here and nowhere else — worth a careful look.
 
 From anywhere else: `TERM=xterm python3 /path/to/TkCurses/uat 31`. **Escape**
 quits.
@@ -54,7 +60,8 @@ the page means anything, and that is the bug worth reporting.
 - [ ] Line 3 repeats the terminfo numbers it came from, so a wrong answer can
       be reported as numbers rather than as "the colours look wrong"
 - [ ] Under `TERM=xterm` it says **BASIC (8)**; under `xterm-16color`,
-      **BRIGHT (16)**; under `xterm-256color`, **EXTENDED (256)**
+      **BRIGHT (16)**; under `xterm-256color`, **EXTENDED (256)**; under
+      `xterm-direct`, **DIRECT (16777216)**
 - [ ] If line 4 shows `COLORTERM=truecolor`, the tier is still whatever
       terminfo said. That variable promises your *emulator* understands
       24-bit escape sequences; it promises nothing about the curses library
@@ -66,6 +73,8 @@ the page means anything, and that is the bug worth reporting.
 Four strips: a grey, then red, green and blue. Each is thirty-two steps of
 the same smooth gradient, handed to the library to render however it can.
 
+- [ ] In direct colour the ramps are genuinely smooth — every step of the
+      thirty-two is its own colour, because there is no palette to round to
 - [ ] At 256 the grey ramp is close to smooth — two dozen distinguishable
       greys rather than a gradient, but visibly a gradient's worth
 - [ ] At 16 it is four bands: black, dark grey, light grey, white
@@ -94,23 +103,32 @@ a bright one.
 ### The chooser — `c`
 
 The same question asked as a dialog, and it is shaped like Tk's: three colour
-bars, three numeric entries, a `Selection:` box and a swatch.
+bars, three numeric entries, a `Selection:` box and a panel showing the
+colour chosen.
 
 - [ ] **The bars have as many steps as the terminal has intensities.** Two
       at 8 colours, three at 16, six at 256. Count them on each terminal —
       that is the thing this cycle exists to fix
 - [ ] No two steps of a bar look the same as each other (except the blue bar
       at 16 colours, for the palette reason above)
-- [ ] Each bar shows what the *colour* becomes as that channel varies, with
-      the other two where you left them — move red, and the green and blue
-      bars change too
+- [ ] Each bar is **that channel alone**, black to full, and **does not
+      change** when you move another channel. Tk repaints the other two
+      strips as you move one; that is a live preview worth having on an X
+      display and destructive here, because a bar has two to six steps and
+      with the other channels mid-way the whole of it collapses to a single
+      colour at 8 and 16. The panel shows the colour being built instead
 - [ ] The `▲` under each bar sits under the step the channel is on
 - [ ] Clicking a step sets that channel; **dragging along a bar** follows the
       pointer continuously
 - [ ] Typing a number into a channel entry and pressing **Return** moves that
       bar. Out of range clamps to 0 or 255; nonsense becomes 0
+- [ ] There is a **panel** under the `Selection:` box, a block several rows
+      tall painted in the colour chosen — this is what answers "what have I
+      actually picked", which three numbers do not
+- [ ] The panel follows every change: a bar click, a channel entry, a typed
+      selection
 - [ ] Typing `#ff8000` into `Selection:` and pressing Return moves all three
-      bars and the swatch
+      markers and the panel
 - [ ] Typing `red` there works too — Tk hands whatever is typed to
       `winfo_rgb`, and so does this. What neither has, and neither should, is
       a list of colour names to pick from

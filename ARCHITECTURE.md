@@ -1671,6 +1671,23 @@ class ScreenBuffer:
     def clear_dirty(self) -> None: ...
 ```
 
+### Container Sizing
+
+A container's **requested** size includes its own border, `padx`/`pady` and
+menubar row. The geometry managers report what the *children* need, which is
+a content size, and children are laid out in `_content_rect()` — which
+subtracts all three. `Misc._outer_size()` adds them back and the layout
+engine propagates that.
+
+Without it a bordered container sized to its children clipped them by exactly
+its border: a bordered frame holding three stacked rows reported that it
+needed three rows, drew a border on the first and last, and showed one.
+
+`_outer_size` asks `_bordered`, never `_border_drawn`. Whether a border is
+*drawn* depends on the size the widget already has, so asking that here would
+be circular — a frame one row tall draws no border, would ask for no room for
+one, and would stay one row tall.
+
 ### X11 to Curses Color Mapping
 
 TkCurses translates tkinter's X11 color names to curses colors. The
@@ -3321,6 +3338,17 @@ other two stay put; three numeric entries taking 0-255, applied on Return; a
 Cancel. There is no colour-name lookup, because Tk has none - though the
 `Selection:` entry takes a name just as Tk's does, since both hand the text
 to `winfo_rgb`.
+
+The bars are **fixed scales**, and that is a deliberate departure from Tk.
+Tk draws each strip with the *other* two channels at their current values, so
+moving green repaints the red and blue strips — measured against Tk 9.0.2,
+where raising green from 0 to 255 turns the red strip from a black-to-red
+ramp into a green-to-yellow one. On an X display that is a live preview of
+millions of colours; here a bar has two to six steps, and with the other
+channels at mid intensity the whole red bar resolves to **one** colour at 8
+and at 16, so the scale stops being a scale. Each bar is therefore its own
+channel alone, painted once. The panel under `Selection:` does what the
+cross-coupling was for — showing the colour actually being built.
 
 **What adapts is how many steps a bar has**, and it comes from
 `winfo_colordepth()`. Tk draws sixteen; on an eight-colour terminal those

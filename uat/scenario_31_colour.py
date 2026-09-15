@@ -18,16 +18,18 @@
 """Colour, at whatever depth this particular terminal has.
 
 What to do: read the top two lines, then run the same scenario again under a
-different TERM and compare. The three worth trying are all on this machine::
+different TERM and compare. The four worth trying are all on this machine::
 
     TERM=xterm            python3 -m uat 31
     TERM=xterm-16color    python3 -m uat 31
     TERM=xterm-256color   python3 -m uat 31
+    TERM=xterm-direct     python3 -m uat 31
 
 What to look for: the tier on line 2 should match what ``tput colors`` says in
 the same shell - that line is the library's answer, and if it is wrong then
-everything below it is wrong for the same reason. Then the ramps: at 256 they
-are close to smooth, at 16 they are four or five bands, at 8 they are two.
+everything below it is wrong for the same reason. Then the ramps: in direct
+colour they are smooth, at 256 close to it, at 16 they are four or five
+bands, at 8 they are two.
 Then the two rows of backgrounds, which are the bug this cycle began with: at
 8 colours the bright row is identical to the dark one, because the only way
 to be bright there is an attribute and no attribute has ever brightened a
