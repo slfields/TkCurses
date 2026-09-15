@@ -22,7 +22,16 @@ from __future__ import annotations
 import pytest
 
 from tkcurses import Misc, TclError
-from tkcurses.colorchooser import PALETTE, Chooser, _hex, askcolor
+from tkcurses._core.colors import ColorDepth, parse_color
+from tkcurses.colorchooser import (
+    BAR_LEVELS,
+    BAR_WIDTH,
+    CHANNELS,
+    Chooser,
+    _hex,
+    _nearest_step,
+    askcolor,
+)
 
 
 def chooser(**options):
@@ -31,22 +40,99 @@ def chooser(**options):
     return picker
 
 
-# ---------------------------------------------------------------- palette
+# ------------------------------------------------------------------- bars
 
 
-def test_the_palette_is_the_sixteen_a_terminal_has():
-    """Eight colours and their bright forms. Not sixteen million: a mixer
-    would be offering precision the terminal cannot deliver."""
-    assert len(PALETTE) == 16
+def test_there_are_three_channels_in_tk_s_order():
+    assert CHANNELS == ("Red", "Green", "Blue")
 
 
-def test_every_swatch_is_a_colour_string():
-    assert all(len(color) == 7 and color.startswith("#") for color in PALETTE)
+def test_every_tier_has_a_set_of_levels():
+    assert set(BAR_LEVELS) == set(ColorDepth)
 
 
-def test_the_palette_has_no_duplicates():
-    """Two swatches the same would be two ways to say one thing."""
-    assert len(set(PALETTE)) == len(PALETTE)
+def test_a_better_terminal_gets_more_steps():
+    """Which is the whole reason the chooser waited for the colour tiers."""
+    counts = [len(BAR_LEVELS[depth]) for depth in sorted(ColorDepth)]
+    assert counts == sorted(counts)
+    assert len(BAR_LEVELS[ColorDepth.BASIC]) == 2
+    assert len(BAR_LEVELS[ColorDepth.EXTENDED]) == 6
+    assert len(BAR_LEVELS[ColorDepth.DIRECT]) == 16
+
+
+@pytest.mark.parametrize("depth", list(ColorDepth))
+def test_every_level_is_a_channel_value(depth):
+    levels = BAR_LEVELS[depth]
+    assert all(0 <= level <= 255 for level in levels)
+    assert list(levels) == sorted(levels), "a bar runs dark to light"
+    assert len(set(levels)) == len(levels)
+
+
+@pytest.mark.parametrize("depth", list(ColorDepth))
+def test_a_bar_runs_from_nothing_to_everything(depth):
+    """Tk's own bars stop at 240, so white cannot be reached from them at
+    all. These end where the channel does."""
+    assert BAR_LEVELS[depth][0] == 0
+    assert BAR_LEVELS[depth][-1] == 255
+
+
+def test_the_256_colour_levels_are_the_cube_s_own():
+    """So every step lands exactly on a palette entry rather than near one."""
+    assert BAR_LEVELS[ColorDepth.EXTENDED] == (0, 95, 135, 175, 215, 255)
+
+
+def test_each_step_of_a_256_colour_bar_is_a_different_colour():
+    """Measured against the resolver rather than assumed: this is what makes
+    six the right count there and sixteen the wrong one."""
+    resolved = {
+        parse_color(_hex((level, 0, 0)), ColorDepth.EXTENDED)
+        for level in BAR_LEVELS[ColorDepth.EXTENDED]
+    }
+    assert len(resolved) == 6
+
+
+def test_sixteen_steps_on_an_eight_colour_terminal_are_mostly_repeats():
+    """The bug this replaces, measured rather than argued.
+
+    Tk's sixteen steps of red, resolved against eight colours, are three
+    distinct results - and two of those differ only by A_BOLD, which does
+    nothing at all to a background. So a bar drawn with them shows two
+    appearances for sixteen steps. That is why the count has to follow the
+    depth.
+    """
+    resolved = {
+        parse_color(_hex((level, 0, 0)), ColorDepth.BASIC)
+        for level in BAR_LEVELS[ColorDepth.DIRECT]
+    }
+    assert len(resolved) == 3
+    assert len({entry.color for entry in resolved}) == 2, "as a background"
+
+
+def test_a_bar_is_about_as_wide_whatever_it_holds():
+    """Few steps means fat ones rather than a stubby bar."""
+    for levels in BAR_LEVELS.values():
+        cells = max(1, BAR_WIDTH // len(levels))
+        assert 15 <= cells * len(levels) <= BAR_WIDTH
+
+
+# ----------------------------------------------------------------- steps
+
+
+def test_a_value_sits_on_the_step_nearest_it():
+    levels = (0, 95, 135, 175, 215, 255)
+    assert _nearest_step(levels, 0) == 0
+    assert _nearest_step(levels, 255) == 5
+    assert _nearest_step(levels, 128) == 2
+    assert _nearest_step(levels, 100) == 1
+
+
+def test_a_value_between_two_steps_picks_the_lower_one():
+    """Only because min() keeps the first of an equal pair; what matters is
+    that it picks one and does not fall off the end."""
+    assert _nearest_step((0, 100, 200), 50) == 0
+
+
+# --------------------------------------------------------------- the hex
 
 
 @pytest.mark.parametrize(
@@ -102,7 +188,6 @@ def test_a_name_answers_with_the_colour_the_terminal_will_show():
     rgb, text = chooser()._fixresult(Misc(), "red")
     assert text == "#cd0000"
     assert text == _hex(rgb)
-    assert text in PALETTE
 
 
 def test_a_hex_colour_is_its_own_answer():

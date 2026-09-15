@@ -3314,6 +3314,22 @@ Vertical:   │
 | `Chooser.show(**options)` | ○ | Display chooser |
 | `askcolor(color, **options)` | ○ | Convenience function |
 
+Shaped like Tk's, read out of `clrpick.tcl`: three colour bars, one per
+channel, each showing what the colour becomes as that channel varies and the
+other two stay put; three numeric entries taking 0-255, applied on Return; a
+`Selection:` entry holding the `#rrggbb`; a swatch of the result; OK and
+Cancel. There is no colour-name lookup, because Tk has none - though the
+`Selection:` entry takes a name just as Tk's does, since both hand the text
+to `winfo_rgb`.
+
+**What adapts is how many steps a bar has**, and it comes from
+`winfo_colordepth()`. Tk draws sixteen; on an eight-colour terminal those
+sixteen resolve to three results, two of which differ only by `A_BOLD` and so
+look identical as a background - sixteen steps, two appearances. So the bar
+is drawn with as many steps as the terminal has intensities: two at eight
+colours, three at sixteen, six at 256 (the cube's own levels), sixteen in
+direct colour. The entries are unaffected and reach every value at any depth.
+
 ### font Module
 
 | tkinter Class/Function | TkCurses | Notes |
