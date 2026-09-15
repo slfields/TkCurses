@@ -173,6 +173,30 @@ _screen: CursesScreen | None = None
 #: The window covering it, which is what initscr() hands back.
 _stdscr: Window | None = None
 
+#: Whether this module started the screen, and so may stop it. False when it
+#: attached to one a Tk application already had up - stopping that would tear
+#: the terminal out from under the application that owns it.
+_owns_screen = False
+
+
+def _running_application_screen() -> CursesScreen | None:
+    """The screen a Tk application already has up, if one has.
+
+    This is what lets the two halves share a terminal rather than fight over
+    it: a curses window opened inside a running tkinter application draws
+    onto the same cells the widgets do, and one refresh paints both.
+    """
+    # Imported here rather than at the top: tkcurses does not import this
+    # module, but importing it from here at module level would depend on
+    # which of the two was imported first.
+    import tkcurses
+
+    root = tkcurses._active_root
+    if root is None or not root.winfo_exists():
+        return None
+    screen = root.tk.screen
+    return screen if screen is not None and screen.started else None
+
 
 def _require_screen() -> CursesScreen:
     """The running screen, or the error curses raises when there is none."""
@@ -186,12 +210,22 @@ def initscr() -> Window:
 
     As in curses, calling this twice without an :func:`endwin` between is an
     error rather than a second screen: there is one terminal.
+
+    If a tkinter application already has the screen up, this attaches to it
+    rather than starting a second one - which is what lets a curses window
+    and a widget share a terminal. :func:`endwin` then leaves that screen
+    alone, since the application owns it.
     """
-    global _screen, _stdscr
+    global _screen, _stdscr, _owns_screen
     if _screen is not None:
         raise _curses.error("initscr() called twice")
-    screen = CursesScreen()
-    buffer = screen.start()
+    existing = _running_application_screen()
+    if existing is not None:
+        screen, buffer, _owns_screen = existing, existing.buffer, False
+    else:
+        screen = CursesScreen()
+        buffer = screen.start()
+        _owns_screen = True
     _screen = screen
     # Cells of its own, not the screen's. It matters: in curses a refresh
     # copies a window's whole content over the screen, so stdscr.refresh()
@@ -211,12 +245,17 @@ def initscr() -> Window:
 
 
 def endwin() -> None:
-    """Give the terminal back. Harmless if curses was never started."""
-    global _screen, _stdscr
-    if _screen is not None:
+    """Give the terminal back. Harmless if curses was never started.
+
+    Gives back only what this module took: a screen belonging to a running
+    tkinter application is left running.
+    """
+    global _screen, _stdscr, _owns_screen
+    if _screen is not None and _owns_screen:
         _screen.stop()
     _screen = None
     _stdscr = None
+    _owns_screen = False
 
 
 def isendwin() -> bool:

@@ -3596,6 +3596,25 @@ mean one class doing both, badly.
 | `move(y, x)` | ✓ | Move panel |
 | `replace(win)` | ✓ | Replace window |
 | `set_userptr(obj)` | ✓ | Set user data |
+
+## Running Both Halves
+
+`python -m tkcurses` is the demo, and it is the one place the library's own
+claim is checked end to end: a curses window and a tkinter widget sharing a
+terminal rather than taking turns with it.
+
+`tkcurses.curses.initscr()` **attaches to a screen a Tk application already
+has up** rather than starting a second one — there is one terminal — and
+`endwin()` then leaves that screen alone, since the application owns it. So
+what the curses half draws lands in the same cells the widgets drew into,
+and one refresh paints both.
+
+Two things make that work rather than merely not crash. `ColorManager`
+passes a caller-chosen colour pair straight through when the attribute
+already carries one: `A_COLOR` is a packed field, so OR-ing a second pair
+into it would leave neither. And the widgets own the buffer and will draw
+over anything in it, so the curses half is put back — `update_panels()` —
+after every repaint.
 | `show()` | ✓ | Show panel |
 | `top()` | ✓ | Move to top |
 | `userptr()` | ✓ | Get user data |
