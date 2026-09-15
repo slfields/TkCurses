@@ -199,3 +199,52 @@ def test_propagation_off_keeps_the_explicit_size(root):
     child.pack()
     root.update_layout()
     assert (frame.winfo_reqwidth(), frame.winfo_reqheight()) == (24, 8)
+
+
+# ------------------------------------------------- asking for its own border
+
+
+def test_a_bordered_frame_asks_for_room_for_its_border(root):
+    """It lays its children out *inside* the border, so it has to ask for
+    the border as well as for them - or it clips them by exactly that much.
+
+    This was real: a bordered frame holding three stacked rows reported that
+    it needed three rows, drew a border on the first and last of them, and
+    showed one row of the three.
+    """
+    frame = Frame(root, name="f", borderwidth=1)
+    for index in range(3):
+        Frame(frame, name=f"band{index}", width=9, height=1).pack()
+    root.update_layout()
+    assert (frame.winfo_reqwidth(), frame.winfo_reqheight()) == (11, 5)
+
+
+def test_an_unbordered_frame_asks_for_exactly_its_children(root):
+    frame = Frame(root, name="f")
+    for index in range(3):
+        Frame(frame, name=f"band{index}", width=9, height=1).pack()
+    root.update_layout()
+    assert (frame.winfo_reqwidth(), frame.winfo_reqheight()) == (9, 3)
+
+
+def test_a_bordered_frame_gives_its_children_what_it_asked_for(root):
+    """The two halves have to agree: whatever the frame asks its parent for,
+    laying out inside it must leave the children the room they wanted."""
+    frame = Frame(root, name="f", borderwidth=1)
+    bands = [Frame(frame, name=f"band{i}", width=9, height=1) for i in range(3)]
+    for band in bands:
+        band.pack()
+    root.update_layout()
+    frame._allocate(Rect(0, 0, frame.winfo_reqwidth(), frame.winfo_reqheight()))
+    root.update_layout()
+    for band in bands:
+        assert (band.winfo_width(), band.winfo_height()) == (9, 1), band
+
+
+def test_padding_is_asked_for_too(root):
+    """padx and pady come out of the content area the same way a border
+    does, so they have to be added back the same way."""
+    frame = Frame(root, name="f", padx=2, pady=1)
+    Frame(frame, name="child", width=9, height=1).pack()
+    root.update_layout()
+    assert (frame.winfo_reqwidth(), frame.winfo_reqheight()) == (13, 3)

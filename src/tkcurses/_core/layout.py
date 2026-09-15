@@ -195,7 +195,9 @@ class LayoutEngine:
         if manager is None:
             return
         if getattr(manager, "propagates", True):
-            self._propagate(container, manager.requested(container))
+            self._propagate(
+                container, container._outer_size(manager.requested(container))
+            )
         manager.apply(container, container._content_rect())
 
     def _propagate(self, container: Any, requested: Size) -> None:

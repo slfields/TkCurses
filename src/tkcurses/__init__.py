@@ -994,6 +994,27 @@ class Misc:
             ),
         )
 
+    def _outer_size(self, content: Size) -> Size:
+        """How big this widget must be to offer ``content`` cells inside it.
+
+        The inverse of :meth:`_content_rect`, and the thing a container has
+        to tell its parent: a geometry manager works out what the children
+        need, which is a *content* size, and the container is bigger than
+        that by its own border, padding and menubar. Without this a bordered
+        container sized to its children clips them by exactly its border.
+
+        ``_bordered`` rather than ``_border_drawn``, deliberately: whether a
+        border is drawn depends on the size the widget already has, and
+        asking that here would be circular - a frame one row tall draws no
+        border, so it would ask for no room for one, so it would stay one
+        row tall.
+        """
+        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        padx = 2 * int(self._options.get("padx", 0) or 0)
+        pady = 2 * int(self._options.get("pady", 0) or 0)
+        menu = 1 if self._options.get("menu") is not None else 0
+        return Size(content.width + edge + padx, content.height + edge + pady + menu)
+
     @property
     def _bordered(self) -> bool:
         """True if this widget draws a border, costing a cell on each edge.

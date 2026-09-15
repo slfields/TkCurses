@@ -42,7 +42,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import tkcurses
-from tkcurses._core.geometry import BORDER_WIDTH
 
 if TYPE_CHECKING:
     from tkcurses import Misc, Toplevel
@@ -73,13 +72,12 @@ def fit(window: Toplevel) -> None:
     window.update_layout()
     screen_width = window.winfo_screenwidth()
     screen_height = window.winfo_screenheight()
-    # A toplevel reports the room its *contents* need, not its own outer
-    # size, so the border it draws round them has to be added back on.
-    # Without that the dialog is two cells too small and clips its own
-    # content by exactly the border.
-    edge = 2 * BORDER_WIDTH if window._border_drawn else 0
-    wanted_width = max(window.winfo_reqwidth() + edge, MINIMUM_WIDTH)
-    wanted_height = max(window.winfo_reqheight() + edge, MINIMUM_HEIGHT)
+    # No border compensation here any more. A container's requested size now
+    # includes the border it draws, which it always should have - a bordered
+    # frame that sized to its children used to clip them by exactly its
+    # border, and this was that bug patched at one call site.
+    wanted_width = max(window.winfo_reqwidth(), MINIMUM_WIDTH)
+    wanted_height = max(window.winfo_reqheight(), MINIMUM_HEIGHT)
     width = min(wanted_width, screen_width)
     height = min(wanted_height, screen_height)
     x = max(0, (screen_width - width) // 2)
