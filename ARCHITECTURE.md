@@ -3420,11 +3420,15 @@ resolved against it. That module imports the standard library as `_curses`.
 
 A window has cells of its own; writing changes nothing on the terminal until
 `noutrefresh()` copies them and `doupdate()` paints. **A refresh copies the
-lines touched in that window and no others** — which is why refreshing
-stdscr erases an overlapping window in one program and leaves it standing in
-another, the difference being whether stdscr had been refreshed before. A
-new window starts wholly touched, so its first refresh paints its blank
-background over whatever was underneath.
+touched *part of each touched line* in that window and nothing else.**
+
+Both halves of that are rules on their own. Lines: refreshing stdscr erases
+an overlapping window in one program and leaves it standing in another, the
+difference being only whether stdscr had been refreshed before. Ranges: a
+program that writes five characters onto a line and refreshes leaves the rest
+of that line alone, so a panel's border further along it survives — copying
+whole lines wiped it. A new window starts wholly touched, so its first
+refresh paints its blank background over whatever was underneath.
 
 None of that was guessed. The tty tests run the same source twice — once
 importing `curses`, once importing `tkcurses.curses` — and compare the two
@@ -3562,7 +3566,16 @@ All curses constants are available:
 
 ## Panel Module
 
-`tkcurses.panel` provides curses.panel-compatible API.
+`tkcurses.panel` provides curses.panel-compatible API, over the windows
+`tkcurses.curses` makes. A curses window has no idea what is in front of it;
+this adds the one thing that fixes that — an order, and an `update_panels()`
+that copies every visible panel back to front.
+
+It does **not** reuse `_core.panels.PanelStack`, which the widgets stack
+themselves with. That one creates its own windows from a rectangle and hands
+the ordering to real curses panels; this one is handed a window that is
+already a cell buffer and does the ordering itself. Sharing the code would
+mean one class doing both, badly.
 
 | curses.panel Function | TkCurses | Notes |
 |-----------------------|----------|-------|

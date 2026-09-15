@@ -382,3 +382,27 @@ def test_touchwin_marks_everything(window):
     window.untouchwin()
     window.touchwin()
     assert all(window.is_linetouched(row) for row in range(6))
+
+
+def test_a_write_touches_only_the_columns_written(window):
+    """The finer half of curses' refresh rule, and the one that is easy to
+    miss: a program that writes five characters onto a line and refreshes
+    leaves the rest of that line alone - so a panel's border further along
+    survives. Copying whole lines wiped it, measured against the stdlib."""
+    window.untouchwin()
+    window.addstr(1, 3, "abc")
+    assert window._touched == {1: (3, 5)}
+
+
+def test_two_writes_on_a_row_cover_both(window):
+    window.untouchwin()
+    window.addstr(0, 2, "ab")
+    window.addstr(0, 10, "cd")
+    assert window._touched[0] == (2, 11)
+
+
+def test_touchwin_marks_whole_rows(window):
+    window.untouchwin()
+    window.addstr(0, 2, "ab")
+    window.touchwin()
+    assert window._touched[0] == (0, 19)

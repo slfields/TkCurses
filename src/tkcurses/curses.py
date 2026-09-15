@@ -478,18 +478,27 @@ class Window:
         self._keypad = False
         self._leave_ok = False
         self._clear_ok = False
-        # Rows changed since the last refresh, and the whole of curses'
-        # refresh rule: a refresh copies the lines *touched in this window*
-        # and no others. That is why refreshing stdscr erases a window it
-        # overlaps in one program and leaves it standing in another - the
-        # difference being whether stdscr had been refreshed before. Both
-        # were measured against the standard library; nothing else
-        # reproduces the pair.
-        #: A new window starts wholly touched, as curses' does: it is blank,
-        #: and its first refresh has to paint that blank over whatever was
-        #: underneath. Measured - a new window overlapping an older one hides
-        #: it entirely on the first refresh, even where nothing was written.
-        self._touched: set[int] = set(range(nlines))
+        # What has changed since the last refresh, as ``row: (first, last)``
+        # columns - and this is the whole of curses' refresh rule.
+        #
+        # A refresh copies the touched *part of each touched line* in this
+        # window and nothing else. Both halves of that were measured against
+        # the standard library, and each is a rule on its own:
+        #
+        # Lines: refreshing stdscr erases a window it overlaps in one program
+        # and leaves it standing in another, the difference being only
+        # whether stdscr had been refreshed before.
+        #
+        # Ranges: a program that writes five characters onto a line and
+        # refreshes leaves the rest of that line alone - so a panel's border
+        # further along it survives. Copying whole lines wiped it.
+        #
+        # A new window starts wholly touched, as curses' does: it is blank,
+        # and its first refresh paints that blank over whatever was
+        # underneath, even where nothing has been written into it.
+        self._touched: dict[int, tuple[int, int]] = {
+            row: (0, max(0, ncols - 1)) for row in range(nlines)
+        }
 
     # ------------------------------------------------------------ geometry
 
@@ -597,7 +606,19 @@ class Window:
             self._buffer.write(
                 self._offset_y + y, self._offset_x + start, visible, attr=attr
             )
-            self._touched.add(y)
+            self._mark(y, start, start + len(visible) - 1)
+
+    def _mark(self, row: int, first: int, last: int) -> None:
+        """Widen the range of one row that the next refresh will copy."""
+        known = self._touched.get(row)
+        if known is None:
+            self._touched[row] = (first, last)
+        else:
+            self._touched[row] = (min(known[0], first), max(known[1], last))
+
+    def _whole(self) -> tuple[int, int]:
+        """The range covering a whole row."""
+        return (0, max(0, self._width - 1))
 
     def _advance(self, y: int, x: int, count: int) -> None:
         """Move the cursor on by ``count`` cells, wrapping as curses does."""
@@ -900,13 +921,13 @@ class Window:
             # simply follow it, and a program that never handles KEY_RESIZE
             # keeps working instead of drawing into the old shape.
             self.resize(destination.height, destination.width)
-        for row in sorted(self._touched):
+        for row, (first, last) in sorted(self._touched.items()):
             target_row = self._begin_y + row
             if not 0 <= row < self._height:
                 continue
             if not 0 <= target_row < destination.height:
                 continue
-            for column in range(self._width):
+            for column in range(first, min(last + 1, self._width)):
                 target_column = self._begin_x + column
                 if not 0 <= target_column < destination.width:
                     continue
@@ -941,16 +962,16 @@ class Window:
         self._clear_ok = True
 
     def touchwin(self) -> None:
-        """Mark every row as changed, so the next refresh copies all of them."""
-        self._touched = set(range(self._height))
+        """Mark every row whole, so the next refresh copies all of it."""
+        self._touched = {row: self._whole() for row in range(self._height)}
 
     def touchline(self, start: int, count: int, changed: bool = True) -> None:
-        """Mark a run of rows as changed, or as unchanged."""
-        rows = range(max(0, start), min(self._height, start + count))
-        if changed:
-            self._touched.update(rows)
-        else:
-            self._touched.difference_update(rows)
+        """Mark a run of rows whole, or mark them as unchanged."""
+        for row in range(max(0, start), min(self._height, start + count)):
+            if changed:
+                self._touched[row] = self._whole()
+            else:
+                self._touched.pop(row, None)
 
     def untouchwin(self) -> None:
         """Mark every row as unchanged, so the next refresh copies none."""
