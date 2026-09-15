@@ -45,7 +45,6 @@ from __future__ import annotations
 import curses
 import os
 
-import tkcurses
 from tkcurses import colorchooser
 from tkcurses._core.colors import TRUECOLOR_ENV
 from uat import _support
@@ -68,6 +67,9 @@ HUES: list[tuple[str, str]] = [
 #: fit a terminal nobody has widened.
 RAMP = 32
 
+#: Columns given to the name at the start of each row of colour.
+LABEL = 10
+
 
 def _ramp(channel: int | None) -> list[str]:
     """One ramp of ``#rrggbb``, either a grey or a single channel."""
@@ -81,20 +83,11 @@ def _ramp(channel: int | None) -> list[str]:
     return colors
 
 
-def _blocks(parent, row: int, name: str, colors: list[str], width: int = 1) -> None:
-    """One labelled row of solid colour."""
-    tkcurses.Label(parent, text=name, width=11, anchor="e").grid(row=row, column=0)
-    strip = tkcurses.Frame(parent)
-    strip.grid(row=row, column=1, sticky="w")
-    for color in colors:
-        tkcurses.Label(strip, text=" " * width, background=color).pack(side="left")
-
-
 def build(root, screen):
     depth = root.winfo_colordepth()
     reported = curses.tigetnum("colors")
-    # > 0, not bool(): tigetflag answers -1 for a capability the
-    # terminal does not have listed at all, and bool(-1) is True.
+    # > 0, not bool(): tigetflag answers -1 for a capability the terminal does
+    # not have listed at all, and bool(-1) is True.
     direct = curses.tigetflag("RGB") > 0
     colorterm = os.environ.get("COLORTERM", "")
 
@@ -120,27 +113,52 @@ def build(root, screen):
         ),
     )
 
-    area = _support.content_area(root, top=5, bottom=2)
-    _blocks(area, 0, "grey", _ramp(None))
-    _blocks(area, 1, "red", _ramp(0))
-    _blocks(area, 2, "green", _ramp(1))
-    _blocks(area, 3, "blue", _ramp(2))
+    #: Each labelled row of colour: the row it goes on, its name, the colours
+    #: along it, and how many cells each colour gets.
+    rows: list[tuple[int, str, list[str], int]] = [
+        (5, "grey", _ramp(None), 1),
+        (6, "red", _ramp(0), 1),
+        (7, "green", _ramp(1), 1),
+        (8, "blue", _ramp(2), 1),
+        (10, "dark bg", [dark for dark, _ in HUES], 4),
+        (11, "bright bg", [bright for _, bright in HUES], 4),
+    ]
+    for row, name, _, _ in rows:
+        screen.line(row, name.rjust(LABEL))
+    screen.line(13, "  press c for the colour chooser")
+    screen.footer(" c chooser   Escape quits ")
 
-    tkcurses.Label(area, text="").grid(row=4, column=0)
-    _blocks(area, 5, "dark bg", [dark for dark, _ in HUES], width=4)
-    _blocks(area, 6, "bright bg", [bright for _, bright in HUES], width=4)
+    def paint(event=None):
+        """Put the colour back on the screen.
 
-    answer = tkcurses.Label(area, text="  press c for the colour chooser", anchor="w")
-    answer.grid(row=8, column=0, columnspan=2, sticky="w")
+        Written straight into the buffer rather than built out of Labels.
+        A Label holds one background, so these six rows are 144 of them -
+        enough widgets that laying them out took a second before the title
+        appeared, which is a long time to look at nothing and long enough
+        that the scenario smoke test timed out on a slow machine.
+
+        The instruction text is written to the buffer for its own reasons and
+        is replayed on a resize by the Screen; this has to do the same, and
+        must run after it, since that replay clears the buffer first.
+        """
+        buffer = root.tk.screen.buffer
+        for row, _, colors, width in rows:
+            for index, color in enumerate(colors):
+                column = LABEL + 1 + index * width
+                if column + width <= buffer.width and row < buffer.height:
+                    buffer.write(row, column, " " * width, fg="white", bg=color)
+        screen.refresh()
 
     def choose(event):
         rgb, name = colorchooser.askcolor(parent=root, title=" Colour ")
-        answer.configure(text=f"  chooser answered {rgb} {name}")
+        screen.line(13, f"  chooser answered {rgb} {name}")
+        paint()
         return "break"
 
     root.bind("<Key-c>", choose)
-    root.update_layout()
-    screen.footer(" c chooser   Escape quits ")
+    # add="+" and after the Screen's own handler, which clears the buffer.
+    root.bind("<Configure>", paint, add="+")
+    paint()
 
 
 if __name__ == "__main__":
