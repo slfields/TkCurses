@@ -66,7 +66,13 @@ from tkcurses._core.canvas import (
     rectangle_pixels,
 )
 from tkcurses._core.clipboard import CLIPBOARD, PRIMARY
-from tkcurses._core.colors import ColorManager, palette_rgb, parse_color, rgb_for
+from tkcurses._core.colors import (
+    ColorDepth,
+    ColorManager,
+    palette_rgb,
+    parse_color,
+    rgb_for,
+)
 from tkcurses._core.config import TkCursesConfig
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.editing import TextField
@@ -1443,13 +1449,33 @@ class Misc:
         """A colour's channel values, 16 bits each, as tkinter reports them.
 
         For a name or a hex string the terminal cannot show exactly, this is
-        what will actually be rendered rather than what was asked for: there
-        are eight colours to choose from, and reporting the request back would
-        hide the approximation.
+        what will actually be rendered rather than what was asked for:
+        reporting the request back would hide the approximation, and how
+        close it gets depends on how many colours the terminal has.
         """
+        depth = self.winfo_colordepth()
         direct = rgb_for(color)
-        rgb = direct if direct is not None else palette_rgb(parse_color(color))
+        rgb = (
+            direct
+            if direct is not None
+            else palette_rgb(parse_color(color, depth), depth)
+        )
         return (rgb[0] * 257, rgb[1] * 257, rgb[2] * 257)
+
+    def winfo_colordepth(self) -> ColorDepth:
+        """How many colours this terminal has.
+
+        Not tkinter's - X has no equivalent question, because an X display
+        answers ``winfo_screendepth`` in bits per pixel and has the full
+        range either way. A terminal does not, and anything drawing a colour
+        ramp has to know which of the four tiers it is drawing on.
+        On a terminal with no colour at all this is :data:`ColorDepth.NONE`.
+        Before there is a screen to ask, it is :data:`ColorDepth.BASIC` - the
+        eight every colour terminal has, which is what colour resolution has
+        always assumed when it had nothing better to go on.
+        """
+        colors = self.tk.colors
+        return colors.depth if colors is not None else ColorDepth.BASIC
 
     def winfo_pixels(self, number: str | int | float) -> int:
         """Convert a screen distance to whole cells."""
@@ -3309,7 +3335,10 @@ class Tk(BaseWidget, Wm):
                 # Cells are painted through this; without colour support the
                 # screen keeps its attributes-only resolver.
                 self._screen.attribute_resolver = colors.attribute_for
-                self.tk.colors = colors
+            # Kept either way, since it is also what anything asking how many
+            # colours there are has to ask - and the answer on a terminal
+            # without any is a real answer rather than a missing one.
+            self.tk.colors = colors
             self.tk.screen = self._screen
             self.tk.panels = PanelStack()
             self._rect = Rect(0, 0, buffer.width, buffer.height)

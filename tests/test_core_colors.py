@@ -31,6 +31,7 @@ from tkcurses._core.colors import (
     ColorManager,
     ResolvedColor,
     detect_depth,
+    palette_rgb,
     parse_color,
     rgb_for,
     truecolor_hinted,
@@ -180,9 +181,15 @@ def test_every_hex_colour_resolves(red, green, blue):
 
 
 @pytest.fixture
-def manager(monkeypatch):
-    """A ColorManager over a stubbed curses, so no terminal is needed."""
+def manager(request, monkeypatch):
+    """A ColorManager over a stubbed curses, so no terminal is needed.
+
+    Eight colours unless the test asks for more, since that is what a
+    terminal that has never been interrogated is assumed to have. Indirect
+    parametrisation sets ``curses.COLORS`` to something else.
+    """
     allocated: list[tuple[int, int, int]] = []
+    colors = getattr(request, "param", 8)
 
     monkeypatch.setattr(curses, "start_color", lambda: None)
     monkeypatch.setattr(curses, "has_colors", lambda: True)
@@ -192,8 +199,9 @@ def manager(monkeypatch):
     )
     # color_pair() likewise needs initscr(); the shift mirrors what curses does.
     monkeypatch.setattr(curses, "color_pair", lambda n: n << 8)
-    # COLOR_PAIRS only exists once start_color() has run.
+    # COLOR_PAIRS and COLORS only exist once start_color() has run.
     monkeypatch.setattr(curses, "COLOR_PAIRS", 8, raising=False)
+    monkeypatch.setattr(curses, "COLORS", colors, raising=False)
 
     instance = ColorManager(
         dispatcher=CursesDispatcher(owner_thread_id=threading.get_ident())
@@ -373,3 +381,107 @@ def test_the_hint_does_not_change_the_tier():
     """
     assert detect_depth(256, False) is ColorDepth.EXTENDED
     assert truecolor_hinted("truecolor") is True
+
+
+# --------------------------------------------- resolving against each tier
+
+
+def test_the_eight_colour_tier_is_what_it_always_was():
+    """Every colour rule written before there were tiers has to survive, so
+    BASIC is the default and nothing about it moves."""
+    assert parse_color("red", ColorDepth.BASIC) == ResolvedColor(curses.COLOR_RED)
+    assert parse_color("lime", ColorDepth.BASIC) == ResolvedColor(
+        curses.COLOR_GREEN, curses.A_BOLD
+    )
+    assert parse_color("red") == parse_color("red", ColorDepth.BASIC)
+
+
+def test_brightness_becomes_a_colour_once_there_are_sixteen():
+    """And stops being an attribute, which is the whole point: A_BOLD never
+    touched a background, so a bright background was unreachable."""
+    bright = parse_color("lime", ColorDepth.BRIGHT)
+    assert bright == ResolvedColor(10)
+    assert bright.attr == curses.A_NORMAL
+
+
+@pytest.mark.parametrize("depth", [ColorDepth.BRIGHT, ColorDepth.EXTENDED])
+def test_no_colour_above_the_eight_carries_a_brightness_attribute(depth):
+    for name in ("lime", "gray", "darkgray", "fuchsia", "brown", "navy"):
+        assert parse_color(name, depth).attr == curses.A_NORMAL, name
+
+
+def test_a_name_renders_as_the_same_colour_at_every_tier():
+    """`red` is #cd0000 on all of them - a better terminal gets closer to
+    what was asked for, it does not change what was asked for."""
+    for depth in ColorDepth:
+        if depth is ColorDepth.NONE:
+            continue
+        assert palette_rgb(parse_color("red", depth), depth) == (205, 0, 0)
+
+
+def test_256_colours_reach_the_cube_rather_than_rounding_to_yellow():
+    """#ff8000 is orange. On eight colours the nearest is yellow; on 256 it
+    is cube entry 208, which really is orange."""
+    assert parse_color("#ff8000", ColorDepth.BASIC).color == curses.COLOR_YELLOW
+    resolved = parse_color("#ff8000", ColorDepth.EXTENDED)
+    assert resolved.color == 208
+    assert palette_rgb(resolved, ColorDepth.EXTENDED) == (255, 135, 0)
+
+
+def test_direct_colour_is_not_approximated_at_all():
+    resolved = parse_color("#ff8000", ColorDepth.DIRECT)
+    assert resolved.color == 0xFF8000
+    assert palette_rgb(resolved, ColorDepth.DIRECT) == (255, 128, 0)
+
+
+def test_a_monochrome_terminal_keeps_the_attributes_and_loses_the_colour():
+    """Bold and dim are all it has to tell one thing from another with."""
+    assert parse_color("lime", ColorDepth.NONE) == ResolvedColor(-1, curses.A_BOLD)
+    assert parse_color("gray", ColorDepth.NONE) == ResolvedColor(-1, curses.A_DIM)
+    assert parse_color("red", ColorDepth.NONE).color == -1
+
+
+@given(red=st.integers(0, 255), green=st.integers(0, 255), blue=st.integers(0, 255))
+def test_every_hex_colour_resolves_at_every_tier(red, green, blue):
+    spec = f"#{red:02x}{green:02x}{blue:02x}"
+    assert 0 <= parse_color(spec, ColorDepth.BRIGHT).color <= 15
+    assert 0 <= parse_color(spec, ColorDepth.EXTENDED).color <= 255
+    assert parse_color(spec, ColorDepth.DIRECT).color == (red << 16 | green << 8 | blue)
+
+
+# ------------------------------------------------- the manager's own tier
+
+
+def test_the_manager_reads_its_tier_from_curses(manager):
+    manager.start()
+    assert manager.depth is ColorDepth.BASIC
+
+
+@pytest.mark.parametrize(
+    ("manager", "expected"),
+    [(8, ColorDepth.BASIC), (16, ColorDepth.BRIGHT), (256, ColorDepth.EXTENDED)],
+    indirect=["manager"],
+)
+def test_the_manager_follows_whatever_curses_reports(manager, expected):
+    manager.start()
+    assert manager.depth is expected
+
+
+def test_the_tier_is_none_before_the_manager_starts(manager):
+    assert manager.depth is ColorDepth.NONE
+
+
+def test_reset_forgets_the_tier_too(manager):
+    manager.start()
+    manager.reset()
+    assert manager.depth is ColorDepth.NONE
+
+
+@pytest.mark.parametrize("manager", [16], indirect=True)
+def test_the_manager_allocates_the_bright_colour_number(manager):
+    """Rather than green-with-bold, which would have painted the background
+    plain green and the caller would never know why."""
+    manager.start()
+    attribute = manager.attribute_for("black", "lime")
+    assert not attribute & curses.A_BOLD
+    assert manager.allocated_pairs == [(1, curses.COLOR_BLACK, 10)]

@@ -1673,7 +1673,38 @@ class ScreenBuffer:
 
 ### X11 to Curses Color Mapping
 
-TkCurses translates tkinter's X11 color names to curses color constants. The ColorManager handles this mapping and creates curses color pairs.
+TkCurses translates tkinter's X11 color names to curses colors. The
+ColorManager handles this mapping and creates curses color pairs.
+
+#### Color Depth
+
+A terminal has one of four amounts of colour, and which one decides how a
+colour is resolved. `ColorDepth` names them and `detect_depth()` works out
+which is in front of us, from `tigetnum("colors")` and `tigetflag("RGB")`
+before a screen is up, and from `curses.COLORS` once `start_color()` has run:
+
+| Tier | Colours | Terminal |
+|------|---------|----------|
+| `NONE` | none | `vt100`, `dumb` |
+| `BASIC` | 8 | `xterm`, `linux` |
+| `BRIGHT` | 16 | `xterm-16color` |
+| `EXTENDED` | 256 | `xterm-256color`, `screen-256color` |
+| `DIRECT` | 2^24 | `xterm-direct` |
+
+An unrecognised count rounds **down** to the tier below it - 88-colour rxvt
+is treated as 16 - because asking for a colour the terminal has not got puts
+the wrong colour on the screen, while asking for one fewer costs only
+accuracy.
+
+`COLORTERM=truecolor` is *not* consulted by `detect_depth()`.
+It promises that the terminal emulator understands 24-bit escape sequences,
+not that ncurses is in direct mode, and acting on it would send `0xRRGGBB`
+colour numbers to a curses that expects 0-255. `truecolor_hinted()` reports
+it separately, for anything that later writes escape sequences past curses.
+
+`Misc.winfo_colordepth()` is how a widget asks. It is not tkinter's - X has
+no equivalent question, because a display answers `winfo_screendepth()` in
+bits per pixel and has the full range either way.
 
 #### Base Color Mapping (8 colors)
 
@@ -1690,7 +1721,8 @@ TkCurses translates tkinter's X11 color names to curses color constants. The Col
 
 #### Extended X11 Color Approximations
 
-Common tkinter colors mapped to nearest curses equivalent:
+At `BASIC` these are the named approximations, with brightness carried as an
+attribute:
 
 | X11 Name | Maps To | Notes |
 |----------|---------|-------|
@@ -1710,30 +1742,33 @@ Common tkinter colors mapped to nearest curses equivalent:
 | `silver` | `white` | Standard white |
 | `fuchsia` | `magenta` + `A_BOLD` | Bright magenta |
 
+**A_BOLD brightens a foreground and does nothing whatever to a background.**
+That is a curses fact, not a TkCurses choice, and it is why brightness stops
+being an attribute as soon as there is somewhere better to put it. From
+`BRIGHT` up a name is resolved through the RGB it renders as, and `lime`
+becomes colour 10 with no attribute - so a bright *background* works, which
+at `BASIC` it cannot.
+
+`red` is `#cd0000` at every tier. A better terminal gets closer to what was
+asked for; it does not change what was asked for.
+
 #### Hex Color Conversion
 
-Hex colors (`#RRGGBB`) are converted to nearest 8-color match:
+A hex colour is matched against the palette the tier has, by weighted RGB
+distance - green weighted most and blue least, roughly matching how much each
+contributes to perceived brightness, so an approximation stays recognisable:
 
-```python
-def hex_to_curses(hex_color: str) -> tuple[int, int]:
-    """Convert #RRGGBB to (curses_color, attribute)."""
-    r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16)
+| Tier | Palette | `#ff8000` resolves to |
+|------|---------|----------------------|
+| `BASIC` | the 8, brightness as `A_BOLD`/`A_DIM` | colour 3, yellow |
+| `BRIGHT` | the 16 as colour numbers | colour 3, yellow |
+| `EXTENDED` | 16 named + 6x6x6 cube + 24 greys | colour 208, `#ff8700` |
+| `DIRECT` | none; the number *is* the colour | `0xff8000`, exactly |
 
-    # Determine brightness
-    brightness = (r + g + b) / 3
-    attr = A_BOLD if brightness > 170 else (A_DIM if brightness < 85 else A_NORMAL)
-
-    # Find dominant channel(s)
-    if r > 200 and g < 100 and b < 100: return COLOR_RED, attr
-    if r < 100 and g > 200 and b < 100: return COLOR_GREEN, attr
-    if r < 100 and g < 100 and b > 200: return COLOR_BLUE, attr
-    if r > 200 and g > 200 and b < 100: return COLOR_YELLOW, attr
-    if r > 200 and g < 100 and b > 200: return COLOR_MAGENTA, attr
-    if r < 100 and g > 200 and b > 200: return COLOR_CYAN, attr
-    if brightness > 200: return COLOR_WHITE, attr
-    if brightness < 50: return COLOR_BLACK, attr
-    return COLOR_WHITE, A_DIM  # gray fallback
-```
+The 256-colour palette is built rather than listed: a table of 256 triples is
+256 chances to mistype one, and xterm's own arithmetic is short. Its cube
+levels are `(0, 95, 135, 175, 215, 255)` - not evenly spaced, which has to be
+matched or every dark colour lands a step out.
 
 #### Color Pair Management
 
@@ -2159,8 +2194,10 @@ Where the table above and the implementation need reading together.
 - **`winfo_pixels`/`winfo_fpixels`** measure in cells, at ten columns to the
   inch — the classic teletype metric terminal emulators still approximate.
 - **`winfo_rgb`** reports the colour the terminal will actually render, not the
-  one that was asked for. With eight colours to choose from, echoing the
-  request back would hide the approximation.
+  one that was asked for: echoing the request back would hide the
+  approximation, and how close it gets depends on how many colours there are.
+- **`winfo_colordepth`** has no tkinter equivalent and is how anything drawing
+  a colour ramp asks which of the four tiers it is drawing on.
 - **Clipboard contents do not leave the process.** A terminal has no clipboard;
   `CLIPBOARD` and `PRIMARY` are strings held in the `Application`. Escape-
   sequence clipboard access (OSC 52) is not attempted, because it is
