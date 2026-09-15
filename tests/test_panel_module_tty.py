@@ -107,6 +107,27 @@ def test_sending_a_panel_to_the_back_hides_it_behind_the_other(terminal, tmp_pat
     assert screens["ours"] == screens["theirs"], _diff(screens)
 
 
+@pytest.mark.parametrize(
+    "action",
+    [
+        "second.hide()",
+        "second.hide(); second.show()",
+        "second.hide(); first.top()",
+        "second.move(6, 18); second.hide()",
+        "first.top(); second.move(5, 20)",
+    ],
+)
+def test_the_background_comes_back_wherever_a_panel_leaves(terminal, tmp_path, action):
+    """The thing a stack is for, and the one this got wrong at first.
+
+    Hiding a panel left it on the screen, because nothing put back what was
+    behind it. Measured against curses.panel, where hiding the top panel
+    brings back what was underneath - including the plain background.
+    """
+    screens = both(terminal, tmp_path, action=action)
+    assert screens["ours"] == screens["theirs"], _diff(screens)
+
+
 def _diff(screens):
     """Both screens, labelled, for a failure anyone can read."""
     return (

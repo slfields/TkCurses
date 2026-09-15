@@ -1012,6 +1012,19 @@ class Window:
             else:
                 self._touched.pop(row, None)
 
+    def touch_region(self, y: int, x: int, height: int, width: int) -> None:
+        """Mark a rectangle for copying at the next refresh.
+
+        Not one of curses' own, and here for one caller: :mod:`tkcurses.panel`
+        has to put the background back where a panel was hidden or moved
+        away from, and the only thing that can is the window behind it -
+        copied over just that rectangle, not the whole of it.
+        """
+        for row in range(max(0, y), min(self._height, y + height)):
+            first, last = max(0, x), min(self._width, x + width) - 1
+            if first <= last:
+                self._mark(row, first, last)
+
     def untouchwin(self) -> None:
         """Mark every row as unchanged, so the next refresh copies none."""
         self._touched.clear()

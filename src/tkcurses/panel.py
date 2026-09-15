@@ -57,6 +57,15 @@ class Panel:
         self._window = window
         self._hidden = False
         self._userptr: Any = None
+        #: Where this panel was last copied to, so that moving or hiding it
+        #: can have the background put back over the place it left.
+        self._painted: tuple[int, int, int, int] | None = None
+
+    def _area(self) -> tuple[int, int, int, int]:
+        """Where this panel is now, as ``(y, x, height, width)``."""
+        top, left = self._window.getbegyx()
+        height, width = self._window.getmaxyx()
+        return (top, left, height, width)
 
     # ------------------------------------------------------------- the window
 
@@ -162,20 +171,42 @@ def bottom_panel() -> Panel | None:
 def update_panels() -> None:
     """Copy every visible panel onto the screen, back to front.
 
-    The whole of each window, not only what has changed in it. That is what
-    makes the stack mean anything: a panel moving away has to leave whatever
-    was behind it looking right, and the only thing that knows what was
-    behind it is the panel behind it.
+    Three steps, and the first is the one that makes a stack a stack.
 
-    As in curses, this stops short of painting - :func:`tkcurses.curses.doupdate`
+    Anywhere a panel has been hidden or moved away from is put back from the
+    window behind everything - which is ``stdscr``, the background a curses
+    program draws on. Without it a hidden panel stays on the screen, which is
+    what the standard library was measured doing the other way: hide the top
+    panel and what was under it comes back.
+
+    Then every visible panel is copied, back to front, whole rather than only
+    what changed in it - a panel that has not been written to since the last
+    update still has to be copied if something in front of it moved.
+
+    As in curses this stops short of painting; :func:`tkcurses.curses.doupdate`
     does that.
     """
+    from tkcurses import curses as _tkcurses
+
+    background = _tkcurses._stdscr
+    for panel in _stack:
+        where = panel._painted
+        if where is None:
+            continue
+        if panel.hidden() or where != panel._area():
+            if background is not None:
+                background.touch_region(*where)
+            panel._painted = None
+    if background is not None and background.is_wintouched():
+        background.noutrefresh()
     for panel in _stack:
         if panel.hidden():
+            panel._painted = None
             continue
         window = panel.window()
         window.touchwin()
         window.noutrefresh()
+        panel._painted = panel._area()
 
 
 def _reset() -> None:

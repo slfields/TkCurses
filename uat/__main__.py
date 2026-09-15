@@ -72,7 +72,8 @@ def show() -> int:
     print("                 docs/UAT_INPUT.md (27),")
     print("                 docs/UAT_GEOMETRY.md again (28),")
     print("                 docs/UAT_DIALOGS.md (29-30),")
-    print("                 docs/UAT_COLOUR.md (31)")
+    print("                 docs/UAT_COLOUR.md (31),")
+    print("                 docs/UAT_CURSES.md (32)")
     return 0
 
 
@@ -89,6 +90,11 @@ def main(argv: list[str]) -> int:
         print(f"no such scenario: {argv[0]!r}", file=sys.stderr)
         return show() or 2
     module = importlib.import_module(f"uat.{chosen}")
+    if hasattr(module, "run"):
+        # A scenario that is not a tkinter one runs itself. The curses
+        # scenario is the case: it has no root and no widgets to lay out,
+        # and _support.run would give it both.
+        return int(module.run())
     return int(module._support.run(module.TITLE, module.build))
 
 
