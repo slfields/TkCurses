@@ -83,6 +83,11 @@ mouse, and a mouse is the thing a terminal user most often does not have.
 - [ ] Clicking a row selects it; clicking below the last row does nothing
 - [ ] The list scrolls when the active row reaches the edge
 - [ ] The scrollbar's thumb tracks the view, and clicking its arrows scrolls
+- [ ] The thumb can be **picked up and dragged**, not only clicked, and the
+      view follows the pointer — wherever within the thumb you grabbed it
+      stays under your finger rather than the thumb jumping to meet you
+- [ ] Pressing the thumb and letting go without moving scrolls **nothing**
+- [ ] Clicking the trough still pages
 - [ ] The count on the second line always matches what is marked
 
 ## 19. A modal dialog

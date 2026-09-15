@@ -136,17 +136,22 @@ files in a temporary folder has not been checked.
 
 ### The colour chooser
 
-- [ ] Sixteen swatches in two rows, each drawn in its own colour, the top row
-      and the bottom row being a colour and its bright form
-- [ ] Clicking a swatch answers with that colour and closes
-- [ ] Typing `red` answers `#cd0000` — **not** `#ff0000`. That is the red
-      your terminal will actually draw, and reporting the request back would
-      hide the difference until you wondered why your orange looked like
-      mustard
-- [ ] Typing `#005f5f` answers `#005f5f` unchanged: you said exactly what you
+Shaped like Tk's: three colour bars, three numeric entries, a `Selection:`
+box and a swatch. There is more about it, and about what changes between
+terminals, in [UAT_COLOUR.md](UAT_COLOUR.md) — this is the short form.
+
+- [ ] Three bars labelled Red, Green and Blue, each with its own entry
+- [ ] Clicking a bar sets that channel, and dragging along it follows the
+      pointer
+- [ ] Typing `red` into `Selection:` and pressing Return gives `#cd0000` —
+      **not** `#ff0000`. That is the red your terminal will actually draw,
+      and reporting the request back would hide the difference until you
+      wondered why your orange looked like mustard
+- [ ] Typing `#005f5f` gives `#005f5f` unchanged: you said exactly what you
       meant, and the approximating happens when it is drawn
-- [ ] Typing something that is not a colour at all does nothing and does not
-      crash
+- [ ] Typing something that is not a colour at all puts the old value back
+      and does not crash
+- [ ] There is **no list of colour names**, because Tk has none
 - [ ] Cancelling answers `(None, None)` — a pair, because callers write
       `rgb, name = askcolor()`
 
