@@ -6436,13 +6436,16 @@ class Spinbox(Entry):
         with contextlib.suppress(ValueError):
             attribute = for_state(str(self._options["state"]), attribute)
         dispatcher = CursesDispatcher.get()
-        with contextlib.suppress(_curses.error):
-            dispatcher.call(
-                window.addstr, area.y, up_column, self._ARROWS[0], attribute
-            )
-            dispatcher.call(
-                window.insstr, area.y, down_column, self._ARROWS[1], attribute
-            )
+        # Both arrows in one write, through the shared writer, for the reason
+        # the listbox does the same: the second used to go on with insstr,
+        # which shifted the row along and pushed a bordered spinbox's right
+        # border off the end. Unbordered, the arrows really do reach the last
+        # cell and insstr really is needed - _write_line is what tells the
+        # two cases apart.
+        del down_column
+        self._write_line(
+            dispatcher, window, area.y, up_column, "".join(self._ARROWS), attribute
+        )
 
 
 def _spinbox_key(event: Event) -> str | None:
@@ -9484,12 +9487,14 @@ class Listbox(_Drawable):
             style |= _curses.A_UNDERLINE
         left, right = self._SELECTED_MARKERS if selected else (" ", " ")
         body = clip_text(self._items[position], max(0, area.width - 2))
-        line = f"{left}{body}".ljust(area.width - 1)[: area.width - 1]
-        with contextlib.suppress(_curses.error):
-            dispatcher.call(window.addstr, area.y + row, area.x, line, style)
-            dispatcher.call(
-                window.insstr, area.y + row, area.x + area.width - 1, right, style
-            )
+        line = f"{left}{body}".ljust(area.width - 1)[: area.width - 1] + right
+        # One write, through the shared writer. The marker used to go on
+        # separately with insstr, which INSERTS: it shifted the row one cell
+        # right and dropped the last one, and on a bordered listbox the cell
+        # it dropped was the border. insstr is right only at the window's
+        # genuinely last cell, and _write_line is the one thing that knows
+        # when that is.
+        self._write_line(dispatcher, window, area.y + row, area.x, line, style)
 
 
 def _listbox_key(event: Event) -> str | None:
