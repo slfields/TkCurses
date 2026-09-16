@@ -102,13 +102,10 @@ already using.
 - [ ] Resize the terminal: both halves come back
 - [ ] Escape gives the terminal back, with no traceback and a clean prompt
 
-### Known, and filed
-
-- [ ] The listbox in the demo is missing its right-hand border on each row.
-      That is **`TkCurses-ego`**, a Listbox bug found while writing the demo
-      and filed rather than fixed here — it inserts its row marker with
-      `insstr`, which shifts the row along and pushes the border off the end.
-      Confirmed not a regression. Noted so it is not reported twice
+- [ ] The listbox in the demo has its **right-hand border on every row**.
+      It did not when the demo was written — `TkCurses-ego`, fixed since —
+      and the same fault was then found in the Spinbox by looking for the
+      pattern rather than waiting to see it
 
 ---
 

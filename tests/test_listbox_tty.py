@@ -136,3 +136,96 @@ def test_a_listbox_packs_with_the_other_widgets(terminal, tmp_path):
     )
     term.wait_for_text("Pick one")
     term.wait_for_text("three")
+
+
+# ------------------------------------------------ keeping its own border
+
+
+BORDERED = (
+    "lb = tkcurses.Listbox(root, width=12, height=3)\n"
+    "lb.place(x=1, y=1)\n"
+    "lb.insert('end', 'alpha', 'beta', 'gamma')\n"
+    "lb.selection_set(1)\n"
+)
+
+
+def bordered(terminal, tmp_path, extra=""):
+    term = terminal(cols=32, rows=10)
+    term.run_source(program(BORDERED + extra), workdir=tmp_path)
+    term.wait_for_text("alpha")
+    term.wait_for_idle()
+    return term
+
+
+def test_every_row_keeps_the_right_border(terminal, tmp_path):
+    """The assertion none of these tests used to make, and the bug it missed.
+
+    The row's right-hand marker went on with insstr, which *inserts*: it
+    shifted the row one cell right and dropped the last one, which on a
+    bordered listbox was the border. Every row lost it, and the text ran on
+    into whatever was beside the widget.
+    """
+    term = bordered(terminal, tmp_path)
+    rows = [
+        i for i, line in enumerate(term.display) if "alpha" in line or "beta" in line
+    ]
+    assert rows, term.describe()
+    for row in rows:
+        line = term.display[row]
+        left = line.index("│")
+        right = line.index("│", left + 1)
+        assert right - left == 13, f"row {row} lost its right border\n{term.describe()}"
+
+
+def test_the_border_is_a_closed_box(terminal, tmp_path):
+    """Top, bottom and both sides, all at the same columns."""
+    term = bordered(terminal, tmp_path)
+    top = next(i for i, line in enumerate(term.display) if "┌" in line)
+    bottom = next(i for i, line in enumerate(term.display) if "└" in line)
+    left = term.display[top].index("┌")
+    right = term.display[top].index("┐")
+    assert term.display[bottom].index("└") == left
+    assert term.display[bottom].index("┘") == right
+    for row in range(top + 1, bottom):
+        assert term.display[row][left] == "│", term.describe()
+        assert term.display[row][right] == "│", term.describe()
+
+
+def test_the_selected_row_still_has_its_markers(terminal, tmp_path):
+    """The markers are what the insstr was for, so the fix has to keep them."""
+    term = bordered(terminal, tmp_path)
+    row = next(i for i, line in enumerate(term.display) if "beta" in line)
+    assert "▶" in term.display[row], term.describe()
+    assert "◀" in term.display[row], term.describe()
+
+
+def test_nothing_is_written_beyond_the_border(terminal, tmp_path):
+    """A long item must stop inside the box rather than run past it."""
+    term = bordered(
+        terminal,
+        tmp_path,
+        "lb.insert('end', 'a very long item indeed that will not fit')\n",
+    )
+    top = next(i for i, line in enumerate(term.display) if "┌" in line)
+    right = term.display[top].index("┐")
+    for row in range(top, top + 5):
+        assert term.display[row][right + 1 :].strip() == "", term.describe()
+
+
+def test_an_unbordered_listbox_still_marks_its_selection(terminal, tmp_path):
+    """Without a border the markers really do reach the window's last cell,
+    which is the one case insstr was right for."""
+    term = terminal(cols=32, rows=10)
+    term.run_source(
+        program(
+            "lb = tkcurses.Listbox(root, width=12, height=2, relief='flat')\n"
+            "lb.place(x=1, y=1)\n"
+            "lb.insert('end', 'first', 'second')\n"
+            "lb.selection_set(0)\n"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("first")
+    term.wait_for_idle()
+    row = next(i for i, line in enumerate(term.display) if "first" in line)
+    assert "▶" in term.display[row] and "◀" in term.display[row], term.describe()

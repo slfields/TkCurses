@@ -210,3 +210,47 @@ def test_spinboxes_pack_into_a_frame(terminal, tmp_path):
     term.wait_for(
         lambda t: "\n".join(t.display).count("▲▼") == 2, message="two spinboxes"
     )
+
+
+# ------------------------------------------------ keeping its own border
+
+
+def test_the_field_row_keeps_its_right_border(terminal, tmp_path):
+    """The same fault the Listbox had, in the same shape.
+
+    The second arrow went on with insstr, which *inserts*: it shifted the row
+    one cell right and dropped the last, which on a bordered spinbox was the
+    border. Found by looking for the pattern rather than by seeing it.
+    """
+    term = terminal(cols=32, rows=10)
+    term.run_source(
+        program(
+            "s = tkcurses.Spinbox(root, width=12, from_=0, to=5)\ns.place(x=1, y=1)\n"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("▲")
+    term.wait_for_idle()
+    row = next(i for i, line in enumerate(term.display) if "▲" in line)
+    line = term.display[row]
+    left = line.index("│")
+    assert "│" in line[left + 1 :], f"the field row lost its border\n{term.describe()}"
+    assert line[line.index("▲") + 1] == "▼", term.describe()
+    assert line[line.index("▼") + 1] == "│", "the arrows sit inside the border"
+
+
+def test_an_unbordered_spinbox_still_shows_both_arrows(terminal, tmp_path):
+    """Without a border the second arrow really is the window's last cell,
+    which is the one case insstr was right for."""
+    term = terminal(cols=32, rows=10)
+    term.run_source(
+        program(
+            "s = tkcurses.Spinbox(root, width=12, from_=0, to=5, relief='flat')\n"
+            "s.place(x=1, y=1)\n"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("▲")
+    term.wait_for_idle()
+    row = next(i for i, line in enumerate(term.display) if "▲" in line)
+    assert "▼" in term.display[row], term.describe()

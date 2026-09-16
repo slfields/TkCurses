@@ -372,6 +372,20 @@ Column:   0        1 to width-2       width-1
 3. **Respect right edge**: Content must not exceed column `width-2`
 4. **Respect bottom edge**: Content must not exceed row `height-2`
 5. **Subwindows**: Use `derwin(height-2, width-2, 1, 1)` for content subwindows
+6. **Write through `_Drawable._write_line`**, not `addstr` or `insstr` directly.
+   It knows the two things curses will not do: it clips a write that would
+   run past the right edge, which curses wraps onto the next row instead of
+   dropping; and it uses `insstr` for the one cell where `addstr` refuses —
+   the window's genuinely last — because filling that would scroll a window
+   with nowhere to scroll to.
+
+   **`insstr` inserts.** It shifts the rest of the row one cell right and
+   drops the last, so using it anywhere but that last cell throws a cell
+   away. Twice now that cell was the widget's own right border: a Listbox
+   put its selection marker on with `insstr` at the last *content* column and
+   every row lost its border, and a Spinbox did the same with its second
+   arrow. Both are `TkCurses-ego`. `_write_line` is the one place that knows
+   which cell is which.
 
 ### Example: Bordered Toplevel (30×8)
 
