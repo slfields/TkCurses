@@ -3395,7 +3395,47 @@ Inherits from Text with integrated Scrollbar.
 
 ## Curses Compatibility Module
 
-`tkcurses.curses` provides a curses-compatible API.
+`tkcurses.curses` provides a curses-compatible API — a facade over
+`CursesScreen` and `ScreenBuffer`, not a reimplementation, so a curses
+program gets this layer's double-buffered painting, resize handling and
+colour depth detection without being written any differently.
+
+**Anything not defined there is forwarded to the standard library's curses**,
+which is where every constant comes from and how the list stays current.
+
+**`has_colors()` and `can_change_color()` tell the truth.** They were
+specified as "always True" and that was wrong: a terminal has one of five
+colour depths and a vt100 has none. A curses program asks those questions
+precisely so it can draw differently, and a compatibility layer that lies is
+worse than one that is missing.
+
+**Importing it is safe for the rest of the package**, and that took
+arranging. `tkcurses.curses` is a submodule, so importing it binds it as the
+attribute `curses` on the package — which is `tkcurses/__init__.py`'s own
+global namespace. Measured: a plain `import curses` there was silently
+replaced by the facade, and all fifty-one references in that file would have
+resolved against it. That module imports the standard library as `_curses`.
+
+#### The refresh rule
+
+A window has cells of its own; writing changes nothing on the terminal until
+`noutrefresh()` copies them and `doupdate()` paints. **A refresh copies the
+touched *part of each touched line* in that window and nothing else.**
+
+Both halves of that are rules on their own. Lines: refreshing stdscr erases
+an overlapping window in one program and leaves it standing in another, the
+difference being only whether stdscr had been refreshed before. Ranges: a
+program that writes five characters onto a line and refreshes leaves the rest
+of that line alone, so a panel's border further along it survives — copying
+whole lines wiped it. A new window starts wholly touched, so its first
+refresh paints its blank background over whatever was underneath.
+
+None of that was guessed. The tty tests run the same source twice — once
+importing `curses`, once importing `tkcurses.curses` — and compare the two
+screens; each rule above is a difference that comparison turned up.
+
+A subwindow shares its parent's cells at an offset, so writing into the child
+shows through the parent, as in curses.
 
 ### Module Functions
 
@@ -3414,8 +3454,8 @@ Inherits from Text with integrated Scrollbar.
 | `pair_number(attr)` | ✓ | Get pair number |
 | `pair_content(pair)` | ✓ | Get pair colors |
 | `color_content(color)` | ✓ | Get color RGB |
-| `has_colors()` | ✓ | Always True |
-| `can_change_color()` | ✓ | Always True |
+| `has_colors()` | ✓ | What the terminal really has — **not** always True |
+| `can_change_color()` | ✓ | Likewise; both delegate to curses |
 | `cbreak()` | ✓ | Cbreak mode |
 | `nocbreak()` | ✓ | Exit cbreak |
 | `echo()` | ✓ | Echo mode |
@@ -3526,7 +3566,16 @@ All curses constants are available:
 
 ## Panel Module
 
-`tkcurses.panel` provides curses.panel-compatible API.
+`tkcurses.panel` provides curses.panel-compatible API, over the windows
+`tkcurses.curses` makes. A curses window has no idea what is in front of it;
+this adds the one thing that fixes that — an order, and an `update_panels()`
+that copies every visible panel back to front.
+
+It does **not** reuse `_core.panels.PanelStack`, which the widgets stack
+themselves with. That one creates its own windows from a rectangle and hands
+the ordering to real curses panels; this one is handed a window that is
+already a cell buffer and does the ordering itself. Sharing the code would
+mean one class doing both, badly.
 
 | curses.panel Function | TkCurses | Notes |
 |-----------------------|----------|-------|
@@ -3547,6 +3596,25 @@ All curses constants are available:
 | `move(y, x)` | ✓ | Move panel |
 | `replace(win)` | ✓ | Replace window |
 | `set_userptr(obj)` | ✓ | Set user data |
+
+## Running Both Halves
+
+`python -m tkcurses` is the demo, and it is the one place the library's own
+claim is checked end to end: a curses window and a tkinter widget sharing a
+terminal rather than taking turns with it.
+
+`tkcurses.curses.initscr()` **attaches to a screen a Tk application already
+has up** rather than starting a second one — there is one terminal — and
+`endwin()` then leaves that screen alone, since the application owns it. So
+what the curses half draws lands in the same cells the widgets drew into,
+and one refresh paints both.
+
+Two things make that work rather than merely not crash. `ColorManager`
+passes a caller-chosen colour pair straight through when the attribute
+already carries one: `A_COLOR` is a packed field, so OR-ing a second pair
+into it would leave neither. And the widgets own the buffer and will draw
+over anything in it, so the curses half is put back — `update_panels()` —
+after every repaint.
 | `show()` | ✓ | Show panel |
 | `top()` | ✓ | Move to top |
 | `userptr()` | ✓ | Get user data |

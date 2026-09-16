@@ -542,6 +542,12 @@ class ColorManager:
         This is the resolver :class:`~tkcurses._core.screen.CursesScreen`
         applies to every cell it paints.
         """
+        if attr & curses.A_COLOR:
+            # The caller already chose a colour pair, which is what a curses
+            # program does - tkcurses.curses hands the pair straight through
+            # in the attribute. Allocating a second one and OR-ing it in
+            # would leave neither: A_COLOR is a packed field, not a flag.
+            return attr
         foreground = parse_color(fg, self._depth)
         background = parse_color(bg, self._depth)
         # A background cannot be bright or dim in curses, so only the

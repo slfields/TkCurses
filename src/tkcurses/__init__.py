@@ -32,7 +32,14 @@ See ARCHITECTURE.md for the full specification.
 from __future__ import annotations
 
 import contextlib
-import curses
+
+# Imported under a private name, and it matters. The compatibility module is
+# tkcurses.curses, and importing it makes Python bind that submodule as the
+# attribute `curses` on this package - which is this module's own global
+# namespace. A plain `import curses` here would be silently replaced by the
+# facade the moment anybody imported it, and every reference below would
+# resolve against the wrong module. Measured, not theorised: it clobbers.
+import curses as _curses
 import itertools
 import os
 import re
@@ -830,8 +837,8 @@ class Misc:
         flash the screen instead, and some do nothing at all.
         """
         if self.tk.screen is not None and self.tk.screen.started:
-            with contextlib.suppress(curses.error):
-                curses.beep()
+            with contextlib.suppress(_curses.error):
+                _curses.beep()
             return
         with contextlib.suppress(OSError, ValueError):
             sys.stdout.write("\a")
@@ -1456,7 +1463,7 @@ class Misc:
 
     def winfo_cells(self) -> int:
         """Number of colours available, which is what Tk means by cells."""
-        return curses.COLORS if self.tk.screen is not None else 8
+        return _curses.COLORS if self.tk.screen is not None else 8
 
     def winfo_depth(self) -> int:
         """Bits per cell, derived from the colour count."""
@@ -3338,8 +3345,8 @@ class Tk(BaseWidget, Wm):
             # cancels things - feel broken. Every terminal in use sends the
             # rest of a sequence in the same packet, so a short wait loses
             # nothing and makes the key usable.
-            with contextlib.suppress(AttributeError, curses.error):
-                curses.set_escdelay(_ESCAPE_DELAY_MS)
+            with contextlib.suppress(AttributeError, _curses.error):
+                _curses.set_escdelay(_ESCAPE_DELAY_MS)
             mouse = TkCursesConfig.load().mouse
             self._input = InputHandler(
                 self._screen.stdscr,
@@ -3699,7 +3706,7 @@ class Tk(BaseWidget, Wm):
         else:
             _write_to_stderr(text)
         if screen is not None and screen.started:
-            with contextlib.suppress(curses.error):
+            with contextlib.suppress(_curses.error):
                 screen.repaint()
 
     def _flush_held_reports(self) -> None:
@@ -3847,7 +3854,7 @@ class Toplevel(BaseWidget, Wm):
         if window is None or self.tk.screen is None:
             return
         dispatcher = CursesDispatcher.get()
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(window.erase)
             if self._bordered:
                 dispatcher.call(window.border)
@@ -3868,7 +3875,7 @@ class Toplevel(BaseWidget, Wm):
         if len(text) < 3:
             return
         column = max(BORDER_WIDTH, (self._rect.width - len(text)) // 2)
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(window.addstr, 0, column, text)
 
     def _redraw_decoration(self) -> None:
@@ -4201,7 +4208,7 @@ class _Drawable(Widget):
         """
         colors = self.tk.colors
         if colors is None:
-            return curses.A_NORMAL
+            return _curses.A_NORMAL
         return colors.attribute_for(
             str(self._options["foreground"] or "white"),
             str(self._options["background"] or "black"),
@@ -4268,7 +4275,7 @@ class _Drawable(Widget):
         text = text[: columns - column]
         if not text:
             return
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             if column + len(text) >= columns:
                 if text[:-1]:
                     dispatcher.call(window.addstr, row, column, text[:-1], attribute)
@@ -4368,7 +4375,7 @@ class Frame(_Drawable):
         width, height = self._rect.width, self._rect.height
         dispatcher = CursesDispatcher.get()
         attribute = self._background_attribute()
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
             if self._border_drawn:
@@ -4503,7 +4510,7 @@ class _TextWidget(_Drawable):
             return
         dispatcher = CursesDispatcher.get()
         attribute = self._background_attribute()
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
             if self._border_drawn:
@@ -4600,13 +4607,13 @@ class _TextWidget(_Drawable):
         column += align_offset(
             len(lines[line_number]), block_width, str(self._options["justify"])
         )
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(
                 window.addstr,
                 row,
                 column + remaining,
                 lines[line_number][remaining],
-                attribute | curses.A_UNDERLINE,
+                attribute | _curses.A_UNDERLINE,
             )
 
 
@@ -4753,7 +4760,7 @@ class Button(_TextWidget):
         row = area.y + area.height // 2
         attribute = self._background_attribute() | self._text_attribute()
         dispatcher = CursesDispatcher.get()
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(window.addstr, row, area.x, left, attribute)
             dispatcher.call(
                 window.addstr, row, area.x + area.width - 1, right, attribute
@@ -5032,9 +5039,9 @@ class _ChoiceWidget(_TextWidget):
         if self._indicator_on:
             return attribute
         if self._indicator_state == "on":
-            attribute |= curses.A_REVERSE
+            attribute |= _curses.A_REVERSE
         if self.focus_get() is self:
-            attribute |= curses.A_UNDERLINE
+            attribute |= _curses.A_UNDERLINE
         return attribute
 
     def _redraw(self) -> None:
@@ -5056,11 +5063,11 @@ class _ChoiceWidget(_TextWidget):
         mark = self._INDICATORS[self._indicator_state][1 if focused else 0]
         attribute = self._background_attribute() | self._text_attribute()
         if self._pressed:
-            attribute |= curses.A_REVERSE
+            attribute |= _curses.A_REVERSE
         _, block_height = measure(self._lines())
         _, down = parse_anchor(str(self._options["anchor"]))
         row = area.y + int((area.height - block_height) * down)
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             CursesDispatcher.get().call(window.addstr, row, area.x, mark, attribute)
 
 
@@ -5536,7 +5543,7 @@ class Entry(_Drawable):
         attribute = self._background_attribute() | self._font_attribute()
         with contextlib.suppress(ValueError):
             attribute = for_state(str(self._options["state"]), attribute)
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
             if self._border_drawn:
@@ -5564,13 +5571,13 @@ class Entry(_Drawable):
         if stop <= start:
             return
         text = self._displayed()[self._field.view + start : self._field.view + stop]
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(
                 window.addstr,
                 area.y,
                 area.x + start,
                 text,
-                attribute | curses.A_REVERSE,
+                attribute | _curses.A_REVERSE,
             )
 
     def _draw_cursor(
@@ -5587,13 +5594,13 @@ class Entry(_Drawable):
         if not (0 <= column < area.width):
             return
         under = self._displayed()[self._field.cursor : self._field.cursor + 1] or " "
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(
                 window.addstr,
                 area.y,
                 area.x + column,
                 under,
-                attribute | curses.A_REVERSE,
+                attribute | _curses.A_REVERSE,
             )
 
 
@@ -5809,10 +5816,10 @@ class Menubutton(_TextWidget):
             return
         attribute = self._background_attribute() | self._text_attribute()
         if self.focus_get() is self:
-            attribute |= curses.A_UNDERLINE
+            attribute |= _curses.A_UNDERLINE
         dispatcher = CursesDispatcher.get()
         if self._indicator_on and area.width >= 2:
-            with contextlib.suppress(curses.error):
+            with contextlib.suppress(_curses.error):
                 dispatcher.call(
                     window.addstr,
                     area.y + (area.height - 1) // 2,
@@ -6150,7 +6157,7 @@ class LabelFrame(Frame):
         row = 0 if edge == "top" else height - 1
         attribute = self._background_attribute() | self._font_attribute()
         dispatcher = CursesDispatcher.get()
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             if row == height - 1 and column + len(text) >= width:
                 # The bottom-right cell cannot be written with addstr: curses
                 # scrolls a window whose cursor has nowhere left to go.
@@ -6429,7 +6436,7 @@ class Spinbox(Entry):
         with contextlib.suppress(ValueError):
             attribute = for_state(str(self._options["state"]), attribute)
         dispatcher = CursesDispatcher.get()
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(
                 window.addstr, area.y, up_column, self._ARROWS[0], attribute
             )
@@ -7168,7 +7175,7 @@ class Text(_Drawable):
         with contextlib.suppress(ValueError):
             attribute = for_state(str(self._options["state"]), attribute)
         area = self._text_area()
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
             if self._border_drawn:
@@ -7240,8 +7247,8 @@ class Text(_Drawable):
                 area.y + offset,
                 area.x + column,
                 character,
-                with_colors(attribute, tagged & curses.A_COLOR)
-                | (tagged & ~curses.A_COLOR),
+                with_colors(attribute, tagged & _curses.A_COLOR)
+                | (tagged & ~_curses.A_COLOR),
             )
 
     def _tag_attribute(self, name: str) -> int | None:
@@ -7269,7 +7276,7 @@ class Text(_Drawable):
                 str(background or self._options["background"] or "black"),
             )
         elif name == "sel":
-            attribute |= curses.A_REVERSE
+            attribute |= _curses.A_REVERSE
         return attribute or None
 
     def _draw_cursor(
@@ -7305,7 +7312,7 @@ class Text(_Drawable):
             area.y + row,
             area.x + column,
             under,
-            attribute | curses.A_REVERSE,
+            attribute | _curses.A_REVERSE,
         )
 
 
@@ -8160,7 +8167,7 @@ class Canvas(_Drawable):
         with contextlib.suppress(ValueError):
             base = for_state(str(self._options["state"]), base)
         area = self._text_area()
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(window.bkgd, " ", base)
             dispatcher.call(window.erase)
             if self._border_drawn:
@@ -8828,7 +8835,7 @@ class Menu(_Drawable):
         self._redraw()
         screen = self.tk.screen
         if screen is not None and self._mapped:
-            with contextlib.suppress(curses.error):
+            with contextlib.suppress(_curses.error):
                 screen.refresh()
 
     # -------------------------------------------------------------- painting
@@ -8840,7 +8847,7 @@ class Menu(_Drawable):
             return
         dispatcher = CursesDispatcher.get()
         attribute = self._background_attribute() | self._font_attribute()
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
             if self._as_menubar:
@@ -8861,7 +8868,7 @@ class Menu(_Drawable):
             text = f" {entry.label} "
             style = attribute
             if number == self._active:
-                style |= curses.A_REVERSE
+                style |= _curses.A_REVERSE
             if str(entry.options.get("state")) == "disabled":
                 style = for_state("disabled", style)
             dispatcher.call(
@@ -8893,7 +8900,7 @@ class Menu(_Drawable):
                 with contextlib.suppress(ValueError):
                     style = for_state("disabled", style)
             if number == self._active:
-                style |= curses.A_REVERSE
+                style |= _curses.A_REVERSE
             if entry.kind == "separator":
                 dispatcher.call(
                     window.addstr,
@@ -8931,13 +8938,13 @@ class Menu(_Drawable):
         column = area.x + len(self._indicator_for(entry)) + index
         if column >= area.x + area.width:
             return
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(
                 window.addstr,
                 area.y + row,
                 column,
                 entry.label[index],
-                style | curses.A_UNDERLINE,
+                style | _curses.A_UNDERLINE,
             )
 
     # --------------------------------------------------------------- moving
@@ -9445,7 +9452,7 @@ class Listbox(_Drawable):
         attribute = self._background_attribute() | self._font_attribute()
         with contextlib.suppress(ValueError):
             attribute = for_state(str(self._options["state"]), attribute)
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
             if self._border_drawn:
@@ -9472,13 +9479,13 @@ class Listbox(_Drawable):
     ) -> None:
         """Draw one row: its markers if selected, then its text."""
         selected = position in self._selection
-        style = attribute | (curses.A_REVERSE if selected else 0)
+        style = attribute | (_curses.A_REVERSE if selected else 0)
         if position == self._active and self.focus_get() is self and not selected:
-            style |= curses.A_UNDERLINE
+            style |= _curses.A_UNDERLINE
         left, right = self._SELECTED_MARKERS if selected else (" ", " ")
         body = clip_text(self._items[position], max(0, area.width - 2))
         line = f"{left}{body}".ljust(area.width - 1)[: area.width - 1]
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(window.addstr, area.y + row, area.x, line, style)
             dispatcher.call(
                 window.insstr, area.y + row, area.x + area.width - 1, right, style
@@ -9828,7 +9835,7 @@ class PanedWindow(_Drawable):
         dispatcher = CursesDispatcher.get()
         attribute = self._background_attribute() | self._font_attribute()
         area = self._content_area()
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
             if self._border_drawn:
@@ -9849,7 +9856,7 @@ class PanedWindow(_Drawable):
         for index in range(max(0, len(self._paned.slaves()) - 1)):
             offset = self._paned.sash_position(index)
             focused = self.focus_get() is self and index == (self._active_sash or 0)
-            style = attribute | (curses.A_REVERSE if focused else 0)
+            style = attribute | (_curses.A_REVERSE if focused else 0)
             if self._paned.vertical:
                 if not 0 <= offset < area.height:
                     continue
@@ -10148,7 +10155,7 @@ class Scrollbar(_Drawable):
         cells.append(last_arrow)
 
         edge = BORDER_WIDTH if self._border_drawn else 0
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
             if self._border_drawn:
@@ -10585,7 +10592,7 @@ class Scale(_Drawable):
         attribute = self._background_attribute() | self._font_attribute()
         with contextlib.suppress(ValueError):
             attribute = for_state(str(self._options["state"]), attribute)
-        with contextlib.suppress(curses.error):
+        with contextlib.suppress(_curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
             if self._border_drawn:
