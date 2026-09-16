@@ -76,26 +76,22 @@ def build_curses(root: tkcurses.Tk) -> Window:
     ``initscr`` finds the application's screen rather than starting one, so
     what this draws lands in the same cells the widgets drew into.
     """
-    stdscr = tcurses.initscr()
-    del stdscr  # the application owns the screen; this half wants a window
+    if tcurses.isendwin():
+        tcurses.initscr()
     width = max(20, root.winfo_screenwidth() - 34)
-    window = tcurses.newwin(9, width, 2, 32)
+    height = max(5, min(9, root.winfo_screenheight() - 4))
+    window = tcurses.newwin(height, width, 2, 32)
     window.box()
-    window.addstr(1, 2, CURSES_TITLE)
-    window.addstr(2, 2, "drawn with addstr")
-    window.addstr(3, 2, "boxed with box()")
-    window.addstr(5, 2, "same screen, same refresh")
-    tpanel.new_panel(window)
+    lines = [
+        CURSES_TITLE,
+        "drawn with addstr",
+        "boxed with box()",
+        "",
+        "same screen, same refresh",
+    ]
+    for row, line in enumerate(lines[: height - 2], start=1):
+        window.addstr(row, 2, line)
     return window
-
-
-def paint_curses() -> None:
-    """Put the curses half back on the screen.
-
-    Needed after every widget repaint, because the widgets own the buffer
-    and will have drawn over whatever was in it.
-    """
-    tpanel.update_panels()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -105,23 +101,48 @@ def main(argv: list[str] | None = None) -> int:
     root.title(" tkcurses ")
     try:
         build_widgets(root)
-        window = build_curses(root)
-        root.update_layout()
+        panel = tpanel.new_panel(build_curses(root))
 
         def repaint(event: object = None) -> None:
+            """Put both halves back on the screen, in the order they stack.
+
+            A full repaint rather than the changed cells, because a terminal
+            resize clears the terminal underneath a double-buffered
+            application: the buffer still holds what it drew, so nothing is
+            dirty and nothing would be sent.
+
+            Then the widget panels, which are real curses panels above
+            stdscr and have to be composited after anything that paints
+            stdscr.
+            """
             del event
-            paint_curses()
+            tpanel.update_panels()
             screen = root.tk.screen
             if screen is not None:
-                screen.refresh()
+                screen.repaint()
+            panels = root.tk.panels
+            if panels is not None:
+                panels.touch_all()
+                panels.update()
 
-        # After a resize the widgets lay out again and paint over everything,
-        # so the curses half has to be put back.
-        root.bind("<Configure>", repaint, add="+")
+        def resized(event: object = None) -> None:
+            """Rebuild the curses half at the size the terminal now is.
+
+            A curses window does not resize itself, and one built for eighty
+            columns on a screen that is now seventy is drawn clipped - the
+            box came back with pieces missing. curses programs handle
+            KEY_RESIZE by rebuilding, and so does this.
+            """
+            del event
+            root.update_layout()
+            panel.replace(build_curses(root))
+            repaint()
+
+        root.bind("<Configure>", resized, add="+")
         root.bind("<Key-Escape>", lambda _event: root.quit())
+        root.update_layout()
         root.after(50, repaint)
         root.mainloop()
-        del window
     finally:
         tcurses.endwin()
         root.destroy()
