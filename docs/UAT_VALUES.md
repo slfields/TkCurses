@@ -91,6 +91,11 @@ message aspect, `F3` moves the captions
 - [ ] A caption longer than its box is cut short rather than wrapped or
       drawn over the corner
 - [ ] Each spinbox shows a value and a pair of arrows at its right-hand edge
+- [ ] **The arrows sit inside the spinbox's own border**, which closes after
+      them — `│0           ▲▼│`, not `│0           ▲▼`. The second arrow was
+      written with an insert, which shifted the row along and pushed the
+      border off the end; the captioned frame around it then looked a cell
+      too wide as well
 - [ ] `Up` and `Down` step the focused spinbox
 - [ ] Clicking the arrows steps it too
 - [ ] The arrows stay in the same column as the value changes width
