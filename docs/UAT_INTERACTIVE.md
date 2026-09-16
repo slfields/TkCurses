@@ -75,6 +75,17 @@ mouse, and a mouse is the thing a terminal user most often does not have.
 `python3 -m uat 18` · arrows, `Home`/`End`, `PageUp`/`PageDown`, `m` cycles mode
 
 - [ ] The selected rows are marked at both ends
+- [ ] **The box is closed on every row.** The right-hand border lines up with
+      the corners above and below it, and nothing in the list runs past it.
+      This is the check that was missing. The row's end marker used to be
+      written with an insert, which shifted each row one cell along and ate
+      the listbox's own border — look for **two** upright bars between the
+      text and the scrollbar's arrow, not one:
+
+      ```
+      wrong:  │ row 00                  │▲│
+      right:  │ row 00                 ││▲│
+      ```
 - [ ] In `browse` the selection follows the arrows
 - [ ] In `single` the arrows move an underlined **active** row while the
       selection stays where it was — these are different things
