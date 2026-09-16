@@ -92,12 +92,25 @@ def test_the_curses_half_survives_a_widget_repaint(demo):
 
 
 def test_it_comes_back_after_a_resize(demo):
+    """Waiting for the redraw, not for quiet.
+
+    term.resize() resizes the emulator at once and only then signals the
+    child, so the screen goes quiet immediately - holding the old content,
+    truncated. wait_for_idle() returns on that quiet, before the application
+    has reacted at all, and the assertion then reads a screen the application
+    never drew. On this machine the child answered inside the idle window and
+    the test passed; on a slower one it did not, and the failure looked like
+    the demo losing its widgets. It was the test looking too early.
+    """
     term = demo()
     term.resize(70, 20)
-    term.wait_for_idle()
-    screen = "\n".join(term.display)
-    assert "widget half" in screen, term.describe()
-    assert CURSES_TITLE in screen, term.describe()
+    term.wait_for(
+        lambda t: (
+            "widget half" in "\n".join(t.display)
+            and CURSES_TITLE in "\n".join(t.display)
+        ),
+        message="both halves to come back after the resize",
+    )
     term.send_keys("<Escape>")
     assert term.wait_for_exit(timeout=10) == 0
 
