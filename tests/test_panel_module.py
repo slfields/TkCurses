@@ -191,3 +191,49 @@ def test_update_panels_works_back_to_front():
         tcpanel.new_panel(Recording(name))
     tcpanel.update_panels()
     assert order == ["back", "middle", "front"]
+
+
+# ------------------------------------------------- whose background it is
+
+
+def test_the_background_is_only_restored_when_we_own_the_screen(monkeypatch):
+    """The bug CI caught and this machine's timing hid.
+
+    stdscr is the background a curses program draws on, and a hidden panel
+    has to be painted over from it. But when tkcurses.curses attached to a
+    screen a tkinter application already had up, stdscr is a *blank* window
+    and the widgets are the background - so restoring from it paints blanks
+    over them. It wiped the widget half of the demo off the screen, and only
+    on a machine slow enough that the widgets did not repaint afterwards.
+    """
+    from tkcurses import curses as tc
+
+    restored = []
+
+    class Background(Window):
+        def touch_region(self, y, x, height, width):
+            restored.append((y, x, height, width))
+
+        def is_wintouched(self):
+            return True
+
+        def noutrefresh(self):
+            restored.append("blitted")
+
+    background = Background(ScreenBuffer(20, 6), 0, 0, 6, 20, owns=True)
+    monkeypatch.setattr(tc, "_stdscr", background)
+
+    panel = tcpanel.new_panel(make_window())
+    panel._painted = (0, 0, 3, 8)
+    panel.hide()
+
+    monkeypatch.setattr(tc, "_owns_screen", False)
+    tcpanel.update_panels()
+    assert restored == [], "an application's background must be left alone"
+
+    monkeypatch.setattr(tc, "_owns_screen", True)
+    panel._painted = (0, 0, 3, 8)
+    tcpanel.update_panels()
+    assert restored == [(0, 0, 3, 8), "blitted"], (
+        "our own background has to be put back"
+    )

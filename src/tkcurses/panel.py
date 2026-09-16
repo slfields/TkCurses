@@ -179,6 +179,12 @@ def update_panels() -> None:
     what the standard library was measured doing the other way: hide the top
     panel and what was under it comes back.
 
+    That step is skipped when :mod:`tkcurses.curses` attached to a screen a
+    tkinter application already had up. There stdscr is a blank window and
+    the widgets are the background, so restoring from it would paint blanks
+    over them - measured, it wiped the widget half of the demo off the screen
+    on a resize. An application that owns the background repaints its own.
+
     Then every visible panel is copied, back to front, whole rather than only
     what changed in it - a panel that has not been written to since the last
     update still has to be copied if something in front of it moved.
@@ -188,7 +194,11 @@ def update_panels() -> None:
     """
     from tkcurses import curses as _tkcurses
 
-    background = _tkcurses._stdscr
+    # stdscr is the background only when this process started the screen.
+    # Attached to a running application it is a blank window and the widgets
+    # are what is behind the panels, so restoring from it paints blanks over
+    # them.
+    background = _tkcurses._stdscr if _tkcurses._owns_screen else None
     for panel in _stack:
         where = panel._painted
         if where is None:
