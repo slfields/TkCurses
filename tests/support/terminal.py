@@ -583,18 +583,39 @@ class TerminalHarness:
         self.send(f"\x1b[<{code};{x + 1};{y + 1}{final}".encode())
 
     def click(self, x: int, y: int, *, button: int = 1, settle: float = 0.05) -> None:
-        """Press and release at ``(x, y)``, with a pause between, as a hand does.
+        """Press and release at ``(x, y)``, pausing either side, as a hand does.
 
-        The pause is not decoration. Sent back to back the two escape
+        Neither pause is decoration, and they are for different faults.
+
+        Between the press and the release: sent back to back the two escape
         sequences arrive in one read, and ncurses holds the release until
         something else turns up - so an application sees a button pressed and
-        never released. No real mouse produces that; a click takes tens of
-        milliseconds, which is what ``settle`` stands in for.
+        never released.
+
+        After the release: **ncurses drops mouse reports that arrive faster
+        than the application drains them.** Measured with a plain curses
+        program, no TkCurses involved - a handler that takes 120ms to run
+        loses two of the four events from two clicks, on an idle machine.
+        Without this pause a test that clicks a list and then a button left
+        the button drawn pressed and never invoked, every time on a single
+        core, and intermittently on a CI runner - which is what made CI red
+        more often than green.
+
+        No real mouse produces either shape. A click takes tens of
+        milliseconds and a person does not click twice in fifty of them,
+        which is what ``settle`` stands in for.
+
+        What this can promise is bounded by ``settle``: measured, an
+        application answering within 0.05s gets every event, and one taking
+        0.08s starts losing them. Drive something slower than that with a
+        larger settle rather than expecting the default to cover it.
         """
         self.send_mouse(x, y, button=button, action="press")
         if settle:
             self._drain(settle)
         self.send_mouse(x, y, button=button, action="release")
+        if settle:
+            self._drain(settle)
 
     def resize(self, cols: int, rows: int) -> None:
         """Resize the terminal and signal the child, as a real resize would."""

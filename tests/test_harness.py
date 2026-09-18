@@ -346,3 +346,72 @@ curses.wrapper(main)
     with pytest.raises(AssertionError, match="malformed"):
         term.assert_box(top=0, left=0, height=3, width=10, timeout=0.4)
     term.send_keys("q")
+
+
+# ------------------------------------------------ clicking a slow program
+
+
+SLOW_MOUSE_APP = """
+    import curses
+    import time
+
+    def main(stdscr):
+        curses.mousemask(curses.ALL_MOUSE_EVENTS)
+        curses.mouseinterval(0)
+        stdscr.keypad(True)
+        stdscr.addstr(0, 0, "ready")
+        stdscr.refresh()
+        seen = []
+        stdscr.timeout(200)
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline:
+            key = stdscr.getch()
+            if key != curses.KEY_MOUSE:
+                continue
+            try:
+                state = curses.getmouse()[4]
+            except curses.error:
+                continue
+            if state & curses.BUTTON1_PRESSED:
+                seen.append("p")
+            elif state & curses.BUTTON1_RELEASED:
+                seen.append("r")
+            # As slow as click()'s own settle, which is the boundary of what
+            # it can promise: measured, all four events arrive with a handler
+            # up to 0.05s and are lost from 0.08s.
+            time.sleep(0.05)
+            stdscr.addstr(1, 0, ("saw: " + "".join(seen) + " " * 20)[:20])
+            stdscr.refresh()
+
+    curses.wrapper(main)
+"""
+
+
+def test_a_click_reaches_a_program_too_slow_to_keep_up(terminal, tmp_path):
+    """The rule behind click()'s two pauses, pinned against plain curses.
+
+    **ncurses drops mouse reports that arrive faster than the application
+    drains them.** No TkCurses in this test at all: a curses program whose
+    handler takes 120ms loses events from clicks sent back to back, and did
+    so on an idle machine. That is what made CI red more often than green -
+    a test would click a list and then a button, and the button's release
+    never arrived, so it was drawn pressed and never invoked.
+
+    click() pauses after the release as well as between press and release,
+    which is what a real mouse does anyway: nobody clicks twice in fifty
+    milliseconds.
+
+    The promise is bounded by ``settle``: a handler slower than that still
+    loses events, measured at 0.08s. A test driving something that slow
+    should pass a larger settle rather than expect this to cover it.
+    """
+    term = terminal(cols=40, rows=6)
+    term.run_source(SLOW_MOUSE_APP, workdir=tmp_path)
+    term.wait_for_text("ready")
+    term.wait_for_idle()
+    term.click(5, 3)
+    term.click(5, 4)
+    term.wait_for(
+        lambda t: "saw: prpr" in "\n".join(t.display),
+        message="both clicks, press and release, to arrive",
+    )
