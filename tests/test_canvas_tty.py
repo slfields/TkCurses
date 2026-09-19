@@ -64,6 +64,7 @@ def test_a_line_is_drawn(terminal, tmp_path):
         program("c.create_line(0, 0, 20, 0, fill='white')"), workdir=tmp_path
     )
     term.wait_for(lambda t: inked(t), message="a line")
+    term.wait_for_idle()
     cells = inked(term)
     assert all(row == 0 for row, _ in cells)
     assert len(cells) == 21
@@ -74,6 +75,7 @@ def test_a_horizontal_line_uses_the_upper_half(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(program("c.create_line(0, 0, 5, 0)"), workdir=tmp_path)
     term.wait_for(lambda t: inked(t), message="a line")
+    term.wait_for_idle()
     assert term.display[0][0] == "▀"
 
 
@@ -81,6 +83,7 @@ def test_a_line_one_pixel_lower_uses_the_lower_half(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(program("c.create_line(0, 1, 5, 1)"), workdir=tmp_path)
     term.wait_for(lambda t: inked(t), message="a line")
+    term.wait_for_idle()
     assert term.display[0][0] == "▄"
 
 
@@ -91,6 +94,7 @@ def test_two_lines_in_one_cell_make_a_full_block(terminal, tmp_path):
         workdir=tmp_path,
     )
     term.wait_for(lambda t: "█" in "".join(t.display), message="a full block")
+    term.wait_for_idle()
     assert term.display[0][0] == "█"
 
 
@@ -101,6 +105,7 @@ def test_a_circle_is_as_wide_as_it_is_tall(terminal, tmp_path):
         program("c.create_oval(0, 0, 20, 20, outline='white')"), workdir=tmp_path
     )
     term.wait_for(lambda t: len(inked(t)) > 20, message="a circle")
+    term.wait_for_idle()
     cells = inked(term)
     columns = {column for _, column in cells}
     rows = {row for row, _ in cells}
@@ -115,6 +120,7 @@ def test_an_oval_is_hollow_and_a_filled_one_is_not(terminal, tmp_path):
         program("c.create_oval(0, 0, 20, 20, outline='white')"), workdir=tmp_path
     )
     term.wait_for(lambda t: len(inked(t)) > 20, message="an oval")
+    term.wait_for_idle()
     hollow = len(inked(term))
 
     solid = terminal(cols=40, rows=12)
@@ -123,6 +129,7 @@ def test_an_oval_is_hollow_and_a_filled_one_is_not(terminal, tmp_path):
         workdir=tmp_path / "solid",
     )
     solid.wait_for(lambda t: len(inked(t)) > 20, message="a filled oval")
+    solid.wait_for_idle()
     assert len(inked(solid)) > hollow
 
 
@@ -133,6 +140,7 @@ def test_a_rectangle_has_four_corners_and_a_hollow_middle(terminal, tmp_path):
         workdir=tmp_path,
     )
     term.wait_for(lambda t: len(inked(t)) > 20, message="a rectangle")
+    term.wait_for_idle()
     cells = inked(term)
     assert (1, 2) in cells  # pixel (2,2) is the lower half of cell row 1
     assert (1, 20) in cells
@@ -146,6 +154,7 @@ def test_a_filled_rectangle_is_solid(terminal, tmp_path):
         workdir=tmp_path,
     )
     term.wait_for(lambda t: len(inked(t)) > 20, message="a filled rectangle")
+    term.wait_for_idle()
     assert (5, 11) in inked(term)
 
 
@@ -160,6 +169,7 @@ def test_two_colours_share_one_cell(terminal, tmp_path):
         workdir=tmp_path,
     )
     term.wait_for(lambda t: "▀" in "".join(t.display), message="a split cell")
+    term.wait_for_idle()
     assert term.display[0][0] == "▀"
     attrs = term.attrs_at(0, 0)
     assert attrs["fg"] == "red"
@@ -176,6 +186,7 @@ def test_an_item_made_later_covers_one_made_earlier(terminal, tmp_path):
         workdir=tmp_path,
     )
     term.wait_for(lambda t: len(inked(t)) > 20, message="two rectangles")
+    term.wait_for_idle()
     assert term.attrs_at(2, 4)["fg"] == "blue"
 
 
@@ -241,7 +252,9 @@ def test_moving_an_item_clears_where_it_was(terminal, tmp_path):
         workdir=tmp_path,
     )
     term.wait_for(lambda t: (1, 2) in inked(t), message="the rectangle")
+    term.wait_for_idle()
     term.wait_for(lambda t: (1, 22) in inked(t), message="the move")
+    term.wait_for_idle()
     assert (1, 2) not in inked(term)
 
 
@@ -255,7 +268,9 @@ def test_deleting_an_item_clears_it(terminal, tmp_path):
         workdir=tmp_path,
     )
     term.wait_for(lambda t: len(inked(t)) > 10, message="the rectangle")
+    term.wait_for_idle()
     term.wait_for(lambda t: not inked(t), message="it to go")
+    term.wait_for_idle()
 
 
 def test_a_hidden_item_is_not_drawn(terminal, tmp_path):
@@ -287,6 +302,7 @@ def test_clicking_an_item_runs_its_binding(terminal, tmp_path):
     )
     term.wait_for_text("ready")
     term.wait_for(lambda t: len(inked(t)) > 5, message="the rectangle")
+    term.wait_for_idle()
     term.click(2, 2)
     term.wait_for_text("hit (1,)")
 
@@ -323,6 +339,7 @@ def test_scrolling_moves_what_is_visible(terminal, tmp_path):
     )
     term.wait_for_text("ready")
     term.wait_for(lambda t: inked(t), message="the rectangle to scroll in")
+    term.wait_for_idle()
 
 
 def test_a_canvas_survives_the_terminal_shrinking(terminal, tmp_path):
@@ -334,8 +351,10 @@ def test_a_canvas_survives_the_terminal_shrinking(terminal, tmp_path):
         workdir=tmp_path,
     )
     term.wait_for(lambda t: len(inked(t)) > 20, message="an oval")
+    term.wait_for_idle()
     term.resize(cols=24, rows=8)
     term.wait_for(lambda t: len(inked(t)) > 5, message="the oval after resize")
+    term.wait_for_idle()
     assert "Traceback" not in term.stderr
 
 
@@ -377,5 +396,6 @@ def test_a_shape_does_not_take_the_canvas_background_as_its_colour(terminal, tmp
         workdir=tmp_path,
     )
     term.wait_for(lambda t: len(inked(t)) > 10, message="the rectangle")
+    term.wait_for_idle()
     row, column = next(iter(sorted(inked(term))))
     assert term.attrs_at(row, column)["fg"] == "red"
