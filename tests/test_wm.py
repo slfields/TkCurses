@@ -331,3 +331,61 @@ def test_wm_manage_explains_what_it_needs(window):
 def test_wm_forget_explains_what_it_needs(window):
     with pytest.raises(TclError, match="geometry managers"):
         window.wm_forget(window)
+
+
+# ------------------------------------------------------------------ dragging
+
+
+def test_the_drag_bindings_are_installed_for_the_window(window):
+    assert "Toplevel" in window.tk.bound_classes
+
+
+def test_a_subclass_gets_the_drag_bindings_under_its_own_name(root):
+    """A Toplevel subclass reports its own name from winfo_class(), so
+    binding under the literal "Toplevel" would leave every subclass - which
+    includes simpledialog.Dialog, and so every dialog in the library - the
+    one kind of window that could not be moved.
+    """
+
+    class Panel(Toplevel):
+        pass
+
+    panel = Panel(root, width=10, height=4)
+    assert panel.winfo_class() == "Panel"
+    assert "Panel" in panel.tk.bound_classes
+
+
+def test_a_window_starts_with_no_drag_in_progress(window):
+    assert window._drag_origin is None
+
+
+def test_raising_a_window_keeps_its_children_in_front_of_it(root, window):
+    """Regression, TkCurses-bk8.
+
+    Sibling order is stacking order, but a child is not a sibling: it draws
+    on its own panel above its container's. Raising only the container's
+    panel puts the container's blank interior in front of its own contents,
+    which on screen is a window that arrives empty.
+    """
+    label = Toplevel(window, width=6, height=3)
+    stack = root.tk.panels
+    other = Toplevel(root, width=10, height=4)
+    other.tkraise()
+
+    window.tkraise()
+
+    order = stack._order
+    assert order.index(label._panel) > order.index(window._panel)
+    assert order.index(window._panel) > order.index(other._panel)
+
+
+def test_lowering_a_window_takes_its_children_down_with_it(root, window):
+    """The same rule downwards: the children come too, and stay above it."""
+    child = Toplevel(window, width=6, height=3)
+    other = Toplevel(root, width=10, height=4)
+
+    window.lower()
+
+    order = root.tk.panels._order
+    assert order.index(window._panel) < order.index(child._panel)
+    assert order.index(child._panel) < order.index(other._panel)

@@ -445,12 +445,25 @@ exposed as a ttk **widget** because ttk has one; moving is not, because ttk
 has no such widget — on a desktop the WM provides it. So resizing is opt-in
 per window and moving is a property of decoration.
 
-### Known gaps
+### How it is bound
 
-Dragging a decorated window is **not yet implemented** — there are no
-`Toplevel` class bindings at all, so today a decorated window can be moved
-only by the program calling `geometry()`. `TkCurses-fiq` implements the rule
-above. The `overrideredirect` half needs nothing: it already works.
+Class bindings on `<Button-1>`, `<B1-Motion>` and `<ButtonRelease-1>`,
+installed by `Toplevel` the first time a window of a given class is made —
+`_toplevel_press`, `_toplevel_drag`, `_toplevel_release`.
+
+They are registered under **`winfo_class()`, not the literal `"Toplevel"`**,
+and that is load-bearing. A `Toplevel` subclass reports its own name from
+`winfo_class()`, so a hard-coded tag would bind nothing for
+`simpledialog.Dialog` — making every dialog in the library the one kind of
+window that could not be moved. Same trap as Spinbox/Entry,
+OptionMenu/Menubutton and ScrolledText/Text: bind under the class the widget
+actually reports.
+
+Because these are class bindings, widget bindings still run first — an
+application that binds `<Button-1>` on its own title row sees the event and
+can stop this with `"break"`.
+
+### Known gap
 
 `geometry()` changes a window's size and position and redraws it, but fires
 no `<Configure>` (`TkCurses-b5o`). An application doing its own dragging

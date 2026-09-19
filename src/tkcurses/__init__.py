@@ -2190,6 +2190,35 @@ class BaseWidget(Misc):
             stack.raise_above(self._panel, target)
         else:
             stack.lower_below(self._panel, target)
+        self._restack_descendants(stack)
+
+    def _restack_descendants(self, stack: PanelStack) -> None:
+        """Carry the children along, so the widget does not bury its own.
+
+        A child draws on its own panel *above* its container's - that is what
+        makes a label visible inside a frame at all. Moving only the
+        container's panel therefore puts the container's own blank interior
+        in front of everything it contains: measured, raising a Toplevel left
+        a window with a border, a title, and nothing else. Every label, every
+        grip, gone, and not left behind at the old position either - simply
+        covered.
+
+        Chaining rather than raising each to the top, and from the container
+        upward: that keeps the subtree's own order intact and works for
+        lowering as well, where the children have to come down and stay just
+        above the parent rather than be left at the front.
+        """
+        previous = self._panel
+        if previous is None:
+            return
+        for widget in self._subtree():
+            if widget is self or not isinstance(widget, BaseWidget):
+                continue
+            panel = widget._panel
+            if panel is None:
+                continue
+            stack.raise_above(panel, previous)
+            previous = panel
 
     def destroy(self) -> None:
         """Destroy the widget, its children, and their windows.
@@ -3790,14 +3819,39 @@ class Toplevel(BaseWidget, Wm):
             **kw: Options as keywords.
         """
         self._class_name = class_
+        self._drag_origin: tuple[int, int, int, int] | None = None
         super().__init__(master, cnf, name=name, **kw)
         self._setup_wm()
         self._allocate(self._default_rect())
         self._map()
+        self._install_class_bindings()
 
     def winfo_class(self) -> str:
         """The class this window binds and reads options under."""
         return self._class_name or type(self).__name__
+
+    # ------------------------------------------------------------- bindings
+
+    def _install_class_bindings(self) -> None:
+        """Register title-row dragging for every window of this class.
+
+        Under ``winfo_class()`` rather than the literal ``"Toplevel"``, which
+        matters because a subclass reports its own name here - so
+        :class:`tkcurses.simpledialog.Dialog` binds under ``Dialog`` and gets
+        the behaviour, where a hard-coded tag would have left every dialog
+        in the library the one kind of window that cannot be moved.
+
+        Class bindings rather than instance ones, so an application that
+        binds the title row itself runs first and can stop this with
+        ``"break"``.
+        """
+        tag = self.winfo_class()
+        if tag in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add(tag)
+        self.bind_class(tag, "<Button-1>", _toplevel_press)
+        self.bind_class(tag, "<B1-Motion>", _toplevel_drag)
+        self.bind_class(tag, "<ButtonRelease-1>", _toplevel_release)
 
     def _default_rect(self) -> Rect:
         """Where the window goes when nothing has said.
@@ -3881,6 +3935,64 @@ class Toplevel(BaseWidget, Wm):
     def _redraw_decoration(self) -> None:
         """Repaint the border and title after the window manager changed them."""
         self._draw()
+
+
+def _toplevel_press(event: Event) -> Any:
+    """Start a drag, if the press landed on the title row.
+
+    A terminal has no window manager, so moving a decorated window is this
+    library's job - the same job Mutter or KWin would be doing, and the
+    reason it is a class binding rather than something an application has to
+    write. An ``overrideredirect`` window is excluded on purpose: it has no
+    decoration to grab, and on a desktop such a window is the application's
+    to move. See ARCHITECTURE.md, "Window Management".
+
+    The title row is row zero, and only row zero. A press anywhere else
+    belongs to whatever is there.
+    """
+    window = event.widget
+    if not isinstance(window, Toplevel) or not window._bordered or event.y != 0:
+        return None
+    window._drag_origin = (
+        event.x_root,
+        event.y_root,
+        window.winfo_x(),
+        window.winfo_y(),
+    )
+    # Clicking a window to move it and having it stay behind another would be
+    # surprising, and here there is no window manager to do the raising.
+    window.tkraise()
+    return None
+
+
+def _toplevel_drag(event: Event) -> Any:
+    """Move the window by however far the pointer has travelled.
+
+    By the distance travelled rather than to the position arrived at, so the
+    column of the title that was grabbed stays under the pointer - the rule
+    the scrollbar thumb and the sizegrip already follow. ``geometry`` clamps
+    to the screen, so a window dragged at the edge stops rather than leaving.
+    """
+    window = event.widget
+    if not isinstance(window, Toplevel):
+        return None
+    origin = window._drag_origin
+    if origin is None:
+        return None
+    press_x, press_y, left, top = origin
+    x = left + (event.x_root - press_x)
+    y = top + (event.y_root - press_y)
+    window.geometry(f"{window.winfo_width()}x{window.winfo_height()}+{x}+{y}")
+    window.update_layout()
+    return None
+
+
+def _toplevel_release(event: Event) -> Any:
+    """Finish the drag, leaving the window where it was let go."""
+    window = event.widget
+    if isinstance(window, Toplevel):
+        window._drag_origin = None
+    return None
 
 
 # ======================================================================
