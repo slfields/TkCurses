@@ -318,3 +318,105 @@ def test_a_dragged_window_carries_its_contents(terminal, tmp_path):
     assert "◢" in term.display[11], term.describe()
     # And nothing of it was left at the old position.
     assert not any("BODYTEXT" in row for row in term.display[:9]), term.describe()
+
+
+# ======================================================================
+# A window stays inside a terminal that changes size
+# ======================================================================
+
+RESIZING = """
+import tkcurses
+
+root = tkcurses.Tk()
+buffer = root.tk.screen.buffer
+
+win = tkcurses.Toplevel(root, name="modal", width=16, height=5)
+win.title(" modal ")
+tkcurses.Label(win, text="MODAL", anchor="w").place(x=1, y=1, width=8)
+win.geometry("16x5+30+10")
+win.grab_set()
+
+
+def report(event=None):
+    root.update_layout()
+    buffer.write(0, 0, ("%dx%d at %d,%d" % (
+        root.winfo_width(), root.winfo_height(),
+        win.winfo_x(), win.winfo_y())).ljust(20))
+    root.tk.screen.refresh()
+
+
+root.bind("<Configure>", report, add="+")
+root.update_layout()
+report()
+root.after(8000, root.quit)
+root.mainloop()
+"""
+
+
+@pytest.fixture
+def resizing(terminal, tmp_path):
+    term = terminal(cols=50, rows=18)
+    term.run_source(RESIZING, workdir=tmp_path)
+    term.wait_for_text("50x18 at 30,10")
+    term.wait_for_idle()
+    return term
+
+
+def settle(term, cols, rows):
+    """Resize and wait for the application to say it has caught up.
+
+    Never wait on idle here: the terminal is quiet in the gap between the
+    resize arriving and the application reacting to it.
+    """
+    term.resize(cols, rows)
+    term.wait_for_text(f"{cols}x{rows} at ")
+    term.wait_for_idle()
+
+
+def test_a_shrinking_terminal_brings_a_window_back_inside(resizing):
+    """Regression, TkCurses-l2i. The window used to keep +30+10 on a 28x8
+    terminal - entirely outside it, invisible, and with no panel.
+    """
+    settle(resizing, 28, 8)
+
+    assert "at 12,3" in resizing.row(0), resizing.describe()
+    assert any("MODAL" in row for row in resizing.display), resizing.describe()
+
+
+def test_a_modal_window_cannot_hide_while_holding_the_grab(resizing):
+    """The failure that made this a bug rather than a preference.
+
+    A modal window outside the screen still takes every click through the
+    grab, so the application stops responding with nothing on screen to say
+    why - measured, a button that looked entirely normal and never fired.
+    Whatever else a resize does, a window holding the grab has to remain
+    somewhere a person can see and answer it.
+    """
+    settle(resizing, 28, 8)
+
+    assert any("MODAL" in row for row in resizing.display), resizing.describe()
+    assert any("modal" in row for row in resizing.display), resizing.describe()
+
+
+def test_a_window_goes_back_to_where_it_was_when_there_is_room(resizing):
+    """Being brought inside must not cost the position permanently, or a
+    one-column shrink and back would rearrange the screen.
+    """
+    settle(resizing, 28, 8)
+    assert "at 12,3" in resizing.row(0), resizing.describe()
+
+    settle(resizing, 50, 18)
+
+    assert "at 30,10" in resizing.row(0), resizing.describe()
+
+
+def test_a_partial_shrink_moves_a_window_only_as_far_as_it_must(resizing):
+    settle(resizing, 40, 13)
+
+    assert "at 24,8" in resizing.row(0), resizing.describe()
+
+
+def test_a_window_that_still_fits_is_not_moved_at_all(resizing):
+    settle(resizing, 48, 17)
+
+    assert "at 30,10" in resizing.row(0), resizing.describe()

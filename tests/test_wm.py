@@ -389,3 +389,56 @@ def test_lowering_a_window_takes_its_children_down_with_it(root, window):
     order = root.tk.panels._order
     assert order.index(window._panel) < order.index(child._panel)
     assert order.index(child._panel) < order.index(other._panel)
+
+
+# ------------------------------------------------- inside the terminal, always
+
+
+def test_geometry_past_the_edge_is_brought_inside(window):
+    window.geometry("20x6+70+20")
+    assert window.winfo_x() + window.winfo_width() <= 80
+    assert window.winfo_y() + window.winfo_height() <= 24
+
+
+def test_minsize_does_not_push_a_window_off_the_edge(root):
+    """Regression, TkCurses-nvf. minsize grows a window without going near
+    geometry(), so it walked straight past the clamp that lived there.
+    Measured before the fix: a 10x4 window at +28+7 of a 40x12 terminal came
+    out 12 columns and 4 rows outside.
+    """
+    window = Toplevel(root, width=10, height=4)
+    window.geometry("10x4+68+18")
+
+    window.minsize(24, 9)
+
+    assert window.winfo_x() + window.winfo_width() <= 80
+    assert window.winfo_y() + window.winfo_height() <= 24
+
+
+def test_a_window_reports_a_position_its_own_setter_would_accept(window):
+    """The invariant, stated as the thing that was measurably false.
+
+    Setting a window to where it already is must be a no-op. When the clamp
+    was only applied at set time, a window could hold a position that
+    geometry(), asked for that exact position, refused to produce.
+    """
+    window.geometry("20x6+55+15")
+    before = (window.winfo_x(), window.winfo_y())
+
+    window.geometry(f"20x6+{before[0]}+{before[1]}")
+
+    assert (window.winfo_x(), window.winfo_y()) == before
+
+
+def test_the_size_is_clamped_before_the_position(root):
+    """Order matters: clamping x against the old width leaves a window
+    hanging off the edge by however much it then shrinks.
+    """
+    window = Toplevel(root, width=10, height=4)
+    window.maxsize(6, 3)
+
+    window.geometry("40x20+76+22")
+
+    assert (window.winfo_width(), window.winfo_height()) == (6, 3)
+    assert window.winfo_x() + 6 <= 80
+    assert window.winfo_y() + 3 <= 24

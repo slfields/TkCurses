@@ -428,8 +428,8 @@ big a terminal is.
   scrollbar thumb and the sizegrip follow.
 - **Raise on press.** Clicking a window to move it and having it stay behind
   another would be surprising, and TkCurses owns the z-order.
-- **Clamp to the screen**, via `wm_geometry` — which both paths go through,
-  and which already clamps.
+- **Clamp to the screen**, via `wm_geometry` — see the invariant below,
+  which both paths go through.
 - **Never swallow a press an application bound.** Class bindings run after
   widget bindings, so an application that binds the title row itself wins.
 
@@ -444,6 +444,46 @@ Note the asymmetry, which is correct rather than accidental. Resizing is
 exposed as a ttk **widget** because ttk has one; moving is not, because ttk
 has no such widget — on a desktop the WM provides it. So resizing is opt-in
 per window and moving is a property of decoration.
+
+### Where a window may be
+
+**A `Toplevel` is always wholly inside the terminal.** Not a courtesy applied
+when geometry is set — an invariant that holds at every moment, because there
+is nowhere for a window to overflow to and because everything else here is
+built on it: hit-testing, the grab, centring a dialog on its parent, and any
+code that computes from `winfo_x()`.
+
+Three things can break it, and all three go through `Wm._within_screen`:
+
+| | What changes | How the invariant is kept |
+|---|---|---|
+| `geometry()` | The window's position and size | Clamped on the way in; the position asked for is remembered |
+| `minsize()` / `maxsize()` | The window's size, not its position | A window at the edge that grows is moved back inside |
+| A terminal resize | **The screen, not the window** | Every window is repositioned into the new screen |
+
+The third is the one that is easy to miss, and it was missed: the clamp used
+to live inside `_apply_geometry`, so it held against whatever the terminal
+was when geometry was last set and nothing re-established it. A window could
+then report a position its own setter, asked for that exact position, would
+refuse to produce.
+
+**Why it is repositioned rather than clipped.** A `Toplevel` is both a `Wm`,
+which may not overflow the terminal, and a `Misc`, which may and gets clipped
+— `place()` is allowed to put a label half off the edge, and Tk clips that
+rather than moving it. Both rules are right for what they were written for,
+and a resize used to apply the weaker one to windows. The cost was not
+cosmetic: a modal window left outside the screen still takes every click
+through its grab, so the application stops responding with nothing drawn to
+explain it.
+
+**The position survives.** What `geometry()` was last asked for is kept, and a
+window displaced by a shrinking terminal returns to it when there is room
+again. Otherwise a one-column shrink and back would quietly rearrange the
+screen. An explicit `geometry()` call replaces what is remembered — a
+position the application named is the one it meant.
+
+The root is exempt, as everywhere else in this section: its size *is* the
+terminal's.
 
 ### How it is bound
 

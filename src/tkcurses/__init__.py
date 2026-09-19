@@ -2783,10 +2783,19 @@ class Wm:
     every method here is the library doing for itself what an X11 window
     manager would otherwise do.
 
-    Two consequences run through the whole class. Geometry is clamped to the
-    terminal, because there is nowhere for a window to overflow to. And
-    nothing raises ``WM_DELETE_WINDOW`` on its own: no user gesture closes a
-    window here, so an application that wants the protocol must invoke it.
+    Two consequences run through the whole class. **A window is always
+    inside the terminal**, because there is nowhere for it to overflow to -
+    an invariant rather than a courtesy, held by routing every path that
+    moves or resizes a window through :meth:`_within_screen`, and
+    re-established by :meth:`_reposition_for_screen` when the terminal itself
+    changes size. And nothing raises ``WM_DELETE_WINDOW`` on its own: no user
+    gesture closes a window here, so an application that wants the protocol
+    must invoke it.
+
+    The invariant used to be only established, never maintained: the clamp
+    lived in ``_apply_geometry`` and so held against whatever the screen was
+    when geometry was last set. A window could then report a position its own
+    setter would refuse to produce.
     """
 
     if TYPE_CHECKING:
@@ -2906,9 +2915,67 @@ class Wm:
 
     geometry = wm_geometry
 
+    #: The geometry the application last asked for, before the screen had its
+    #: say. A window displaced by a shrinking terminal returns here when
+    #: there is room again; None until geometry() is called.
+    _wanted_rect: Rect | None = None
+
     def _is_resizable_window(self) -> bool:
         """False for the root, whose geometry the terminal decides."""
         return not isinstance(self, Tk)
+
+    def _within_screen(self, rect: Rect) -> Rect:
+        """``rect`` brought inside the terminal, size first and then position.
+
+        **The one place that decides where a window may be.** Every path that
+        moves or resizes a window goes through here, which is what makes
+        "geometry is clamped to the terminal" an invariant rather than
+        something that happened to be true when it was last set.
+
+        It was the latter for a long time. The clamp lived inside
+        ``_apply_geometry``, so it held against the screen size at the moment
+        geometry was set and nothing re-established it afterwards. Two paths
+        walked straight past it: a terminal resize, which changes the screen
+        rather than the window, and ``minsize``, which grows a window without
+        going near ``geometry()``. Measured before this existed, a window at
+        ``+30+10`` on a terminal shrunk to 28x8 still reported ``+30+10`` -
+        a position ``geometry()`` itself, asked for it, would have refused.
+
+        Size before position, because the position a window can have depends
+        on how big it is: clamping x against the old width leaves a window
+        hanging off the edge by however much it then shrinks.
+        """
+        width, height = self._clamp_size(rect.width, rect.height)
+        screen_width, screen_height = self._screen_size()
+        return Rect(
+            clamp(rect.x, 0, max(0, screen_width - width)),
+            clamp(rect.y, 0, max(0, screen_height - height)),
+            width,
+            height,
+        )
+
+    def _reposition_for_screen(self) -> None:
+        """Put this window back inside a terminal that has changed size.
+
+        Called for every window when the terminal is resized. Two things
+        happen, and the second is what keeps the first from being destructive.
+
+        The window is brought inside the new screen, so it cannot end up
+        somewhere nothing can reach. That matters most for a modal window:
+        measured before this, shrinking the terminal under a dialog left it
+        invisible, still holding the grab, and every click in the application
+        going to a window nobody could see - a button that looked entirely
+        normal and did nothing, with nothing on screen to explain it.
+
+        And the position the application actually asked for is remembered, so
+        that growing the terminal again puts the window back where it was
+        rather than leaving it wherever a transient shrink pushed it. Without
+        that, a one-column shrink and back would quietly rearrange the screen.
+        """
+        wanted = self._wanted_rect or self._rect
+        target = self._within_screen(wanted)
+        if target != self._rect:
+            self._allocate(target)
 
     def _apply_geometry(self, spec: str) -> None:
         """Parse a geometry string and move or resize the window to match."""
@@ -2930,9 +2997,12 @@ class Wm:
         if match["x"] is not None:
             x = self._edge_offset(match["x"], screen_width, width)
             y = self._edge_offset(match["y"], screen_height, height)
-        x = clamp(x, 0, max(0, screen_width - width))
-        y = clamp(y, 0, max(0, screen_height - height))
-        self._allocate(Rect(x, y, width, height))
+        # What the application asked for, before the screen has its say. This
+        # is what the window goes back to if a shrink displaces it and the
+        # terminal is later big enough again, and an explicit geometry() call
+        # replaces it - a position the application named is the one it meant.
+        self._wanted_rect = Rect(x, y, width, height)
+        self._allocate(self._within_screen(Rect(x, y, width, height)))
 
     @staticmethod
     def _edge_offset(token: str, screen: int, extent: int) -> int:
@@ -2996,9 +3066,14 @@ class Wm:
         """Re-clamp the current size after the limits changed."""
         if not self._is_resizable_window():
             return
-        width, height = self._clamp_size(self._rect.width, self._rect.height)
-        if (width, height) != (self._rect.width, self._rect.height):
-            self._allocate(Rect(self._rect.x, self._rect.y, width, height))
+        # Through _within_screen rather than _clamp_size alone: a window at
+        # the edge that minsize makes bigger has to come back inside, and
+        # measured before this it did not - minsize(24, 9) on a 10x4 window
+        # at +28+7 of a 40x12 terminal left it hanging 12 columns and 4 rows
+        # off the screen, with no resize involved at all.
+        target = self._within_screen(self._rect)
+        if target != self._rect:
+            self._allocate(target)
 
     def wm_grid(
         self,
@@ -3594,6 +3669,14 @@ class Tk(BaseWidget, Wm):
         # The children's subtrees, not the root's: the root deliberately has
         # no window of its own, and giving it one puts an opaque full-screen
         # panel over everything drawn on the screen behind the widgets.
+        # Windows first, and by moving rather than clipping. A Toplevel is
+        # both a Wm, which may not overflow the terminal, and a Misc, which
+        # may and gets clipped - and it is the Misc rule that _sync_window
+        # applies. Re-establishing the stronger one here is what stops a
+        # window, and with it a grab, from ending up where nothing can reach.
+        for child in list(self.children.values()):
+            if isinstance(child, Wm):
+                child._reposition_for_screen()
         for child in list(self.children.values()):
             for widget in child._subtree():
                 if isinstance(widget, BaseWidget):
