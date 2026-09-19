@@ -338,6 +338,125 @@ Loading: [████████████░░░░░░░░] 60%
 
 ---
 
+## Window Management
+
+**There is no window manager, so TkCurses is one.** That single fact decides
+everything in this section, and it is the one thing about windows that has no
+counterpart in tkinter.
+
+### What tkinter does, and why it does not answer this
+
+On Linux, dragging a window is not tkinter's job. Two cases:
+
+| Window | Who moves it |
+|--------|--------------|
+| Decorated (normal) | **The window manager** — Mutter, KWin, Xfwm. It owns the title bar, intercepts the press, and runs the drag. tkinter is only told the result. |
+| `overrideredirect(True)` | **The application.** There is no decoration left to grab, so the program binds `<Button-1>` to record the offset and `<B1-Motion>` to call `geometry()`. This is the standard recipe, not a workaround. |
+
+A terminal has neither a window manager nor decorations that anything else
+draws. So **every** TkCurses `Toplevel` is structurally the second case: the
+library draws the title, owns the z-order, and receives the press. There is
+nobody else to delegate to.
+
+That does not make window dragging an extension to tkinter. It makes
+TkCurses play both roles at once — the toolkit *and* the window manager —
+and the division below is how it keeps them straight.
+
+### The rule
+
+**Decoration decides who drags.**
+
+- A **decorated** `Toplevel` — the default — is dragged by TkCurses, from its
+  title row. This is the library standing in for the window manager, doing
+  the job the WM would do on a desktop. An application writes nothing.
+- An **`overrideredirect(True)`** `Toplevel` is *not* dragged by TkCurses.
+  It has no decoration, so there is nothing to grab, and moving it is the
+  application's business — exactly as on a desktop.
+
+The second half is not a limitation, because **the standard tkinter recipe
+works here unchanged.** Verified:
+
+```python
+win = tkcurses.Toplevel(root)
+win.overrideredirect(True)
+win.geometry("20x4+3+2")
+bar = tkcurses.Label(win, text=" drag me ")
+bar.place(x=0, y=0, relwidth=1.0, height=1)
+
+drag = {}
+def press(event):
+    drag["x"] = event.x_root - win.winfo_x()
+    drag["y"] = event.y_root - win.winfo_y()
+
+def motion(event):
+    win.geometry(f"20x4+{event.x_root - drag['x']}+{event.y_root - drag['y']}")
+
+bar.bind("<Button-1>", press)
+bar.bind("<B1-Motion>", motion)
+```
+
+That is a tkinter program, not a TkCurses one, and it moves the window. Code
+written for a borderless tkinter window ports without edits.
+
+### The root is not one of them
+
+tkinter has two kinds of top-level window and they part company here, so the
+distinction is worth being blunt about:
+
+| | What it is | Moved by | Resized by |
+|---|---|---|---|
+| `Tk` — the root | **The terminal itself.** Its size is the terminal's size and its position is wherever the user put the terminal. | The user's *desktop* window manager, dragging the terminal emulator. Nothing in TkCurses. | The user, by resizing the terminal. TkCurses is told, via `<Configure>`. |
+| `Toplevel` | A window TkCurses draws **inside** the root, out of cells it owns. | TkCurses, or the application — per the rule above. | The application, e.g. by placing a `ttk.Sizegrip`. |
+
+So the root is the exception to everything in this section, and it is the
+exception precisely because it is the one window TkCurses did not draw. A
+`Toplevel` is ours down to the last cell; the root is a hole in the desktop
+that somebody else manages. Anything the library does to move or resize a
+window applies to `Toplevel` and stops at the root.
+
+This is also why the earlier sizegrip note reads the way it does: a sizegrip
+resizes *its own* window, which is nearly always a `Toplevel` and works; put
+one in the root and it has nothing it can do, because no drawing changes how
+big a terminal is.
+
+### What the library's own drag must do
+
+- **Handle**: the title row, which is already drawn. Nothing else — a press
+  anywhere else belongs to whatever widget is there.
+- **Move by distance travelled**, not to the position arrived at, so wherever
+  in the title the press landed stays under the pointer. The same rule the
+  scrollbar thumb and the sizegrip follow.
+- **Raise on press.** Clicking a window to move it and having it stay behind
+  another would be surprising, and TkCurses owns the z-order.
+- **Clamp to the screen**, via `wm_geometry` — which both paths go through,
+  and which already clamps.
+- **Never swallow a press an application bound.** Class bindings run after
+  widget bindings, so an application that binds the title row itself wins.
+
+### Resizing already follows this rule
+
+`ttk.Sizegrip` is a widget the *application* places, so it works on any
+window it is put in — that is the ttk API, and it is the application's
+choice — and it works on a `Toplevel` for the same reason dragging does:
+TkCurses drew it. The root is the exception, per the table above.
+
+Note the asymmetry, which is correct rather than accidental. Resizing is
+exposed as a ttk **widget** because ttk has one; moving is not, because ttk
+has no such widget — on a desktop the WM provides it. So resizing is opt-in
+per window and moving is a property of decoration.
+
+### Known gaps
+
+Dragging a decorated window is **not yet implemented** — there are no
+`Toplevel` class bindings at all, so today a decorated window can be moved
+only by the program calling `geometry()`. `TkCurses-fiq` implements the rule
+above. The `overrideredirect` half needs nothing: it already works.
+
+`geometry()` changes a window's size and position and redraws it, but fires
+no `<Configure>` (`TkCurses-b5o`). An application doing its own dragging
+therefore cannot learn its new position from an event — it has to read
+`winfo_x()`/`winfo_y()`. That is a bug rather than a design choice.
+
 ## Window Content Areas
 
 When rendering content within curses windows, **borders occupy the outermost cells** on all four sides. All widget rendering code MUST account for this.
