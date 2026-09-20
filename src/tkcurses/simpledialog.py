@@ -95,10 +95,12 @@ class Dialog(tkcurses.Toplevel):
 
         self.protocol("WM_DELETE_WINDOW", self.cancel)
         fit(self)
-        self.initial_focus.focus_set()
-        # Kept so that closing hands the keyboard back to whatever had it,
-        # which matters when this dialog was opened from inside another.
+        # Before the focus moves, not after. take_focus_grab records what it
+        # displaces, so called second it records this dialog's own widget -
+        # and restore_focus_grab then finds that widget destroyed and puts
+        # nothing back, which is the failure the pair exists to prevent.
         self._displaced = take_focus_grab(self)
+        self.initial_focus.focus_set()
         self.wait_window(self)
 
     # --------------------------------------------------- construction hooks
@@ -145,7 +147,14 @@ class Dialog(tkcurses.Toplevel):
             self.cancel()
 
     def cancel(self, event: Event | None = None) -> None:  # noqa: ARG002
-        """Close without applying, handing the keyboard back."""
+        """Close without applying, handing the keyboard back.
+
+        The parent is a fallback, not the mechanism: destroy() runs
+        restore_focus_grab after this, which puts the keyboard back on the
+        widget that actually had it. This only matters when that widget has
+        itself been destroyed in the meantime, and restore has nothing to
+        give back to.
+        """
         if self.parent is not None and self.parent.winfo_exists():
             self.parent.focus_set()
         self.destroy()

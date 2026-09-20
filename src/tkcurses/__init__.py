@@ -443,6 +443,7 @@ class Misc:
         self._panel: Panel | None = None
         self._mapped = False
         self._takefocus = True
+        self._takefocus_given = False
         self._destroyed = False
 
         self.tk.widgets.add(self._w, self)
@@ -493,6 +494,11 @@ class Misc:
         self._destroyed = True
         self._mapped = False
         self.tk.bindings.unbind(self._w)
+        # Pending callbacks go with it. Tk owns an after handle as a command
+        # belonging to the widget, so destroying the widget drops it and the
+        # callback never runs; here it used to run against a widget whose
+        # window and panel were gone.
+        self.tk.timers.cancel_for(self._w)
         self.tk.widgets.remove(self._w)
         self.tk.selections.disown(self)
         if self.tk.focus is self:
@@ -772,7 +778,7 @@ class Misc:
         order = [
             widget
             for widget in self.winfo_toplevel()._subtree()
-            if widget._takefocus and widget is not self.winfo_toplevel()
+            if widget._focus_ok() and widget is not self.winfo_toplevel()
         ]
         if not order:
             return None
@@ -781,6 +787,32 @@ class Misc:
         except ValueError:
             return order[0 if direction > 0 else -1]
         return order[(index + direction) % len(order)]
+
+    def _focus_ok(self) -> bool:
+        """Whether tabbing may stop on this widget.
+
+        Tk settles this in ``::tk::FocusOK``, and it is three rules rather
+        than one:
+
+        * ``takefocus`` set to false - never.
+        * ``takefocus`` set to true - always, **disabled or not**. A caller
+          who named it meant it.
+        * ``takefocus`` left alone - only while the widget is not disabled.
+
+        The third is the one that was missing, so tabbing stopped on widgets
+        that could not be typed into and said nothing about why; the next Tab
+        moved on, making it read as a dead stop rather than a skipped one.
+
+        The distinction needs to know whether ``takefocus`` was *asked for* or
+        merely defaulted, which a bool cannot hold - hence
+        ``_takefocus_given``. Tk keeps the same distinction by defaulting the
+        option to the empty string rather than to a truth value.
+        """
+        if not self._takefocus:
+            return False
+        if self._takefocus_given:
+            return True
+        return str(self._options.get("state", "normal")) != "disabled"
 
     def _subtree(self) -> Iterator[Misc]:
         """This widget and its descendants, parents before children."""
@@ -805,11 +837,11 @@ class Misc:
         if func is None:
             time.sleep(ms / 1000.0)
             return None
-        return self.tk.timers.after(ms, func, *args)
+        return self.tk.timers.after(ms, func, *args, owner=self._w)
 
     def after_idle(self, func: Callable[..., Any], *args: Any) -> str:
         """Run ``func`` when the event loop next has nothing else to do."""
-        return self.tk.timers.after_idle(func, *args)
+        return self.tk.timers.after_idle(func, *args, owner=self._w)
 
     def after_cancel(self, id: str) -> None:
         """Cancel a scheduled callback.
@@ -1912,8 +1944,10 @@ class BaseWidget(Misc):
         if master is None:
             master = _get_default_root(f"create a {type(self).__name__}")
         super().__init__(master, name)
-        self._options = self._initial_options({**(cnf or {}), **kw})
+        given = {**(cnf or {}), **kw}
+        self._options = self._initial_options(given)
         self._takefocus = bool(self._options.get("takefocus", False))
+        self._takefocus_given = "takefocus" in given
 
     # ------------------------------------------------------------ options
 
@@ -1976,8 +2010,9 @@ class BaseWidget(Misc):
         if not given:
             return dict(self._options)
         self._options.update(self._checked(given))
-        if "takefocus" in self._options:
+        if "takefocus" in given:
             self._takefocus = bool(self._options["takefocus"])
+            self._takefocus_given = True
         self._configured_menubar(given)
         return None
 
@@ -2020,6 +2055,13 @@ class BaseWidget(Misc):
         """
         previous, self._rect = self._rect, rect
         resized = (rect.width, rect.height) != (previous.width, previous.height)
+        if resized:
+            # How much of the content is visible is a function of the size, so
+            # a scrollbar told before the widget had its final size was told a
+            # fraction computed against the wrong height. Nothing corrected
+            # it, and the ordinary idiom - create, fill, lay out - is the
+            # broken order, so the common case was the wrong one.
+            self._report_scroll_view()
         if resized and self._layout_manager is not None:
             # A container given a new size has to place its children again.
             # Propagation travels upward - what a widget needs - and this is
@@ -2048,6 +2090,14 @@ class BaseWidget(Misc):
             # descendant.
             if widget is not self and isinstance(widget, BaseWidget):
                 widget._sync_window()
+
+    def _report_scroll_view(self) -> None:
+        """Tell any scrollbar where the view is now. A no-op unless scrollable.
+
+        Overridden by the widgets that have a view to report - Listbox, Text
+        and Canvas - so that :meth:`_allocate` has one thing to call without
+        knowing which widgets those are.
+        """
 
     def _sync_window(self) -> bool:
         """Put this widget's curses window where its geometry now says.
@@ -3412,6 +3462,7 @@ class Tk(BaseWidget, Wm):
         self.className = className
         self._options = dict(self._option_spec())
         self._takefocus = True
+        self._takefocus_given = False
 
         self._screen = CursesScreen()
         self._mouse_owner: Misc | None = None
@@ -4661,7 +4712,26 @@ class _TextWidget(_Drawable):
         self._variable_changed()
 
     def _variable_changed(self) -> None:
-        """Re-measure and repaint after the variable behind the text moved."""
+        """Re-measure and repaint after the variable behind the text moved.
+
+        The ``text`` option is kept in step with the variable, which is what
+        Tk does: measured on 9.0.2, a Label built with ``textvariable=`` and
+        no ``text=`` answers ``cget("text")`` with the variable's value and
+        keeps answering with it as the variable changes.
+
+        It did not here, and the display was right the whole time - ``_text``
+        prefers the variable - so every screen looked correct and only code
+        that *asked* a widget what it was showing got an answer that was not
+        on the screen.
+
+        Written into the options directly rather than through ``configure``:
+        that would re-enter the option machinery on every write, and a
+        ``configure`` that wrote the variable back would have the two chasing
+        each other.
+        """
+        variable = self._options["textvariable"]
+        if variable is not None:
+            self._options["text"] = str(variable.get())
         self._apply_requested_size()
         self._invalidate_layout()
         self._redraw()
@@ -6296,7 +6366,15 @@ class LabelFrame(Frame):
         self._caption_changed()
 
     def _caption_changed(self) -> None:
-        """Re-measure and repaint after the caption's variable moved."""
+        """Re-measure and repaint after the caption's variable moved.
+
+        The ``text`` option follows the variable here too - see the note on
+        ``_TextWidget._variable_changed``. A LabelFrame is a Frame rather
+        than a _TextWidget, so it keeps its own copy of this.
+        """
+        variable = self._options["textvariable"]
+        if variable is not None:
+            self._options["text"] = str(variable.get())
         self._apply_requested_size()
         self._invalidate_layout()
         self._redraw()
@@ -7340,6 +7418,10 @@ class Text(_Drawable):
             min(1.0, (self._left + width) / total),
         )
 
+    def _report_scroll_view(self) -> None:
+        """A resize changes how much is visible, so the scrollbar is retold."""
+        self._report_view()
+
     def _report_view(self) -> None:
         """Tell the scrollbars where the view is, if anything is listening."""
         for option, fractions in (
@@ -8289,6 +8371,10 @@ class Canvas(_Drawable):
         origin = top if vertical else left
         start = ((self._top if vertical else self._left) - origin) / total
         return (min(1.0, max(0.0, start)), min(1.0, max(0.0, start + span / total)))
+
+    def _report_scroll_view(self) -> None:
+        """A resize changes how much is visible, so the scrollbar is retold."""
+        self._report_view()
 
     def _report_view(self) -> None:
         """Tell the scrollbars where the view is, if anything is listening."""
@@ -9599,6 +9685,10 @@ class Listbox(_Drawable):
             return (0.0, 1.0)
         height = max(1, self._text_area().height)
         return (self._top / total, min(1.0, (self._top + height) / total))
+
+    def _report_scroll_view(self) -> None:
+        """A resize changes how much is visible, so the scrollbar is retold."""
+        self._publish_view()
 
     def _publish_view(self) -> None:
         """Tell the scrollbar where the view is, if one is listening."""

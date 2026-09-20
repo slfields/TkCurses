@@ -141,9 +141,6 @@ def test_escape_closes_the_dialog_without_an_answer(running):
     assert not any("Who?" in row for row in running.display), running.describe()
 
 
-@pytest.mark.xfail(
-    reason="TkCurses-3wi: simpledialog takes the focus grab after moving focus"
-)
 def test_closing_returns_the_keyboard_to_the_widget_that_had_it(running):
     """The application's Entry had the focus. After the dialog closes it
     should have it again - the *widget*, not merely its window.

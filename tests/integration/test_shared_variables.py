@@ -239,7 +239,6 @@ def test_two_checkbuttons_on_one_variable_move_together(app):
 # ---------------------------------------------------- what cget reports
 
 
-@pytest.mark.xfail(reason="TkCurses-u4y: cget('text') does not follow a textvariable")
 def test_cget_text_reports_what_the_variable_holds(text_widgets):
     """Measured against Tk 9.0.2, where a Label built with textvariable= and
     no text= answers cget('text') with the variable's value, and keeps

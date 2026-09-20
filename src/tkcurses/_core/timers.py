@@ -75,6 +75,10 @@ class Timer:
     #: Cleared by cancel(). A heap entry cannot be removed cheaply, so a
     #: cancelled timer is left in place and skipped when it surfaces.
     live: bool = field(compare=False, default=True)
+    #: The widget path this was scheduled on, so that destroying the widget
+    #: can drop it. A path rather than the widget itself: a pending callback
+    #: must not be the thing keeping a destroyed widget alive.
+    owner: str | None = field(compare=False, default=None)
 
     def __call__(self) -> Any:
         """Run the callback, if there is one."""
@@ -105,22 +109,56 @@ class AfterQueue:
 
     # ------------------------------------------------------------ scheduling
 
-    def after(self, ms: int, func: Callable[..., Any] | None = None, *args: Any) -> str:
+    def after(
+        self,
+        ms: int,
+        func: Callable[..., Any] | None = None,
+        *args: Any,
+        owner: str | None = None,
+    ) -> str:
         """Schedule ``func`` to run in ``ms`` milliseconds; return its handle.
 
         A negative delay is treated as zero rather than rejected: Tk runs such
         a callback at the next opportunity, and arithmetic that lands slightly
         in the past is common in code that schedules against a deadline.
+
+        ``owner`` is the widget path the call was made on, so that
+        :meth:`cancel_for` can drop it when that widget is destroyed.
         """
-        timer = self._make(max(ms, 0) / 1000.0 + self._clock(), func, args, "timer")
+        timer = self._make(
+            max(ms, 0) / 1000.0 + self._clock(), func, args, "timer", owner
+        )
         heapq.heappush(self._pending, timer)
         return timer.id
 
-    def after_idle(self, func: Callable[..., Any], *args: Any) -> str:
+    def after_idle(
+        self, func: Callable[..., Any], *args: Any, owner: str | None = None
+    ) -> str:
         """Schedule ``func`` to run when the loop next goes idle."""
-        timer = self._make(0.0, func, args, "idle")
+        timer = self._make(0.0, func, args, "idle", owner)
         self._idle.append(timer)
         return timer.id
+
+    def cancel_for(self, owner: str) -> int:
+        """Drop every pending callback scheduled on ``owner``; return the count.
+
+        Called when a widget is destroyed. Tk owns an ``after`` handle as a
+        command belonging to the widget, so destroying the widget deletes the
+        command and the callback never runs - measured, it does not fire.
+        Without this the callback runs against a widget whose window and panel
+        are gone and which has left the tree.
+
+        Dropped rather than run-and-guarded, which is also Tk's choice: a
+        guard leaves every caller responsible for remembering one, and only
+        ttk.Progressbar ever did.
+        """
+        dropped = 0
+        for timer in list(self._by_id.values()):
+            if timer.owner == owner and timer.live:
+                timer.live = False
+                self._by_id.pop(timer.id, None)
+                dropped += 1
+        return dropped
 
     def cancel(self, timer_id: str) -> None:
         """Cancel a scheduled callback.
@@ -231,6 +269,7 @@ class AfterQueue:
         func: Callable[..., Any] | None,
         args: tuple[Any, ...],
         kind: TimerKind,
+        owner: str | None = None,
     ) -> Timer:
         """Create a timer and index it by handle."""
         sequence = next(self._ids)
@@ -241,6 +280,7 @@ class AfterQueue:
             func=func,
             args=args,
             kind=kind,
+            owner=owner,
         )
         self._by_id[timer.id] = timer
         return timer

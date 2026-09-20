@@ -64,9 +64,14 @@ tkcurses.Label(win, text='INWINDOW', anchor='w').place(x=1, y=1, width=10)
 
 def report(event=None):
     root.update_layout()
-    buffer.write(0, 0, ('size=%dx%d frame=%d win=+%d+%d told=%.3f is=%.3f' % (
+    buffer.write(0, 0, ('size=%dx%d frame=%d win=+%d+%d' % (
         root.winfo_width(), root.winfo_height(), frame.winfo_width(),
-        win.winfo_x(), win.winfo_y(), bar.get()[1], box.yview()[1])).ljust(58))
+        win.winfo_x(), win.winfo_y())).ljust(30))
+    # On its own row: at 34 columns the first line is cut off, and a test
+    # that parses a truncated line fails for a reason that has nothing to do
+    # with what it is testing.
+    buffer.write(1, 0, ('told=%.3f is=%.3f' % (
+        bar.get()[1], box.yview()[1])).ljust(24))
     root.tk.screen.refresh()
 
 
@@ -208,9 +213,6 @@ def test_a_resize_back_to_the_starting_size_restores_the_starting_screen(full):
 # ------------------------------------------------ the scrollbar, on resize
 
 
-@pytest.mark.xfail(
-    reason="TkCurses-8kt: nothing re-publishes the view when the size changes"
-)
 def test_a_resize_re_tells_the_scrollbar_how_much_is_visible(full):
     """The same fault as filling before layout, reached the other way.
 
@@ -221,5 +223,5 @@ def test_a_resize_re_tells_the_scrollbar_how_much_is_visible(full):
     """
     resize(full, 34, 12)
 
-    told, actual = full.row(0).split("told=")[1].split(" is=")
+    told, actual = full.row(1).split("told=")[1].split(" is=")
     assert float(told) == pytest.approx(float(actual), abs=0.01), full.describe()

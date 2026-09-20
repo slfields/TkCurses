@@ -137,7 +137,6 @@ def test_takefocus_true_puts_one_back_in(form):
     assert "caption" in walk(form["a"], 6)
 
 
-@pytest.mark.xfail(reason="TkCurses-s6g: tab traversal does not skip disabled widgets")
 def test_a_disabled_widget_is_skipped(form):
     """Measured on Tk 9.0.2: with b disabled, tabbing from a gives
     ['a', 'c', 'a', 'c'] - b is gone from the order, and ::tk::FocusOK

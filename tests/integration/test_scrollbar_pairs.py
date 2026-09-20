@@ -188,9 +188,6 @@ def test_deleting_the_contents_puts_the_scrollbar_back(pair):
 # ------------------------------------------- filled before it was laid out
 
 
-@pytest.mark.xfail(
-    reason="TkCurses-8kt: nothing re-publishes the view when the size changes"
-)
 def test_filling_before_layout_still_leaves_the_two_agreeing(app):
     """The ordinary tkinter idiom, and the broken one.
 
@@ -210,7 +207,6 @@ def test_filling_before_layout_still_leaves_the_two_agreeing(app):
     assert recorder.last == box.yview()
 
 
-@pytest.mark.xfail(reason="TkCurses-8kt: the same fault in Text")
 def test_a_text_widget_filled_before_layout_also_agrees(app):
     recorder = Recorder(app)
     text = tkcurses.Text(app, name="tx", height=5, yscrollcommand=recorder.set)

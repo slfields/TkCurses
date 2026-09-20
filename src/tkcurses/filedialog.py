@@ -266,8 +266,9 @@ class FileDialog:
         self.browser.set_selection(default)
         self.filter_command()
         fit(self.top)
-        self.browser.selection.focus_set()
+        # Before the focus moves - see the note in simpledialog.Dialog.
         self._displaced = take_focus_grab(self.top)
+        self.browser.selection.focus_set()
         self.how = None
         self.top.wait_window(self.top)
         # Re-widened on purpose: the answer arrives during the wait, from

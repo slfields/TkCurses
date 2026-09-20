@@ -230,7 +230,6 @@ def test_setting_a_variable_after_its_widget_died_does_not_raise(tree):
 # ------------------------------------------------------------------- timers
 
 
-@pytest.mark.xfail(reason="TkCurses-khq: after() callbacks still fire on a dead widget")
 def test_a_pending_callback_does_not_fire_on_a_destroyed_widget(tree, app):
     """Measured on Tk 9.0.2: it does not fire. Tk owns the handle as a
     command belonging to the widget, so destroying the widget drops it.
@@ -259,3 +258,26 @@ def test_a_pending_callback_on_a_surviving_widget_still_fires(tree, app):
     app.tk.timers.run_due()
 
     assert fired == ["fired"]
+
+
+def test_a_pending_callback_does_not_fire_when_an_ancestor_is_destroyed(tree, app):
+    """Destroying a container takes its children's timers with it, because
+    it destroys the children and each drops its own.
+    """
+    fired = []
+    tree["field"].after(0, lambda: fired.append("fired"))
+
+    tree["frame"].destroy()
+    app.tk.timers.run_due()
+
+    assert fired == []
+
+
+def test_a_pending_idle_callback_goes_too(tree, app):
+    fired = []
+    tree["field"].after_idle(lambda: fired.append("fired"))
+
+    tree["field"].destroy()
+    app.tk.timers.run_idle()
+
+    assert fired == []

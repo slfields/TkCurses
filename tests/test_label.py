@@ -137,11 +137,37 @@ def test_replacing_the_variable_stops_following_the_old_one(root):
     assert size(label) == (12, 1)
 
 
-def test_clearing_the_variable_falls_back_to_the_text(root):
+def test_clearing_the_variable_keeps_what_it_last_held(root):
+    """Not a fall back to the original text - the variable's value stays.
+
+    This test asserted the opposite, and was wrong. Measured on Tk 9.0.2:
+
+        lab = Label(root, text="literal", textvariable=var)   # var: "variable"
+        lab.cget("text")                  ->  'variable'
+        lab.configure(textvariable="")
+        lab.cget("text")                  ->  'variable'
+
+    A textvariable does not shadow the text option, it *writes* it - so
+    detaching the variable leaves behind whatever it last wrote, and the
+    literal the widget was built with is gone. Tk is consistent about this:
+    attaching an empty variable sets the text to empty too, rather than
+    leaving the literal showing.
+    """
     var = StringVar(root, value="variable")
     label = Label(root, name="l", text="literal", textvariable=var)
+
     label.configure(textvariable=None)
-    assert label._text() == "literal"
+
+    assert label._text() == "variable"
+    assert label.cget("text") == "variable"
+
+
+def test_attaching_an_empty_variable_empties_the_text(root):
+    """The same rule at its least intuitive, and measured: Tk answers ''."""
+    label = Label(root, name="l", text="literal")
+    label.configure(textvariable=StringVar(root))
+
+    assert label.cget("text") == ""
 
 
 # ------------------------------------------------------------------ options
