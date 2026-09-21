@@ -609,7 +609,9 @@ class TerminalHarness:
         final = "m" if action == "release" else "M"
         self.send(f"\x1b[<{code};{x + 1};{y + 1}{final}".encode())
 
-    def click(self, x: int, y: int, *, button: int = 1, settle: float = 0.05) -> None:
+    def click(
+        self, x: int, y: int, *, button: int = 1, settle: float | None = None
+    ) -> None:
         """Press and release at ``(x, y)``, pausing either side, as a hand does.
 
         Neither pause is decoration, and they are for different faults.
@@ -636,7 +638,16 @@ class TerminalHarness:
         application answering within 0.05s gets every event, and one taking
         0.08s starts losing them. Drive something slower than that with a
         larger settle rather than expecting the default to cover it.
+
+        Which is why the default is scaled, like every other wait here. 0.05s
+        described *this* machine: on a runner six to ten times slower a canvas
+        repaint takes 100-124ms, past the boundary the paragraph above names,
+        and the report is dropped before the application ever drains it. That
+        is the whole of the intermittent canvas-click failure on the slowest
+        CI job - not a lost binding, a lost *event*. A named settle is scaled
+        too, so "slower than the default" keeps meaning that everywhere.
         """
+        settle = self._budget(0.05 if settle is None else settle)
         self.send_mouse(x, y, button=button, action="press")
         if settle:
             self._drain(settle)

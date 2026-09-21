@@ -27,7 +27,6 @@ which is TkCurses-txk, and why its failures named a different test each run.
 
 from __future__ import annotations
 
-import os
 import time
 
 import pytest
@@ -63,6 +62,11 @@ def test_a_quit_timer_is_scaled_with_the_harness(terminal, tmp_path, monkeypatch
     harness writes beside the program - so the program itself is untouched
     and its line numbers are unchanged.
     """
+    # Both arms set the scale. Reading the baseline from whatever the
+    # environment happens to hold made this pass locally and fail on CI,
+    # which sets the scale to 4 for the whole run - so the "unscaled" arm
+    # was scaled, lived 2.51s, and failed a test asserting it was quick.
+    monkeypatch.setenv("TKCURSES_TEST_TIMEOUT_SCALE", "1")
     plain = lifetime(terminal(cols=30, rows=6), SHORT_LIFE, tmp_path)
 
     monkeypatch.setenv("TKCURSES_TEST_TIMEOUT_SCALE", "4")
@@ -103,7 +107,14 @@ root.mainloop()
     assert time.monotonic() - start < 1.5
 
 
-def test_the_shim_is_absent_when_nothing_asks_for_it(terminal, tmp_path):
-    """At scale 1 it installs nothing, so the ordinary case is untouched."""
-    assert os.environ.get("TKCURSES_TEST_TIMEOUT_SCALE", "1") == "1"
+def test_the_shim_is_absent_when_nothing_asks_for_it(terminal, tmp_path, monkeypatch):
+    """At scale 1 it installs nothing, so the ordinary case is untouched.
+
+    The scale is set here rather than assumed. Asserting that the
+    environment already held "1" was true on a development machine and false
+    on CI, which sets it to 4 - a test that described where it was running
+    rather than what the code does.
+    """
+    monkeypatch.setenv("TKCURSES_TEST_TIMEOUT_SCALE", "1")
+
     assert lifetime(terminal(cols=30, rows=6), SHORT_LIFE, tmp_path) < 1.5

@@ -40,15 +40,29 @@ milliseconds, which is the thing that actually matters.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 pytestmark = pytest.mark.tty
 
-#: Generous by design. The measured costs are 3.4ms and 17.3ms; these are
-#: about six times that, which a loaded runner can absorb and a regression
-#: to the old behaviour - a hundredfold - cannot hide in.
-TEXT_BUDGET_MS = 25
-CANVAS_BUDGET_MS = 120
+#: Generous by design, and scaled by the same factor that tells the harness
+#: how much slower this machine is.
+#:
+#: The measured costs on a development machine are 3.4ms and 17.3ms. A
+#: GitHub runner is not "several times" slower, which is what the first
+#: version of these numbers assumed: it measured 31-35ms and 100-124ms, ten
+#: times and six times. Fixed budgets picked from local measurements
+#: therefore described this machine rather than the code, and CI failed on
+#: every Python version.
+#:
+#: TKCURSES_TEST_TIMEOUT_SCALE already exists to say how much slower the
+#: machine is - CI sets it to 4 - so the budgets follow it. At scale 4 that
+#: is 100ms and 480ms against observed 35ms and 124ms, which a busy runner
+#: can absorb and a return to the old 353ms and 758ms cannot hide in.
+_SCALE = float(os.environ.get("TKCURSES_TEST_TIMEOUT_SCALE", "1"))
+TEXT_BUDGET_MS = 25 * _SCALE
+CANVAS_BUDGET_MS = 120 * _SCALE
 
 TIMED = """
 import time
@@ -78,7 +92,7 @@ def cost(widget, rounds):
     return (time.perf_counter() - start) / rounds * 1000
 
 
-buffer.write(0, 0, ('text=%.2f canvas=%.2f' % (cost(text, 10), cost(canvas, 5))).ljust(40))
+buffer.write(0, 0, ('text=%.2f canvas=%.2f' % (cost(text, 5), cost(canvas, 3))).ljust(40))
 buffer.write(1, 0, 'measured'.ljust(12))
 root.tk.screen.refresh()
 root.after(30000, root.quit)
@@ -90,7 +104,12 @@ root.mainloop()
 def costs(terminal, tmp_path):
     term = terminal(cols=120, rows=40)
     term.run_source(TIMED, workdir=tmp_path)
-    term.wait_for_text("measured", timeout=120)
+    # Ten, not a hundred and twenty. wait_for_text multiplies by
+    # TKCURSES_TEST_TIMEOUT_SCALE, so 120 became 480s on CI - eight times
+    # the suite's own 60s pytest-timeout, which killed the test before it
+    # could report anything useful. Forty seconds at CI's scale leaves the
+    # failure legible.
+    term.wait_for_text("measured", timeout=10)
     reported = term.row(0).strip()
     return {part.split("=")[0]: float(part.split("=")[1]) for part in reported.split()}
 
