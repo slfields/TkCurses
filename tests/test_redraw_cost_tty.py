@@ -92,8 +92,15 @@ def cost(widget, rounds):
     return (time.perf_counter() - start) / rounds * 1000
 
 
-buffer.write(0, 0, ('text=%.2f canvas=%.2f' % (cost(text, 5), cost(canvas, 3))).ljust(40))
-buffer.write(1, 0, 'measured'.ljust(12))
+# Rows 37 and 38, not 0 and 1. The widgets are placed at y=0 and are 36
+# rows tall, so rows 0 and 1 are cells the Text's own border owns: the
+# result was written underneath a widget, and whether it showed through
+# depended on whether anything repainted that panel afterwards. It did show
+# on four Python versions and not on the fifth, where the failure screen has
+# both widgets drawn, the measurement plainly finished, and no 'measured'
+# anywhere. Nothing is placed below row 36, so nothing can paint over it.
+buffer.write(37, 0, ('text=%.2f canvas=%.2f' % (cost(text, 5), cost(canvas, 3))).ljust(40))
+buffer.write(38, 0, 'measured'.ljust(12))
 root.tk.screen.refresh()
 root.after(30000, root.quit)
 root.mainloop()
@@ -110,7 +117,7 @@ def costs(terminal, tmp_path):
     # could report anything useful. Forty seconds at CI's scale leaves the
     # failure legible.
     term.wait_for_text("measured", timeout=10)
-    reported = term.row(0).strip()
+    reported = term.row(37).strip()
     return {part.split("=")[0]: float(part.split("=")[1]) for part in reported.split()}
 
 
