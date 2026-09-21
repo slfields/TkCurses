@@ -38,6 +38,7 @@ import curses
 import os
 from dataclasses import dataclass
 from enum import IntEnum
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from tkcurses._core.dispatcher import CursesDispatcher
@@ -357,6 +358,7 @@ def _resolve_rgb(rgb: tuple[int, int, int], depth: ColorDepth) -> ResolvedColor:
     return _nearest(rgb, _PALETTES.get(depth, _PALETTE_RGB))
 
 
+@lru_cache(maxsize=4096)
 def parse_color(spec: str, depth: ColorDepth = ColorDepth.BASIC) -> ResolvedColor:
     """Resolve a tkinter colour specification to a terminal colour.
 
@@ -441,6 +443,12 @@ class ColorManager:
     def __init__(self, *, dispatcher: CursesDispatcher | None = None) -> None:
         self._dispatcher = dispatcher or CursesDispatcher.get()
         self._pairs: dict[tuple[int, int], int] = {}
+        #: Whole resolved attributes, keyed by what was asked for. A screen
+        #: paints one cell at a time and asks here for each - measured, a
+        #: canvas of 500 items asked 22,500 times for about thirty distinct
+        #: answers. Cleared by :meth:`reset` and whenever the depth is
+        #: decided, which are the only things that change an answer.
+        self._attributes: dict[tuple[str, str, int], int] = {}
         self._next = 1  # pair 0 is reserved for the terminal's default
         self._started = False
         self._has_colors = False
@@ -478,11 +486,15 @@ class ColorManager:
             # same number in every case measured, but this one cannot be out
             # of step with the library actually being called.
             self._depth = detect_depth(getattr(curses, "COLORS", 0))
+            # The depth decides what every colour resolves to, so answers
+            # worked out before it was known are not answers any more.
+            self._attributes.clear()
         return self._has_colors
 
     def reset(self) -> None:
         """Forget every allocated pair, for a screen being torn down."""
         self._pairs.clear()
+        self._attributes.clear()
         self._next = 1
         self._started = False
         self._has_colors = False
@@ -542,6 +554,9 @@ class ColorManager:
         This is the resolver :class:`~tkcurses._core.screen.CursesScreen`
         applies to every cell it paints.
         """
+        cached = self._attributes.get((fg, bg, attr))
+        if cached is not None:
+            return cached
         if attr & curses.A_COLOR:
             # The caller already chose a colour pair, which is what a curses
             # program does - tkcurses.curses hands the pair straight through
@@ -556,6 +571,11 @@ class ColorManager:
         pair = self.pair_number(foreground.color, background.color)
         if pair:
             combined |= curses.color_pair(pair)
+        # Not cached while pairs are still being handed out and could run
+        # out: an answer of 0 from an exhausted allocator is a failure, not
+        # a result, and keeping it would make the failure permanent.
+        if not self._exhausted:
+            self._attributes[(fg, bg, attr)] = combined
         return combined
 
     def preallocate(self, combinations: Iterable[tuple[str, str]]) -> int:

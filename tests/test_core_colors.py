@@ -485,3 +485,38 @@ def test_the_manager_allocates_the_bright_colour_number(manager):
     attribute = manager.attribute_for("black", "lime")
     assert not attribute & curses.A_BOLD
     assert manager.allocated_pairs == [(1, curses.COLOR_BLACK, 10)]
+
+
+# ------------------------------------------------------ the attribute cache
+
+
+def test_the_same_request_answers_the_same_attribute(manager):
+    """A screen paints one cell at a time and asks here for each: measured,
+    a canvas of 500 items asked 22,500 times for about thirty distinct
+    answers, and each answer re-searched the palette. TkCurses-g9w.
+    """
+    manager.start()
+    first = manager.attribute_for("white", "black")
+    assert manager.attribute_for("white", "black") == first
+
+
+def test_reset_forgets_the_cached_attributes(manager):
+    """The pairs go with a screen being torn down, so the attributes built
+    from them cannot outlive it."""
+    manager.start()
+    manager.attribute_for("white", "black")
+    assert manager._attributes
+
+    manager.reset()
+
+    assert not manager._attributes
+
+
+def test_different_requests_get_different_answers(manager):
+    """The obvious way a cache goes wrong: one key for everything."""
+    manager.start()
+    one = manager.attribute_for("white", "black")
+    two = manager.attribute_for("red", "black")
+    three = manager.attribute_for("white", "blue")
+
+    assert len({one, two, three}) == 3

@@ -104,6 +104,11 @@ class TextBuffer:
 
     def __init__(self, text: str = "") -> None:
         self._text = text if text.endswith("\n") else text + "\n"
+        #: The split of :attr:`_text`, or None when it needs doing again.
+        #: Every assignment to ``_text`` clears it.
+        self._lines: list[str] | None = None
+        #: Line start offsets, rebuilt with :attr:`lines`.
+        self._starts: list[int] | None = None
         self._marks: dict[str, tuple[int, str]] = {}
         self._tags: dict[str, list[tuple[int, int]]] = {}
 
@@ -120,8 +125,18 @@ class TextBuffer:
 
         A buffer holding only its final newline has one empty line, not none:
         an empty Text still has a line 1 for the cursor to sit on.
+
+        Split once and kept until the text changes. It was split on every
+        access, and the callers are not occasional: ``offset_of`` walks this
+        for each index it resolves, and a redraw resolves one per visible
+        row. Measured on 5000 lines, a single repaint split the whole buffer
+        528 times and ran 13 million len() calls, for 353ms - against 0.31ms
+        for a Listbox of the same size. TkCurses-g9w.
         """
-        return self._text.split("\n")[:-1]
+        if self._lines is None:
+            self._lines = self._text.split("\n")[:-1]
+            self._starts = None
+        return self._lines
 
     def end(self) -> Index:
         """The index just past everything, which is Tk's ``end``."""
@@ -140,14 +155,30 @@ class TextBuffer:
 
     # ------------------------------------------------------ offsets and indices
 
+    @property
+    def _line_starts(self) -> list[int]:
+        """Where each line begins in the whole string, line 1 first.
+
+        Built with the split and thrown away with it. Without it
+        :meth:`offset_of` walks every line to reach one, and a redraw asks
+        for one index per visible row - so a 5000-line buffer was walked 528
+        times per repaint even once the split itself was cached.
+        """
+        if self._starts is None:
+            starts, at = [], 0
+            for line in self.lines:
+                starts.append(at)
+                at += len(line) + 1
+            self._starts = starts
+        return self._starts
+
     def offset_of(self, index: Index) -> int:
         """Where an index falls in the whole string, clamped to it."""
         index = self.clamp(index)
-        start = 0
-        for number, line in enumerate(self.lines, start=1):
-            if number == index.line:
-                return start + index.char
-            start += len(line) + 1
+        starts = self._line_starts
+        position = index.line - 1
+        if 0 <= position < len(starts):
+            return starts[position] + index.char
         return len(self._text)
 
     def index_of(self, offset: int) -> Index:
@@ -329,6 +360,8 @@ class TextBuffer:
             return self.index(index)
         at = min(self.offset_of(self.index(index)), len(self._text) - 1)
         self._text = self._text[:at] + text + self._text[at:]
+        self._lines = None
+        self._starts = None
         self._shift(at, len(text))
         return self.index_of(at + len(text))
 
@@ -349,6 +382,8 @@ class TextBuffer:
         if start == stop:
             return
         self._text = self._text[:start] + self._text[stop:]
+        self._lines = None
+        self._starts = None
         self._shift(stop, -(stop - start), floor=start)
 
     def _shift(self, at: int, distance: int, *, floor: int | None = None) -> None:

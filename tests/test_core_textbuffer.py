@@ -369,3 +369,56 @@ def test_tag_nextrange_and_prevrange(buffer):
     assert buffer.tag_prevrange("bold", "2.0") == (Index(1, 0), Index(1, 3))
     assert buffer.tag_nextrange("bold", "end") is None
     assert buffer.tag_prevrange("bold", "1.0") is None
+
+
+# ------------------------------------------------------- the cached split
+
+
+def test_the_lines_follow_an_insert(buffer):
+    """The split is kept until the text changes, so every edit has to clear
+    it. TkCurses-g9w.
+    """
+    before = list(buffer.lines)
+
+    buffer.insert(Index(1, 0), "new\n")
+
+    assert buffer.lines != before
+    assert buffer.lines[0] == "new"
+
+
+def test_the_lines_follow_a_delete(buffer):
+    buffer.insert(Index(1, 0), "gone\n")
+    assert buffer.lines[0] == "gone"
+
+    buffer.delete(Index(1, 0), Index(2, 0))
+
+    assert buffer.lines[0] != "gone"
+
+
+def test_offset_of_follows_an_edit(buffer):
+    """The line starts are built with the split and thrown away with it, so
+    an edit that moved a line has to move its offset too."""
+    buffer.insert(Index(1, 0), "one\ntwo\n")
+    assert buffer.offset_of(Index(2, 0)) == 4
+
+    buffer.insert(Index(1, 0), "zero\n")
+
+    assert buffer.offset_of(Index(2, 0)) == 5
+    assert buffer.offset_of(Index(3, 0)) == 9
+
+
+def test_offset_of_agrees_with_walking_the_lines(buffer):
+    """The answer the old implementation gave, which walked every line to
+    reach one. Asserted directly because the fast path is a lookup and a
+    lookup into the wrong list is silently plausible.
+    """
+    buffer.insert(Index(1, 0), "alpha\nbeta\ngamma\n")
+
+    for line in range(1, 4):
+        walked, start = None, 0
+        for number, text in enumerate(buffer.lines, start=1):
+            if number == line:
+                walked = start + 2
+                break
+            start += len(text) + 1
+        assert buffer.offset_of(Index(line, 2)) == walked
