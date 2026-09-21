@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from tkcurses._core.input import InputHandler
     from tkcurses._core.panels import PanelStack
     from tkcurses._core.screen import CursesScreen
+    from tkcurses.ttk import Theme
 
 __all__ = ["Application", "OptionDatabase", "WidgetRegistry"]
 
@@ -284,6 +285,16 @@ class Application:
         #: a modal dialog stays modal.
         self.grab: Misc | None = None
         self.grab_global = False
+
+        #: The ttk style database, one per application so that a Style()
+        #: made anywhere changes widgets made anywhere else - which is what
+        #: tkinter gets by talking to the interpreter. None until the first
+        #: Style() is constructed, since an application using none of ttk
+        #: should not pay for six themes.
+        self.themes: dict[str, Theme] | None = None
+
+        #: Which of them is in use.
+        self.theme_in_use = "default"
 
         #: Widget classes whose default bindings have been installed. Class
         #: bindings are per application, and a widget registering its own on

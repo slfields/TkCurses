@@ -2114,6 +2114,13 @@ class BaseWidget(Misc):
         stack = self.tk.panels
         if stack is None:
             return False
+        if not self._viewable:
+            # Inside something that is not on screen. The widget keeps its
+            # geometry and gets its window back when the ancestor returns -
+            # the same treatment as one scrolled off the edge. Without this a
+            # layout pass gives every hidden notebook page's contents a fresh
+            # window, and two pages are drawn at once. TkCurses-mlw.
+            return self._drop_window()
         if self._rect.is_empty:
             return self._drop_window()
         if self._panel is None:
@@ -2158,7 +2165,80 @@ class BaseWidget(Misc):
             return
         self._mapped = True
         self._create_window()
+        self._show_subtree()
+        if not self._viewable:
+            # Mapped, but inside something that is not: the widget belongs on
+            # screen and cannot be seen yet. Tk keeps these apart as *mapped*
+            # and *viewable*, and without the distinction a layout pass puts
+            # the contents of every hidden notebook page back on the screen -
+            # which is exactly what it did.
+            self._hide_subtree()
+            if self._panel is not None:
+                self.tk.panels.hide(self._panel)  # type: ignore[union-attr]
+            return
         self.event_generate("<Map>")
+
+    @property
+    def _viewable(self) -> bool:
+        """True when this widget and every ancestor of it is mapped.
+
+        Tk's rule. ``_mapped`` says whether the widget wants to be on screen;
+        this says whether it can be, which is a property of the whole chain
+        above it.
+        """
+        widget: Misc | None = self.master
+        while widget is not None:
+            if isinstance(widget, BaseWidget) and not widget._mapped:
+                return False
+            widget = widget.master
+        return True
+
+    def _show_subtree(self) -> None:
+        """Put the panels of everything inside this widget back on screen.
+
+        The counterpart of :meth:`_hide_subtree`. A child that was unmapped
+        in its own right stays away: its ``_mapped`` is false, and this only
+        shows the ones whose absence was their ancestor's doing. That is Tk's
+        distinction between *mapped* and *viewable* - a widget is viewable
+        only when it and every ancestor is mapped.
+        """
+        stack = self.tk.panels
+        if stack is None:
+            return
+        for widget in self._subtree():
+            if widget is self or not isinstance(widget, BaseWidget):
+                continue
+            if not widget._mapped:
+                continue
+            if widget._panel is None:
+                # It gave its window up while it could not be seen - a child
+                # laid out before its container was mapped does exactly that -
+                # so it needs building rather than merely unhiding.
+                widget._sync_window()
+            elif widget._panel is not None:
+                stack.show(widget._panel)
+        # And put them back above this widget's own panel, which was created
+        # after theirs and would otherwise be drawn over its own contents -
+        # the same rule _restack_descendants keeps for raising and lowering.
+        self._restack_descendants(stack)
+
+    def _hide_subtree(self) -> None:
+        """Take the panels of everything inside this widget off screen.
+
+        A child draws on its own panel, so hiding only this widget's leaves
+        every label and field inside it exactly where it was - measured, a
+        notebook showed two pages at once. TkCurses-mlw, and the third time
+        this shape has bitten: see also ``_restack_descendants`` and the
+        descendant loop in ``_allocate``.
+        """
+        stack = self.tk.panels
+        if stack is None:
+            return
+        for widget in self._subtree():
+            if widget is self or not isinstance(widget, BaseWidget):
+                continue
+            if widget._panel is not None:
+                stack.hide(widget._panel)
 
     def _unmap(self) -> None:
         """Take the widget off screen, keeping its window for a later map.
@@ -2167,6 +2247,11 @@ class BaseWidget(Misc):
         widget is usually on its way back - a notebook tab, a hidden frame -
         and rebuilding the window each time would throw away its contents.
         """
+        # Before the guard, not after it. A container may itself never have
+        # been mapped while the children inside it were - a notebook page
+        # laid out once and then put away - and returning early left every
+        # one of them on screen.
+        self._hide_subtree()
         if not self._mapped:
             return
         self._mapped = False
@@ -9567,8 +9652,20 @@ class Listbox(_Drawable):
         raise TclError(f'bad listbox index "{index}"')
 
     def nearest(self, y: int) -> int:
-        """The item nearest a screen row."""
-        row = y - self.winfo_rooty() - self._text_area().y
+        """The item nearest row ``y`` **within this widget**.
+
+        Widget-relative, as Tk's is: "given a y-coordinate within the listbox
+        window". Measured on 9.0.2, ``nearest(0)`` is the first visible item
+        wherever the listbox sits on screen, and handing it a screen row
+        gives nonsense.
+
+        It used to subtract ``winfo_rooty()``, which made the tkinter idiom -
+        ``listbox.nearest(event.y)`` in a binding - answer with the first
+        item for every click, since the widget-relative y came out negative
+        and clamped. Nothing internal depended on it: the click handler works
+        the row out itself. TkCurses-9hr.
+        """
+        row = y - self._text_area().y
         return max(0, min(max(0, len(self._items) - 1), self._top + max(0, row)))
 
     # ------------------------------------------------------------ selection

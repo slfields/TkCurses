@@ -315,8 +315,11 @@ def test_bbox_of_a_scrolled_out_row_is_nothing(listbox):
     assert listbox.bbox(7) is None
 
 
-def test_nearest_finds_the_row_under_a_screen_position(listbox):
-    assert listbox.nearest(listbox.winfo_rooty() + 2) == 1
+def test_nearest_finds_the_row_under_a_position_in_the_widget(listbox):
+    # Widget-relative, as Tk's is. This asserted a screen row until
+    # TkCurses-9hr, which is why listbox.nearest(event.y) - the tkinter
+    # idiom - answered with the first item for every click.
+    assert listbox.nearest(2) == 1
 
 
 # -------------------------------------------------------------------- state
