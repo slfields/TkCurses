@@ -32,6 +32,7 @@ constantly, and a global registry would leak bindings from one into the next.
 from __future__ import annotations
 
 import fnmatch
+import weakref
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -232,6 +233,17 @@ class Application:
         #: option; this is where a widget looks the name up to find out
         #: what styling it stands for.
         self.fonts: dict[str, dict[str, Any]] = {}
+
+        #: Images by name, as PhotoImage and BitmapImage create them.
+        #: Widgets name one in their ``image`` option rather than holding
+        #: the object, which is how Tk refers to an image and what lets
+        #: ``cget("image")`` give a name back. Weak: an image that nothing
+        #: else references is gone, exactly as in Tk, where a widget showing
+        #: a collected image keeps its size and shows nothing - the trap
+        #: every tkinter tutorial warns about, reproduced rather than fixed.
+        self.images: weakref.WeakValueDictionary[str, Any] = (
+            weakref.WeakValueDictionary()
+        )
 
         #: Variable objects the library itself owns, by name. A Variable
         #: forgets its value when the last reference to it goes, so a

@@ -2088,9 +2088,9 @@ tkcurses/
 
 ### By Design
 1. **Monospace only**: All text uses terminal's fixed-width character cells
-2. **Text rendering only**: No actual graphical elements (images render as ASCII art or placeholders)
+2. **No raster graphics**: the finest mark is half a character cell (see **The pixel**), so images and drawings are composed from `▀`, `▄` and `█` rather than rendered
 3. **Single root window**: One TkCurses app per process (curses limitation)
-4. **Character cell precision**: Sub-cell positioning not supported
+4. **Half-cell precision**: a Canvas and an image address half-cells; *widget* geometry is whole cells only
 
 ### Thread Safety
 
@@ -2191,7 +2191,7 @@ dispatcher.call(update_widget)
 ### Potential Enhancements
 1. **Unicode box drawing**: Full Unicode support for borders/lines
 2. **256-color/truecolor**: Extended color palette support
-3. **Image-to-ASCII**: Convert images to character art for Canvas
+3. **Image file decoding**: read PNG/GIF into the pixel plane, rather than only text and XBM
 4. **Screen recording**: Export UI state as text files
 
 ---
@@ -2359,8 +2359,8 @@ Base mixin providing common widget functionality.
 | `selection_own(**kw)` | ✓ | Claim selection |
 | `selection_own_get(**kw)` | ✓ | Get selection owner |
 | **Image** | | |
-| `image_names()` | ◐ | List images (ASCII only) |
-| `image_types()` | ◐ | Supported types (ASCII) |
+| `image_names()` | ○ | Names still held; the registry is weak |
+| `image_types()` | ○ | `bitmap` and `photo` |
 | **Grid Manager (from Misc)** | | |
 | `grid_anchor(anchor=None)` | ○ | Cell-based anchor |
 | `grid_bbox(column, row, col2, row2)` | ○ | Cell bounding box |
@@ -2686,9 +2686,9 @@ Static text display.
 | `foreground`/`fg` | color | Cell foreground |
 | `background`/`bg` | color | Cell background |
 | `font` | font | Attribute (bold/underline) |
-| `image` | PhotoImage | ✗ N/A |
-| `bitmap` | bitmap | ✗ N/A |
-| `compound` | position | ✗ N/A |
+| `image` | PhotoImage | A pixel plane, composed into cells |
+| `bitmap` | bitmap | ✗ N/A (the built-in named bitmaps) |
+| `compound` | position | none/left/right/top/bottom/center |
 | `width` | chars | Cells |
 | `height` | lines | Cells |
 | `padx` | pixels | Cells |
@@ -3090,34 +3090,73 @@ Open:      [Option 1    ▼]
 
 ---
 
+## The pixel
+
+**One pixel is one cell wide and half a cell tall.** Everything in the
+library that claims to draw in pixels means this one, and there is only one
+of them.
+
+A character cell is about twice as tall as it is wide. A surface that treated
+one cell as one unit would draw every circle as a tall ellipse, so the plane
+is divided across the middle instead: `▀` is the upper pixel, `▄` the lower,
+`█` both. Each half is very nearly square, so a circle comes out round.
+
+Quadrant glyphs (`▖▗▘▝▚▞▙▟`) would give four pixels per cell rather than two.
+They are not used, and the reason is the same one: a quadrant is half as wide
+as it is tall, so the extra resolution would be bought by making every shape
+wrong again. Resolution was traded for aspect ratio deliberately.
+
+`tkcurses._core.canvas` owns this. Rasterising and compositing are kept
+apart: the rasterisers turn geometry into a set of pixels, and `compose()`
+folds each pair of pixel rows into one cell — a glyph and up to two colours.
+Neither touches curses, so the awkward cases (an oval one pixel tall, two
+colours meeting inside a single cell) can be exercised directly.
+
+**Two coordinate systems meet wherever this plane is exposed, and confusing
+them is the only real hazard.** Widget dimensions — `width`, `height`,
+geometry, padding — are in **cells**, like every other widget in the library.
+Content coordinates on a pixel surface are in **pixels**. A canvas 40 cells
+by 10 is a plane 40 pixels by 20.
+
+Text is the one thing that cannot live on the plane, because a glyph occupies
+a whole cell. A text item snaps to the nearest cell row and, while it is on
+top, nothing else can share those cells.
+
+Both pixel surfaces — Canvas and the image classes — are the same plane, in
+the same units, composed by the same function. That is what lets an image be
+drawn onto a canvas at all.
+
+---
+
 ### Canvas Class
 
-Drawing surface (ASCII art).
+A drawing surface, measured in half-cells. See **The pixel** above: item
+coordinates are in pixels, `width` and `height` are in cells.
 
 | tkinter Method | TkCurses | Notes |
 |----------------|----------|-------|
-| `__init__(master=None, cnf={}, **kw)` | ○ | Character canvas |
+| `__init__(master=None, cnf={}, **kw)` | ○ | Pixel plane; `width`/`height` in cells |
 | `addtag(tag, method, *args)` | ✓ | Add tag |
 | `addtag_above(newtag, tagOrId)` | ✓ | Tag above |
 | `addtag_all(newtag)` | ✓ | Tag all |
 | `addtag_below(newtag, tagOrId)` | ✓ | Tag below |
-| `addtag_closest(newtag, x, y)` | ○ | Tag closest cell |
+| `addtag_closest(newtag, x, y)` | ○ | Tag closest, in pixels |
 | `addtag_enclosed(newtag, x1, y1, x2, y2)` | ○ | Tag enclosed |
 | `addtag_overlapping(newtag, x1, y1, x2, y2)` | ○ | Tag overlapping |
 | `addtag_withtag(newtag, tagOrId)` | ✓ | Tag with tag |
-| `bbox(tagOrId=None)` | ○ | Cell bounding box |
-| `canvasx(screenx)` | ○ | Screen to canvas cell |
-| `canvasy(screeny)` | ○ | Screen to canvas cell |
-| `coords(tagOrId, *args)` | ○ | Get/set cell coords |
-| `create_arc(...)` | ○ | ASCII arc |
-| `create_bitmap(...)` | ✗ | N/A |
-| `create_image(...)` | ✗ | N/A (ASCII art only) |
-| `create_line(...)` | ○ | Line with `─│╱╲` |
-| `create_oval(...)` | ○ | ASCII oval |
-| `create_polygon(...)` | ○ | ASCII polygon |
-| `create_rectangle(...)` | ○ | Box drawing chars |
-| `create_text(...)` | ○ | Text at cells |
-| `create_window(...)` | ○ | Embed widget |
+| `bbox(tagOrId=None)` | ○ | Bounding box, in pixels |
+| `canvasx(screenx)` | ○ | Screen column to canvas pixel |
+| `canvasy(screeny)` | ○ | Screen row to canvas pixel (its upper half) |
+| `coords(tagOrId, *args)` | ○ | Get/set coords, in pixels |
+| `create_arc(...)` | ✗ | N/A (TkCurses-aj1.16.1) |
+| `create_bitmap(...)` | ✗ | Likewise (TkCurses-aj1.16.1) |
+| `create_image(...)` | ✗ | Possible now the planes match (TkCurses-aj1.16.1) |
+| `create_line(...)` | ○ | Rasterised to pixels |
+| `create_oval(...)` | ○ | Rasterised; round, not elliptical |
+| `create_polygon(...)` | ○ | Rasterised to pixels |
+| `create_rectangle(...)` | ○ | Rasterised to pixels |
+| `create_text(...)` | ○ | Snaps to a cell row; a glyph is a whole cell |
+| `create_window(...)` | ✗ | N/A (TkCurses-aj1.16.1) |
 | `dchars(tagOrId, first, last=None)` | ✓ | Delete chars |
 | `delete(tagOrId)` | ✓ | Delete item |
 | `dtag(tagOrId, tagToDelete=None)` | ✓ | Remove tag |
@@ -3219,28 +3258,103 @@ All inherit from Variable with type-specific `get()` methods.
 
 ## Image Classes
 
+**An image is a plane of pixels, and it is the same pixel as everywhere else:
+one cell wide, half a cell tall.** See **The pixel** above. `width()` and
+`height()` answer in pixels, as Tk's do, so an image 8 by 4 occupies 8 cells
+across and 2 down. It is drawn by the same `compose()` that draws a canvas,
+so `▀`, `▄` and `█` are what reaches the screen.
+
+This is worth stating because the first attempt got it wrong. An image was
+built as a grid of *characters*, one per cell — a second, incompatible
+meaning of "pixel" in a library that already had one. It was internally
+consistent and it was wrong: `get()` returned a glyph where Tk returns a
+colour, an image could not be placed on a canvas without a conversion nobody
+had specified, and `create_image` was therefore impossible by construction
+rather than by choice. The two planes are one plane now.
+
+What that buys, beyond tidiness: `put("red", to=...)` takes a colour as Tk's
+does, `get(x, y)` answers with one, `zoom()` and `subsample()` are real pixel
+operations, and an image can be handed to a canvas.
+
+Three behaviours are reproduced rather than improved on, because tkinter code
+is written around them. All three were measured on Tk 9.0.2:
+
+- **An image is referred to by name.** `str(photo)` is `pyimage1`, and
+  `cget("image")` gives that name back, not the object — so a widget holds a
+  name and never owns its image.
+- **An image nothing references is gone**, and a widget showing it keeps its
+  size and draws nothing. Deleting an image under a live Label left the label
+  at its old 22x12 with the dead name still in its option. This is the trap
+  every tkinter tutorial warns about; the registry is weak so that it holds.
+  Collection is silent, so a finalizer — not the change notification, which
+  dies with the image — is what repaints the widget empty.
+- **A widget follows its image.** Resizing an image from 4x2 to 20x10 moved a
+  Label's request from 6x4 to 22x12 with nothing asked of the label, so an
+  image tells its users when it changes.
+
 ### PhotoImage Class
+
+A plane of coloured pixels. A pixel holds a colour, or nothing at all —
+transparency is a pixel that declines to paint, so what is behind it shows
+through.
 
 | tkinter Method | TkCurses | Notes |
 |----------------|----------|-------|
-| `__init__(name, cnf, master, **kw)` | ◐ | ASCII art storage |
-| `blank()` | ◐ | Clear image |
-| `cget(option)` | ◐ | Get option |
-| `copy(...)` | ✗ | N/A |
-| `zoom(...)` | ✗ | N/A |
-| `subsample(...)` | ✗ | N/A |
-| `get(x, y)` | ✗ | N/A |
-| `put(data, to)` | ◐ | Put ASCII chars |
-| `read(filename, ...)` | ✗ | N/A |
-| `write(filename, ...)` | ✗ | N/A |
-| `transparency_get(x, y)` | ✗ | N/A |
-| `transparency_set(x, y, bool)` | ✗ | N/A |
+| `__init__(name, cnf, master, **kw)` | ○ | `width`/`height` in pixels; `data`/`file` |
+| `blank()` | ○ | Every pixel becomes transparent |
+| `cget(option)` | ○ | Get option |
+| `copy(...)` | ○ | Independent copy |
+| `zoom(...)` | ○ | Repeats each pixel |
+| `subsample(...)` | ○ | Keeps every n-th pixel |
+| `get(x, y)` | ○ | The pixel's colour |
+| `put(data, to)` | ○ | A colour, or rows of them; `to` places or tiles |
+| `read(filename, ...)` | ○ | A text file of art |
+| `write(filename, ...)` | ○ | Likewise |
+| `transparency_get(x, y)` | ○ | Whether the pixel paints |
+| `transparency_set(x, y, bool)` | ○ | Make it transparent, or opaque |
+
+`zoom` and `subsample` were once marked N/A here. They are the two operations
+that survive the move most cleanly: repeating a pixel is exactly what
+enlarging means when the plane is this coarse.
 
 ### BitmapImage Class
 
+XBM is the one image format that survives intact: one bit per pixel is
+exactly what this plane holds. Set bits are drawn in `foreground`, clear bits
+are transparent.
+
 | tkinter Method | TkCurses | Notes |
 |----------------|----------|-------|
-| `__init__(name, cnf, master, **kw)` | ✗ | N/A |
+| `__init__(name, cnf, master, **kw)` | ○ | XBM, or rows of text |
+| `configure(**kw)` | ○ | `foreground`, `background` |
+| `image["option"]` | ○ | BitmapImage has no `cget`, as in tkinter |
+
+XBM packs each row into whole bytes, least significant bit leftmost, so a
+12-wide bitmap spends two bytes a row and four bits of every second byte are
+padding. Dropping them is not optional: keep them and every row after the
+first is shifted.
+
+### compound
+
+`compound` says how an image and a text share a widget. The default is the
+part that surprises people — measured with `text='hello'` and an 8x4 image:
+
+| compound | Tk requests | Arrangement |
+|----------|-------------|-------------|
+| `none` (default) | 10x6 | **The image only. The text is not drawn.** |
+| `left` / `right` | 45x23 | Side by side |
+| `top` / `bottom` | 36x28 | Stacked |
+| `center` | 36x23 | Text over the image |
+
+Setting an image on a labelled widget therefore hides its text unless
+`compound` says otherwise. Tk leaves one pixel between the two, which is a
+fraction of a cell; here a whole cell is left horizontally, because art and
+the first letter otherwise run together, and none vertically, because rows
+are already distinct.
+
+Text and pixels meeting in one widget has the same consequence it has on a
+canvas: a glyph occupies a whole cell, so the text half of a compound layout
+is placed on cell boundaries while the image half is placed on pixel ones.
 
 ---
 

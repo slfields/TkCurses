@@ -46,6 +46,7 @@ import re
 import sys
 import time
 import traceback
+import weakref
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -107,6 +108,7 @@ from tkcurses._core.grid import (
     LineConfig,
     parse_sticky,
 )
+from tkcurses._core.images import BitmapImage, Image, PhotoImage
 from tkcurses._core.input import InputHandler
 from tkcurses._core.menus import (
     CASCADE,
@@ -157,6 +159,7 @@ See <https://www.gnu.org/licenses/gpl-3.0.html> for the full terms."""
 __all__ = [
     "NOTICE",
     "BaseWidget",
+    "BitmapImage",
     "BooleanVar",
     "Button",
     "Canvas",
@@ -166,6 +169,7 @@ __all__ = [
     "Event",
     "Frame",
     "Grid",
+    "Image",
     "IntVar",
     "Label",
     "LabelFrame",
@@ -178,6 +182,7 @@ __all__ = [
     "OptionMenu",
     "Pack",
     "PanedWindow",
+    "PhotoImage",
     "Place",
     "Radiobutton",
     "Scale",
@@ -913,6 +918,20 @@ class Misc:
     def selection_own(self, **kw: Any) -> None:
         """Claim the selection for this widget."""
         self.tk.selections.own(self, kw.get("selection", PRIMARY))
+
+    def image_names(self) -> tuple[str, ...]:
+        """The names of every image this application still holds.
+
+        "Still" is the operative word, and it is not a quirk of this
+        implementation: an image nothing references is collected, so a name
+        can leave this list without anything having deleted it. That is Tk's
+        behaviour too, and the registry is weak in order to keep it.
+        """
+        return tuple(sorted(self.tk.images))
+
+    def image_types(self) -> tuple[str, ...]:
+        """The image types that can be created, as Tk reports them."""
+        return ("bitmap", "photo")
 
     def selection_own_get(self, **kw: Any) -> Misc:
         """The widget owning the selection.
@@ -4735,6 +4754,31 @@ class Frame(_Drawable):
                 self._draw_border(dispatcher, window, width, height, attribute)
 
 
+def _repaint_when_image_is_collected(reference: weakref.ref[Any]) -> None:
+    """Repaint the widget behind ``reference``, its image having gone.
+
+    Module level and weak on purpose: a bound method here would make the
+    image own the widget, and the point of the whole arrangement is that it
+    does not.
+    """
+    widget = reference()
+    if widget is not None and widget.winfo_exists():
+        # Repaint, and deliberately do NOT re-measure. Measured on Tk 9.0.2,
+        # deleting an image a Label was showing left the label at its old
+        # 22x12 after an update: the geometry it negotiated stays, and only
+        # the drawing stops. Re-measuring here would collapse it to nothing,
+        # which is tidier and is not what tkinter code has been written
+        # against.
+        widget._redraw()
+
+
+#: Cells left between an image and the text beside it. Tk leaves one pixel,
+#: which is a fraction of a cell and rounds to nothing; horizontally a whole
+#: cell is needed or the art and the first letter run together, while stacked
+#: rows are already distinct without one.
+IMAGE_GAP = 1
+
+
 class _TextWidget(_Drawable):
     """A widget whose size and appearance come from a run of text.
 
@@ -4750,8 +4794,10 @@ class _TextWidget(_Drawable):
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "anchor": "center",
+        "compound": "none",
         "font": "",
         "height": 0,
+        "image": "",
         "justify": "center",
         "state": "normal",
         "text": "",
@@ -4779,8 +4825,18 @@ class _TextWidget(_Drawable):
                 ``underline``, ``font``, and the standard options.
         """
         self._variable_trace: tuple[Variable, str] | None = None
+        #: The name of the image this widget is listening to, so that
+        #: pointing it at a second one can stop listening to the first. The
+        #: NAME, not the image: holding the object would keep it alive, and
+        #: an image a widget cannot outlive is the one thing Tk's arrangement
+        #: guarantees against.
+        self._watched_image: str = ""
+        #: Fires when that image is collected, so the widget can repaint
+        #: itself empty. See _follow_image.
+        self._image_finalizer: weakref.finalize[Any, None] | None = None
         super().__init__(master, cnf, name=name, **kw)
         self._follow_variable()
+        self._follow_image()
         self._apply_requested_size()
 
     # -------------------------------------------------------------- content
@@ -4793,12 +4849,84 @@ class _TextWidget(_Drawable):
             return result
         if "textvariable" in given:
             self._follow_variable()
+        if "image" in given:
+            self._follow_image()
         self._apply_requested_size()
         self._invalidate_layout()
         self._redraw()
         return result
 
     config = configure
+
+    # ---------------------------------------------------------------- images
+
+    def _follow_image(self) -> None:
+        """Listen to the ``image`` option's image, dropping any previous one.
+
+        Measured on Tk 9.0.2: resizing an image from 4x2 to 20x10 moved a
+        live Label's requested size from 6x4 to 22x12 with nothing asked of
+        the label at all. A widget follows its image, so it has to be told.
+
+        Raises:
+            TclError: If the option names an image that does not exist, which
+                is what Tk raises: ``image "nosuch" does not exist``.
+        """
+        previous = self.tk.images.get(self._watched_image)
+        if previous is not None:
+            previous._unwatch(self)
+        if self._image_finalizer is not None:
+            self._image_finalizer.detach()
+            self._image_finalizer = None
+        self._watched_image = ""
+        option = self._options["image"]
+        if not option:
+            return
+        # Normalised to the name, because that is what Tk stores: measured on
+        # 9.0.2, a Label built with image=<PhotoImage> answers cget("image")
+        # with 'pyimage1'. Keeping the object instead would quietly make the
+        # widget an owner of its image, and the whole weak arrangement - a
+        # widget outliving its art rather than the other way round - would
+        # stop being true the moment anyone passed an object.
+        name = str(option)
+        self._options["image"] = name
+        image = self.tk.images.get(name)
+        if image is None:
+            raise TclError(f'image "{name}" does not exist')
+        image._watch(self, self._image_changed)
+        self._watched_image = name
+        # An image going away has to repaint the widget, and collection is
+        # silent: the registry simply stops holding it, and _users dies with
+        # it, so the watch above cannot be what says so. Without this a
+        # widget goes on showing art whose image no longer exists - not
+        # merely stale, but undrawable, since _image() already returns None
+        # and only the last painted cells are still on the screen.
+        #
+        # Weak on the widget, or the image would keep alive the very widget
+        # that is supposed to outlive it. atexit=False because this paints,
+        # and interpreter shutdown is no time to be calling curses.
+        self._image_finalizer = weakref.finalize(
+            image, _repaint_when_image_is_collected, weakref.ref(self)
+        )
+
+    def _image_changed(self) -> None:
+        """Re-measure and repaint after the image under this widget moved."""
+        self._apply_requested_size()
+        self._invalidate_layout()
+        self._redraw()
+
+    def _image(self) -> Image | None:
+        """The image to draw, or None.
+
+        A name that no longer resolves gives None rather than raising. That
+        is deliberate and it is Tk's behaviour: measured, deleting an image a
+        Label was showing left the label alive at its old size with the dead
+        name still in its ``image`` option. Only *setting* an unknown name is
+        an error; having one go away underneath is the documented trap.
+        """
+        name = str(self._options["image"])
+        if not name:
+            return None
+        return self.tk.images.get(name)
 
     def _follow_variable(self) -> None:
         """Track the ``textvariable``, dropping any previous one.
@@ -4858,13 +4986,98 @@ class _TextWidget(_Drawable):
         """The text as display lines, wrapped if ``wraplength`` says so."""
         return wrap(self._text(), int(self._options["wraplength"]))
 
+    def _content_size(self) -> tuple[int, int]:
+        """How big the image and text together are, in cells."""
+        width, height = 0, 0
+        for _, rect in self._content_layout():
+            width = max(width, rect.x + rect.width)
+            height = max(height, rect.y + rect.height)
+        return width, height
+
+    def _content_layout(self) -> list[tuple[str, Rect]]:
+        """Where the image and the text sit relative to each other.
+
+        Returns ``("image", rect)`` and ``("text", rect)`` pairs, each
+        positioned within a block whose origin is (0, 0); the caller anchors
+        that block wherever the widget's area allows.
+
+        The arrangement is ``compound``, and its default is the part that
+        surprises people. Measured on Tk 9.0.2, a Label with both
+        ``text='hello'`` and an 8x4 image:
+
+            compound=none (DEFAULT)  10x6  <- the image, and no text at all
+            compound=left/right      45x23    side by side
+            compound=top/bottom      36x28    stacked
+            compound=center          36x23    the text over the image
+
+        So setting an image on a labelled widget silently hides its text
+        unless compound says otherwise, and reproducing that matters more
+        than the arrangement being a sensible default.
+        """
+        lines = self._lines()
+        text = Rect(0, 0, *measure(lines))
+        image = self._image()
+        if image is None:
+            # Including when there is no text either: an empty label still
+            # occupies a row, because measure([""]) is one line high, and
+            # that is what keeps a blank label from collapsing.
+            return [("text", text)]
+        # In CELLS. The image is a plane of pixels half a cell tall, so its
+        # height halves here and its width does not - see ARCHITECTURE.md's
+        # "The pixel". Laying out in pixels would make every image twice as
+        # tall as it draws.
+        picture = Rect(0, 0, image.width(), image.cell_height())
+        compound = str(self._options["compound"] or "none")
+        if compound == "none" or not self._text():
+            # An image and no text is just the image, however compound reads:
+            # otherwise an empty string would reserve a gap and a row for
+            # nothing.
+            return [("image", picture)]
+        if compound == "center":
+            width = max(picture.width, text.width)
+            height = max(picture.height, text.height)
+            return [
+                (
+                    "image",
+                    picture.translated(
+                        (width - picture.width) // 2, (height - picture.height) // 2
+                    ),
+                ),
+                (
+                    "text",
+                    text.translated(
+                        (width - text.width) // 2, (height - text.height) // 2
+                    ),
+                ),
+            ]
+        if compound in ("left", "right"):
+            height = max(picture.height, text.height)
+            first, second = (picture, text) if compound == "left" else (text, picture)
+            names = ("image", "text") if compound == "left" else ("text", "image")
+            return [
+                (names[0], first.translated(0, (height - first.height) // 2)),
+                (
+                    names[1],
+                    second.translated(
+                        first.width + IMAGE_GAP, (height - second.height) // 2
+                    ),
+                ),
+            ]
+        width = max(picture.width, text.width)
+        first, second = (picture, text) if compound == "top" else (text, picture)
+        names = ("image", "text") if compound == "top" else ("text", "image")
+        return [
+            (names[0], first.translated((width - first.width) // 2, 0)),
+            (names[1], second.translated((width - second.width) // 2, first.height)),
+        ]
+
     def _apply_requested_size(self) -> None:
-        """Ask for room for the text, or for the size the options name.
+        """Ask for room for the content, or for the size the options name.
 
         Padding and any border are included: a label asks for what it needs to
         draw, not for what is left after the frame around it.
         """
-        text_width, text_height = measure(self._lines())
+        text_width, text_height = self._content_size()
         width = int(self._options["width"]) or text_width
         height = int(self._options["height"]) or text_height
         edge = 2 * BORDER_WIDTH if self._bordered else 0
@@ -4894,18 +5107,29 @@ class _TextWidget(_Drawable):
     def _draw_text(
         self, dispatcher: CursesDispatcher, window: Any, attribute: int
     ) -> None:
-        """Write the lines into the area left after border and padding."""
+        """Write the image and the lines into the area left after the border."""
         area = self._text_area()
         if area.is_empty:
+            return
+        layout = self._content_layout()
+        places = dict(layout)
+        if "image" in places:
+            self._draw_image(dispatcher, window, area, places["image"], layout)
+        if "text" not in places:
+            # compound=none with an image: the text is not drawn at all.
             return
         lines = self._lines()
         attribute |= self._text_attribute()
         across, down = parse_anchor(str(self._options["anchor"]))
-        block_width, block_height = measure(lines)
+        block_width, _ = measure(lines)
         # Clamped to the top, the way the column below is clamped to the
         # left: text taller than the widget has to lose its end rather than
         # its beginning, or it cannot be read at all.
-        top = max(area.y, area.y + int((area.height - block_height) * down))
+        content_width, content_height = self._content_size()
+        text_place = places["text"]
+        origin_x = area.x + int((area.width - content_width) * across)
+        origin_y = max(area.y, area.y + int((area.height - content_height) * down))
+        top = origin_y + text_place.y
         justify = str(self._options["justify"])
         for index, line in enumerate(lines):
             row = top + index
@@ -4916,7 +5140,7 @@ class _TextWidget(_Drawable):
             # shortened, and centring the shortened version pushes it right,
             # so text too long to fit ends up hard against the far edge with
             # its beginning cut off.
-            column = area.x + int((area.width - block_width) * across)
+            column = origin_x + text_place.x
             column += align_offset(len(line), block_width, justify)
             column = max(column, area.x)
             text = clip_text(line, area.x + area.width - column)
@@ -4925,6 +5149,49 @@ class _TextWidget(_Drawable):
             # a window smaller than that.
             self._write_line(dispatcher, window, row, column, text, attribute)
         self._draw_underline(dispatcher, window, area, lines, attribute)
+
+    def _draw_image(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        area: Rect,
+        place: Rect,
+        layout: list[tuple[str, Rect]],
+    ) -> None:
+        """Paint the image's cells into ``area`` at ``place``.
+
+        A cell holding None is a hole and is skipped rather than written as a
+        space, so art that is not a full rectangle - and a bitmap's clear
+        bits - show whatever is behind them instead of punching a block of
+        background through it.
+        """
+        image = self._image()
+        if image is None:
+            return
+        del layout
+        content_width, content_height = self._content_size()
+        across, down = parse_anchor(str(self._options["anchor"]))
+        origin_x = area.x + int((area.width - content_width) * across)
+        origin_y = max(area.y, area.y + int((area.height - content_height) * down))
+        # The same compose() a Canvas draws through, on the same plane: it
+        # folds each pair of pixel rows into one cell and says which glyph
+        # and which two colours that cell needs. A background of None means
+        # the unlit half should show the widget's own colour rather than one
+        # of the image's.
+        colors = self.tk.colors
+        background = str(self._options["background"] or "black")
+        for (x, y), (glyph, fore, back) in compose(image.lit()).items():
+            line = origin_y + place.y + y
+            column = origin_x + place.x + x
+            if not (area.y <= line < area.y + area.height):
+                continue
+            if not (area.x <= column < area.x + area.width):
+                continue
+            if colors is None:
+                attribute = _curses.A_NORMAL
+            else:
+                attribute = colors.attribute_for(fore, back or background)
+            self._write_line(dispatcher, window, line, column, glyph, attribute)
 
     def _text_area(self) -> Rect:
         """Where the text may go, in cells relative to this widget's window."""

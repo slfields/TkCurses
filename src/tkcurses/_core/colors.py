@@ -54,6 +54,7 @@ __all__ = [
     "palette_rgb",
     "parse_color",
     "rgb_for",
+    "rgb_of",
     "truecolor_hinted",
 ]
 
@@ -239,6 +240,27 @@ def rgb_for(spec: str) -> tuple[int, int, int] | None:
     scale = 16**per - 1
     red, green, blue = (round(int(part, 16) * 255 / scale) for part in parts)
     return red, green, blue
+
+
+def rgb_of(spec: str) -> tuple[int, int, int] | None:
+    """The RGB a colour specification actually renders as, or None.
+
+    ``rgb_for`` answers only for ``#rgb`` forms, because that is all the
+    resolver needs. This one also answers for the names, by resolving the
+    name and reporting the RGB the terminal palette really shows for it - so
+    ``PhotoImage.get`` can return a triple the way Tk's does without
+    pretending a terminal has more colours than it has.
+    """
+    direct = rgb_for(spec)
+    if direct is not None:
+        return direct
+    resolved = _NAMED.get(spec.lower())
+    if resolved is None:
+        return None
+    for rgb, candidate in _PALETTE_RGB:
+        if candidate == resolved:
+            return rgb
+    return None
 
 
 def palette_rgb(
