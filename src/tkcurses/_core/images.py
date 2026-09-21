@@ -84,6 +84,7 @@ from typing import TYPE_CHECKING, Any
 
 from tkcurses._core.colors import rgb_of
 from tkcurses._core.errors import TclError
+from tkcurses._core.imagefiles import decode, sniff
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -284,17 +285,38 @@ class Image:
         """A copy of the pixels, row by row."""
         return [list(row) for row in self._pixels]
 
-    def lit(self) -> dict[tuple[int, int], str]:
+    def lit(
+        self, region: tuple[int, int, int, int] | None = None
+    ) -> dict[tuple[int, int], str]:
         """Every pixel that paints, keyed by ``(x, y)``.
 
         Exactly what :func:`~tkcurses._core.canvas.compose` takes, which is
         the point of sharing the plane: a widget draws an image by composing
         this, the same way a canvas draws a circle.
+
+        Args:
+            region: ``(x0, y0, x1, y1)`` in pixels, half-open, to limit the
+                result to. **A caller drawing into a window should pass the
+                part it can actually show.** Without it a 320x200 photograph
+                hands over 64,000 pixels and composes 32,000 cells on every
+                repaint, of which a 120x24 window keeps 9% - which is the
+                same fault TkCurses-g9w found in Text and Canvas, doing work
+                proportional to the content instead of to the window.
         """
+        if region is None:
+            return {
+                (x, y): colour
+                for y, row in enumerate(self._pixels)
+                for x, colour in enumerate(row)
+                if colour is not None
+            }
+        x0, y0, x1, y1 = region
+        x0, y0 = max(x0, 0), max(y0, 0)
+        x1, y1 = min(x1, self.width()), min(y1, self.height())
         return {
             (x, y): colour
-            for y, row in enumerate(self._pixels)
-            for x, colour in enumerate(row)
+            for y in range(y0, y1)
+            for x, colour in enumerate(self._pixels[y][x0:x1], start=x0)
             if colour is not None
         }
 
@@ -379,13 +401,38 @@ class PhotoImage(Image):
         self._options["height"] = len(split)
 
     def _read_file(self, path: str) -> None:
-        """Load rows from a text file, one line per pixel row."""
+        """Load an image file, or rows of art from a text one.
+
+        Sniffed from the content, never from the name - which is what Tk
+        does: measured on 9.0.2, opening a PNG while saying ``format="gif"``
+        still fails with ``couldn't recognize data in image file``, so it is
+        plainly reading the bytes.
+
+        A file in none of the image formats is read as rows of characters -
+        but only when a ``palette`` has been declared, because that is how a
+        caller says "this is character art, and here is what the characters
+        mean". Without one it is refused, which is what Tk does: measured,
+        ``PhotoImage(file=)`` on a text file raises ``couldn't recognize
+        data in image file``. The rule keeps art loadable without making
+        every text file on the disk a valid image - an image viewer that
+        opened a README as a 37-pixel-wide picture is what that cost.
+        """
         try:
-            text = Path(path).read_text(encoding="utf-8")
+            raw = Path(path).read_bytes()
         except OSError as exc:
             raise TclError(
                 f'couldn\'t open "{path}": {exc.strerror or "no such file or directory"}'
             ) from None
+        if sniff(raw) is not None:
+            self._pixels = decode(raw, path)
+            self._remeasure()
+            return
+        if self._options.get("palette") is None:
+            raise TclError(f'couldn\'t recognize data in image file "{path}"')
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise TclError(f'couldn\'t recognize data in image file "{path}"') from None
         self._set_rows(text.rstrip("\n").split("\n"))
 
     def _resize(self, width: int, height: int) -> None:

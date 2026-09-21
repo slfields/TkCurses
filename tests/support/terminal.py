@@ -65,6 +65,7 @@ import sys
 import termios
 import textwrap
 import time
+import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
@@ -354,6 +355,18 @@ class TerminalHarness:
             env["LINES"] = str(self.rows)
             os.execvpe(argv[0], list(argv), env)
         except BaseException:
+            # Say why, before going. A bare _exit(127) here produced the
+            # least diagnosable failure this suite has: a blank screen, no
+            # stderr, and a test waiting out its whole budget against a
+            # process that died before curses ever opened. Whatever goes
+            # wrong between the fork and the exec - a pty that will not
+            # become a controlling terminal, an unwritable workdir for the
+            # shim, a runner out of descriptors - now arrives as text on the
+            # pipe the harness is already reading.
+            with contextlib.suppress(BaseException):
+                # fd 2, not err_w: the loop above has already closed err_w,
+                # and 2 is what was dup2'd onto the pipe.
+                os.write(2, traceback.format_exc().encode())
             os._exit(127)
 
     def close(self) -> None:
@@ -530,12 +543,39 @@ class TerminalHarness:
         while True:
             if predicate(self):
                 return
+            # A dead child will not start satisfying the predicate later, so
+            # waiting out the rest of the budget only delays the report and
+            # buries the reason. Checked after the predicate, not before: a
+            # program that printed what was wanted and then exited has
+            # succeeded, and the order is the whole difference.
+            if self._exited_without(message):
+                return
             if time.monotonic() >= deadline:
                 raise TerminalTimeout(
                     f"timed out after {budget:g}s waiting for {message}\n"
                     f"{self.describe()}"
                 )
             self._drain(min(0.05, max(0.0, deadline - time.monotonic())))
+
+    def _exited_without(self, message: str) -> bool:
+        """Raise if the child is gone and cannot ever satisfy the wait.
+
+        Returns False when it is still running, and never returns True - the
+        signature is a lie for the caller's benefit, so the check reads as
+        one line inside the loop.
+        """
+        if self._pid is None:
+            return False
+        pid, status = os.waitpid(self._pid, os.WNOHANG)
+        if not pid:
+            return False
+        self._exit_status = status
+        self._pid = None
+        self._drain(0.05)  # whatever it managed to say on the way out
+        raise TerminalTimeout(
+            f"the program exited with code {self.exit_code} while waiting "
+            f"for {message}\n{self.describe()}"
+        )
 
     def wait_for_text(self, text: str, *, timeout: float | None = None) -> None:
         """Wait until ``text`` appears anywhere on the screen."""

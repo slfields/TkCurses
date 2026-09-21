@@ -324,3 +324,50 @@ def test_art_stops_being_drawn_when_its_image_is_collected(terminal, tmp_path):
     assert block(term, 0, 0, 2, 1) == ["  "]
     # The geometry it negotiated survives; only the image goes.
     assert "dropped 2x1" in "\n".join(term.display)
+
+
+def test_an_image_larger_than_its_window_fills_it_to_the_edges(terminal, tmp_path):
+    """The clipped draw must reach the last visible row and column.
+
+    A repaint composes only the pixels that can land in the widget, because
+    composing a whole photograph and discarding 91% of it cost 47ms a frame.
+    Every test before this one used an image that fitted inside its window,
+    so a clip one cell too tight in either direction went unnoticed - it
+    only shows where the image runs past the edge, which is the case that
+    made clipping worth doing.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "big = tkcurses.PhotoImage(master=root, width=60, height=40)\n"
+            "big.put('red', to=(0, 0, 60, 40))\n"
+            "tkcurses.Label(root, image=big, anchor='nw', background='')"
+            ".place(x=0, y=0, width=10, height=4)"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text(FULL)
+    term.wait_for_idle()
+    # Every cell of the 10x4 window, corners included.
+    assert block(term, 0, 0, 10, 4) == [FULL * 10] * 4
+    # And nothing outside it.
+    assert term.display[4][:10].strip() == ""
+    assert term.display[0][10:].strip() == ""
+
+
+def test_an_image_clipped_by_the_screen_edge_still_fills_what_shows(terminal, tmp_path):
+    """Placed partly off-screen, the visible part must be complete."""
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "big = tkcurses.PhotoImage(master=root, width=60, height=40)\n"
+            "big.put('red', to=(0, 0, 60, 40))\n"
+            "tkcurses.Label(root, image=big, anchor='nw', background='')"
+            ".place(x=34, y=9, width=20, height=8)"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text(FULL)
+    term.wait_for_idle()
+    # Columns 34..39 and rows 9..11 are all that fit, and all must be drawn.
+    assert block(term, 34, 9, 6, 3) == [FULL * 6] * 3

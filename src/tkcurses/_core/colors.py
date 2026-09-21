@@ -500,9 +500,25 @@ class ColorManager:
             # unstyled widget looks native rather than forced to white on black.
             with contextlib.suppress(curses.error):
                 self._dispatcher.call(curses.use_default_colors)
-            # start_color() defines COLOR_PAIRS; read it defensively so a
-            # curses build that omits it degrades rather than raising.
-            self._max_pairs = getattr(curses, "COLOR_PAIRS", 0)
+            # Two different numbers, and using the wrong one silently ruins
+            # the screen. COLOR_PAIRS is how many pairs the terminal will
+            # CREATE - 65536 on a modern ncurses. A_COLOR is how many an
+            # attribute can NAME, and curses.color_pair() packs the number
+            # into that field: eight bits, so 256.
+            #
+            # Past 255 the number wraps instead of failing. Measured on
+            # xterm-256color: color_pair(256) is 0, which is the terminal's
+            # default colours; color_pair(257) is pair 1; color_pair(300) is
+            # pair 44. Cells come out painted in some other pair's colours
+            # entirely, and nothing reports a thing - allocation succeeded,
+            # init_pair succeeded, exhausted stayed False.
+            #
+            # That is what "the image is way off at 256 colours and fine at
+            # 8" turns out to be: eight colours never needs more than a few
+            # dozen pairs, and an image at 256 runs through them.
+            reported = getattr(curses, "COLOR_PAIRS", 0)
+            encodable = (curses.A_COLOR >> 8) + 1
+            self._max_pairs = min(reported, encodable) if reported else encodable
             # start_color() sets COLORS to what the running ncurses will
             # accept, which is the number that matters here. Terminfo is the
             # same number in every case measured, but this one cannot be out
@@ -559,16 +575,57 @@ class ColorManager:
             return existing
         if self._max_pairs and self._next >= self._max_pairs:
             self._exhausted = True
-            return 0
+            return self._nearest_pair(fg, bg)
         try:
             self._dispatcher.call(curses.init_pair, self._next, fg, bg)
         except curses.error:
             # Some terminals report more pairs than they will actually create.
             self._exhausted = True
-            return 0
+            return self._nearest_pair(fg, bg)
         self._pairs[key] = self._next
         self._next += 1
         return self._pairs[key]
+
+    def _nearest_pair(self, fg: int, bg: int) -> int:
+        """The closest pair already allocated, for when there are no more.
+
+        Returning 0 instead - which is what this did - paints the cell in
+        the terminal's default colours, so running out of pairs turned parts
+        of a picture into whatever the background happens to be. An
+        approximate colour is a far better answer than an unrelated one, and
+        it is a real answer rather than a failure, so it can be cached.
+        """
+        if not self._pairs:
+            return 0
+        want_fg = self._rgb_of_number(fg)
+        want_bg = self._rgb_of_number(bg)
+        if want_fg is None or want_bg is None:
+            return next(iter(self._pairs.values()))
+
+        def distance(key: tuple[int, int]) -> int:
+            have_fg = self._rgb_of_number(key[0])
+            have_bg = self._rgb_of_number(key[1])
+            if have_fg is None or have_bg is None:
+                return 1 << 30
+            return sum(
+                (a - b) ** 2 for a, b in zip(want_fg, have_fg, strict=True)
+            ) + sum((a - b) ** 2 for a, b in zip(want_bg, have_bg, strict=True))
+
+        return self._pairs[min(self._pairs, key=distance)]
+
+    def _rgb_of_number(self, number: int) -> tuple[int, int, int] | None:
+        """What a colour number actually shows as, for comparing two of them."""
+        if number < 0:
+            return None
+        if self._depth >= ColorDepth.DIRECT:
+            return rgb_of_direct(number)
+        palette = _PALETTES.get(self._depth)
+        if palette is None:
+            return None
+        for rgb, resolved in palette:
+            if resolved.color == number:
+                return rgb
+        return None
 
     def attribute_for(self, fg: str, bg: str, attr: int = curses.A_NORMAL) -> int:
         """Combine colours and attributes into one curses attribute value.
@@ -593,11 +650,12 @@ class ColorManager:
         pair = self.pair_number(foreground.color, background.color)
         if pair:
             combined |= curses.color_pair(pair)
-        # Not cached while pairs are still being handed out and could run
-        # out: an answer of 0 from an exhausted allocator is a failure, not
-        # a result, and keeping it would make the failure permanent.
-        if not self._exhausted:
-            self._attributes[(fg, bg, attr)] = combined
+        # Cached either way now. This used to refuse to cache once the
+        # allocator was exhausted, because an exhausted allocator answered
+        # 0 - a failure, and caching a failure makes it permanent. It
+        # answers with the nearest pair it already has instead, which is a
+        # real and stable answer and worth keeping.
+        self._attributes[(fg, bg, attr)] = combined
         return combined
 
     def preallocate(self, combinations: Iterable[tuple[str, str]]) -> int:

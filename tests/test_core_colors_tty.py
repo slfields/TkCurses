@@ -220,3 +220,113 @@ def test_winfo_rgb_answers_for_the_terminal_in_front_of_it(
     term.wait_for_text("gray=")
     assert term.row(0).strip() == f"depth={depth}", term.describe()
     assert term.row(1).strip() == f"gray={gray!r}", term.describe()
+
+
+#: Colours from the xterm cube, each of which resolves to its own palette
+#: entry, so asking for many really does allocate many pairs.
+CUBE = (
+    "L = (0, 95, 135, 175, 215, 255)\n"
+    "cube = ['#%02x%02x%02x' % (L[i // 36], L[(i // 6) % 6], L[i % 6])"
+    " for i in range(216)]\n"
+)
+
+
+def test_no_pair_is_ever_numbered_past_what_an_attribute_can_carry(terminal, tmp_path):
+    """COLOR_PAIRS and A_COLOR are different numbers, and it matters.
+
+    ncurses will CREATE 65536 pairs, and curses.color_pair() packs the
+    number into an eight-bit field, so only 256 can be NAMED. Past that the
+    number wraps and the cell is painted in some other pair's colours -
+    measured: pair 256 became pair 0, pair 257 became pair 1, pair 300
+    became pair 44. Nothing raised, and the exhausted flag stayed False,
+    because allocation had genuinely succeeded.
+
+    That is what an image "way off at 256 colours and fine at 8" is: eight
+    colours needs a few dozen pairs and never reaches the edge.
+    """
+    term = terminal(cols=70, rows=8)
+    term.run_source(
+        "import curses\n"
+        "from tkcurses._core.colors import ColorManager\n"
+        "from tkcurses._core.screen import CursesScreen\n"
+        "screen = CursesScreen()\n"
+        "buffer = screen.start()\n"
+        "try:\n"
+        "    colors = ColorManager()\n"
+        "    colors.start()\n"
+        + "".join(f"    {line}\n" for line in CUBE.splitlines())
+        + "    worst = 0\n"
+        "    colourless = 0\n"
+        "    for fg in cube:\n"
+        "        for bg in cube[:3]:\n"
+        "            a = colors.attribute_for(fg, bg)\n"
+        "            worst = max(worst, (a & curses.A_COLOR) >> 8)\n"
+        "            if not (a & curses.A_COLOR):\n"
+        "                colourless += 1\n"
+        "    buffer.write(0, 0, 'highest pair used %d' % worst)\n"
+        "    buffer.write(1, 0, 'allocated %d' % colors.allocated)\n"
+        "    buffer.write(2, 0, 'colourless %d' % colourless)\n"
+        "    buffer.write(3, 0, 'exhausted %s' % colors.exhausted)\n"
+        "    screen.refresh()\n"
+        "    screen.stdscr.getch()\n"
+        "finally:\n"
+        "    screen.stop()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("exhausted")
+    screen = "\n".join(term.display)
+    highest = int(term.display[0].split()[-1])
+    allocated = int(term.display[1].split()[-1])
+    assert highest <= 255, f"a pair number past 255 cannot be encoded\n{screen}"
+    assert allocated <= 255, f"more pairs allocated than can be named\n{screen}"
+    # Every cell must still get a colour: running out is not a reason to
+    # paint in the terminal's default.
+    assert "colourless 0" in screen, screen
+    assert "exhausted True" in screen, "the allocator should know it ran out"
+    term.send_keys("q")
+
+
+def test_running_out_of_pairs_gives_a_near_colour_not_a_default_one(terminal, tmp_path):
+    """The fallback has to be *close*, or it is no better than pair 0."""
+    term = terminal(cols=70, rows=8)
+    term.run_source(
+        "import curses\n"
+        "from tkcurses._core.colors import ColorManager\n"
+        "from tkcurses._core.screen import CursesScreen\n"
+        "screen = CursesScreen()\n"
+        "buffer = screen.start()\n"
+        "try:\n"
+        "    colors = ColorManager()\n"
+        "    colors.start()\n"
+        + "".join(f"    {line}\n" for line in CUBE.splitlines())
+        + "    for fg in cube:\n"
+        "        for bg in cube[:3]:\n"
+        "            colors.attribute_for(fg, bg)\n"
+        "            if colors.exhausted:\n"
+        "                break\n"
+        "        if colors.exhausted:\n"
+        "            break\n"
+        "    a = colors.attribute_for('#00ff00', '#000000')\n"
+        "    pair = (a & curses.A_COLOR) >> 8\n"
+        "    number = -1\n"
+        "    for key, value in colors._pairs.items():\n"
+        "        if value == pair:\n"
+        "            number = key[0]\n"
+        "    rgb = colors._rgb_of_number(number)\n"
+        "    buffer.write(0, 0, 'pair %d rgb %s' % (pair, rgb))\n"
+        "    screen.refresh()\n"
+        "    screen.stdscr.getch()\n"
+        "finally:\n"
+        "    screen.stop()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("pair ")
+    line = term.display[0]
+    assert "rgb (" in line, line
+    red, green, blue = (
+        int(part) for part in line.split("rgb (")[1].rstrip(") ").split(",")
+    )
+    # Asked for pure green; the nearest allocated pair must be green-ish
+    # rather than whatever happened to be first.
+    assert green > red and green > blue, f"the fallback is not near the colour: {line}"
+    term.send_keys("q")

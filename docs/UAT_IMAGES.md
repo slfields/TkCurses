@@ -212,3 +212,107 @@ This is why every tkinter tutorial says to keep a reference to your images.
   it has none; anything still drawn is a repaint that never happened.
 - `d` collapsing a widget to nothing rather than leaving its size alone.
 - An exception from `d`, or from the terminal being resized at any point.
+
+
+---
+
+# UAT: The image viewer
+
+Scenario 36. Run it with:
+
+```bash
+python3 -m uat 36
+```
+
+Scenario 35 showed images built in a source file. This one opens real ones:
+**PNG, GIF, PGM and PPM through `PhotoImage`, and XBM through
+`BitmapImage`** — the same formats tkinter 8.6 and later read, decoded with
+nothing but the standard library.
+
+The scenario writes its own folder of test images on startup, so there is
+always something to open whatever machine it runs on, and it opens the first
+one for you.
+
+---
+
+## 36.1 Every format opens
+
+**Do:** press `n` repeatedly to step through the folder.
+
+**Look for:**
+
+- [ ] `arrow.xbm` draws an arrow pointing right, and the status says
+      **opened as BitmapImage**. XBM is BitmapImage's format and PhotoImage
+      will not read it — in Tk either — so the viewer has to look at the
+      file before choosing a class.
+- [ ] `big.png`, `gradient.png`, `blocks.gif`, `colour.ppm` and `ramp.pgm`
+      all draw, each **opened as PhotoImage**.
+- [ ] Every one reports its size twice: in **pixels**, and in **cells**,
+      the second always half the first in height.
+- [ ] The gradients are smooth left to right, and the GIF's blocks are four
+      distinct colours. A shifted or repeated row means a decoder bug.
+
+## 36.2 Two files that must fail politely
+
+**Do:** keep pressing `n` until each comes round.
+
+**Look for:**
+
+- [ ] `interlaced.png` is refused with **"Adam7 interlacing is not
+      supported"** — named, not a generic complaint. Tk 9.0.2 reads these;
+      this does not, and the message says which of those two is the problem.
+- [ ] Neither file produces a traceback or closes the program.
+- [ ] `bad.txt` never appears under the `Images` filter at all. Switch the
+      chooser to `All files` and open it by hand: **"couldn't recognize data
+      in image file"**, which is Tk's own wording for it.
+
+## 36.3 Images load at their native size
+
+**Do:** press `n` until `big.png` is up — 160x120 pixels, so 160 cells wide
+and 60 rows, on a screen that is neither. Then press `f`.
+
+**Look for:**
+
+- [ ] Fitted, the status says **showing 40x15 cells** — subsampled by 4 —
+      and the whole picture is on screen.
+- [ ] `f` again says **showing 160x60 cells, actual size**, and the image
+      now runs off the right and bottom edges.
+- [ ] The reported **pixel** size never changes. The image is always
+      160x120; only what the viewer chooses to show changes.
+
+This is the part worth understanding rather than just ticking. `PhotoImage`
+loads at native size, exactly as Tk's does — it does not fit itself to
+anything. Fitting is the viewer's job, done here with `subsample()`.
+
+## 36.4 The file dialog filters to images
+
+**Do:** press `o`.
+
+**Look for:**
+
+- [ ] The listing shows **only openable images** — no `bad.txt`.
+- [ ] Above the filter box is a chooser reading `Images`. Open it: `PNG`,
+      `GIF`, `Netpbm`, `Bitmaps`, `All files`.
+- [ ] Choosing `PNG` leaves only the three `.png` files. Choosing `Netpbm`
+      leaves the `.ppm` and the `.pgm` — **one filetype, two patterns**.
+- [ ] Choosing `All files` shows everything, `bad.txt` included.
+- [ ] Choosing a file opens it.
+- [ ] Escape cancels and the status says so.
+
+Both halves of this were broken until this cycle: a filetype naming several
+patterns matched **nothing**, because the whole string went to `fnmatch` as
+one pattern; and every filetype after the first was unreachable, because
+only `filetypes[0]` was ever read.
+
+---
+
+## What would count as a failure
+
+- A format that will not open, or opens with rows shifted or repeated.
+- An XBM opened as a PhotoImage, or any file opened as the wrong class.
+- A traceback from `bad.txt` or `interlaced.png`, rather than a message.
+- `interlaced.png` refused without naming interlacing.
+- An image that shrinks itself to fit without `f` being pressed.
+- The dialog listing `bad.txt` under `Images`, or listing nothing under
+  `Netpbm`.
+- The filetype chooser missing, or choosing a type changing nothing.

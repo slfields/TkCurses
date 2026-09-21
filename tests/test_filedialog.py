@@ -34,6 +34,7 @@ from tkcurses.filedialog import (
     _first_pattern,
     _with_extension,
     dialogstates,
+    patterns_of,
 )
 
 
@@ -211,3 +212,107 @@ def test_the_default_extension_is_added_only_when_there_is_none(
 def test_the_remembered_states_are_shared_across_dialogs():
     """tkinter keeps them in a module-level dictionary, and so does this."""
     assert isinstance(dialogstates, dict)
+
+
+# ------------------------------------------------------- filetypes, plural
+
+
+@pytest.fixture
+def gallery(tmp_path):
+    """One of each, so a filter that matches too much shows."""
+    for name in ("one.png", "two.gif", "three.ppm", "four.txt", "five.xbm"):
+        (tmp_path / name).write_text("x")
+    (tmp_path / "sub").mkdir()
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        ("*.png *.gif", ("*.png", "*.gif")),
+        (("*.png", "*.gif"), ("*.png", "*.gif")),
+        ((".png", ".gif"), ("*.png", "*.gif")),
+        (".txt", ("*.txt",)),
+        ("*", ("*",)),
+        ("", ("*",)),
+        ((), ("*",)),
+    ],
+    ids=[
+        "spaced string",
+        "tuple of globs",
+        "bare extensions",
+        "one extension",
+        "star",
+        "empty string",
+        "empty tuple",
+    ],
+)
+def test_the_shapes_tk_writes_a_pattern_field_in(spec, expected):
+    """All of these mean the same thing in Tk, including the man page's
+    ``{.txt .text}`` - bare extensions, no star."""
+    assert patterns_of(spec) == expected
+
+
+def test_a_filter_with_several_globs_matches_any_of_them(browser, gallery):
+    """It used to match none: fnmatch was handed the whole string at once,
+    and no file is called "something *.png *.gif"."""
+    browser.set_filter(str(gallery), "*.png *.gif *.ppm")
+    assert browser.refresh()
+    assert sorted(browser.files.get(0, "end")) == ["one.png", "three.ppm", "two.gif"]
+
+
+def test_a_single_glob_still_works(browser, gallery):
+    browser.set_filter(str(gallery), "*.png")
+    assert browser.refresh()
+    assert list(browser.files.get(0, "end")) == ["one.png"]
+
+
+def test_directories_are_listed_whatever_the_filter(browser, gallery):
+    browser.set_filter(str(gallery), "*.png")
+    assert browser.refresh()
+    assert "sub" in browser.dirs.get(0, "end")
+
+
+def test_the_first_filetype_supplies_the_opening_pattern():
+    filetypes = [("Images", "*.png *.gif"), ("Text", "*.txt")]
+    assert _first_pattern(filetypes) == "*.png *.gif"
+
+
+def test_bare_extensions_in_filetypes_grow_their_star():
+    assert _first_pattern([("Text", (".txt", ".text"))]) == "*.txt *.text"
+
+
+def test_one_filetype_needs_no_chooser():
+    browser = _Browser(Misc(), [("Images", "*.png")])
+    assert browser.kinds is None
+
+
+def test_several_filetypes_get_a_chooser():
+    browser = _Browser(Misc(), [("Images", "*.png"), ("Text", "*.txt")])
+    assert browser.kinds is not None
+    assert browser.kind.get() == "Images"
+
+
+def test_choosing_a_filetype_relists_the_directory(gallery):
+    """The gap this closes: the other filetypes were unreachable."""
+    browser = _Browser(
+        Misc(), [("Images", "*.png *.gif"), ("Text", "*.txt"), ("All", "*")]
+    )
+    browser.set_filter(str(gallery), "*.png *.gif")
+    assert browser.refresh()
+    assert sorted(browser.files.get(0, "end")) == ["one.png", "two.gif"]
+
+    browser._kind_chosen("Text")
+    assert list(browser.files.get(0, "end")) == ["four.txt"]
+    assert browser.get_filter()[1] == "*.txt"
+
+    browser._kind_chosen("All")
+    assert len(browser.files.get(0, "end")) == 5
+
+
+def test_choosing_a_filetype_that_is_not_there_changes_nothing(gallery):
+    browser = _Browser(Misc(), [("Images", "*.png"), ("Text", "*.txt")])
+    browser.set_filter(str(gallery), "*.png")
+    browser.refresh()
+    browser._kind_chosen("Nonesuch")
+    assert list(browser.files.get(0, "end")) == ["one.png"]

@@ -37,6 +37,12 @@ test = [
     "pytest-timeout>=2.0",
     "hypothesis>=6.0",
     "pyte>=0.8",
+    # An independent decoder to check ours against. Test-only on purpose:
+    # the library itself takes no runtime dependency, and decoding PNG, GIF
+    # and netpbm needs nothing beyond zlib. Pillow is here to disagree with
+    # us when we are wrong, which is exactly how the XBM bit order was
+    # caught - so the tests skip rather than fail when it is absent.
+    "pillow>=10.0",
 ]
 dev = [
     "tkcurses[test]",

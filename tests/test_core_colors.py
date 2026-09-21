@@ -244,13 +244,26 @@ def test_pair_zero_is_never_allocated(manager):
 
 
 def test_running_out_of_pairs_degrades_instead_of_failing(manager):
-    """An over-colourful application must still render."""
+    """An over-colourful application must still render.
+
+    This used to assert that an exhausted allocator answers 0, and 0 is the
+    pair holding the TERMINAL's default colours - so running out did not
+    degrade, it repainted whatever came next in the default foreground and
+    background. On a picture that is the difference between a slightly
+    wrong colour and an unrelated one.
+
+    It answers with the nearest pair it has already allocated now, so the
+    guarantee is the stronger one: every cell still gets a colour, and the
+    colour is close to the one asked for.
+    """
     manager.start()
     for fg in range(8):
         for bg in range(8):
             manager.pair_number(fg, bg)
     assert manager.exhausted
-    assert manager.pair_number(6, 7) == 0  # falls back to the default pair
+    fallback = manager.pair_number(6, 7)
+    assert fallback != 0, "an exhausted allocator must not answer with the default pair"
+    assert fallback in manager._pairs.values()
 
 
 def test_a_terminal_without_colour_is_not_an_error(monkeypatch):

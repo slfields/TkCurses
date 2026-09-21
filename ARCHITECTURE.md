@@ -3292,6 +3292,48 @@ is written around them. All three were measured on Tk 9.0.2:
   Label's request from 6x4 to 22x12 with nothing asked of the label, so an
   image tells its users when it changes.
 
+### Image files
+
+**tkinter 8.6 and later give PhotoImage PNG, GIF, PGM and PPM, and
+BitmapImage XBM. All five are read, with nothing but the standard library.**
+`dependencies = []` is a property of this library rather than an oversight:
+PNG needs `zlib`, which is stdlib, and GIF's LZW and the netpbm headers are
+short enough to write. Pillow appears only in the test extra, as an
+independent decoder to check the answers against.
+
+**The format is sniffed from the content, never from the name.** Measured on
+Tk 9.0.2: opening a PNG while passing `format="gif"` still fails with
+`couldn't recognize data in image file`, so Tk is plainly reading the bytes.
+
+**An image loads at its native size.** An 800x600 PNG becomes an 800x600
+pixel image — 800 cells across and 300 rows — most of it off the screen, and
+that is correct. Fitting is the *caller's* job, through `subsample()`, as it
+is in Tk. Auto-fitting inside PhotoImage would surprise anyone porting
+tkinter code.
+
+| Format | Read | Notes |
+|--------|------|-------|
+| PNG | ○ | Non-interlaced, 8-bit: grey, RGB, palette, either with alpha |
+| GIF | ○ | 87a and 89a, first frame, interlacing undone |
+| PGM / PPM | ○ | P1-P6, any maxval, comments anywhere in the header |
+| XBM | ○ | Via BitmapImage, as in tkinter |
+
+Refused **by name**, not as "unrecognised data": Adam7-interlaced PNG, PNG
+bit depths other than 8, and frames after a GIF's first. Tk 9.0.2 reads
+interlaced PNG, so that one is this library's limit rather than the format's
+and the message says so — blaming the file would send someone looking for a
+corrupt download.
+
+Alpha becomes presence or absence, not a blend. A half-cell paints or it does
+not, and by draw time the pixel has been folded into a glyph with a single
+colour, so there is nothing left to blend with; below half alpha the pixel is
+a hole. GIF's transparent index and PNG's `tRNS` are honoured the same way.
+
+A file in none of these formats is read as **rows of characters** only when a
+`palette` has been declared — that being how a caller says "this is character
+art". Without one it is refused, as Tk refuses it. The rule keeps art
+loadable without making every text file on the disk a valid image.
+
 ### PhotoImage Class
 
 A plane of coloured pixels. A pixel holds a colour, or nothing at all —
@@ -3300,7 +3342,7 @@ through.
 
 | tkinter Method | TkCurses | Notes |
 |----------------|----------|-------|
-| `__init__(name, cnf, master, **kw)` | ○ | `width`/`height` in pixels; `data`/`file` |
+| `__init__(name, cnf, master, **kw)` | ○ | PNG, GIF, PGM, PPM, or rows |
 | `blank()` | ○ | Every pixel becomes transparent |
 | `cget(option)` | ○ | Get option |
 | `copy(...)` | ○ | Independent copy |
@@ -3326,6 +3368,7 @@ are transparent.
 | tkinter Method | TkCurses | Notes |
 |----------------|----------|-------|
 | `__init__(name, cnf, master, **kw)` | ○ | XBM, or rows of text |
+| `file=` | ○ | Real `.xbm` files, sniffed by content |
 | `configure(**kw)` | ○ | `foreground`, `background` |
 | `image["option"]` | ○ | BitmapImage has no `cget`, as in tkinter |
 

@@ -64,6 +64,18 @@ _SCALE = float(os.environ.get("TKCURSES_TEST_TIMEOUT_SCALE", "1"))
 TEXT_BUDGET_MS = 25 * _SCALE
 CANVAS_BUDGET_MS = 120 * _SCALE
 
+#: An image is the third widget whose content can dwarf its window, and it
+#: was missed when this file was written: a 320x200 photograph composed
+#: 32,000 cells on every repaint and a 24-row window kept 9% of them.
+#: The image here is 640x1600 in a 58x36 window - 512,000 cells against
+#: 2,088 - so walking EITHER axis in full blows the budget by an order of
+#: magnitude, which a merely-large image did not: at 640x400 a repaint that
+#: ignored the row range still came in under it.
+#: Measured at 47ms before the draw was clipped to the visible region, and
+#: 6ms after. The budget is set where a return to composing the whole image
+#: cannot hide.
+IMAGE_BUDGET_MS = 20 * _SCALE
+
 TIMED = """
 import time
 import tkcurses
@@ -74,6 +86,15 @@ buffer = root.tk.screen.buffer
 text = tkcurses.Text(root, name='tx')
 text.place(x=0, y=0, width=58, height=36)
 text.insert('end', '\\n'.join('line %d of some text' % i for i in range(5000)))
+
+# Deliberately far wider and taller than the 58x36 window it goes in, so a
+# repaint that walks either axis of the whole image cannot stay in budget.
+photo = tkcurses.PhotoImage(master=root, name='shot', width=640, height=1600)
+photo.put('#3060a0', to=(0, 0, 640, 1600))
+for stripe in range(0, 640, 7):
+    photo.put('#e0d0b0', to=(stripe, 0, stripe + 3, 1600))
+shown = tkcurses.Label(root, name='shown', image='shot', anchor='nw')
+shown.place(x=0, y=0, width=58, height=36)
 
 canvas = tkcurses.Canvas(root, name='c')
 canvas.place(x=60, y=0, width=58, height=36)
@@ -99,7 +120,14 @@ def cost(widget, rounds):
 # on four Python versions and not on the fifth, where the failure screen has
 # both widgets drawn, the measurement plainly finished, and no 'measured'
 # anywhere. Nothing is placed below row 36, so nothing can paint over it.
-buffer.write(37, 0, ('text=%.2f canvas=%.2f' % (cost(text, 5), cost(canvas, 3))).ljust(40))
+buffer.write(
+    37,
+    0,
+    (
+        'text=%.2f canvas=%.2f image=%.2f'
+        % (cost(text, 5), cost(canvas, 3), cost(shown, 5))
+    ).ljust(48),
+)
 buffer.write(38, 0, 'measured'.ljust(12))
 root.tk.screen.refresh()
 root.after(30000, root.quit)
@@ -127,3 +155,16 @@ def test_a_text_repaints_quickly_enough_to_sit_in_a_handler(costs):
 
 def test_a_canvas_repaints_quickly_enough_to_sit_in_a_handler(costs):
     assert costs["canvas"] < CANVAS_BUDGET_MS, costs
+
+
+def test_an_image_repaints_in_time_with_its_window_not_its_content(costs):
+    """A 320x200 photograph in a 58x36 window.
+
+    The window is the small number here and the repaint has to follow it.
+    Composing the whole image instead took 47ms, which is past the 50-80ms
+    boundary where ncurses begins dropping mouse reports as soon as the
+    machine is a few times slower - so a click on a picture could simply go
+    missing. This is TkCurses-g9w's fault a third time, in a widget that
+    did not exist when g9w was closed.
+    """
+    assert costs["image"] < IMAGE_BUDGET_MS, costs

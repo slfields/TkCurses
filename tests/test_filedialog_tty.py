@@ -78,6 +78,15 @@ def browse(term, tmp_path, tree, call):
 
 
 def click_text(term, text, offset=0):
+    """Click on ``text``, once it is actually on the screen.
+
+    It used to assume it already was, and next() with no default raised
+    StopIteration - a bare "E StopIteration" with no clue which text was
+    missing. The dialog's listing arrives before its buttons do, so a test
+    that waited for a filename and then clicked Cancel was racing the
+    button's first paint. Seen on CI, on one Python version out of five.
+    """
+    term.wait_for(lambda t: any(text in line for line in t.display), message=repr(text))
     row = next(i for i, line in enumerate(term.display) if text in line)
     term.click(term.display[row].index(text) + offset, row)
 

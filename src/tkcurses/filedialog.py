@@ -95,8 +95,23 @@ class _Browser:
     that the filesystem arithmetic can be exercised without a terminal.
     """
 
-    def __init__(self, master: Misc) -> None:
+    def __init__(self, master: Misc, filetypes: Any = ()) -> None:
         self.directory: str = os.curdir
+        self.filetypes = tuple(filetypes or ())
+
+        # A chooser, but only when there is a choice. Declaring filetypes and
+        # then being unable to reach any but the first is the gap this fills:
+        # the patterns were read from filetypes[0] and nothing else ever
+        # looked at the rest.
+        self.kinds: tkcurses.OptionMenu | None = None
+        self.kind: tkcurses.StringVar | None = None
+        if len(self.filetypes) > 1:
+            labels = [str(entry[0]) for entry in self.filetypes]
+            self.kind = tkcurses.StringVar(master=master, value=labels[0])
+            self.kinds = tkcurses.OptionMenu(
+                master, self.kind, *labels, command=self._kind_chosen
+            )
+            self.kinds.pack(side="top", fill="x")
 
         self.filter = tkcurses.Entry(master, name="filter")
         self.filter.pack(side="top", fill="x")
@@ -122,6 +137,18 @@ class _Browser:
 
         self.selection = tkcurses.Entry(master, name="selection")
         self.selection.pack(side="bottom", fill="x")
+
+    def _kind_chosen(self, label: Any = None) -> None:
+        """Put the chosen filetype's patterns in the filter box and relist."""
+        wanted = str(
+            label if label is not None else (self.kind.get() if self.kind else "")
+        )
+        for entry in self.filetypes:
+            if str(entry[0]) == wanted:
+                spec = entry[1] if len(entry) > 1 else "*"
+                self.set_filter(self.directory, pattern_text(spec))
+                self.refresh()
+                return
 
     # ------------------------------------------------------------- reading
 
@@ -179,7 +206,7 @@ class _Browser:
         for name in names:
             if os.path.isdir(os.path.join(directory, name)):
                 subdirs.append(name)
-            elif fnmatch.fnmatch(name, pattern):
+            elif matches(name, pattern):
                 files.append(name)
 
         self.dirs.delete(0, "end")
@@ -407,7 +434,7 @@ class _NativeDialog(_CommonDialog):
         return result
 
     def body(self, window: Toplevel) -> Misc | None:
-        self.browser = _Browser(window)
+        self.browser = _Browser(window, self.options.get("filetypes") or ())
         directory = str(self.options.get("initialdir") or os.curdir)
         pattern = _first_pattern(self.options.get("filetypes"))
         self.browser.set_filter(directory, pattern)
@@ -465,13 +492,55 @@ class _NativeDialog(_CommonDialog):
         self.finish(chosen)
 
 
+def patterns_of(spec: Any) -> tuple[str, ...]:
+    """Every glob one filetype's pattern field asks for.
+
+    Tk writes these several ways and means the same thing by all of them:
+    ``"*.png *.gif"``, ``("*.png", "*.gif")``, and the man page's own
+    ``{.txt .text}`` - bare extensions, no star. All three are accepted, and
+    a bare extension grows the ``*`` it needs, because a caller who wrote
+    ``.png`` plainly did not mean a file called exactly ".png".
+    """
+    if not spec:
+        return ("*",)
+    items: list[str] = []
+    if isinstance(spec, str):
+        items = spec.split()
+    else:
+        for item in spec:
+            items.extend(str(item).split())
+    globs = []
+    for item in items:
+        if item.startswith("."):
+            globs.append(f"*{item}")
+        elif item:
+            globs.append(item)
+    return tuple(globs) or ("*",)
+
+
+def pattern_text(spec: Any) -> str:
+    """One filetype's globs as the single string the filter box holds."""
+    return " ".join(patterns_of(spec))
+
+
+def matches(name: str, pattern: str) -> bool:
+    """Whether ``name`` matches any of the globs in ``pattern``.
+
+    The filter box holds one string, and that string may name several globs
+    - which is the whole point: ``filetypes=[("Images", "*.png *.gif")]``
+    used to match nothing at all, because fnmatch was handed the lot as a
+    single pattern and no file is called "something *.png *.gif".
+    """
+    return any(fnmatch.fnmatch(name, glob) for glob in pattern.split() or ["*"])
+
+
 def _first_pattern(filetypes: Any) -> str:
     """The pattern to start with, from ``filetypes`` if there is one."""
     if not filetypes:
         return "*"
     first = next(iter(filetypes))
     if isinstance(first, (list, tuple)) and len(first) > 1:
-        return str(first[1])
+        return pattern_text(first[1])
     return "*"
 
 
