@@ -52,7 +52,9 @@ def test_colours_reach_the_terminal(terminal, tmp_path):
         """,
         workdir=tmp_path,
     )
+    # Waits for row 2 and then asserts on row 0, so wait for row 0.
     term.wait_for_text("blue on white")
+    term.wait_for_idle()
     assert term.attrs_at(0, 0)["fg"] == "red"
     assert term.attrs_at(1, 0)["fg"] == "green"
     assert term.attrs_at(2, 0)["fg"] == "blue"

@@ -68,9 +68,14 @@ def test_a_later_panel_covers_an_earlier_one(terminal, tmp_path):
     panel(4, 2, 20, 5, "FRONT")
 """,
     )
-    term.wait_for_text("FRONT")
-    # The front panel's border overwrites the back panel's interior.
-    assert term.display[2][4] == "┌"
+    # Waiting for the CELL the assertion is about, not for text somewhere
+    # else in the same frame. A test that waits for one cell and asserts on
+    # another is asking the frame to have arrived in an order nobody
+    # promised, and fails intermittently when it has not.
+    term.wait_for(
+        lambda screen: screen.display[2][4] == "┌",
+        message="the front panel's top-left corner",
+    )
     assert term.text_at(3, 5, 5) == "FRONT"
     term.send_keys("q")
 
@@ -86,9 +91,15 @@ def test_raising_a_panel_brings_it_forward(terminal, tmp_path):
     stack.raise_to_top(back)
 """,
     )
-    term.wait_for_text("BACK")
-    # BACK now covers the overlap, so its bottom border is intact at row 4.
-    assert term.display[4][4] == "─"
+    # BACK now covers the overlap, so its bottom border is intact at row 4 -
+    # and that is what to wait for. Waiting for the text "BACK" instead
+    # meant waiting for a cell three rows away and then asserting on this
+    # one, which failed on CI twice: Python 3.13 on one run and 3.10 on the
+    # next, the same assertion each time, never reproducible here.
+    term.wait_for(
+        lambda screen: screen.display[4][4] == "─",
+        message="BACK's bottom border, unbroken",
+    )
     term.send_keys("q")
 
 
@@ -103,7 +114,10 @@ def test_hiding_a_panel_reveals_what_is_behind(terminal, tmp_path):
     stack.hide(front)
 """,
     )
+    # An absence cannot be waited for, so wait for the thing that must be
+    # present first and let the screen settle before asserting the negative.
     term.wait_for_text("BACK")
+    term.wait_for_idle()
     assert not term.contains("FRONT")
     term.send_keys("q")
 

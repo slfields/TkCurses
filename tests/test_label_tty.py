@@ -90,7 +90,10 @@ def test_anchor_places_the_text_within_the_widget(terminal, tmp_path):
         workdir=tmp_path,
     )
     term.wait_for_text("NW")
+    # SE is the last corner drawn and NW the first, so waiting for SE and
+    # asserting NW reads two ends of one frame.
     term.wait_for_text("SE")
+    term.wait_for_idle()
     assert term.display[0].startswith("NW")
     assert term.display[10][18:20] == "SE"
 
@@ -102,6 +105,7 @@ def test_a_bordered_label_keeps_its_text_inside(terminal, tmp_path):
         workdir=tmp_path,
     )
     term.wait_for_text("inside")
+    term.wait_for_idle()
     assert term.display[1][1] == "┌"
     assert term.display[2][2:8] == "inside"
     assert term.display[3][1] == "└"
