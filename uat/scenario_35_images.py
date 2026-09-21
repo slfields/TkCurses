@@ -44,6 +44,8 @@ background comes through it, not a blank the image painted.
 were, and they draw nothing - which is why every tkinter tutorial tells you
 to keep a reference. `r` builds it again.
 
+What to look for: docs/UAT_IMAGES.md, "UAT: Images", checks 35.0 to 35.7.
+
 Keys: `c` next compound, `p` repaint the art, `s` resize it, `z` zoom,
 `x` subsample, `h` hole, `d` drop the image, `r` rebuild, Escape quits.
 """

@@ -1,3 +1,23 @@
+# UAT: Images — contents
+
+Three scenarios live in this file, and the checklists for the later two are
+a long way down it. They are:
+
+| Scenario | What it is for | Checks |
+|---|---|---|
+| **35** — [Images](#uat-images) | A pixel is half a character cell. Art built in a source file, `compound`, and the reference trap | 35.0 – 35.7 |
+| **36** — [The image viewer](#uat-the-image-viewer) | Opening real PNG, GIF, PGM, PPM and XBM files through the filtered file dialog | 36.1 – 36.4 |
+| **37** — [Image rendering quality](#uat-image-rendering-quality) | Averaging against dropping pixels, and dithering against flat colour | 37.0 – 37.5 |
+
+Run one with `python3 -m uat 35`, `36` or `37`.
+
+Scenario 37 wants a **terminal of at least 120x44**. It works in anything and
+says so when the pictures are too small to judge — at 80x24 they come out
+26x8 cells, where the differences are all present and none of them are
+visible.
+
+---
+
 # UAT: Images
 
 Scenario 35. Run it with:
@@ -316,3 +336,164 @@ only `filetypes[0]` was ever read.
 - The dialog listing `bad.txt` under `Images`, or listing nothing under
   `Netpbm`.
 - The filetype chooser missing, or choosing a type changing nothing.
+
+
+---
+
+# UAT: Image rendering quality
+
+Scenario 37. Run it with:
+
+```bash
+python3 -m uat 37
+```
+
+Two problems with the same shape, and one screen that shows both: **the
+image is technically right and it looks wrong.** The same picture is
+prepared four ways and drawn side by side, because the difference is a
+thing to see, and showing them one at a time would ask you to remember a
+colour instead.
+
+| | shrinking | colour |
+|---|---|---|
+| `dropped, flat` | every n-th pixel kept | nearest per pixel |
+| `averaged, flat` | the block averaged | nearest per pixel |
+| `dropped, dithered` | every n-th pixel kept | error diffused |
+| `averaged, dithered` | the block averaged | error diffused |
+
+The fourth is what a viewer should do. **The first is what this library did
+until now.**
+
+---
+
+## 37.0 Enough room to judge them
+
+**Do:** look at line 4 of the screen, and at the picture size on line 2.
+
+**Look for:**
+
+- [ ] The pictures are at least **52x16 cells**, and line 4 is blank.
+- [ ] If line 4 says the pictures are too small, the terminal is too small.
+      Make it **120x44 or larger** and run it again. At 80x24 they come out
+      26x8, where every difference below is present and none is visible.
+
+The panels size themselves to the terminal, so this costs nothing but a
+bigger window. It is first because judging 37.2 and 37.3 in a small one
+wastes the effort.
+
+## 37.1 The numbers, which are the checkable part
+
+Each caption reads `N/M unavailable` — of the M colours in that panel, N are
+ones the terminal cannot show and would have to approximate.
+
+**Look for:**
+
+- [ ] Both **dithered** panels read **`0/…`**. That is the whole guarantee:
+      after dithering, nothing is left that still needs approximating.
+- [ ] Both **flat** panels read nearly all unavailable — on mickey at 256
+      colours, `11/12` and `260/261`.
+- [ ] `averaged, flat` has far more colours than `dropped, flat` (261
+      against 12). Averaging invents intermediate colours; dropping pixels
+      can only ever return ones that were already there.
+- [ ] Dithering **reduces** the count on the averaged panel (261 → 45). It
+      does not add colours; it snaps every pixel to one that exists.
+
+## 37.2 Shrinking: dropped against averaged
+
+**Do:** compare the two left panels with the two right ones, then press `n`
+to change picture.
+
+**Look for:**
+
+- [ ] `dropped` loses thin features — whichever pixels missed the grid are
+      simply gone, so fine detail flickers in and out between pictures.
+- [ ] `averaged` keeps something of every pixel; edges are softer and
+      shapes stay put.
+- [ ] On the `earth` picture the terminator (the day/night line) is smooth
+      under averaging and stepped under dropping.
+
+Measured against a Lanczos reference at 320x200 reduced by six, averaging is
+**38% to 93% closer at every colour depth** — including the flat cartoon,
+which is the case where dropping pixels should have preserved the palette
+and won.
+
+## 37.3 Colour: flat against dithered
+
+This check has no right answer written down, because **the first person to
+run it disagreed with the measurement and was correct.**
+
+**Do:** look at mickey's forest — the large dark area behind him — in the
+flat panels and then the dithered ones. Then decide which of the four
+panels you would rather look at.
+
+**Look for:**
+
+- [ ] In the **flat** panels the forest is one single flat grey. The
+      256-colour palette has nothing for a dark reddish brown: its cube is
+      empty between 0 and 95 while the grey ramp is dense there, so every
+      distance metric — plain RGB, redmean, a chroma penalty, CIE Lab —
+      picks that same grey.
+- [ ] In the **dithered** panels it is a mix of eleven colours instead of
+      one.
+- [ ] **Whether that is an improvement is the thing being asked.** Record
+      which panel you prefer.
+
+Two measurements, both on mickey at 256 colours against an ideal reduction,
+and they disagree:
+
+| | flat | dithered |
+|---|---|---|
+| per-pixel | **13.48** | 18.50 |
+| after a 3x3 blur | 10.03 | **3.71** |
+
+Dithering trades colour accuracy for spatial noise, and that pays only when
+the eye merges neighbouring pixels back together. It does on a monitor,
+where a pixel is a quarter of a millimetre. **It does not here**, where a
+pixel is half a character cell, so you see the dither pattern itself. Across
+a grey ramp and two photographs at two depths, flat wins four times of six
+per-pixel, and every time at 256 colours.
+
+The blurred number was the only one taken when `dither()` was written, and
+it encoded an assumption about the viewer that had never been checked.
+
+## 37.5 Which one would you actually use
+
+**Do:** ignore every number above and pick a favourite.
+
+**Look for:**
+
+- [ ] `averaged, flat` is expected to win on a normal terminal. If it does,
+      that confirms the per-pixel measurement and the conclusion that
+      dithering is a tool rather than a default.
+- [ ] If a **dithered** panel wins for you, say so — it would mean the
+      cells are small enough on your terminal for the eye to merge them,
+      which is the case dithering is for, and worth knowing.
+
+## 37.4 Dithering knows when to do nothing
+
+**Do:** press `t`, and read the depth on line 2.
+
+**Look for:**
+
+- [ ] **On a truecolor terminal the dithered panels are identical to the
+      flat ones, and all four read `0/…`.** That is correct, not a failure:
+      every colour is available, so no pixel accumulates any error and there
+      is nothing to spread. Dithering is self-limiting, which is what makes
+      it safe to apply without asking whether it will help.
+- [ ] At 8 colours the difference is at its most dramatic, because there is
+      least to work with.
+- [ ] `t` also reports the pairs allocated. It should be well under 255 —
+      past that a pair number cannot be named in an attribute, which is the
+      bug `TkCurses-7sh` fixed.
+
+---
+
+## What would count as a failure
+
+- A dithered panel reading anything but `0/…` unavailable.
+- The two averaged panels looking identical to the two dropped ones.
+- Mickey's forest still a single flat grey in the dithered panels.
+- Dithering changing anything at all on a truecolor terminal.
+- A caption clipped so its numbers cannot be read — the panel is 38 cells
+  and the first wording ran to 41, which is how this check was nearly
+  impossible to make.

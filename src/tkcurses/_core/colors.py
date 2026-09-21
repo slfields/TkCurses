@@ -340,6 +340,43 @@ _PALETTES: dict[ColorDepth, tuple[tuple[tuple[int, int, int], ResolvedColor], ..
 }
 
 
+@lru_cache(maxsize=8)
+def _by_number(depth: ColorDepth) -> dict[int, tuple[int, int, int]]:
+    """A palette indexed by colour number, for looking one up backwards.
+
+    Built once per depth. Scanning the 256 entries each time is fine when a
+    caller asks about a handful of colours and hopeless when it asks about
+    one per pixel, which is what dithering does.
+    """
+    palette = _PALETTES.get(depth)
+    if palette is None:
+        return {}
+    # First occurrence wins, which is what the linear scan this replaces
+    # did. _PALETTE_RGB lists a colour number twice - once plain and once
+    # bright, the bright one reached with A_BOLD - so a plain dict
+    # comprehension answers (255, 0, 0) for red where the scan answered
+    # (205, 0, 0), and every colour in the basic palette shifts.
+    found: dict[int, tuple[int, int, int]] = {}
+    for rgb, resolved in palette:
+        found.setdefault(resolved.color, rgb)
+    return found
+
+
+def rgb_of_number(number: int, depth: ColorDepth) -> tuple[int, int, int] | None:
+    """What a colour *number* shows as, which is the reverse of parse_color.
+
+    Needed wherever two resolved colours have to be compared rather than
+    just used: choosing the nearest already-allocated pair when the pair
+    table is full, and measuring the error a pixel accumulates when it is
+    moved to the nearest colour the terminal has.
+    """
+    if number < 0:
+        return None
+    if depth >= ColorDepth.DIRECT:
+        return rgb_of_direct(number)
+    return _by_number(depth).get(number)
+
+
 def direct_color(rgb: tuple[int, int, int]) -> int:
     """The colour number ncurses uses for an RGB triple in direct mode."""
     red, green, blue = rgb
@@ -369,6 +406,82 @@ def _nearest(
     return min(palette or _PALETTE_RGB, key=distance)[1]
 
 
+@lru_cache(maxsize=1)
+def _extended_index() -> tuple[
+    tuple[tuple[tuple[int, int, int], ResolvedColor], ...],
+    tuple[tuple[tuple[int, int, int], ResolvedColor], ...],
+]:
+    """The 256 palette split into the part that can be solved and the rest.
+
+    The cube is a product grid - every combination of six levels on each
+    channel - and the distance below is *separable*: a weighted sum of
+    per-channel squares. Minimising each channel on its own therefore gives
+    the nearest cube entry exactly, with no search. What is left is the 16
+    named colours and the 24 greys, forty entries to check by hand.
+    """
+    named = tuple(_EXTENDED_PALETTE[:CUBE_START])
+    greys = tuple(_EXTENDED_PALETTE[GREY_START:])
+    return named, greys
+
+
+def _nearest_level(channel: int) -> int:
+    """Which of the cube's six levels one channel is nearest to."""
+    best = 0
+    closest = abs(CUBE_LEVELS[0] - channel)
+    for index in range(1, len(CUBE_LEVELS)):
+        measure = abs(CUBE_LEVELS[index] - channel)
+        if measure < closest:
+            closest, best = measure, index
+    return best
+
+
+def _nearest_extended(rgb: tuple[int, int, int]) -> ResolvedColor:
+    """The nearest of the 256, without walking all of them.
+
+    Measured: dithering a 53x33 image made 981 distinct lookups and 251,136
+    distance comparisons, which was over half the time it took. This makes
+    forty-one comparisons instead of two hundred and fifty-six, and gives
+    the same answer - the cube part is solved rather than searched.
+    """
+    red, green, blue = rgb
+    named, greys = _extended_index()
+
+    # In palette order, and strictly less than, because that is how a scan
+    # of all 256 breaks a tie: the lowest colour number wins. Black is both
+    # colour 0 and colour 16, and checking the cube first quietly answered
+    # 16 - which is the same colour and a different number, and enough to
+    # make this disagree with the scan it replaces on 209 of 20,000 random
+    # colours.
+    best: ResolvedColor | None = None
+    closest = 0
+    for (pr, pg, pb), resolved in named:
+        measure = 2 * (red - pr) ** 2 + 4 * (green - pg) ** 2 + 3 * (blue - pb) ** 2
+        if best is None or measure < closest:
+            closest, best = measure, resolved
+
+    levels = [_nearest_level(channel) for channel in (red, green, blue)]
+    cube_rgb = (
+        CUBE_LEVELS[levels[0]],
+        CUBE_LEVELS[levels[1]],
+        CUBE_LEVELS[levels[2]],
+    )
+    measure = (
+        2 * (red - cube_rgb[0]) ** 2
+        + 4 * (green - cube_rgb[1]) ** 2
+        + 3 * (blue - cube_rgb[2]) ** 2
+    )
+    if measure < closest:
+        closest = measure
+        best = ResolvedColor(CUBE_START + levels[0] * 36 + levels[1] * 6 + levels[2])
+
+    for (pr, pg, pb), resolved in greys:
+        measure = 2 * (red - pr) ** 2 + 4 * (green - pg) ** 2 + 3 * (blue - pb) ** 2
+        if measure < closest:
+            closest, best = measure, resolved
+    assert best is not None
+    return best
+
+
 def _resolve_rgb(rgb: tuple[int, int, int], depth: ColorDepth) -> ResolvedColor:
     """An RGB triple as this tier expresses it.
 
@@ -377,6 +490,8 @@ def _resolve_rgb(rgb: tuple[int, int, int], depth: ColorDepth) -> ResolvedColor:
     """
     if depth is ColorDepth.DIRECT:
         return ResolvedColor(direct_color(rgb))
+    if depth is ColorDepth.EXTENDED:
+        return _nearest_extended(rgb)
     return _nearest(rgb, _PALETTES.get(depth, _PALETTE_RGB))
 
 
@@ -614,18 +729,8 @@ class ColorManager:
         return self._pairs[min(self._pairs, key=distance)]
 
     def _rgb_of_number(self, number: int) -> tuple[int, int, int] | None:
-        """What a colour number actually shows as, for comparing two of them."""
-        if number < 0:
-            return None
-        if self._depth >= ColorDepth.DIRECT:
-            return rgb_of_direct(number)
-        palette = _PALETTES.get(self._depth)
-        if palette is None:
-            return None
-        for rgb, resolved in palette:
-            if resolved.color == number:
-                return rgb
-        return None
+        """What a colour number actually shows as, at this manager's depth."""
+        return rgb_of_number(number, self._depth)
 
     def attribute_for(self, fg: str, bg: str, attr: int = curses.A_NORMAL) -> int:
         """Combine colours and attributes into one curses attribute value.

@@ -37,6 +37,7 @@ import pytest
 import tkcurses
 from tkcurses import BitmapImage, Misc, PhotoImage, TclError
 from tkcurses._core.canvas import compose
+from tkcurses._core.colors import ColorDepth
 from tkcurses._core.images import cells_tall
 
 
@@ -389,6 +390,66 @@ def test_scaling_by_a_non_positive_factor_raises(root, factor):
         photo.zoom(factor)
     with pytest.raises(TclError, match="must be positive"):
         photo.subsample(factor)
+    with pytest.raises(TclError, match="must be positive"):
+        photo.reduce(factor)
+
+
+# ---------------------------------------------------------------- reducing
+
+
+def test_reduce_averages_the_block_it_covers(root):
+    """Where subsample keeps one pixel of four, this is the mean of all four."""
+    photo = PhotoImage(
+        master=root, data=[["#000000", "#ffffff"], ["#ffffff", "#000000"]]
+    )
+    assert photo.reduce(2).rows() == [["#7f7f7f"]]
+    # subsample keeps the top-left and knows nothing of the other three.
+    assert photo.subsample(2).rows() == [["#000000"]]
+
+
+def test_reduce_takes_separate_factors(root):
+    photo = PhotoImage(
+        master=root, data=[["#000000", "#ffffff"], ["#000000", "#ffffff"]]
+    )
+    assert photo.reduce(2, 1).rows() == [["#7f7f7f"], ["#7f7f7f"]]
+
+
+def test_reduce_reports_its_new_size_in_both_units(root):
+    photo = PhotoImage(master=root, width=12, height=8)
+    photo.put("red", to=(0, 0, 12, 8))
+    smaller = photo.reduce(2)
+    assert (smaller.width(), smaller.height(), smaller.cell_height()) == (6, 4, 2)
+
+
+def test_reduce_leaves_the_original_alone(root):
+    photo = PhotoImage(
+        master=root, data=[["#000000", "#ffffff"], ["#ffffff", "#000000"]]
+    )
+    photo.reduce(2)
+    assert photo.rows() == [["#000000", "#ffffff"], ["#ffffff", "#000000"]]
+
+
+def test_a_block_that_is_mostly_hole_stays_a_hole(root):
+    """Or a silhouette grows a fringe of half-lit edges half a block wide."""
+    photo = PhotoImage(master=root, data=["#...", "...."], palette={"#": "#ff0000"})
+    assert photo.reduce(2).rows() == [[None, None]]
+
+
+def test_a_block_that_is_mostly_colour_keeps_it(root):
+    photo = PhotoImage(master=root, data=["###.", "###."], palette={"#": "#ff0000"})
+    assert photo.reduce(2).rows() == [["#ff0000", None]]
+
+
+def test_reduce_ignores_a_partial_block_at_the_edge(root):
+    """Five pixels reduced by two is two blocks, not two and a half."""
+    photo = PhotoImage(master=root, width=5, height=5)
+    photo.put("red", to=(0, 0, 5, 5))
+    assert (photo.reduce(2).width(), photo.reduce(2).height()) == (2, 2)
+
+
+def test_reduce_by_one_changes_nothing(root):
+    photo = PhotoImage(master=root, data=[["#123456", "#abcdef"]])
+    assert photo.reduce(1).rows() == [["#123456", "#abcdef"]]
 
 
 # -------------------------------------------------------------------- files
@@ -625,3 +686,145 @@ def test_changing_the_colours_recolours_the_same_bits(root):
     bitmap = BitmapImage(master=root, data=SQUARE_XBM, foreground="red")
     bitmap.configure(foreground="green")
     assert bitmap.rows()[0] == ["green"] * 8
+
+
+# --------------------------------------------------------------- dithering
+
+
+def colours_of(image):
+    return {pixel for row in image.rows() for pixel in row if pixel}
+
+
+def test_dithering_spreads_a_colour_the_palette_cannot_hold(root):
+    """One unavailable colour becomes a mix that averages back to it."""
+    photo = PhotoImage(master=root, width=8, height=8)
+    photo.put("#804020", to=(0, 0, 8, 8))
+    assert len(colours_of(photo)) == 1
+    spread = photo.dither(ColorDepth.BASIC)
+    assert len(colours_of(spread)) > 1, "a flat unavailable colour must break up"
+
+
+def test_dithering_leaves_an_available_colour_alone(root):
+    """Self-limiting: no error means no diffusion.
+
+    A pixel the palette holds exactly accumulates nothing to pass on, so an
+    image already made of available colours comes back unchanged. This is
+    what makes dithering safe to apply without asking whether it will help.
+    """
+    photo = PhotoImage(master=root, width=6, height=6)
+    photo.put("#cd0000", to=(0, 0, 6, 6))  # exactly the 8-colour red
+    assert colours_of(photo.dither(ColorDepth.BASIC)) == {"#cd0000"}
+
+
+def test_truecolor_dithers_nothing(root):
+    """Every colour is available, so there is no error to spread."""
+    photo = PhotoImage(master=root, data=[["#123456", "#abcdef"]])
+    assert photo.dither(ColorDepth.DIRECT).rows() == photo.rows()
+
+
+def test_dithering_keeps_the_size(root):
+    photo = PhotoImage(master=root, width=9, height=7)
+    photo.put("#336699", to=(0, 0, 9, 7))
+    spread = photo.dither(ColorDepth.BASIC)
+    assert (spread.width(), spread.height()) == (9, 7)
+
+
+def test_dithering_leaves_the_original_alone(root):
+    photo = PhotoImage(master=root, width=4, height=4)
+    photo.put("#804020", to=(0, 0, 4, 4))
+    photo.dither(ColorDepth.BASIC)
+    assert colours_of(photo) == {"#804020"}
+
+
+def test_a_hole_stays_a_hole_and_spreads_no_error(root):
+    """Transparency is not a colour, so it takes no part in the diffusion."""
+    photo = PhotoImage(master=root, width=4, height=4)
+    photo.put("#804020", to=(0, 0, 4, 4))
+    photo.transparency_set(1, 1, True)
+    spread = photo.dither(ColorDepth.BASIC)
+    assert spread.transparency_get(1, 1) is True
+
+
+def test_every_dithered_pixel_is_a_colour_the_terminal_has(root):
+    """The whole point: nothing is left that still needs approximating."""
+    photo = PhotoImage(master=root, width=12, height=12)
+    for x in range(12):
+        photo.put(f"#{x * 20:02x}3060", to=(x, 0, x + 1, 12))
+    spread = photo.dither(ColorDepth.EXTENDED)
+    from tkcurses._core.colors import _resolve_rgb, rgb_of_number
+
+    for spec in colours_of(spread):
+        rgb = tuple(int(spec[i : i + 2], 16) for i in (1, 3, 5))
+        shown = rgb_of_number(
+            _resolve_rgb(rgb, ColorDepth.EXTENDED).color, ColorDepth.EXTENDED
+        )
+        assert shown == rgb, f"{spec} still needs approximating"
+
+
+def test_dithering_a_gradient_beats_matching_it_pixel_by_pixel(root):
+    """Measured on the real thing, this is 10.32 against 2.93.
+
+    Here it is a synthetic ramp, scored the same way: compare against the
+    source after blurring, which is roughly what an eye does over a few
+    cells. Per-pixel matching bands; dithering does not.
+    """
+    from tkcurses._core.colors import _resolve_rgb, rgb_of_number
+
+    width = 48
+    photo = PhotoImage(master=root, width=width, height=12)
+    for x in range(width):
+        level = x * 255 // (width - 1)
+        photo.put(f"#{level:02x}{level:02x}{level:02x}", to=(x, 0, x + 1, 12))
+
+    def as_rgb(image):
+        return [
+            [tuple(int(c[i : i + 2], 16) for i in (1, 3, 5)) for c in row]
+            for row in image.rows()
+        ]
+
+    def matched(image):
+        cache = {}
+        rows = []
+        for row in as_rgb(image):
+            line = []
+            for pixel in row:
+                if pixel not in cache:
+                    cache[pixel] = (
+                        rgb_of_number(
+                            _resolve_rgb(pixel, ColorDepth.BASIC).color,
+                            ColorDepth.BASIC,
+                        )
+                        or pixel
+                    )
+                line.append(cache[pixel])
+            rows.append(line)
+        return rows
+
+    def blurred(rows, k=4):
+        return [
+            [
+                tuple(
+                    sum(rows[y + dy][x + dx][i] for dy in range(k) for dx in range(k))
+                    // (k * k)
+                    for i in range(3)
+                )
+                for x in range(0, len(rows[0]) - k + 1, k)
+            ]
+            for y in range(0, len(rows) - k + 1, k)
+        ]
+
+    def error(rows, reference):
+        total = count = 0
+        for a, b in zip(rows, reference, strict=False):
+            for one, two in zip(a, b, strict=False):
+                for i in range(3):
+                    total += (one[i] - two[i]) ** 2
+                    count += 1
+        return (total / count) ** 0.5
+
+    reference = blurred(as_rgb(photo))
+    plain = error(blurred(matched(photo)), reference)
+    spread = error(blurred(as_rgb(photo.dither(ColorDepth.BASIC))), reference)
+    assert spread < plain / 2, (
+        f"dithering {spread:.1f} should beat matching {plain:.1f}"
+    )

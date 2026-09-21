@@ -3347,7 +3347,9 @@ through.
 | `cget(option)` | ○ | Get option |
 | `copy(...)` | ○ | Independent copy |
 | `zoom(...)` | ○ | Repeats each pixel |
-| `subsample(...)` | ○ | Keeps every n-th pixel |
+| `subsample(...)` | ○ | Keeps every n-th pixel, as Tk does |
+| `reduce(...)` | ○ | Averages each block; what fitting wants |
+| `dither(...)` | ○ | Error diffusion. A tool, not a default — see below |
 | `get(x, y)` | ○ | The pixel's colour |
 | `put(data, to)` | ○ | A colour, or rows of them; `to` places or tiles |
 | `read(filename, ...)` | ○ | A text file of art |
@@ -3358,6 +3360,44 @@ through.
 `zoom` and `subsample` were once marked N/A here. They are the two operations
 that survive the move most cleanly: repeating a pixel is exactly what
 enlarging means when the plane is this coarse.
+
+`reduce` is an addition rather than one of Tk's. Both it and `subsample`
+are wanted and they answer different questions. `subsample` keeps every
+n-th pixel — exact, Tk's, and what a caller porting tkinter code reaches
+for. `reduce` averages the block it covers, which is what *fitting a
+photograph to a window* means. Measured on the perl-Tk demo images at 320x200
+reduced by six, scored against a Lanczos reference after quantising to the
+terminal palette:
+
+| | 8 colours | 256 | truecolor |
+|---|---|---|---|
+| earth.gif, subsample → reduce | 1319 → 821 | 692 → 126 | 638 → 52 |
+| mickey.gif, subsample → reduce | 3051 → 1421 | 2026 → 321 | 1946 → 133 |
+
+Averaging wins at every depth on both — including the flat cartoon, which is
+the case where dropping pixels should have preserved the palette and won.
+
+`dither()` is a different matter, and the honest answer is narrower than it
+first looked. Error diffusion trades colour accuracy for spatial noise, and
+that pays **only when the eye merges neighbouring pixels back together**. It
+does on a monitor, where a pixel is a quarter of a millimetre. It does not
+here: a pixel is half a character cell, so the dither pattern is seen as
+itself. Measured on mickey.gif at 256 colours against an ideal reduction:
+
+| | flat | dithered |
+|---|---|---|
+| per-pixel — what a terminal shows | **13.48** | 18.50 |
+| after a 3x3 blur — what a monitor shows | 10.03 | **3.71** |
+
+Across a grey ramp and two photographs at two depths, flat matching wins
+four times of six per-pixel and every time at 256 colours. So `dither()` is
+available for the case where the cells really are small — a large image at a
+small font — and is not what a widget or a viewer should do by default.
+
+The blurred figure was the only one taken when it was written, and it
+assumed a viewer nobody had checked for. A person comparing the four side by
+side picked averaged-and-flat, which is what prompted the second
+measurement.
 
 ### BitmapImage Class
 

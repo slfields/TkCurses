@@ -38,6 +38,9 @@ wondering why a 200-pixel-tall photograph did not shrink itself.
 crashes; both say what is wrong, and the second says it by name, because
 Tk 9.0.2 reads interlaced PNG and this does not.
 
+What to look for: docs/UAT_IMAGES.md, "UAT: The image viewer", checks 36.1
+to 36.4.
+
 Keys: `o` open, `f` fit or actual size, `n` next image in the folder,
 `i` information, Escape quits.
 """
@@ -254,7 +257,12 @@ def build(root, screen):
             ):
                 factor += 1
             if factor > 1:
-                shown = picture.subsample(factor)
+                # reduce, not subsample. Fitting a photograph is exactly
+                # what averaging is for: measured on these images, dropping
+                # pixels is 38% to 93% further from a Lanczos reference at
+                # every colour depth. subsample stays in the library because
+                # it is Tk's and it is exact; it is not what a viewer wants.
+                shown = picture.reduce(factor)
         # Held, or an image nothing references is collected and the label
         # draws nothing - the trap UAT 35 demonstrates on purpose.
         state["shown"] = shown
