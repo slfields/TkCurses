@@ -68,15 +68,17 @@ def test_a_later_panel_covers_an_earlier_one(terminal, tmp_path):
     panel(4, 2, 20, 5, "FRONT")
 """,
     )
-    # Waiting for the CELL the assertion is about, not for text somewhere
-    # else in the same frame. A test that waits for one cell and asserts on
-    # another is asking the frame to have arrived in an order nobody
-    # promised, and fails intermittently when it has not.
+    # Every cell the assertions rest on, in one wait. Waiting for just the
+    # corner was the first attempt and it failed the same way a week's worth
+    # of CI runs had: the corner is row 2 and FRONT is row 3, and asserting
+    # on a cell you did not wait for asks the frame to have arrived in an
+    # order nobody promised.
     term.wait_for(
-        lambda screen: screen.display[2][4] == "┌",
-        message="the front panel's top-left corner",
+        lambda screen: (
+            screen.display[2][4] == "┌" and screen.text_at(3, 5, 5) == "FRONT"
+        ),
+        message="the front panel's corner and its title",
     )
-    assert term.text_at(3, 5, 5) == "FRONT"
     term.send_keys("q")
 
 
@@ -97,8 +99,8 @@ def test_raising_a_panel_brings_it_forward(terminal, tmp_path):
     # one, which failed on CI twice: Python 3.13 on one run and 3.10 on the
     # next, the same assertion each time, never reproducible here.
     term.wait_for(
-        lambda screen: screen.display[4][4] == "─",
-        message="BACK's bottom border, unbroken",
+        lambda screen: screen.display[4][4] == "─" and screen.contains("BACK"),
+        message="BACK raised, with its bottom border unbroken",
     )
     term.send_keys("q")
 

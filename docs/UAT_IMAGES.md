@@ -272,19 +272,20 @@ one for you.
 - [ ] The gradients are smooth left to right, and the GIF's blocks are four
       distinct colours. A shifted or repeated row means a decoder bug.
 
-## 36.2 Two files that must fail politely
+## 36.2 An interlaced PNG, and a file that is not an image
 
 **Do:** keep pressing `n` until each comes round.
 
 **Look for:**
 
-- [ ] `interlaced.png` is refused with **"Adam7 interlacing is not
-      supported"** — named, not a generic complaint. Tk 9.0.2 reads these;
-      this does not, and the message says which of those two is the problem.
-- [ ] Neither file produces a traceback or closes the program.
+- [ ] `interlaced.png` **opens like any other PNG**, showing the same kind
+      of gradient as the rest. It is a real Adam7 file — the image stored as
+      seven passes over a lattice rather than row by row — and it used to be
+      refused by name. If it opens as bands of noise, the de-interlacing is
+      wrong; if it is refused, it is not being attempted.
 - [ ] `bad.txt` never appears under the `Images` filter at all. Switch the
       chooser to `All files` and open it by hand: **"couldn't recognize data
-      in image file"**, which is Tk's own wording for it.
+      in image file"**, which is Tk's own wording, and no traceback.
 
 ## 36.3 Images load at their native size
 

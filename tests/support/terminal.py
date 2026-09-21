@@ -542,6 +542,27 @@ class TerminalHarness:
         deadline = time.monotonic() + budget
         while True:
             if predicate(self):
+                # Take whatever else has already arrived before handing back.
+                # A predicate satisfied by the first cell of a frame can
+                # leave the rest of the bytes in the pty, parsed into
+                # nothing, and a test that then asserts on another cell of
+                # that frame reads a half-drawn screen. Observed on CI: a
+                # panel's corner present and its title three rows down still
+                # blank, two Python versions in one run.
+                #
+                # HONESTLY: this cannot be demonstrated here. The loop below
+                # drains before every predicate check, so by the time one is
+                # satisfied the frame has already been parsed - 200x60 of
+                # escapes, five runs, no difference with this removed. It is
+                # kept because it is free at a zero timeout and cannot make
+                # anything worse, not because it is known to fix anything.
+                #
+                # The fix that is correct by construction is in the tests: a
+                # test must wait for every cell it asserts on. This can only
+                # ever collect bytes that have already arrived, never ones
+                # the program has not written yet.
+                while self._drain(0):
+                    pass
                 return
             # A dead child will not start satisfying the predicate later, so
             # waiting out the rest of the budget only delays the report and

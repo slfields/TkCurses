@@ -34,9 +34,10 @@ them - so a big one does not fit, and `f` is what fits it, by subsampling.
 That is the viewer's job and not the image's, which is worth knowing before
 wondering why a 200-pixel-tall photograph did not shrink itself.
 
-`bad.txt` and `interlaced.png` are in the directory on purpose. Neither
-crashes; both say what is wrong, and the second says it by name, because
-Tk 9.0.2 reads interlaced PNG and this does not.
+`bad.txt` is in the directory on purpose: it is not an image, and opening
+it says so rather than crashing. `interlaced.png` is there for the opposite
+reason - it is a real Adam7 file, which this refused to read until
+recently, and it should now open like any other PNG.
 
 What to look for: docs/UAT_IMAGES.md, "UAT: The image viewer", checks 36.1
 to 36.4.
@@ -80,13 +81,48 @@ def _chunk(kind: bytes, payload: bytes) -> bytes:
     )
 
 
+#: Adam7's seven passes: start and stride, in x then y.
+ADAM7 = (
+    (0, 0, 8, 8),
+    (4, 0, 8, 8),
+    (0, 4, 4, 8),
+    (2, 0, 4, 4),
+    (0, 2, 2, 4),
+    (1, 0, 2, 2),
+    (0, 1, 1, 2),
+)
+
+
 def _png(path, width, height, pixels, interlaced=False):
-    """A PNG written by hand, so the scenario needs no encoder installed."""
+    """A PNG written by hand, so the scenario needs no encoder installed.
+
+    The interlaced one is a REAL Adam7 file. It used to be a progressive
+    file with the interlace flag set, which was honest enough while the
+    decoder refused to look at it and became a picture of noise the moment
+    the decoder started honouring the flag.
+    """
     raw = bytearray()
+    if interlaced:
+        for x0, y0, dx, dy in ADAM7:
+            across = 0 if width <= x0 else (width - x0 + dx - 1) // dx
+            down = 0 if height <= y0 else (height - y0 + dy - 1) // dy
+            if not across or not down:
+                continue
+            for row in range(down):
+                raw.append(0)  # filter: none
+                for column in range(across):
+                    raw += bytes(pixels(x0 + column * dx, y0 + row * dy))
+        _write_png(path, width, height, raw, interlaced)
+        return
     for y in range(height):
         raw.append(0)  # filter: none
         for x in range(width):
             raw += bytes(pixels(x, y))
+    _write_png(path, width, height, raw, interlaced)
+
+
+def _write_png(path, width, height, raw, interlaced):
+    """Wrap raw scanlines in the chunks that make them a file."""
     header = (
         width.to_bytes(4, "big")
         + height.to_bytes(4, "big")
@@ -159,7 +195,7 @@ def make_images(folder):
         return ((x * 255) // max(w - 1, 1), (y * 255) // max(h - 1, 1), 128)
 
     _png(folder / "gradient.png", 48, 32, lambda x, y: wheel(x, y, 48, 32))
-    _png(folder / "interlaced.png", 16, 16, lambda x, y: wheel(x, y, 16, 16), True)
+    _png(folder / "interlaced.png", 24, 18, lambda x, y: wheel(x, y, 24, 18), True)
     _png(folder / "big.png", 160, 120, lambda x, y: wheel(x, y, 160, 120))
 
     palette = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)]

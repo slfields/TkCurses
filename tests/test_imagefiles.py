@@ -362,26 +362,112 @@ def test_a_palette_png_honours_its_trns_chunk(tmp_path):
     assert decode(path.read_bytes(), str(path)) == [[None, "#0000ff"]]
 
 
-def test_an_interlaced_png_is_refused_by_name():
-    """Tk 9.0.2 reads these; we do not, and say which it is.
+#: Adam7's seven passes, repeated here rather than imported: a test that
+#: shares the table with the code under test cannot catch a wrong table.
+ADAM7 = (
+    (0, 0, 8, 8),
+    (4, 0, 8, 8),
+    (0, 4, 4, 8),
+    (2, 0, 4, 4),
+    (0, 2, 2, 4),
+    (1, 0, 2, 2),
+    (0, 1, 1, 2),
+)
 
-    Built by hand: Pillow's ``interlace=`` is a GIF option and quietly does
-    nothing for a PNG, so saving through it produced a progressive file and
-    a test that never raised.
+
+def build_interlaced_png(rows_of_rgb):
+    """A real Adam7 PNG.
+
+    Written by hand because Pillow cannot make one: its ``interlace=`` is a
+    GIF option and does nothing at all to a PNG. The test this replaces set
+    the IHDR byte over progressive data, which was a file no decoder should
+    accept and proved only that the flag was being read.
+
+    Pillow *reads* these, so every test below checks the file twice: that
+    Pillow agrees it is a valid interlaced PNG, and that we decode it the
+    same way. A bug in this encoder shows up as Pillow disagreeing, not as
+    a false pass.
     """
+    height, width = len(rows_of_rgb), len(rows_of_rgb[0])
+    raw = bytearray()
+    for x0, y0, dx, dy in ADAM7:
+        across = 0 if width <= x0 else (width - x0 + dx - 1) // dx
+        down = 0 if height <= y0 else (height - y0 + dy - 1) // dy
+        if not across or not down:
+            continue
+        for row in range(down):
+            raw.append(0)  # filter: none
+            for column in range(across):
+                raw += bytes(rows_of_rgb[y0 + row * dy][x0 + column * dx])
     header = (
-        (4).to_bytes(4, "big")
-        + (4).to_bytes(4, "big")
-        + bytes([8, 2, 0, 0, 1])  # the last byte is the interlace method
+        width.to_bytes(4, "big") + height.to_bytes(4, "big") + bytes([8, 2, 0, 0, 1])
     )
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + png_chunk(b"IHDR", header)
+        + png_chunk(b"IDAT", zlib.compress(bytes(raw)))
+        + png_chunk(b"IEND", b"")
+    )
+
+
+@pytest.mark.parametrize(
+    ("width", "height"),
+    [(1, 1), (2, 2), (3, 5), (5, 3), (7, 7), (8, 8), (9, 3), (16, 16), (41, 27)],
+    ids=lambda v: str(v),
+)
+def test_an_interlaced_png_decodes(width, height):
+    """Tk 9.0.2 reads these and now so do we.
+
+    The small sizes are the point. Adam7 spreads an image over seven passes
+    on a lattice of eight, so anything under eight pixels leaves some passes
+    EMPTY - and a decoder that does not skip them reads the next pass's
+    bytes as this one's and every pass after it is wrong.
+    """
+    pixels = gradient(width, height)
+    data = build_interlaced_png(pixels)
+    assert data[data.index(b"IHDR") + 4 + 12] == 1, "the file must really be interlaced"
+
+    expected = [["#{:02x}{:02x}{:02x}".format(*p) for p in row] for row in pixels]
+    # Pillow first: if it disagrees, the encoder above is wrong and the
+    # comparison that follows would be two wrongs agreeing.
+    assert as_rows(PIL.open(io.BytesIO(data))) == expected
+    assert decode(data, "i.png") == expected
+
+
+def test_interlaced_and_progressive_give_the_same_picture():
+    """The same pixels, stored both ways, must arrive identical."""
+    pixels = gradient(23, 17)
+    assert decode(build_interlaced_png(pixels), "i.png") == decode(
+        build_png(pixels), "p.png"
+    )
+
+
+def test_an_interlaced_png_that_ends_early_says_so():
+    pixels = gradient(16, 16)
+    whole = build_interlaced_png(pixels)
+    at = whole.index(b"IDAT") + 4
+    length = int.from_bytes(whole[at - 8 : at - 4], "big")
+    payload = zlib.decompress(whole[at : at + length])
+    truncated = (
+        b"\x89PNG\r\n\x1a\n"
+        + whole[8 : at - 8]
+        + png_chunk(b"IDAT", zlib.compress(payload[: len(payload) // 2]))
+        + png_chunk(b"IEND", b"")
+    )
+    with pytest.raises(TclError, match="where a pass needs"):
+        decode(truncated, "short.png")
+
+
+def test_an_impossible_interlace_method_is_refused():
+    header = (4).to_bytes(4, "big") + (4).to_bytes(4, "big") + bytes([8, 2, 0, 0, 7])
     data = (
         b"\x89PNG\r\n\x1a\n"
         + png_chunk(b"IHDR", header)
         + png_chunk(b"IDAT", zlib.compress(b"\x00" * 16))
         + png_chunk(b"IEND", b"")
     )
-    with pytest.raises(TclError, match="Adam7 interlacing is not supported"):
-        decode(data, "i.png")
+    with pytest.raises(TclError, match="interlace method 7 is not one"):
+        decode(data, "odd.png")
 
 
 def test_a_sixteen_bit_png_is_refused_by_name(tmp_path):

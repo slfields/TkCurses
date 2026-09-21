@@ -37,10 +37,10 @@ bytes. A file whose name says one thing and whose content says another is
 read as its content, and the error when nothing matches is worded as Tk
 words it.
 
-What is deliberately not supported, and says so rather than guessing:
-Adam7-interlaced PNG, PNG bit depths other than 8, and animation beyond a
-GIF's first frame. Tk 9.0.2 does read interlaced PNG, so that one is a known
-divergence rather than a shared limit; see TkCurses-q5m.
+What is deliberately not supported, and says so rather than guessing: PNG
+bit depths other than 8, and animation beyond a GIF's first frame. Adam7
+interlacing *is* read - it was refused for a while, and Tk 9.0.2 reads
+these, so leaving it refused was a divergence rather than a shared limit.
 """
 
 from __future__ import annotations
@@ -351,6 +351,31 @@ def _png_chunks(data: bytes, path: str) -> Iterator[tuple[bytes, bytes]]:
     return
 
 
+#: Adam7's seven passes: where each starts and how far it steps, in x and
+#: y. Each pass is a little image in its own right - filtered against its
+#: own width, not the full one - which is the part that catches people.
+_ADAM7 = (
+    (0, 0, 8, 8),
+    (4, 0, 8, 8),
+    (0, 4, 4, 8),
+    (2, 0, 4, 4),
+    (0, 2, 2, 4),
+    (1, 0, 2, 2),
+    (0, 1, 1, 2),
+)
+
+
+def _pass_size(
+    width: int, height: int, spread: tuple[int, int, int, int]
+) -> tuple[int, int]:
+    """How many pixels one Adam7 pass holds, which can be none at all."""
+    x0, y0, dx, dy = spread
+    return (
+        0 if width <= x0 else (width - x0 + dx - 1) // dx,
+        0 if height <= y0 else (height - y0 + dy - 1) // dy,
+    )
+
+
 def _paeth(left: int, above: int, corner: int) -> int:
     """PNG's predictor: whichever of the three neighbours the gradient favours."""
     estimate = left + above - corner
@@ -408,6 +433,39 @@ def _png_unfilter(
     return out
 
 
+def _png_deinterlace(
+    raw: bytes, width: int, height: int, step: int, path: str
+) -> bytearray:
+    """Undo Adam7, returning the scanlines as if they had never been split.
+
+    Each pass is its own little image: its own width, its own filter bytes,
+    its own row above for the predictors. Unfiltering the lot against the
+    full width - which is the obvious mistake - gives seven bands of noise.
+    """
+    out = bytearray(height * width * step)
+    at = 0
+    for spread in _ADAM7:
+        x0, y0, dx, dy = spread
+        across, down = _pass_size(width, height, spread)
+        if not across or not down:
+            continue  # a pass can be empty on a narrow or short image
+        stride = across * step
+        wanted = down * (stride + 1)
+        if len(raw) - at < wanted:
+            raise _unreadable(
+                path,
+                f"{len(raw) - at} bytes left where a pass needs {wanted}",
+            )
+        block = _png_unfilter(raw[at : at + wanted], down, stride, step, path)
+        at += wanted
+        for row in range(down):
+            for column in range(across):
+                source = row * stride + column * step
+                target = ((y0 + row * dy) * width + (x0 + column * dx)) * step
+                out[target : target + step] = block[source : source + step]
+    return out
+
+
 def _decode_png(data: bytes, path: str) -> Rows:
     """Non-interlaced, 8-bit PNG: greyscale, RGB, palette, and either with alpha."""
     width = height = depth = colour_type = interlace = 0
@@ -437,10 +495,8 @@ def _decode_png(data: bytes, path: str) -> Rows:
         raise _unreadable(path, "there is no IHDR chunk")
     if width <= 0 or height <= 0:
         raise _unreadable(path, f"a {width}x{height} image has no pixels")
-    if interlace:
-        # Tk 9.0.2 does read these. Saying so is more useful than pretending
-        # it is a limit of the format - see TkCurses-q5m.
-        raise _unreadable(path, "Adam7 interlacing is not supported")
+    if interlace not in (0, 1):
+        raise _unreadable(path, f"interlace method {interlace} is not one")
     if depth != 8:
         raise _unreadable(path, f"a bit depth of {depth} is not supported, only 8")
     if colour_type not in _PNG_CHANNELS:
@@ -459,7 +515,10 @@ def _decode_png(data: bytes, path: str) -> Rows:
 
     step = _PNG_CHANNELS[colour_type]
     stride = width * step
-    flat = _png_unfilter(raw, height, stride, step, path)
+    if interlace:
+        flat = _png_deinterlace(raw, width, height, step, path)
+    else:
+        flat = _png_unfilter(raw, height, stride, step, path)
 
     colour = _Cache()
     rows: Rows = []

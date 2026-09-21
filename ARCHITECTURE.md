@@ -3313,16 +3313,23 @@ tkinter code.
 
 | Format | Read | Notes |
 |--------|------|-------|
-| PNG | ○ | Non-interlaced, 8-bit: grey, RGB, palette, either with alpha |
+| PNG | ○ | 8-bit, interlaced or not: grey, RGB, palette, either with alpha |
 | GIF | ○ | 87a and 89a, first frame, interlacing undone |
 | PGM / PPM | ○ | P1-P6, any maxval, comments anywhere in the header |
 | XBM | ○ | Via BitmapImage, as in tkinter |
 
-Refused **by name**, not as "unrecognised data": Adam7-interlaced PNG, PNG
-bit depths other than 8, and frames after a GIF's first. Tk 9.0.2 reads
-interlaced PNG, so that one is this library's limit rather than the format's
-and the message says so — blaming the file would send someone looking for a
-corrupt download.
+**Adam7 interlacing is read.** The image is stored as seven passes over a
+lattice, and each pass is its own little image — its own width, its own
+filter bytes, its own row above for the predictors — so the row filters are
+undone per pass. Unfiltering the lot against the full width is the obvious
+mistake and gives seven bands of noise. A pass can also be *empty* on an
+image narrower or shorter than eight pixels, and a decoder that does not
+skip those reads the next pass's bytes as this one's.
+
+Still refused **by name**, not as "unrecognised data": PNG bit depths other
+than 8, and frames after a GIF's first. Naming them matters because these
+are this library's limits rather than the formats' — blaming the file would
+send someone looking for a corrupt download.
 
 Alpha becomes presence or absence, not a blend. A half-cell paints or it does
 not, and by draw time the pixel has been folded into a glyph with a single
