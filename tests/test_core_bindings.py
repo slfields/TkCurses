@@ -288,7 +288,7 @@ def table():
 def test_bind_returns_a_handle_and_records_the_sequence(table):
     funcid = table.bind(".w", parse_sequence("<Key-a>"), lambda event: None)
     assert funcid
-    assert table.sequences(".w") == ["<Key-a>"]
+    assert table.sequences(".w") == ("<Key-a>",)
 
 
 def test_rebinding_replaces_by_default(table):
@@ -336,7 +336,7 @@ def test_unbind_with_no_pattern_clears_the_tag(table):
     table.bind(".w", parse_sequence("<Key-a>"), lambda event: None)
     table.bind(".w", parse_sequence("<Key-b>"), lambda event: None)
     table.unbind(".w")
-    assert table.sequences(".w") == []
+    assert table.sequences(".w") == ()
 
 
 def test_unbinding_something_absent_is_not_an_error(table):

@@ -124,8 +124,14 @@ def test_bind_with_no_callback_reports_what_is_bound(root):
 
 
 def test_bind_with_nothing_reports_the_bound_sequences(root):
+    """A tuple, as tkinter's is - measured on Tk 9.0.2, ``('a',)``.
+
+    This asserted a list until TkCurses-js9. Small, and the kind that breaks
+    real code quietly: ``widget.bind() + ('x',)`` raises rather than going
+    wrong somewhere later.
+    """
     root.bind("<Key-a>", lambda event: None)
-    assert root.bind() == ["<Key-a>"]
+    assert root.bind() == ("<Key-a>",)
 
 
 def test_rebinding_replaces_unless_add_is_given(root):
@@ -960,4 +966,4 @@ def test_a_destroyed_widgets_bindings_are_discarded(tree):
     root, _, ok, _ = tree
     ok.bind("<Key-a>", lambda event: None)
     ok.destroy()
-    assert root.tk.bindings.sequences(".frame.ok") == []
+    assert root.tk.bindings.sequences(".frame.ok") == ()

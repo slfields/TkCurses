@@ -23,6 +23,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import tkcurses
 from tkcurses import Misc, TclError, Toplevel
 from tkcurses._core.panels import PanelStack
 
@@ -442,3 +443,82 @@ def test_the_size_is_clamped_before_the_position(root):
     assert (window.winfo_width(), window.winfo_height()) == (6, 3)
     assert window.winfo_x() + 6 <= 80
     assert window.winfo_y() + 3 <= 24
+
+
+# --------------------------------------------------------------- <Configure>
+
+
+def test_geometry_fires_configure(window):
+    """Regression, TkCurses-b5o. Code that lays itself out in response to
+    its own resize - the ordinary way to write a resizable dialog - never
+    ran, because the programmatic path was silent.
+    """
+    seen = []
+    window.bind("<Configure>", lambda event: seen.append((event.width, event.height)))
+
+    window.geometry("24x8+0+0")
+
+    assert seen == [(24, 8)]
+
+
+def test_moving_fires_configure_too(window):
+    """Measured on Tk 9.0.2: a move with no resize fires, carrying the new
+    position."""
+    window.geometry("20x6+5+3")
+    seen = []
+    window.bind("<Configure>", lambda event: seen.append((event.x, event.y)))
+
+    window.geometry("20x6+9+7")
+
+    assert seen == [(9, 7)]
+
+
+def test_setting_the_same_geometry_fires_nothing(window):
+    """On a change, not on a call - and this is what stops a handler that
+    calls geometry() from recurring: its second call sets the same rect,
+    which is not a change.
+    """
+    window.geometry("20x6+5+3")
+    seen = []
+    window.bind("<Configure>", lambda event: seen.append(True))
+
+    window.geometry("20x6+5+3")
+
+    assert seen == []
+
+
+def test_a_handler_that_sets_the_geometry_does_not_recur(window):
+    """Two events and a stop, which is what Tk 9.0.2 does with the same
+    handler."""
+    window.geometry("20x6+5+3")
+    depth = {"n": 0}
+
+    def handler(event):
+        depth["n"] += 1
+        if depth["n"] < 50:
+            window.geometry("24x8+5+3")
+
+    window.bind("<Configure>", handler)
+    window.geometry("24x8+5+3")
+
+    assert depth["n"] == 1
+
+
+def test_a_childs_configure_reaches_its_toplevel(root):
+    """Not a quirk - the toplevel is one of a child's binding tags, so this
+    is the same in tkinter, and it is why application code that watches a
+    toplevel for resizes has to check which widget the event is about. The
+    library's own demo did not, and rebuilt its curses half on every widget
+    it laid out.
+    """
+    top = Toplevel(root, width=20, height=8)
+    child = tkcurses.Frame(top, name="inner")
+    child.place(x=0, y=0, width=6, height=3)
+    root.update_layout()
+    seen = []
+    top.bind("<Configure>", lambda event: seen.append(event.widget))
+
+    child.place_configure(width=8, height=4)
+    root.update_layout()
+
+    assert child in seen

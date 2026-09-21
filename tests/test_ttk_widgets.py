@@ -29,10 +29,12 @@ import tkcurses
 from tkcurses import Misc, TclError
 from tkcurses.ttk import (
     Combobox,
+    Label,
     LabeledScale,
     Notebook,
     OptionMenu,
     Progressbar,
+    Scale,
     Separator,
     Sizegrip,
     Style,
@@ -1007,3 +1009,69 @@ def test_the_entries_are_radiobuttons_where_the_classic_uses_commands(root, chos
 
     assert themed.cget("menu").type(0) == "radiobutton"
     assert classic.cget("menu").type(0) == "command"
+
+
+# ======================================================================
+# Label and Scale
+# ======================================================================
+
+
+def test_a_themed_label_reports_tlabel(root):
+    assert Label(root, name="l", text="hi").winfo_class() == "TLabel"
+
+
+def test_nothing_is_bound_to_tlabel(root):
+    """A label answers no gesture, so the class-binding trap that catches
+    the interactive widgets does not arise for it."""
+    Label(root, name="l", text="hi")
+    assert root.tk.bindings.sequences("TLabel") == ()
+
+
+def test_a_themed_scale_reports_tscale(root):
+    assert Scale(root, name="s", from_=0, to=10).winfo_class() == "TScale"
+
+
+def test_a_themed_scale_is_bound_under_its_own_class(root):
+    """The classic Scale registered its gestures under the literal "Scale",
+    so a widget reporting TScale matched none of them and answered nothing.
+    It registers under winfo_class() now, the cure Menubutton already
+    carried for OptionMenu.
+    """
+    Scale(root, name="s", from_=0, to=10)
+    assert root.tk.bindings.sequences("TScale")
+
+
+def test_a_themed_scale_is_horizontal_by_default(root):
+    """Measured: ttk's is horizontal, the classic one is vertical. A
+    composite built on the wrong default draws nothing at all on one row.
+    """
+    assert Scale(root, name="s", from_=0, to=10).cget("orient") == "horizontal"
+    assert tkcurses.Scale(root, name="c").cget("orient") == "vertical"
+
+
+def test_a_themed_scale_takes_a_value_option(root):
+    """Which the classic one has not - it takes a starting value only
+    through set()."""
+    assert Scale(root, name="s", from_=0, to=10, value=3).get() == 3
+
+
+def test_a_themed_scale_leaves_its_variable_alone(root):
+    """Measured on Tk 9.0.2, and the opposite of LabeledScale, which
+    overwrites the variable with ``from_`` as tkinter's own source does.
+    """
+    shared = tkcurses.IntVar(root, value=7)
+
+    widget = Scale(root, name="s", variable=shared, from_=0, to=10)
+
+    assert shared.get() == 7
+    assert widget.get() == 7
+
+
+def test_the_labeled_scales_halves_are_themed(root):
+    """TkCurses-8an. They were a classic Label and Scale while the themed
+    ones did not exist, so they did not draw from the style database.
+    """
+    widget = LabeledScale(root, name="ls", from_=0, to=10)
+
+    assert widget.label.winfo_class() == "TLabel"
+    assert widget.scale.winfo_class() == "TScale"

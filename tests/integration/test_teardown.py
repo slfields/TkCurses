@@ -151,7 +151,6 @@ def test_a_destroyed_widgets_bindings_are_gone(tree):
     assert fired == []
 
 
-@pytest.mark.xfail(reason="TkCurses-js9: bind() returns a list, tkinter a tuple")
 def test_bind_hands_back_a_tuple(tree):
     """Measured on Tk 9.0.2: bind() answers () and ('a',) - tuples. Here it
     is a list, so ``widget.bind() + ('x',)`` raises and a comparison to ()

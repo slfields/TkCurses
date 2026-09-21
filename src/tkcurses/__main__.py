@@ -31,7 +31,7 @@ Run it with ``python -m tkcurses``. Escape quits.
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import tkcurses
 from tkcurses import curses as tcurses
@@ -125,15 +125,22 @@ def main(argv: list[str] | None = None) -> int:
                 panels.touch_all()
                 panels.update()
 
-        def resized(event: object = None) -> None:
+        def resized(event: Any = None) -> None:
             """Rebuild the curses half at the size the terminal now is.
 
             A curses window does not resize itself, and one built for eighty
             columns on a screen that is now seventy is drawn clipped - the
             box came back with pieces missing. curses programs handle
             KEY_RESIZE by rebuilding, and so does this.
+
+            The widget check is the tkinter idiom and not a detail: a child's
+            ``<Configure>`` reaches its toplevel's bindings, because the
+            toplevel is one of the child's binding tags. Without it every
+            widget being laid out rebuilds the curses half, which is a good
+            way to have nothing on the screen at all.
             """
-            del event
+            if event is not None and getattr(event, "widget", root) is not root:
+                return
             root.update_layout()
             panel.replace(build_curses(root))
             repaint()

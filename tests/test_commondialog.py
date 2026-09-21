@@ -25,10 +25,14 @@ happens to the answer on the way out.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
-from tkcurses import Misc, TclError
-from tkcurses.commondialog import Dialog
+from tkcurses import Frame, Label, Misc, TclError, Toplevel
+from tkcurses._core.geometry import Rect
+from tkcurses._core.panels import PanelStack
+from tkcurses.commondialog import Dialog, fit
 
 
 class Recording(Dialog):
@@ -135,3 +139,68 @@ def test_finish_with_nothing_is_a_cancel():
 def test_closing_a_dialog_that_was_never_opened_is_harmless():
     """destroy() runs on every exit path, including the ones that failed."""
     Dialog()._close()
+
+
+# --------------------------------------------- sizing during a layout pass
+
+
+@pytest.fixture
+def root():
+    """A mapped root with a panel stack, so windows get real geometry."""
+    application = Misc()
+    application.tk.panels = PanelStack(
+        window_factory=lambda rect: SimpleNamespace(rect=rect), panel_factory=None
+    )
+    application._rect = Rect(0, 0, 60, 20)
+    application._mapped = True
+    type(application)._screen_size = lambda self: (60, 20)
+    return application
+
+
+def _dialog(root, name):
+    """A window whose content is wider than the dialog minimum."""
+    window = Toplevel(root, name=name)
+    frame = Frame(window, name="f")
+    for index in range(3):
+        Label(frame, name=f"l{index}", text="Selection:" + "x" * index).pack()
+    frame.pack()
+    return window
+
+
+def test_a_dialog_sized_mid_layout_still_gets_its_content_size(root):
+    """Regression, TkCurses-3k4.
+
+    ``update_layout`` refuses to nest, so called during a layout pass it
+    lays nothing out and returns. ``fit`` then read requested sizes that
+    were partial or zero and sized the dialog to the minimum - measured,
+    30x10 instead of the 16x5 its content asks for.
+
+    That is the mechanism behind a colour chooser seen once at 45 cells
+    instead of 48, and it became easier to reach when ``<Configure>`` began
+    firing from ``_allocate``: an application handler that opens a dialog
+    now runs inside a layout pass.
+    """
+    settled = _dialog(root, "settled")
+    fit(settled)
+    wanted = settled.geometry()
+
+    root.tk.layout._running = True
+    window = _dialog(root, "midrun")
+    fit(window)
+    root.tk.layout._running = False
+
+    root.tk.timers.run_idle()
+
+    assert window.geometry() == wanted
+
+
+def test_the_sizing_is_deferred_rather_than_dropped(root):
+    """It is put off to the idle pass, which runs before anything is drawn -
+    so the dialog is sized before a person could see it, not never.
+    """
+    root.tk.layout._running = True
+    window = _dialog(root, "deferred")
+    fit(window)
+    root.tk.layout._running = False
+
+    assert root.tk.timers.run_idle() > 0

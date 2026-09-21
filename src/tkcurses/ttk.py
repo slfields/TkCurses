@@ -79,6 +79,7 @@ __all__ = [
     "THEMES",
     "Combobox",
     "Progressbar",
+    "Scale",
     "Separator",
     "Sizegrip",
     "Style",
@@ -2574,12 +2575,9 @@ class LabeledScale(Widget, tkcurses.Frame):
     ``compound`` decides which side the label goes, ``"top"`` by default, and
     is a constructor argument rather than an option, again as Tk has it.
 
-    One departure, and it is temporary: Tk's halves are a ``TLabel`` and a
-    ``TScale``, and these are a classic ``Label`` and ``Scale``, because the
-    themed ones do not exist yet. So the halves do not draw from the style
-    database and ``label.winfo_class()`` answers ``Label`` rather than
-    ``TLabel``. ``TkCurses-8an`` swaps them over when there is something to
-    swap them for; nothing else about the widget changes.
+    Its halves are a :class:`Label` and a :class:`Scale` - the themed ones,
+    so they draw from the style database and report ``TLabel`` and
+    ``TScale``, as Tk's do.
     """
 
     _ttk_class = "TFrame"
@@ -2615,21 +2613,19 @@ class LabeledScale(Widget, tkcurses.Frame):
         self._variable.set(from_)
         self._compound = compound
 
-        self.label = tkcurses.Label(self, name="label", text=str(from_), anchor="w")
-        # Horizontal, and said so: the classic Scale defaults to VERTICAL
-        # where ttk.Scale defaults to horizontal - measured on Tk 9.0.2 - and
-        # a composite built on the classic one inherits the wrong default. A
-        # vertical scale one row tall draws nothing at all, which is what it
-        # did. showvalue is off because the composite's own label is the
-        # value; two copies of the same number is not what this widget is.
-        self.scale = tkcurses.Scale(
+        self.label = Label(self, name="label", text=str(from_), anchor="w")
+        # ttk's Scale is horizontal by default and shows no number of its
+        # own, which is what this composite wants: its label is the value,
+        # and two copies of the same number is not what the widget is for.
+        # The classic Scale defaults to VERTICAL - measured on Tk 9.0.2 -
+        # and a composite built on that one drew nothing at all on a single
+        # row until it was told otherwise.
+        self.scale = Scale(
             self,
             name="scale",
             variable=self._variable,
             from_=from_,
             to=to,
-            orient="horizontal",
-            showvalue=False,
             relief="flat",
         )
         label_row, scale_row = (0, 1) if compound == LABEL_ABOVE else (1, 0)
@@ -2752,3 +2748,69 @@ def _chosen(widget: OptionMenu, value: Any) -> Callable[[], None]:
             widget._command(value)
 
     return run
+
+
+class Label(Widget, tkcurses.Label):
+    """Text drawn from the style database. ``ttk.Label``.
+
+    A themed Label over the classic one. Nothing is bound to ``TLabel`` - a
+    label answers no gestures - so the class-binding trap that catches the
+    interactive widgets does not arise here.
+    """
+
+    _ttk_class = "TLabel"
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "padding": "",
+        "compound": "",
+    }
+
+
+class Scale(Widget, tkcurses.Scale):
+    """A value chosen by sliding, drawn from the style database. ``ttk.Scale``.
+
+    Three measured differences from the classic ``Scale``, all of them worth
+    knowing because code written against one behaves differently under the
+    other:
+
+    * **It is horizontal by default.** The classic one is vertical. A
+      composite built on the wrong default draws nothing at all on a single
+      row, which is how this was first noticed.
+    * **It has a ``value`` option**, which the classic takes only through
+      ``set()``.
+    * **It leaves a variable alone.** Handed a variable holding 7, it shows
+      7 - where ``LabeledScale`` overwrites it with ``from_``, as tkinter's
+      own source does.
+
+    It shows no number of its own: ttk's scale is the slider and nothing
+    else, and anything wanting a number beside it uses ``LabeledScale``.
+    """
+
+    _ttk_class = "TScale"
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "orient": "horizontal",
+        "value": None,
+        "showvalue": False,
+    }
+
+    def __init__(
+        self,
+        master: Misc | None = None,
+        cnf: dict[str, Any] | None = None,
+        *,
+        name: str | None = None,
+        **kw: Any,
+    ) -> None:
+        """
+        Args:
+            master: Parent widget; the implicit root when omitted.
+            cnf: Options as a dictionary, merged with the keywords.
+            name: Path component, generated when omitted.
+            **kw: ``orient``, ``from_``, ``to``, ``value``, ``variable``,
+                ``command``, ``style``, and the standard options.
+        """
+        value = kw.pop("value", None)
+        super().__init__(master, cnf, name=name, **kw)
+        if value is not None:
+            self.set(float(value))

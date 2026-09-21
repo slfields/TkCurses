@@ -69,6 +69,23 @@ def fit(window: Toplevel) -> None:
     this module's, simpledialog's Toplevel subclass, and SimpleDialog - and
     they have no base class in common to inherit it from.
     """
+    if window.tk.layout.running:
+        # A layout pass is already in progress, and update_layout refuses to
+        # nest: it would return without laying anything out, and the
+        # requested sizes read below would be whatever had been computed so
+        # far - partial, or zero. Measured: a dialog sized mid-run comes out
+        # at its minimum rather than its content's size.
+        #
+        # That is the mechanism behind TkCurses-3k4, a colour chooser seen
+        # once at 45 cells instead of the 48 it asks for. It became easier to
+        # reach when <Configure> started firing from _allocate, because an
+        # application handler - one that opens a dialog, say - can now run
+        # inside a layout pass.
+        #
+        # Deferred rather than forced: the idle pass runs before anything is
+        # drawn, so the dialog is sized before a person could see it.
+        window.after_idle(lambda: fit(window))
+        return
     window.update_layout()
     screen_width = window.winfo_screenwidth()
     screen_height = window.winfo_screenheight()

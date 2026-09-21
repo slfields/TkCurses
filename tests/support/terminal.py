@@ -287,6 +287,27 @@ class TerminalHarness:
         self._workdir = workdir
         self.run([sys.executable, str(script)])
 
+    def _install_quit_timer_shim(self) -> Path | None:
+        """Put ``sitecustomize.py`` where the child will import it.
+
+        A tty program schedules its own exit so that a wedged one cannot hang
+        the suite, and those delays are constants while the harness's waiting
+        budget is multiplied on CI. The shim scales the exit timers to match.
+        See ``tests/support/quit_timer_shim.py`` for why that matters.
+
+        Returns the directory to add to ``PYTHONPATH``, or None when there is
+        nowhere to write it.
+        """
+        workdir = self._workdir
+        if workdir is None:
+            return None
+        source = Path(__file__).with_name("quit_timer_shim.py")
+        target = workdir / "sitecustomize.py"
+        with contextlib.suppress(OSError):
+            target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+            return workdir
+        return None
+
     def run(self, argv: Sequence[str]) -> None:
         """Fork a child attached to the pty and exec ``argv`` in it."""
         if self._pid is not None:
@@ -323,6 +344,12 @@ class TerminalHarness:
                 if fd > 2:
                     os.close(fd)
             env = {**os.environ, **_CHILD_ENV, **self._extra_env}
+            shim = self._install_quit_timer_shim()
+            if shim is not None:
+                existing = env.get("PYTHONPATH", "")
+                env["PYTHONPATH"] = (
+                    f"{shim}{os.pathsep}{existing}" if existing else str(shim)
+                )
             env["COLUMNS"] = str(self.cols)
             env["LINES"] = str(self.rows)
             os.execvpe(argv[0], list(argv), env)

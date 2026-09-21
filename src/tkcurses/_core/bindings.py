@@ -543,9 +543,16 @@ class BindingTable:
             return list(patterns.get(pattern, []))
         return [binding for bindings in patterns.values() for binding in bindings]
 
-    def sequences(self, tag: str) -> list[str]:
-        """Canonical sequence strings currently bound on ``tag``."""
-        return [str(pattern) for pattern in self._tags.get(tag, {})]
+    def sequences(self, tag: str) -> tuple[str, ...]:
+        """Canonical sequence strings currently bound on ``tag``.
+
+        A tuple, because this is what ``bind()`` with no callback hands back
+        and tkinter's answers with one - measured on Tk 9.0.2, ``()`` and
+        ``('a',)``. A list is the kind of difference that breaks real code
+        quietly: ``widget.bind() + ('x',)`` raises rather than misbehaving
+        somewhere later.
+        """
+        return tuple(str(pattern) for pattern in self._tags.get(tag, {}))
 
     def tags(self) -> list[str]:
         """Tags that currently hold at least one binding."""

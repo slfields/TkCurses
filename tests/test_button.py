@@ -23,7 +23,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tkcurses import Button, Misc, StringVar, TclError
+from tkcurses import PRESS_RECOVERY_MS, Button, Misc, StringVar, TclError
 from tkcurses._core.events import KeyEvent, MouseEvent
 from tkcurses._core.geometry import Rect
 from tkcurses._core.panels import PanelStack
@@ -292,3 +292,63 @@ def test_releasing_back_inside_still_invokes(root):
     button._handle(MouseEvent(button=1, state="pressed", x=1, y=1))
     button._handle(MouseEvent(button=1, state="released", x=3, y=2))
     assert calls == [1]
+
+
+# ------------------------------------------------- a release that never came
+
+
+def _wind_forward(root):
+    """Run the timer queue as though the recovery delay had passed.
+
+    The queue takes its time from a clock it was handed, so moving that on
+    is how a test reaches a timer without waiting for one.
+    """
+    timers = root.tk.timers
+    real = timers._clock
+    timers._clock = lambda: real() + PRESS_RECOVERY_MS / 1000 + 0.01
+    try:
+        timers.run_due()
+    finally:
+        timers._clock = real
+
+
+def test_a_button_puts_itself_back_if_the_release_is_lost(root):
+    """Regression, TkCurses-9lr.
+
+    ncurses drops mouse reports that arrive faster than the application
+    drains them, so a release can simply never be delivered - and a button
+    whose look depends on it stays drawn pressed and never invokes.
+
+    It was filed as needing a handler slower than any in the library.
+    Measured on a real screen, that is not so: a Text of 5000 lines redraws
+    in 350ms and a Canvas of 500 items in 766ms, either well past the
+    50-80ms where reports start being lost.
+    """
+    button = Button(root, name="b", text="OK")
+    button.event_generate("<Button-1>", x=0, y=0)
+    assert button._pressed is True
+
+    _wind_forward(root)
+
+    assert button._pressed is False
+
+
+def test_a_released_button_does_not_keep_a_recovery_timer(root):
+    """The safety net is dropped once the release has actually arrived, or
+    every click would leave a timer behind."""
+    button = Button(root, name="b", text="OK")
+    button.event_generate("<Button-1>", x=0, y=0)
+    button.event_generate("<ButtonRelease-1>", x=0, y=0)
+
+    assert getattr(button, "_press_recovery", None) is None
+
+
+def test_recovery_does_not_invoke_the_button(root):
+    """Putting the look back is not the same as deciding it was clicked."""
+    calls = []
+    button = Button(root, name="b", text="OK", command=lambda: calls.append(1))
+    button.event_generate("<Button-1>", x=0, y=0)
+
+    _wind_forward(root)
+
+    assert calls == []

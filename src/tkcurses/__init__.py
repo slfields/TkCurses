@@ -2054,6 +2054,23 @@ class BaseWidget(Misc):
         curses refuses.
         """
         previous, self._rect = self._rect, rect
+        if rect != previous:
+            # tkinter raises <Configure> whenever a widget's size or position
+            # changes, however it changed - geometry(), a manager, minsize, a
+            # terminal resize. _allocate is the one place all of those meet,
+            # so it is the one place this belongs.
+            #
+            # Only on a real change, which is what keeps a handler that calls
+            # geometry() from recurring: its second call sets the same rect,
+            # that is not a change, and nothing fires. Measured against Tk
+            # 9.0.2, where such a handler produces two events and stops.
+            self.event_generate(
+                "<Configure>",
+                width=rect.width,
+                height=rect.height,
+                x=rect.x,
+                y=rect.y,
+            )
         resized = (rect.width, rect.height) != (previous.width, previous.height)
         if resized:
             # How much of the content is visible is a function of the size, so
@@ -4149,7 +4166,12 @@ class Toplevel(BaseWidget, Wm):
             return
         column = max(BORDER_WIDTH, (self._rect.width - len(text)) // 2)
         with contextlib.suppress(_curses.error):
-            dispatcher.call(window.addstr, 0, column, text)
+            # A_NORMAL: the title had no attribute of its own before this
+            # went through _write_line, and the border it sits in has none
+            # either.
+            # Through the class: a Toplevel is a BaseWidget rather than a
+            # _Drawable, and _write_line is a static method on the latter.
+            _Drawable._write_line(dispatcher, window, 0, column, text, _curses.A_NORMAL)
 
     def _redraw_decoration(self) -> None:
         """Repaint the border and title after the window manager changed them."""
@@ -4958,8 +4980,9 @@ class _TextWidget(_Drawable):
             len(lines[line_number]), block_width, str(self._options["justify"])
         )
         with contextlib.suppress(_curses.error):
-            dispatcher.call(
-                window.addstr,
+            self._write_line(
+                dispatcher,
+                window,
                 row,
                 column + remaining,
                 lines[line_number][remaining],
@@ -5111,9 +5134,9 @@ class Button(_TextWidget):
         attribute = self._background_attribute() | self._text_attribute()
         dispatcher = CursesDispatcher.get()
         with contextlib.suppress(_curses.error):
-            dispatcher.call(window.addstr, row, area.x, left, attribute)
-            dispatcher.call(
-                window.addstr, row, area.x + area.width - 1, right, attribute
+            self._write_line(dispatcher, window, row, area.x, left, attribute)
+            self._write_line(
+                dispatcher, window, row, area.x + area.width - 1, right, attribute
             )
 
 
@@ -5137,6 +5160,56 @@ def _button_press(event: Event) -> None:
         return
     button._pressed = True
     button._redraw()
+    _arm_press_recovery(button)
+
+
+#: How long a button may stay drawn pressed with no release in sight.
+#: Longer than any click, and shorter than a person will spend looking at a
+#: control that has stopped working.
+PRESS_RECOVERY_MS = 700
+
+
+def _arm_press_recovery(button: Any) -> None:
+    """Put the button back up if its release never arrives.
+
+    **ncurses drops mouse reports that arrive faster than the application
+    drains them.** Measured with a plain curses program, no TkCurses
+    involved: a handler taking 120ms loses two of the four events from two
+    clicks. So a release can simply never be delivered, and a button whose
+    look depends on it stays drawn pressed and never invokes - until
+    something else happens to repaint it.
+
+    It was filed as needing "a handler slower than any in the library"
+    (TkCurses-9lr). Measured on a real screen, that is not so: a Text of
+    5000 lines redraws in 350ms and a Canvas of 500 items in 766ms, either
+    of which is well past the 50-80ms where reports start being lost. A
+    click handler that repaints one of those is enough.
+
+    Recovering rather than preventing, because nothing downstream can
+    recover a report ncurses never parsed. The worst case becomes a flicker
+    instead of a control that has to be clicked twice to come back.
+    """
+    handle = getattr(button, "_press_recovery", None)
+    if handle is not None:
+        with contextlib.suppress(Exception):
+            button.after_cancel(handle)
+
+    def recover() -> None:
+        button._press_recovery = None
+        if button._pressed and button.winfo_exists():
+            button._pressed = False
+            button._redraw()
+
+    button._press_recovery = button.after(PRESS_RECOVERY_MS, recover)
+
+
+def _disarm_press_recovery(button: Any) -> None:
+    """Drop the safety timer once the release has actually arrived."""
+    handle = getattr(button, "_press_recovery", None)
+    if handle is not None:
+        button._press_recovery = None
+        with contextlib.suppress(Exception):
+            button.after_cancel(handle)
 
 
 def _button_release(event: Event) -> None:
@@ -5148,6 +5221,7 @@ def _button_release(event: Event) -> None:
     the implicit grab, so whether it counts has to be decided here.
     """
     button = event.widget
+    _disarm_press_recovery(button)
     if not button._pressed:
         return
     button._pressed = False
@@ -5418,7 +5492,9 @@ class _ChoiceWidget(_TextWidget):
         _, down = parse_anchor(str(self._options["anchor"]))
         row = area.y + int((area.height - block_height) * down)
         with contextlib.suppress(_curses.error):
-            CursesDispatcher.get().call(window.addstr, row, area.x, mark, attribute)
+            self._write_line(
+                CursesDispatcher.get(), window, row, area.x, mark, attribute
+            )
 
 
 class Checkbutton(_ChoiceWidget):
@@ -5904,7 +5980,7 @@ class Entry(_Drawable):
                 return
             view = self._field.view
             text = self._displayed()[view : view + area.width]
-            dispatcher.call(window.addstr, area.y, area.x, text, attribute)
+            self._write_line(dispatcher, window, area.y, area.x, text, attribute)
             self._draw_selection(dispatcher, window, area, attribute)
             self._draw_cursor(dispatcher, window, area, attribute)
 
@@ -5922,8 +5998,9 @@ class Entry(_Drawable):
             return
         text = self._displayed()[self._field.view + start : self._field.view + stop]
         with contextlib.suppress(_curses.error):
-            dispatcher.call(
-                window.addstr,
+            self._write_line(
+                dispatcher,
+                window,
                 area.y,
                 area.x + start,
                 text,
@@ -5945,8 +6022,9 @@ class Entry(_Drawable):
             return
         under = self._displayed()[self._field.cursor : self._field.cursor + 1] or " "
         with contextlib.suppress(_curses.error):
-            dispatcher.call(
-                window.addstr,
+            self._write_line(
+                dispatcher,
+                window,
                 area.y,
                 area.x + column,
                 under,
@@ -6170,8 +6248,9 @@ class Menubutton(_TextWidget):
         dispatcher = CursesDispatcher.get()
         if self._indicator_on and area.width >= 2:
             with contextlib.suppress(_curses.error):
-                dispatcher.call(
-                    window.addstr,
+                self._write_line(
+                    dispatcher,
+                    window,
                     area.y + (area.height - 1) // 2,
                     area.x + area.width - 1,
                     self._INDICATOR,
@@ -6516,12 +6595,10 @@ class LabelFrame(Frame):
         attribute = self._background_attribute() | self._font_attribute()
         dispatcher = CursesDispatcher.get()
         with contextlib.suppress(_curses.error):
-            if row == height - 1 and column + len(text) >= width:
-                # The bottom-right cell cannot be written with addstr: curses
-                # scrolls a window whose cursor has nowhere left to go.
-                dispatcher.call(window.insstr, row, column, text, attribute)
-            else:
-                dispatcher.call(window.addstr, row, column, text, attribute)
+            # The last-cell case this used to handle here - curses scrolls a
+            # window whose cursor has nowhere left to go - is one of the two
+            # things _write_line exists for, along with the clipping.
+            self._write_line(dispatcher, window, row, column, text, attribute)
 
 
 class Spinbox(Entry):
@@ -7574,7 +7651,9 @@ class Text(_Drawable):
         line, start, stop = span
         text = lines[line - 1][start:stop] if line <= len(lines) else ""
         visible = text[self._left : self._left + area.width]
-        dispatcher.call(window.addstr, area.y + offset, area.x, visible, attribute)
+        self._write_line(
+            dispatcher, window, area.y + offset, area.x, visible, attribute
+        )
         for name in self._tag_order:
             self._draw_tagged(
                 dispatcher, window, area, offset, span, visible, name, attribute
@@ -7607,8 +7686,9 @@ class Text(_Drawable):
             at = Index(line, first + column)
             if name not in self._buffer.tag_names(at):
                 continue
-            dispatcher.call(
-                window.addstr,
+            self._write_line(
+                dispatcher,
+                window,
                 area.y + offset,
                 area.x + column,
                 character,
@@ -7672,8 +7752,9 @@ class Text(_Drawable):
         under = self._buffer.get(insert) or " "
         if under == "\n":
             under = " "
-        dispatcher.call(
-            window.addstr,
+        self._write_line(
+            dispatcher,
+            window,
             area.y + row,
             area.x + column,
             under,
@@ -8545,8 +8626,13 @@ class Canvas(_Drawable):
                 )
             if not area.is_empty:
                 for column, row, glyph, attribute in self._painted(area, base):
-                    dispatcher.call(
-                        window.addstr, area.y + row, area.x + column, glyph, attribute
+                    self._write_line(
+                        dispatcher,
+                        window,
+                        area.y + row,
+                        area.x + column,
+                        glyph,
+                        attribute,
                     )
 
     def _painted(self, area: Rect, base: int) -> list[tuple[int, int, str, int]]:
@@ -9240,8 +9326,9 @@ class Menu(_Drawable):
                 style |= _curses.A_REVERSE
             if str(entry.options.get("state")) == "disabled":
                 style = for_state("disabled", style)
-            dispatcher.call(
-                window.addstr,
+            self._write_line(
+                dispatcher,
+                window,
                 0,
                 column,
                 clip_text(text, self._rect.width - column),
@@ -9271,8 +9358,9 @@ class Menu(_Drawable):
             if number == self._active:
                 style |= _curses.A_REVERSE
             if entry.kind == "separator":
-                dispatcher.call(
-                    window.addstr,
+                self._write_line(
+                    dispatcher,
+                    window,
                     area.y + row,
                     area.x - 1,
                     "─" * (area.width + 2),
@@ -9286,8 +9374,13 @@ class Menu(_Drawable):
                 line = line[: area.width - len(accelerator)] + accelerator
             if entry.kind == "cascade" and cascades:
                 line = line[: area.width - 1] + CASCADE
-            dispatcher.call(
-                window.addstr, area.y + row, area.x, clip_text(line, area.width), style
+            self._write_line(
+                dispatcher,
+                window,
+                area.y + row,
+                area.x,
+                clip_text(line, area.width),
+                style,
             )
             self._draw_underline(dispatcher, window, area, row, entry, style)
 
@@ -9308,8 +9401,9 @@ class Menu(_Drawable):
         if column >= area.x + area.width:
             return
         with contextlib.suppress(_curses.error):
-            dispatcher.call(
-                window.addstr,
+            self._write_line(
+                dispatcher,
+                window,
                 area.y + row,
                 column,
                 entry.label[index],
@@ -10250,8 +10344,13 @@ class PanedWindow(_Drawable):
                 middle = area.x + area.width // 2
                 for column in range(area.width):
                     glyph = handle if show and column == middle else line
-                    dispatcher.call(
-                        window.addstr, area.y + offset, area.x + column, glyph, style
+                    self._write_line(
+                        dispatcher,
+                        window,
+                        area.y + offset,
+                        area.x + column,
+                        glyph,
+                        style,
                     )
             else:
                 if not 0 <= offset < area.width:
@@ -10259,8 +10358,8 @@ class PanedWindow(_Drawable):
                 middle = area.y + area.height // 2
                 for row in range(area.height):
                     glyph = handle if show and row == middle else line
-                    dispatcher.call(
-                        window.addstr, area.y + row, area.x + offset, glyph, style
+                    self._write_line(
+                        dispatcher, window, area.y + row, area.x + offset, glyph, style
                     )
 
     @property
@@ -10551,9 +10650,13 @@ class Scrollbar(_Drawable):
                 )
             if self._vertical:
                 for offset, cell in enumerate(cells):
-                    dispatcher.call(window.addstr, edge + offset, edge, cell, attribute)
+                    self._write_line(
+                        dispatcher, window, edge + offset, edge, cell, attribute
+                    )
             else:
-                dispatcher.call(window.addstr, edge, edge, "".join(cells), attribute)
+                self._write_line(
+                    dispatcher, window, edge, edge, "".join(cells), attribute
+                )
 
 
 def _scrollbar_press(event: Event) -> None:
@@ -10686,21 +10789,28 @@ class Scale(_Drawable):
     # ------------------------------------------------------------- bindings
 
     def _install_class_bindings(self) -> None:
-        """Register the default behaviour for every Scale in this application."""
-        if "Scale" in self.tk.bound_classes:
+        """Register the default behaviour for every Scale in this application.
+
+        Under ``winfo_class()`` rather than the literal ``"Scale"``: binding
+        tags name one class, so ``ttk.Scale`` - which reports ``TScale`` -
+        would otherwise match none of these and answer no gesture at all.
+        The same cure Menubutton carries for OptionMenu.
+        """
+        name = self.winfo_class()
+        if name in self.tk.bound_classes:
             return
-        self.tk.bound_classes.add("Scale")
+        self.tk.bound_classes.add(name)
         bind = self.bind_class
-        bind("Scale", "<Button-1>", _scale_press)
+        bind(name, "<Button-1>", _scale_press)
         # A drag arrives as Motion: curses reports motion-with-a-button, and
         # there is no Button1 modifier to match a <B1-Motion> against. The
         # press holds the implicit grab, so every one of these belongs to
         # this scale however far the pointer has wandered.
-        bind("Scale", "<Motion>", _scale_motion)
-        bind("Scale", "<ButtonRelease-1>", _scale_release)
-        bind("Scale", "<Any-Key>", _scale_key)
-        bind("Scale", "<FocusIn>", _scale_refresh)
-        bind("Scale", "<FocusOut>", _scale_refresh)
+        bind(name, "<Motion>", _scale_motion)
+        bind(name, "<ButtonRelease-1>", _scale_release)
+        bind(name, "<Any-Key>", _scale_key)
+        bind(name, "<FocusIn>", _scale_refresh)
+        bind(name, "<FocusOut>", _scale_refresh)
 
     # --------------------------------------------------------------- options
 
@@ -11003,8 +11113,13 @@ class Scale(_Drawable):
         area = self._content_area()
         label = str(self._options["label"])
         if label and area.width > 0:
-            dispatcher.call(
-                window.addstr, area.y, area.x, clip_text(label, area.width), attribute
+            self._write_line(
+                dispatcher,
+                window,
+                area.y,
+                area.x,
+                clip_text(label, area.width),
+                attribute,
             )
         if not self._showvalue:
             return
@@ -11023,8 +11138,8 @@ class Scale(_Drawable):
                 column = max(column, area.x + len(label) + 1)
         if row < area.y or column < area.x:
             return
-        dispatcher.call(
-            window.addstr, row, column, clip_text(text, area.width), attribute
+        self._write_line(
+            dispatcher, window, row, column, clip_text(text, area.width), attribute
         )
 
     def _draw_trough(
@@ -11042,27 +11157,42 @@ class Scale(_Drawable):
         focused = self.focus_get() is self
         left, right = self._FOCUS_CAPS if focused else (" ", " ")
         if self._vertical:
-            dispatcher.call(window.addstr, origin_y - 1, origin_x, left, attribute)
+            self._write_line(
+                dispatcher, window, origin_y - 1, origin_x, left, attribute
+            )
             for thick in range(self._thickness()):
                 for offset, cell in enumerate(cells):
-                    dispatcher.call(
-                        window.addstr,
+                    self._write_line(
+                        dispatcher,
+                        window,
                         origin_y + offset,
                         origin_x + thick,
                         cell,
                         attribute,
                     )
-            dispatcher.call(window.addstr, origin_y + span, origin_x, right, attribute)
+            self._write_line(
+                dispatcher, window, origin_y + span, origin_x, right, attribute
+            )
         else:
             for thick in range(self._thickness()):
-                dispatcher.call(
-                    window.addstr, origin_y + thick, origin_x - 1, left, attribute
+                self._write_line(
+                    dispatcher, window, origin_y + thick, origin_x - 1, left, attribute
                 )
-                dispatcher.call(
-                    window.addstr, origin_y + thick, origin_x, "".join(cells), attribute
+                self._write_line(
+                    dispatcher,
+                    window,
+                    origin_y + thick,
+                    origin_x,
+                    "".join(cells),
+                    attribute,
                 )
-                dispatcher.call(
-                    window.addstr, origin_y + thick, origin_x + span, right, attribute
+                self._write_line(
+                    dispatcher,
+                    window,
+                    origin_y + thick,
+                    origin_x + span,
+                    right,
+                    attribute,
                 )
 
     def _draw_ticks(
@@ -11094,8 +11224,9 @@ class Scale(_Drawable):
             if self._vertical:
                 row, column = origin_y + offset, area.x
                 if row > taken:
-                    dispatcher.call(
-                        window.addstr,
+                    self._write_line(
+                        dispatcher,
+                        window,
                         row,
                         column + self._value_width() - len(text),
                         text,
@@ -11106,7 +11237,7 @@ class Scale(_Drawable):
                 row = origin_y + self._thickness()
                 column = min(origin_x + offset, area.x + area.width - len(text))
                 if column > taken:
-                    dispatcher.call(window.addstr, row, column, text, attribute)
+                    self._write_line(dispatcher, window, row, column, text, attribute)
                     taken = column + len(text)
             value += step
 
