@@ -415,3 +415,81 @@ def test_a_click_reaches_a_program_too_slow_to_keep_up(terminal, tmp_path):
         lambda t: "saw: prpr" in "\n".join(t.display),
         message="both clicks, press and release, to arrive",
     )
+
+
+# ------------------------------------------------- direct colour and pyte
+
+
+@pytest.mark.parametrize(
+    ("emitted", "expected"),
+    [
+        (b"\x1b[38:2::51:102:204m", b"\x1b[38;2;51;102;204m"),
+        (b"\x1b[48:2::17:34:51m", b"\x1b[48;2;17;34;51m"),
+        (b"\x1b[38:5:62m", b"\x1b[38;5;62m"),
+        (b"\x1b[1;38:2::1:2:3m", b"\x1b[1;38;2;1;2;3m"),
+        # Already in pyte's form, and must be left exactly alone.
+        (b"\x1b[38;5;62m", b"\x1b[38;5;62m"),
+        (b"\x1b[m", b"\x1b[m"),
+        (b"\x1b[0m", b"\x1b[0m"),
+        # Not an SGR at all.
+        (b"\x1b[2J", b"\x1b[2J"),
+        (b"hello", b"hello"),
+    ],
+    ids=[
+        "direct foreground",
+        "direct background",
+        "indexed with colons",
+        "colons after another parameter",
+        "already semicolons",
+        "bare reset",
+        "zero reset",
+        "not an SGR",
+        "not a sequence",
+    ],
+)
+def test_colon_separated_sgr_is_rewritten_for_pyte(emitted, expected):
+    """ncurses emits the colon form for a direct-colour terminfo.
+
+    It is the ITU-T T.416 spelling and real terminals accept it; pyte does
+    not, and printed it as literal text - so every tty test was meaningless
+    under TERM=xterm-direct, and looked like a bug in the library.
+    """
+    from tests.support.terminal import _COLON_SGR, _semicolons
+
+    assert _COLON_SGR.sub(_semicolons, emitted) == expected
+
+
+def test_a_direct_colour_terminal_shows_the_exact_colour(terminal, tmp_path):
+    """End to end, because the rewrite above could be perfect and unwired.
+
+    At 256 colours #3366cc is approximated by the nearest cube entry. On a
+    direct-colour terminal it arrives exactly, which is the whole point of
+    the terminfo and could not be seen here at all before.
+    """
+    term = terminal(cols=20, rows=4, env={"TERM": "xterm-direct"})
+    term.run_source(
+        """
+        from tkcurses._core.colors import ColorManager
+        from tkcurses._core.screen import CursesScreen
+
+        screen = CursesScreen()
+        buffer = screen.start()
+        try:
+            colors = ColorManager()
+            colors.start()
+            screen.attribute_resolver = colors.attribute_for
+            buffer.write(0, 0, "XX", fg="#3366cc", bg="#112233")
+            screen.refresh()
+            screen.stdscr.getch()
+        finally:
+            screen.stop()
+        """,
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda screen: screen.display[0].startswith("XX"), message="XX")
+    assert term.display[0].startswith("XX"), (
+        "escape bytes reached the screen as text\n" + term.describe()
+    )
+    assert term.attrs_at(0, 0)["fg"] == "3366cc"
+    assert term.attrs_at(0, 0)["bg"] == "112233"
+    term.send_keys("q")

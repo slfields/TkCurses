@@ -58,6 +58,7 @@ import fcntl
 import locale
 import os
 import pty
+import re
 import select
 import signal
 import struct
@@ -207,13 +208,47 @@ class _Screen(pyte.Screen):
             self.cursor.x = max(behind) if behind else 0
 
 
+#: An SGR sequence whose parameters are separated by colons rather than
+#: semicolons. ncurses emits these for a direct-colour terminfo - the
+#: ITU-T T.416 form that real terminals accept - and pyte does not parse
+#: them, so the bytes land on the screen as text.
+_COLON_SGR = re.compile(rb"\x1b\[([0-9:;]*:[0-9:;]*)m")
+
+
+def _semicolons(match: re.Match[bytes]) -> bytes:
+    """Rewrite one colon-separated SGR into the form pyte understands.
+
+    ``38:2::r:g:b`` becomes ``38;2;r;g;b``. The empty field after the 2 is
+    the colour-space id, which T.416 allows and nobody fills in; dropping
+    empties is what makes the two forms line up.
+
+    Only the separators change. A sequence pyte already understands has no
+    colons in it and never reaches here.
+    """
+    parts = [part for part in match.group(1).split(b":") if part != b""]
+    return b"\x1b[" + b";".join(parts) + b"m"
+
+
 class _ByteStream(pyte.ByteStream):
-    """pyte's byte stream, taught the sequence :class:`_Screen` implements."""
+    """pyte's byte stream, taught the sequences :class:`_Screen` implements.
+
+    And taught direct colour, which pyte cannot read at all. Under
+    ``TERM=xterm-direct`` the library correctly emits
+    ``ESC[38:2::51:102:204m``; pyte printed ``2::51:102:204m`` as literal
+    text, so every tty test and UAT was meaningless on a direct-colour
+    terminal - and looked like a rendering bug in the library rather than a
+    gap in the emulator. Measured before this: an image came back as 79
+    inked cells in one colour, against 901 cells in 239 at 256 colours.
+    """
 
     csi: ClassVar[dict[str, str]] = {
         **pyte.ByteStream.csi,
         "Z": "cursor_back_tab",
     }
+
+    def feed(self, data: bytes) -> None:
+        """Feed bytes, converting any colon-separated SGR on the way in."""
+        super().feed(_COLON_SGR.sub(_semicolons, data))
 
 
 class TerminalHarness:
