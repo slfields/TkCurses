@@ -1899,11 +1899,19 @@ is treated as 16 - because asking for a colour the terminal has not got puts
 the wrong colour on the screen, while asking for one fewer costs only
 accuracy.
 
-`COLORTERM=truecolor` is *not* consulted by `detect_depth()`.
-It promises that the terminal emulator understands 24-bit escape sequences,
-not that ncurses is in direct mode, and acting on it would send `0xRRGGBB`
-colour numbers to a curses that expects 0-255. `truecolor_hinted()` reports
-it separately, for anything that later writes escape sequences past curses.
+`COLORTERM=truecolor` is *not* consulted by `detect_depth()`, for two
+reasons that are worth keeping apart.
+
+The mechanical one: it promises that the terminal emulator understands 24-bit
+escape sequences, not that ncurses is in direct mode, and acting on it would
+send `0xRRGGBB` colour numbers to a curses that expects 0-255.
+`truecolor_hinted()` reports it separately, for anything that later writes
+escape sequences past curses.
+
+The second is that **honouring it would currently make pictures worse**, not
+better — see **Why more colour can mean a worse picture** below. That is the
+one that keeps it switched off now that `TkCurses-3g8` has made the effect
+measurable, and `TkCurses-bvu` is the work that changes it.
 
 `Misc.winfo_colordepth()` is how a widget asks. It is not tkinter's - X has
 no equivalent question, because a display answers `winfo_screendepth()` in
@@ -1968,40 +1976,94 @@ contributes to perceived brightness, so an approximation stays recognisable:
 | `EXTENDED` | 16 named + 6x6x6 cube + 24 greys | colour 208, `#ff8700` |
 | `DIRECT` | none; the number *is* the colour | `0xff8000`, exactly |
 
-The 256-colour palette is built rather than listed: a table of 256 triples is
-256 chances to mistype one, and xterm's own arithmetic is short. Its cube
-levels are `(0, 95, 135, 175, 215, 255)` - not evenly spaced, which has to be
-matched or every dark colour lands a step out.
+#### The 256-colour palette
 
-#### Color Pair Management
-
-Curses requires pre-initialized color pairs. ColorManager maintains a dynamic pair registry:
-
-```python
-class ColorManager:
-    _pairs: dict[tuple[int, int], int]  # (fg, bg) -> pair_number
-    _next_pair: int = 1                  # pair 0 is reserved
-
-    def get_pair(self, fg: int, bg: int) -> int:
-        """Get or create color pair for fg/bg combination."""
-        key = (fg, bg)
-        if key not in self._pairs:
-            curses.init_pair(self._next_pair, fg, bg)
-            self._pairs[key] = self._next_pair
-            self._next_pair += 1
-        return curses.color_pair(self._pairs[key])
-```
-
-#### 256-Color Support (Future)
-
-When `curses.COLORS >= 256`, extended colors can be used:
+`EXTENDED` is built rather than listed: a table of 256 triples is 256 chances
+to mistype one, and xterm's own arithmetic is short. Its cube levels are not
+evenly spaced, which has to be matched or every dark colour lands a step out:
 
 | Range | Description |
 |-------|-------------|
-| 0-7 | Standard colors |
-| 8-15 | Bright/bold colors |
-| 16-231 | 6×6×6 RGB color cube |
-| 232-255 | Grayscale (24 shades) |
+| 0-7 | The 8 base colours |
+| 8-15 | Their bright counterparts |
+| 16-231 | 6x6x6 RGB cube, levels `(0, 95, 135, 175, 215, 255)` |
+| 232-255 | 24 greys |
+
+A colour number resolves back to RGB through the same arithmetic, which is
+what lets a pair be compared against a colour that was asked for.
+
+#### Color Pair Management
+
+Curses cannot paint a colour; it paints a **pair**, and a pair is a
+*combination* of foreground and background. `ColorManager` allocates them on
+demand and caches by `(fg, bg)`.
+
+**There are at most 255 of them, and that is the tightest constraint in the
+whole colour system.** Two different numbers describe the supply, and using
+the wrong one silently ruins the screen:
+
+| | What it means | Typical value |
+|---|---|---|
+| `COLOR_PAIRS` | how many pairs the terminal will **create** | 65536 |
+| `A_COLOR` | how many an attribute can **name** | 8 bits, so 256 |
+
+`curses.color_pair()` packs the pair number into the `A_COLOR` field, and the
+field is eight bits wide, so past 255 **the number wraps rather than
+failing**. Measured on `xterm-256color`: `color_pair(256)` is 0 — the
+terminal's default colours — `color_pair(257)` is pair 1, and
+`color_pair(300)` is pair 44. Cells come out painted in some unrelated pair's
+colours while every call reports success: the allocation succeeded,
+`init_pair` succeeded, and `exhausted` stayed `False`.
+
+So the ceiling is `min(COLOR_PAIRS, (A_COLOR >> 8) + 1)`, and it is the
+second term that binds. This is not a tuning parameter. The pair number is
+stored per cell, so pairs cannot be recycled within a frame the way a palette
+entry could be.
+
+Running out is handled rather than ignored. `pair_number()` falls back to
+`_nearest_pair()` — the closest pair already allocated, by the same weighted
+RGB distance used everywhere else — and sets `exhausted`. It used to return
+pair 0, which paints the terminal's default colours, so exhaustion turned
+parts of a picture into whatever the background happened to be; an
+approximate colour is a far better answer than an unrelated one.
+
+That bug is worth remembering for its symptom rather than its cause. It
+presented as *"the image is way off at 256 colours and fine at 8"*, which
+sounds like a palette problem and is not one: eight colours never needs more
+than a few dozen pairs, and an image at 256 runs through the lot.
+
+#### Why more colour can mean a worse picture
+
+**A richer terminal does not automatically produce a better image, and
+measurement says it produces a worse one.** This is the counter-intuitive
+result that shapes `TkCurses-bvu`, and it follows directly from the ceiling
+above.
+
+Quantisation to the 256-colour cube currently keeps us under the ceiling by
+accident: it collapses an image's colours *before* the pair table sees them.
+Remove it — which is exactly what direct colour does — and nothing collapses,
+the table fills, and every cell after the 255th falls back to the nearest
+pair already allocated. Measured on `earth.gif` reduced to 53x33 and drawn on
+a real terminal, each cell compared against the colour the image asked for:
+
+| Terminal | Inked cells | Distinct pairs | Mean error |
+|----------|-------------|----------------|------------|
+| 256 colours | 901 | 239 | **8.58** |
+| truecolor | 845 | 257 | **20.09** |
+
+Truecolor is worse by more than a factor of two, and draws fewer cells at all.
+
+Pairs also do not scale with colours, so bounding one does not bound the
+other by itself: `earth.gif` at full size is 253 colours but **8583** pairs,
+because a pair is a combination. What caps pairs for a fitted image is the
+cell count, not the palette.
+
+**The decided answer is a collapse step that is chosen rather than
+accidental: an image brings its own palette, sized to fit a pair budget, and
+the entries of that palette are reproduced exactly.** See **Image colour and
+the pair ceiling** under Image Classes for the measurements, and
+`TkCurses-bvu` for the work. Until that lands, `detect_depth()` deliberately
+ignores `COLORTERM`.
 
 ---
 
@@ -2182,17 +2244,29 @@ dispatcher.call(update_widget)
 
 ## Future Considerations
 
-### Planned Extensions
-1. **Theme system**: Multiple text-mode themes (DOS, Unicode, minimal)
-2. **Mouse support**: Full mouse event handling (hover, drag, scroll)
-3. **Clipboard**: Copy/paste integration
-4. **Async/await**: Integration with asyncio event loop
+This list was written before most of it existed, and six of its eight entries
+have since shipped. Kept as a record of what was planned, marked with where
+it landed, because a list of "future" work that is mostly done is worse than
+no list at all — it was still offering 256-colour support and image decoding
+as ideas well after both had shipped and been accepted by a person.
 
-### Potential Enhancements
-1. **Unicode box drawing**: Full Unicode support for borders/lines
-2. **256-color/truecolor**: Extended color palette support
-3. **Image file decoding**: read PNG/GIF into the pixel plane, rather than only text and XBM
-4. **Screen recording**: Export UI state as text files
+| Planned | Where it is |
+|---------|-------------|
+| Theme system | `ttk.Style`, with `theme_names()` / `theme_use()` |
+| Mouse support | `_core/input.py`; modes handled per `TkCurses-gyo` |
+| Clipboard | `Misc.clipboard_get` / `clipboard_append` |
+| Unicode box drawing | `_core/attributes.py`, the `BorderStyle` table |
+| 256-colour | the `EXTENDED` tier; see **X11 to Curses Color Mapping** |
+| Image file decoding | `_core/imagefiles.py` — PNG, GIF, netpbm, XBM |
+
+Genuinely still ahead:
+
+1. **Truecolor**, which is not the small remainder of the 256-colour work it
+   looks like. It needs an image to bring its own palette first, or it makes
+   photographs worse — `TkCurses-bvu`, and **Why more colour can mean a worse
+   picture** for why.
+2. **Async/await**: integration with an asyncio event loop.
+3. **Screen recording**: export UI state as text files.
 
 ---
 
@@ -3405,6 +3479,59 @@ The blurred figure was the only one taken when it was written, and it
 assumed a viewer nobody had checked for. A person comparing the four side by
 side picked averaged-and-flat, which is what prompted the second
 measurement.
+
+### Image colour and the pair ceiling
+
+**An image is the only thing in this library that can exhaust the terminal's
+supply of colour pairs, and it is the reason a richer terminal currently
+produces a worse picture.** The mechanism is under **Why more colour can mean
+a worse picture**; this is what follows from it for images.
+
+A widget uses a handful of colours. A photograph reduced to fit a panel uses
+hundreds, and what it costs is counted in *pairs* — `(foreground,
+background)` combinations — of which there are at most 255 on any screen.
+Quantising every pixel to the 256-colour cube is what keeps a picture under
+that ceiling today, and it does so by accident rather than by design: nobody
+chose the cube for this image, it just happens to collapse things.
+
+The decision, taken 2026-09-21, is to keep a collapse step and make it a
+chosen one. **An image brings its own palette, sized to fit a pair budget,
+and the entries of that palette are reproduced exactly.** Measured on both
+demo images reduced to 53x33 — mean per-pixel error against the unquantised
+fitted image, and the distinct pairs `compose()` asks for:
+
+| How the colours are chosen | mickey | earth |
+|---|---|---|
+| 256-cube, shared — today | 231 pairs, 18.35 | 230 pairs, 14.34 |
+| 16-entry image palette, entries snapped to the cube | 97 pairs, 23.89 | 102 pairs, 16.32 |
+| 16-entry image palette, entries exact | **149 pairs, 14.45** | **143 pairs, 7.50** |
+| 32-entry image palette, entries exact | 275 pairs, 8.98 | 304 pairs, 5.23 |
+
+Three things follow, and the middle one is the one that is easy to get wrong.
+
+**A small exact palette beats a large shared one.** Sixteen entries chosen
+from the picture and reproduced exactly are better than 256 the picture did
+not choose — on accuracy *and* on pairs, on both images. `earth` halves its
+error while using 87 fewer pairs.
+
+**The palette and the exact reproduction cannot ship separately.** A
+per-image palette whose entries are then snapped to the cube is *worse than
+no palette at all* — 23.89 against 18.35, 16.32 against 14.34 — because the
+quantisation error and the cube error stack. This was very nearly sequenced
+as two cycles, palette first; that would have shipped a regression and then
+undone it. The palette is only worth having if its entries land exactly.
+
+**The palette size is not a constant.** Thirty-two entries goes over the
+ceiling on both images (275, 304) where sixteen sits comfortably under (149,
+143), but which size fits depends on the picture, on how large it is drawn,
+and on what else is on screen. It has to be chosen by quantising, counting
+the pairs, and backing off — never assumed, because pairs do not scale with
+colours: `earth.gif` at full size is 253 colours and 8583 pairs.
+
+`TkCurses-bvu` is the work. Median cut produced the numbers above and is a
+floor to beat rather than a design. Note also that the palette pass belongs
+*after* the fit, not before: `reduce()` averages, and averaging creates
+colours — mickey goes from 15 to 616 on the way down to 53x33.
 
 ### BitmapImage Class
 
