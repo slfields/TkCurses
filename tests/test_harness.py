@@ -493,3 +493,35 @@ def test_a_direct_colour_terminal_shows_the_exact_colour(terminal, tmp_path):
     assert term.attrs_at(0, 0)["fg"] == "3366cc"
     assert term.attrs_at(0, 0)["bg"] == "112233"
     term.send_keys("q")
+
+
+def test_wait_for_cell_waits_for_the_cell_not_the_screen(terminal, tmp_path):
+    """The helper that makes waiting for the right thing the easy thing.
+
+    A marker and the cell under assertion are written by different widgets
+    and reach the terminal in different frames. This program makes that gap
+    explicit: 'ready' appears at once, the cell it is about a beat later.
+    Waiting on the text alone would read the cell too early.
+    """
+    term = terminal(cols=30, rows=6)
+    term.run_source(
+        """
+import tkcurses
+root = tkcurses.Tk()
+buffer = root.tk.screen.buffer
+buffer.write(0, 0, 'ready')
+root.tk.screen.refresh()
+
+def later():
+    buffer.write(2, 0, 'X')
+    root.tk.screen.refresh()
+
+root.after(400, later)
+root.after(6000, root.quit)
+root.mainloop()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("ready")
+    term.wait_for_cell(2, 0, lambda cell: cell.data == "X", message="the late cell")
+    assert term.char_at(2, 0).data == "X"

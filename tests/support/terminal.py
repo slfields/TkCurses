@@ -259,6 +259,21 @@ class _ByteStream(pyte.ByteStream):
 class TerminalHarness:
     """Runs a program under a pty and exposes the rendered character grid.
 
+    **Two rules, both learned from CI failures that never reproduced
+    locally.**
+
+    *Wait for the cell the assertion is about.* Waiting for a marker
+    elsewhere and then reading a different cell is how these tests flake: the
+    two are written by different widgets, arrive in different frames, and the
+    read lands between them. :meth:`wait_for_cell` is the one to reach for;
+    :meth:`wait_for_idle` settles the whole frame. ``TkCurses-txk``.
+
+    *Do not write a marker underneath a widget.* A panel is opaque, so a
+    marker written into the screen buffer under one may never become visible
+    - the child then runs, draws and quits normally, and the wait fails with
+    "the program exited with code 0". That cost three CI failures before it
+    was understood; see the note above ``program()`` in test_canvas_tty.py.
+
     Args:
         cols: Terminal width in character cells.
         rows: Terminal height in character cells.
@@ -642,6 +657,36 @@ class TerminalHarness:
         """Wait until ``text`` appears anywhere on the screen."""
         self.wait_for(
             lambda t: t.contains(text), timeout=timeout, message=f"text {text!r}"
+        )
+
+    def wait_for_cell(
+        self,
+        row: int,
+        column: int,
+        predicate: Callable[[pyte.screens.Char], bool],
+        *,
+        timeout: float | None = None,
+        message: str = "cell",
+    ) -> None:
+        """Wait until the cell at ``(row, column)`` satisfies ``predicate``.
+
+        **Wait for the cell the assertion is about.** Waiting for a marker
+        somewhere else and then reading a different cell is the commonest
+        way a tty test flakes here: the marker is written by one widget and
+        the cell by another, they reach the terminal in separate frames, and
+        the read lands between them. It fails on one interpreter in ten and
+        never locally.
+
+        That is TkCurses-txk's first shape, and it has been fixed one test at
+        a time - TkCurses-79 for a Text, and the scrollbar thumb, which was
+        measured on CI as `assert 7 < 7`: the thumb read from the frame
+        before it moved. This is the helper that makes waiting for the right
+        thing as easy as waiting for the wrong one.
+        """
+        self.wait_for(
+            lambda t: predicate(t.char_at(row, column)),
+            timeout=timeout,
+            message=f"{message} at ({row}, {column})",
         )
 
     def wait_for_idle(

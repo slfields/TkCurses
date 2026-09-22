@@ -3326,6 +3326,41 @@ drawn onto a canvas at all.
 
 ---
 
+#### Why not finer sub-cells
+
+Unicode offers quadrants (2x2 per cell) and sextants (2x3), and a renderer
+like chafa matches an 8x8 block against a whole symbol set. **The half-cell
+plane is kept, and measured rather than assumed.**
+
+Each plane rendering the same picture into the same 106x33 cells, two colours
+per cell, scored perceptually against one common reference at 8x8 sub-cell
+resolution:
+
+| | mickey.gif (cartoon) | earth.gif (photograph) |
+|---|---|---|
+| half blocks, 1x2 | 21.24 | 13.92 |
+| quadrants, 2x2 | 18.54 (+12.7%) | 13.75 (+1.3%) |
+| sextants, 2x3 | 17.78 (+16.3%) | 14.15 (**−1.6%**) |
+| chafa-like, 8x8 | 16.95 (+20.2%) | 17.27 (**−24.0%**) |
+
+**A finer plane helps hard-edged art and hurts a photograph**, which is the
+opposite of the intuition that more detail is better. The reason is that a
+cell still has only two colours however many sub-pixels it is cut into: six
+sub-pixels sharing two colours forces each one further from its true value
+than two sub-pixels sharing two colours. A cartoon's cells are mostly one
+flat colour meeting another, so the extra positions pay; a photograph's cells
+are gradients, so they do not.
+
+So the gain is around 16% on cartoons and nothing on photographs, against:
+a pixel that is no longer square-ish (a quadrant is half as wide as tall,
+which squashes a circle — see **The pixel**), a plane no longer shared with
+Canvas, a symbol search per cell per frame, and a font that may not have the
+glyphs. Declined on that basis. `TkCurses-58f`.
+
+The model used for the 8x8 row is an idealisation — two colours per cell
+chosen as the extremes along the cell's widest axis — rather than chafa's
+actual symbol matching, so it flatters that row if anything.
+
 ### Canvas Class
 
 A drawing surface, measured in half-cells. See **The pixel** above: item
