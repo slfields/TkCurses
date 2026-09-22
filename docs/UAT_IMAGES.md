@@ -6,8 +6,8 @@ a long way down it. They are:
 | Scenario | What it is for | Checks |
 |---|---|---|
 | **35** — [Images](#uat-images) | A pixel is half a character cell. Art built in a source file, `compound`, and the reference trap | 35.0 – 35.7 |
-| **36** — [The image viewer](#uat-the-image-viewer) | Opening real PNG, GIF, PGM, PPM and XBM files through the filtered file dialog | 36.1 – 36.4 |
-| **37** — [Image rendering quality](#uat-image-rendering-quality) | Averaging against dropping pixels, and dithering against flat colour | 37.0 – 37.5 |
+| **36** — [The image viewer](#uat-the-image-viewer) | Opening real PNG, GIF, PGM, PPM and XBM files through the filtered file dialog, and what several in a row cost in colour pairs | 36.1 – 36.5 |
+| **37** — [Image rendering quality](#uat-image-rendering-quality) | The one render path — averaged, linear light, perceptual colour, written past curses in whichever form the terminal takes | 37.0 – 37.4 |
 
 Run one with `python3 -m uat 35`, `36` or `37`.
 
@@ -327,6 +327,39 @@ only `filetypes[0]` was ever read.
 
 ---
 
+## 36.5 The tenth image looks like the tenth image
+
+**This is the check for a bug UAT 36 passed over.** The first picture always
+looked right, which is exactly why nobody noticed.
+
+**Do:** press `n` repeatedly, going right round the folder at least twice.
+Press `i` after each one, or at least after the first, second and last.
+
+**Look for:**
+
+- [ ] Every picture is drawn **in its own colours**. Not "colourful" — the
+      tenth should look like the tenth, not like a wash of whatever the
+      first one was made of.
+- [ ] `i` reports `exhausted=False` throughout, however many you load.
+- [ ] `pairs=` goes up and comes **back down** as pictures are replaced. It
+      should sit near what the current picture needs, not climb to the
+      capacity and stay there.
+- [ ] Going round a second time, a picture looks the same as it did the
+      first time.
+
+A colour pair is a `(foreground, background)` combination and the terminal
+has 255 of them — eight bits in the attribute, not a tunable. They used to
+be handed out and never given back, so measured on `xterm-256color`:
+
+    mickey.gif  pairs=238  exhausted=False
+    earth.gif   pairs=255  exhausted=True
+    mickey.gif  pairs=255  exhausted=True     and from here, wrong colours
+
+Now the table is rebuilt from what is actually on screen whenever it runs
+dry, so the same sequence reads 238, 240, 238, 240 and never exhausts.
+
+---
+
 ## What would count as a failure
 
 - A format that will not open, or opens with rows shifted or repeated.
@@ -349,152 +382,188 @@ Scenario 37. Run it with:
 python3 -m uat 37
 ```
 
-Two problems with the same shape, and one screen that shows both: **the
-image is technically right and it looks wrong.** The same picture is
-prepared four ways and drawn side by side, because the difference is a
-thing to see, and showing them one at a time would ask you to remember a
-colour instead.
+**The image is technically right and it looks wrong.** That was the problem
+this scenario was built to chase, and chasing it produced a render path with
+no remaining choices in it.
 
-| | shrinking | colour |
+One render, and the reasons it is the one:
+
+| step | what it does |
+|---|---|
+| shrink | the block **averaged**, never every n-th pixel dropped |
+| arithmetic | in **linear light**, not in sRGB bytes |
+| colour | matched **perceptually**, in DIN99d |
+| dithering | **none** |
+| colour combinations | written past curses in whichever form the terminal takes; fitted to the free pairs only where it takes neither |
+
+The first four are what chafa does, checked against its source. **The scenario
+used to show all four combinations at once and ask which looked best; that
+question is answered and the choice is gone.**
+
+The fifth is about a limit chafa does not have. Curses paints a registered
+*pair*, and there are 255 of them — Python's binding packs the number into
+eight bits, so `color_pair(300)` wraps to 44. A photograph wants thousands.
+So the cells are written as SGR ourselves: `ESC[38;2;r;g;b` where `COLORTERM`
+says the terminal takes direct colour, `ESC[38;5;N` against the palette where
+it merely has 256. **Both escape the ceiling** — a palette terminal has no
+pair limit either once the sequences are written by hand. Only below 256
+colours, or with the escape hatch shut, is the picture fitted to the pairs
+that are free.
+
+Measured at 106x33 against a Lanczos reference:
+
+| | TkCurses | chafa |
 |---|---|---|
-| `dropped, flat` | every n-th pixel kept | nearest per pixel |
-| `averaged, flat` | the block averaged | nearest per pixel |
-| `dropped, dithered` | every n-th pixel kept | error diffused |
-| `averaged, dithered` | the block averaged | error diffused |
-
-The fourth is what a viewer should do. **The first is what this library did
-until now.**
+| mickey.gif, 256 | **25.03**, 88 colours | 33.16, 88 colours |
+| mickey.gif, truecolor | **6.88**, 1793 colours | 11.78, 1778 colours |
+| earth.gif, 256 | **24.06**, 35 colours | 27.83, 36 colours |
+| earth.gif, truecolor | **6.54**, 4309 colours | 7.48, 3785 colours |
 
 ---
 
-## 37.0 Enough room to judge them
+## 37.0 Enough room, and the table not full
 
-**Do:** look at line 4 of the screen, and at the picture size on line 2.
-
-**Look for:**
-
-- [ ] The pictures are at least **52x16 cells**, and line 4 is blank.
-- [ ] If line 4 says the pictures are too small, the terminal is too small.
-      Make it **120x44 or larger** and run it again. At 80x24 they come out
-      26x8, where every difference below is present and none is visible.
-
-The panels size themselves to the terminal, so this costs nothing but a
-bigger window. It is first because judging 37.2 and 37.3 in a small one
-wastes the effort.
-
-## 37.1 The numbers, which are the checkable part
-
-Each caption reads `N/M unavailable` — of the M colours in that panel, N are
-ones the terminal cannot show and would have to approximate.
+**Do:** start the scenario. Press `t`.
 
 **Look for:**
 
-- [ ] Both **dithered** panels read **`0/…`**. That is the whole guarantee:
-      after dithering, nothing is left that still needs approximating.
-- [ ] Both **flat** panels read nearly all unavailable — on mickey at 256
-      colours, `11/12` and `260/261`.
-- [ ] `averaged, flat` has far more colours than `dropped, flat` (261
-      against 12). Averaging invents intermediate colours; dropping pixels
-      can only ever return ones that were already there.
-- [ ] Dithering **reduces** the count on the averaged panel (261 → 45). It
-      does not add colours; it snaps every pixel to one that exists.
+- [ ] The picture is at least **52x16 cells**. Below that the differences
+      are all present and none of them visible. A 120x44 terminal gives
+      about 106x33.
+- [ ] `t` reports `direct=`. **Read that first, because it decides what the
+      rest of this scenario means.** It has three values:
 
-## 37.2 Shrinking: dropped against averaged
-
-**Do:** compare the two left panels with the two right ones, then press `n`
-to change picture.
-
-**Look for:**
-
-- [ ] `dropped` loses thin features — whichever pixels missed the grid are
-      simply gone, so fine detail flickers in and out between pictures.
-- [ ] `averaged` keeps something of every pixel; edges are softer and
-      shapes stay put.
-- [ ] On the `earth` picture the terminator (the day/night line) is smooth
-      under averaging and stepped under dropping.
-
-Measured against a Lanczos reference at 320x200 reduced by six, averaging is
-**38% to 93% closer at every colour depth** — including the flat cartoon,
-which is the case where dropping pixels should have preserved the palette
-and won.
-
-## 37.3 Colour: flat against dithered
-
-This check has no right answer written down, because **the first person to
-run it disagreed with the measurement and was correct.**
-
-**Do:** look at mickey's forest — the large dark area behind him — in the
-flat panels and then the dithered ones. Then decide which of the four
-panels you would rather look at.
-
-**Look for:**
-
-- [ ] In the **flat** panels the forest is one single flat grey. The
-      256-colour palette has nothing for a dark reddish brown: its cube is
-      empty between 0 and 95 while the grey ramp is dense there, so every
-      distance metric — plain RGB, redmean, a chroma penalty, CIE Lab —
-      picks that same grey.
-- [ ] In the **dithered** panels it is a mix of eleven colours instead of
-      one.
-- [ ] **Whether that is an improvement is the thing being asked.** Record
-      which panel you prefer.
-
-Two measurements, both on mickey at 256 colours against an ideal reduction,
-and they disagree:
-
-| | flat | dithered |
+| `direct=` | when | what to expect |
 |---|---|---|
-| per-pixel | **13.48** | 18.50 |
-| after a 3x3 blur | 10.03 | **3.71** |
+| `truecolor` | `COLORTERM` says so | exact colour, thousands of them |
+| `palette` | 256 colours, no `COLORTERM` | the cube, hundreds of them |
+| `off` | 8 or 16 colours, or the hatch shut | fitted to the free pairs, a handful |
 
-Dithering trades colour accuracy for spatial noise, and that pays only when
-the eye merges neighbouring pixels back together. It does on a monitor,
-where a pixel is a quarter of a millimetre. **It does not here**, where a
-pixel is half a character cell, so you see the dither pattern itself. Across
-a grey ramp and two photographs at two depths, flat wins four times of six
-per-pixel, and every time at 256 colours.
+- [ ] With `truecolor` or `palette`, the status line says the ceiling does
+      not apply and the colour count is in the hundreds or thousands.
+      `exhausted` may say `True` and **does not matter** — that is the curses
+      layer underneath, which is only a fallback.
+- [ ] With `off`, the status line reads `pairs wanted: N of M budget` with N
+      at or below M, and `t` reports `exhausted=False`.
+- [ ] These four give the three, and the first should look best:
 
-The blurred number was the only one taken when `dither()` was written, and
-it encoded an assumption about the viewer that had never been checked.
+```bash
+COLORTERM=truecolor python3 -m uat 37             # truecolor
+COLORTERM= python3 -m uat 37                      # palette
+TKCURSES_DISPLAY_DIRECT_IMAGES=0 python3 -m uat 37  # off
+TERM=xterm python3 -m uat 37                      # off, and 8 colours
+```
 
-## 37.5 Which one would you actually use
+The old four-panel version of this scenario could not pass this check. Its
+four pictures wanted 984 pairs between them, the table filled during the
+second, and the two drawn last — both of them the dithered ones — were drawn
+from the leftovers. `TkCurses-8cn`.
 
-**Do:** ignore every number above and pick a favourite.
+---
+
+## 37.1 The fitting is doing something, and says so
+
+**This check needs `direct=off`**, because fitting is what happens only when
+the cells are not written past curses. Run it as:
+
+```bash
+TKCURSES_DISPLAY_DIRECT_IMAGES=0 python3 -m uat 37
+```
+
+**Do:** read the second status line. Press `f` to turn fitting off, then
+`f` again.
 
 **Look for:**
 
-- [ ] `averaged, flat` is expected to win on a normal terminal. If it does,
-      that confirms the per-pixel measurement and the conclusion that
-      dithering is a tool rather than a default.
-- [ ] If a **dithered** panel wins for you, say so — it would mean the
-      cells are small enough on your terminal for the eye to merge them,
-      which is the case dithering is for, and worth knowing.
+- [ ] Fitted, it reports what the picture *would* have wanted:
+      `(unfitted this picture would want 991)` against a budget near 231.
+- [ ] With `f` off, `t` now reports `exhausted=True` on a photograph at 256
+      colours — that is the ceiling being hit, and it is what fitting avoids.
+- [ ] With `f` off the picture is **worse**, not better: colours drift as
+      later cells fall back to whatever pair is nearest among those already
+      taken.
+- [ ] Press `f` again and it recovers.
 
-## 37.4 Dithering knows when to do nothing
+**`f` does nothing unless `direct=off`**, because there is no ceiling to fit
+to otherwise. Run `TKCURSES_DISPLAY_DIRECT_IMAGES=0 python3 -m uat 37` to
+exercise this check.
 
-**Do:** press `t`, and read the depth on line 2.
+---
+
+## 37.2 The picture looks like the picture
+
+**Do:** look at it. Press `n` to cycle.
 
 **Look for:**
 
-- [ ] **On a truecolor terminal the dithered panels are identical to the
-      flat ones, and all four read `0/…`.** That is correct, not a failure:
-      every colour is available, so no pixel accumulates any error and there
-      is nothing to spread. Dithering is self-limiting, which is what makes
-      it safe to apply without asking whether it will help.
-- [ ] At 8 colours the difference is at its most dramatic, because there is
-      least to work with.
-- [ ] `t` also reports the pairs allocated. It should be well under 255 —
-      past that a pair number cannot be named in an attribute, which is the
-      bug `TkCurses-7sh` fixed.
+- [ ] Recognisable shapes with clean edges. Mickey's outline should be a
+      line, not a smear.
+- [ ] **No horizontal banding** in smooth regions. Stripes there were a real
+      bug — `TkCurses-20y` — caused by the two halves of a cell being
+      resolved against different palettes.
+- [ ] No large flat area of one wrong colour where the source has a gradient.
+- [ ] Nothing painted black on black, which shows as a hole.
+
+---
+
+## 37.3 Colour depth changes it in the right direction
+
+**Do:** run with `TERM=xterm`, `xterm-16color`, `xterm-256color`.
+
+**Look for:**
+
+- [ ] Each step up is **better, or at least no worse**. A richer terminal
+      that looked worse was a real bug and the reason much of this exists.
+- [ ] At 8 colours the picture is coarse but still the right *shape*, and
+      still not striped.
+- [ ] At 256 the colours are close enough to argue about.
+- [ ] `t` reports the depth it actually detected, matching the TERM you set.
+
+---
+
+## 37.3a Truecolor against the palette, which is the difference you can see
+
+**Do:** run it twice, once with `COLORTERM=truecolor` and once with
+`COLORTERM=`, on the same 256-colour terminal. Press `t` in each.
+
+**Look for:**
+
+- [ ] `direct=truecolor` in the first, `direct=palette` in the second.
+- [ ] Both report thousands of colours and both say the ceiling does not
+      apply. Neither should look like the `off` case.
+- [ ] The truecolor one is **better**, and visibly: it can say the exact
+      colour, where the palette one is held to the 256-entry cube. Measured
+      against a Lanczos reference, 6.88 against 25.03 on mickey.gif.
+- [ ] The palette one honours your terminal's **theme** — it names cube
+      entries, so a themed palette shows through. The truecolor one does
+      not, because an exact RGB has no theme to honour. That is the trade,
+      and it is the right way round for a photograph.
+
+---
+
+## 37.4 It is quick enough to be usable
+
+**Do:** press `n` a few times.
+
+**Look for:**
+
+- [ ] Each picture appears promptly. Fitting a full-screen photograph was
+      measured at about 200ms; it was **8.7 seconds** before the palette was
+      grown once rather than rebuilt for every candidate size, and that is
+      the kind of regression this check exists to catch.
+- [ ] Cycling right round the list and back gives the same picture again,
+      in the same colours.
 
 ---
 
 ## What would count as a failure
 
-- A dithered panel reading anything but `0/…` unavailable.
-- The two averaged panels looking identical to the two dropped ones.
-- Mickey's forest still a single flat grey in the dithered panels.
-- Dithering changing anything at all on a truecolor terminal.
-- A caption clipped so its numbers cannot be read — the panel is 38 cells
-  and the first wording ran to 41, which is how this check was nearly
-  impossible to make.
+- `t` reporting `exhausted=True` while fitting is on and `direct=off`.
+- `direct=palette` looking no better than `direct=off` — the whole reason
+  the palette form exists is that a 256-colour terminal has no pair ceiling
+  either. Measured, mickey.gif goes from 17 colours to 1584.
+- Horizontal stripes in any smooth region.
+- A picture at a higher colour depth looking worse than at a lower one.
+- Turning fitting off making the picture *better* — that would mean the
+  fitting is costing more than the ceiling does.
+- A noticeable wait between pressing `n` and seeing the picture.

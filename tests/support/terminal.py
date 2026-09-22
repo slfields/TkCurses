@@ -127,6 +127,11 @@ _CHILD_ENV = {
     # Keep tracebacks stable and free of colour escapes on 3.13+.
     "PYTHONNODEBUGRANGES": "1",
     "NO_COLOR": "1",
+    # Pinned, because it decides whether images are painted past curses in
+    # direct colour. Left to os.environ it makes a run on a developer's
+    # machine - where COLORTERM is usually truecolor - disagree with CI,
+    # where it usually is not. A test that wants direct colour asks for it.
+    "COLORTERM": "",
 }
 
 

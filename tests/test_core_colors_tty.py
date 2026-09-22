@@ -96,21 +96,35 @@ def paint(terminal, tmp_path, term_name):
 #: What each tier really put on the screen, measured rather than predicted.
 #: Read down a column to see what changes as the terminal gets better: bright
 #: green stops being green-with-bold and becomes a colour of its own, and
-#: orange stops being yellow.
+#: orange stops being approximated at all.
+#:
+#: Two rows moved when colours began resolving by perceptual distance rather
+#: than weighted RGB, and both are worth reading rather than just accepting.
+#:
+#: Orange is now RED at eight and sixteen colours, where it used to be yellow
+#: (pyte calls colour 3 "brown"). Measured in DIN99d, #ff8000 is 50.96 from
+#: bright red and 85.31 from yellow. The old weights counted green four times
+#: over, and orange's green channel sits half way to yellow's.
+#:
+#: And orange as a BACKGROUND is plain red at eight colours while orange as a
+#: foreground is bright red - the one place in this table where the two
+#: differ. A_BOLD does not reach a background, so a background must be chosen
+#: from the colours that need no attribute. At sixteen both are brightred,
+#: because there brightness is a colour number.
 MEASURED = {
     "xterm": (
         "BASIC",
         {"fg": "green", "bold": True},
         {"bg": "green", "bold": False},
-        {"fg": "brown"},
-        {"bg": "brown"},
+        {"fg": "red", "bold": True},
+        {"bg": "red", "bold": False},
     ),
     "xterm-16color": (
         "BRIGHT",
         {"fg": "brightgreen", "bold": False},
         {"bg": "brightgreen", "bold": False},
-        {"fg": "brown"},
-        {"bg": "brown"},
+        {"fg": "brightred", "bold": False},
+        {"bg": "brightred", "bold": False},
     ),
     "xterm-256color": (
         "EXTENDED",

@@ -80,8 +80,11 @@ from tkcurses._core.colors import (
     palette_rgb,
     parse_color,
     rgb_for,
+    rgb_of,
+    truecolor_hinted,
 )
 from tkcurses._core.config import TkCursesConfig
+from tkcurses._core.direct import DirectPainter
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.editing import TextField
 from tkcurses._core.errors import TclError, TkCursesError
@@ -3644,6 +3647,25 @@ class Tk(BaseWidget, Wm):
                 # Cells are painted through this; without colour support the
                 # screen keeps its attributes-only resolver.
                 self._screen.attribute_resolver = colors.attribute_for
+            # Pictures need more (foreground, background) combinations than
+            # curses can name - 255, and a photograph wants thousands - so
+            # their cells are written past it when the terminal takes direct
+            # colour. See _core/direct.py.
+            painter = DirectPainter()
+            allowed = TkCursesConfig.load().display.direct_images
+            if not allowed:
+                pass
+            elif colors.depth >= ColorDepth.DIRECT or truecolor_hinted():
+                # Exact colour, written as ESC[38;2;r;g;b.
+                painter.enable(True)
+            elif colors.depth >= ColorDepth.EXTENDED:
+                # A palette rather than direct colour, so written as
+                # ESC[38;5;N against it. Worth doing for the same reason:
+                # a 256-colour terminal has no pair ceiling either once the
+                # sequences are written by hand, and going through curses
+                # costs a photograph most of its colours.
+                painter.enable(True, index_of=colors.index_of)
+            self.tk.painter = painter
             # Kept either way, since it is also what anything asking how many
             # colours there are has to ask - and the answer on a terminal
             # without any is a real answer rather than a missing one.
@@ -3728,6 +3750,45 @@ class Tk(BaseWidget, Wm):
         # painted at a size it is about to stop having.
         self._guard(self.tk.layout.run)
         self._update_display()
+
+    def _renew_colour_pairs(self) -> None:
+        """Rebuild an exhausted colour-pair table, and put the screen back.
+
+        A pair is the scarcest thing the terminal has - 255 of them, because
+        that is all an attribute can name - and they were never given back
+        once handed out. Measured on xterm-256color: one demo photograph took
+        238 of them and the *second* one exhausted the table, after which
+        every later picture was drawn in whatever palette the first had left
+        behind. An image viewer is exactly the program that does this.
+
+        Renewing is done here, at the frame boundary, rather than wherever
+        the table happens to run dry. Recycling a pair number changes what
+        every cell already painted with it *shows*, so it may only happen
+        when the whole screen can be put back in the same breath - half way
+        through a paint would leave the first half of the frame recoloured.
+
+        Both layers have to be dealt with, and they need different things:
+
+        - The screen buffer holds a cell's colours as **names**, so it only
+          needs marking dirty; the repaint re-asks for every one.
+        - A widget resolved its attribute once and baked the pair number into
+          its curses window, which nothing re-reads. It has to draw again.
+
+        What makes this safe rather than merely hopeful is that the rebuilt
+        table is populated by the repaint itself, so it ends up holding
+        exactly the colours still on screen. A picture that has gone is
+        simply never asked for again.
+        """
+        colors = self.tk.colors
+        if colors is None or not colors.renew_if_exhausted():
+            return
+        self._screen.buffer.touch_all()
+        for child in list(self.children.values()):
+            for widget in child._subtree():
+                if isinstance(widget, BaseWidget):
+                    widget._redraw()
+        if self.tk.panels is not None:
+            self.tk.panels.touch_all()
 
     def _read_input(self) -> None:
         """Wait for input up to the next timer's deadline, then route it."""
@@ -3869,9 +3930,17 @@ class Tk(BaseWidget, Wm):
         """
         if not self._started:
             return
-        self._screen.refresh()
+        self._renew_colour_pairs()
+        painted = self._screen.refresh()
         if self.tk.panels is not None:
             self.tk.panels.update()
+        # After doupdate, never before: curses has finished writing and
+        # cannot paint over the picture within this frame. Every frame it
+        # has cells, because curses repaints them whenever anything near
+        # them changes and does not say so.
+        painter = getattr(self.tk, "painter", None)
+        if painter is not None and painter.pending:
+            CursesDispatcher.get().call(painter.paint, bool(painted))
 
     def update(self) -> None:
         """Process everything pending without entering the loop.
@@ -5113,6 +5182,13 @@ class _TextWidget(_Drawable):
         self, dispatcher: CursesDispatcher, window: Any, attribute: int
     ) -> None:
         """Write the image and the lines into the area left after the border."""
+        # Cleared here rather than in _draw_image, which is only reached when
+        # there IS an image. A widget whose image has been collected draws
+        # nothing and never gets there, so its cells would be repainted past
+        # curses for ever - the stale art UAT 35 exists to demonstrate.
+        painter = getattr(self.tk, "painter", None)
+        if painter is not None:
+            painter.clear(self)
         area = self._text_area()
         if area.is_empty:
             return
@@ -5170,6 +5246,7 @@ class _TextWidget(_Drawable):
         bits - show whatever is behind them instead of punching a block of
         background through it.
         """
+        painter = getattr(self.tk, "painter", None)
         image = self._image()
         if image is None:
             return
@@ -5184,6 +5261,10 @@ class _TextWidget(_Drawable):
         # the unlit half should show the widget's own colour rather than one
         # of the image's.
         colors = self.tk.colors
+        # Absolute screen position, because the painter writes past curses
+        # and curses windows are the only thing that knows about offsets.
+        where = self._screen_rect()
+        buffer = self.tk.screen.buffer if self.tk.screen is not None else None
         background = str(self._options["background"] or "black")
         # Only the pixels that can land in the area. Composing the whole
         # image and discarding what falls outside made a repaint cost what
@@ -5211,7 +5292,32 @@ class _TextWidget(_Drawable):
                 attribute = _curses.A_NORMAL
             else:
                 attribute = colors.attribute_for(fore, back or background)
+            # Written through curses as well, always. If direct painting
+            # never happens - no truecolor, a terminal that ignores it, a
+            # closed stream - what shows is the ordinary rendering rather
+            # than a hole where the picture was.
             self._write_line(dispatcher, window, line, column, glyph, attribute)
+            if painter is not None and painter.enabled:
+                screen_row = where.y + line
+                screen_column = where.x + column
+                # Clipped to the screen, because this writes to the terminal
+                # rather than to a window: a position outside it is not
+                # ignored the way curses ignores one, it lands somewhere
+                # else and can scroll what is already there.
+                on_screen = buffer is not None and buffer.contains(
+                    screen_row, screen_column
+                )
+                exact_fore = rgb_of(fore) if on_screen else None
+                exact_back = rgb_of(back or background) if on_screen else None
+                if exact_fore is not None and exact_back is not None:
+                    painter.add(
+                        self,
+                        screen_row,
+                        screen_column,
+                        glyph,
+                        exact_fore,
+                        exact_back,
+                    )
 
     def _text_area(self) -> Rect:
         """Where the text may go, in cells relative to this widget's window."""

@@ -88,6 +88,13 @@ class DisplaySettings:
     unicode_borders: bool = True
     #: Minimum gap between refreshes; 16ms is roughly 60 per second.
     refresh_interval: int = 16
+    #: False makes images go through curses' colour pairs instead of being
+    #: written as escape sequences. Direct writing is what lets a picture use
+    #: more than the 255 (foreground, background) combinations curses can
+    #: name, so turning it off costs a photograph most of its colour - but a
+    #: terminal that mis-renders the sequences needs a way out, and so does a
+    #: test that wants to exercise the pair table.
+    direct_images: bool = True
 
 
 @dataclass
@@ -131,6 +138,7 @@ _FIELDS: tuple[tuple[str, str, str, str | None, tuple[int, int] | None], ...] = 
     ("mouse", "report_hover", "bool", "TKCURSES_MOUSE_REPORT_HOVER", None),
     ("display", "color_mode", "choice", "TKCURSES_DISPLAY_COLOR_MODE", None),
     ("display", "unicode_borders", "bool", "TKCURSES_DISPLAY_UNICODE", None),
+    ("display", "direct_images", "bool", "TKCURSES_DISPLAY_DIRECT_IMAGES", None),
     (
         "display",
         "refresh_interval",

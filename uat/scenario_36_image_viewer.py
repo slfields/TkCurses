@@ -287,18 +287,20 @@ def build(root, screen):
         if state["fit"]:
             across = area.winfo_width() or 1
             down = (area.winfo_height() or 1) * 2  # rows are two pixels tall
-            factor = 1
-            while (
-                picture.width() // factor > across or picture.height() // factor > down
-            ):
-                factor += 1
-            if factor > 1:
-                # reduce, not subsample. Fitting a photograph is exactly
-                # what averaging is for: measured on these images, dropping
-                # pixels is 38% to 93% further from a Lanczos reference at
-                # every colour depth. subsample stays in the library because
-                # it is Tk's and it is exact; it is not what a viewer wants.
-                shown = picture.reduce(factor)
+            scale = min(across / picture.width(), down / picture.height())
+            if scale < 1:
+                # resize, not reduce and certainly not subsample. Fitting a
+                # photograph is what averaging is for - dropping pixels is
+                # far further from a Lanczos reference at every depth - and
+                # it has to be an ARBITRARY ratio: a whole-number factor
+                # gives 80 cells for a 100-cell panel and throws away a
+                # fifth of the picture. subsample stays in the library
+                # because it is Tk's and exact; it is not what a viewer
+                # wants.
+                shown = picture.resize(
+                    max(1, round(picture.width() * scale)),
+                    max(1, round(picture.height() * scale)),
+                )
         # Held, or an image nothing references is collected and the label
         # draws nothing - the trap UAT 35 demonstrates on purpose.
         state["shown"] = shown
@@ -376,10 +378,18 @@ def build(root, screen):
         if picture is None:
             state["note"] = "nothing open"
         else:
+            # The pair count is the interesting number after several images.
+            # A pair is a (foreground, background) combination and there are
+            # only 255; one photograph takes most of them, so before pairs
+            # were recycled the second image exhausted the table and every
+            # picture after it was drawn in the first one's palette.
+            manager = getattr(root.tk, "colors", None)
             state["note"] = (
                 f"type={picture.type()}"
-                f"  registry={sorted(root.tk.images)}"
                 f"  first pixel={picture.get(0, 0)}"
+                f"  pairs={getattr(manager, 'allocated', 0)}"
+                f"/{getattr(manager, 'capacity', 0)}"
+                f"  exhausted={getattr(manager, 'exhausted', False)}"
             )
         report()
         screen.refresh()

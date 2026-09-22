@@ -85,13 +85,32 @@ def test_the_thumb_follows_the_view(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     start(term, tmp_path)
 
-    def thumb_rows():
-        return [row for row, line in enumerate(term.display) if "█" in line]
+    def thumb_rows(source=None):
+        display = (source or term).display
+        return [row for row, line in enumerate(display) if "█" in line]
 
+    # Both reads used to be taken from whatever frame happened to be on the
+    # terminal, and both were wrong for the same reason - TkCurses-txk.
+    #
+    # This one had no wait at all, so it could measure the thumb before the
+    # first frame had drawn it.
+    term.wait_for(lambda t: thumb_rows(t), message="the scrollbar thumb to appear")
     at_end = thumb_rows()
+
     for _ in range(20):
         term.send_keys("<Up>")
+
+    # And this one waited for the TEXT and then asserted on the SCROLLBAR.
+    # The view scrolls first and the bar is told about it afterwards, so the
+    # thumb was read a frame too early. Seen on CI as `assert 7 < 7` - the
+    # thumb sitting exactly where it had started. Waiting for the thing the
+    # assertion is actually about is the fix, the same one TkCurses-79 made
+    # for a different test.
     term.wait_for(lambda t: t.contains("line 01"), message="the top of the text")
+    term.wait_for(
+        lambda t: min(thumb_rows(t), default=len(t.display)) < min(at_end),
+        message="the thumb to follow the view up",
+    )
     at_start = thumb_rows()
     assert at_start and at_end, term.describe()
     assert min(at_start) < min(at_end), (

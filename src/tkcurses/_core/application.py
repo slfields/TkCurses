@@ -48,6 +48,7 @@ if TYPE_CHECKING:
 
     from tkcurses import Misc
     from tkcurses._core.colors import ColorManager
+    from tkcurses._core.direct import DirectPainter
     from tkcurses._core.input import InputHandler
     from tkcurses._core.panels import PanelStack
     from tkcurses._core.screen import CursesScreen
@@ -291,6 +292,11 @@ class Application:
         #: widget asked to draw without one falls back to attributes alone -
         #: a terminal with no colour behaves the same way.
         self.colors: ColorManager | None = None
+
+        #: Cells written past curses, for pictures that want more colour
+        #: combinations than curses can name. None until Tk has started.
+        #: See :mod:`tkcurses._core.direct`.
+        self.painter: DirectPainter | None = None
 
         #: Widget holding the input grab, and whether it is global. A grab
         #: diverts events away from the rest of the application, which is how

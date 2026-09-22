@@ -15,50 +15,49 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""The same picture, four ways: shrinking and colour, and what each costs.
+"""One picture, rendered the one way the library renders pictures.
 
-What to do: look at the four panels. They are one image, prepared four
-different ways, side by side - because the difference between them is a
-thing to *see*, and a scenario that showed them one at a time would be
-asking you to remember a colour instead.
+What to do: look at the picture. Press `n` for the next one, `t` for what
+the terminal can do, and change TERM to see it at another colour depth.
 
-    dropped + flat      every n-th pixel kept, nearest colour per pixel
-    averaged + flat     the block averaged, nearest colour per pixel
-    dropped + dithered
-    averaged + dithered
+**This scenario used to show four pictures at once** - every n-th pixel
+against block averaging, crossed with flat colour against dithering - and
+ask which looked best. That question is answered, so the choice is gone.
+The answer matches what chafa does, which was checked against its source:
 
-The first is what this library did until now. **Which of the other three
-is best is a real question, and the answer is not the one I expected.**
+    average the block, do not drop pixels
+    do the arithmetic in linear light, not in sRGB bytes
+    match colours perceptually, in a uniform space
+    do not dither
 
-What to look for. **Shrinking**: `dropped` keeps whichever pixels landed on
-the grid and discards the rest, so thin features come and go and edges
-crawl; `averaged` keeps something of every pixel. Measured against a Lanczos
-reference, averaging is 38% to 93% closer at every colour depth.
+The four-way comparison was also never fair. All four panels shared one
+table of 255 colour pairs and did not fit in it, so the two drawn last were
+always the two starved of colour - and the two drawn last were the dithered
+ones. See TkCurses-8cn.
 
-**Colour**: dithering trades colour accuracy for spatial noise, and that
-only pays when the eye merges neighbouring pixels back together. It does
-that on a monitor. It does NOT here, where a pixel is half a character cell
-and you see the dither pattern itself. Measured on mickey at 256 colours,
-against an ideal reduction:
+**What this library must do that chafa does not.** chafa writes its own
+escape sequences and can use as many foreground/background combinations as
+it likes. Going through curses there are 255, because that is all a
+character attribute can name - `color_pair(300)` wraps to 44 - and a
+photograph wants thousands.
 
-    per-pixel          flat 13.48   dithered 18.50
-    after a 3x3 blur   flat 10.03   dithered  3.71
+So the cells are written as escape sequences here too, in whichever form the
+terminal takes. Press `t` and read `direct=`:
 
-Both are true; they assume different viewers, and the first is the one a
-terminal gives you. **Judge it with your eyes, not with either number.**
+    truecolor   COLORTERM says so; exact colour, thousands of them
+    palette     256 colours and no COLORTERM; the cube, hundreds
+    off         8 or 16 colours, or TKCURSES_DISPLAY_DIRECT_IMAGES=0
 
-Press `t` and the colour depth is reported. At truecolor the two dithered
-panels are IDENTICAL to the flat ones, and that is correct: every colour is
-available, no pixel accumulates error, and there is nothing to spread.
-
-This one wants room. At 80x24 the pictures come out 26x8 cells, where the
-differences are all present and none of them are visible; it says so when
-that happens. **A terminal of 120x44 or larger** shows them at 53x17.
+**Both of the first two escape the ceiling**, which is easy to miss: a
+256-colour terminal has no pair limit either once the sequences are written
+by hand. Only at `off` is the picture cut down to fit the free pairs, by
+`PhotoImage.fit_pairs()`, and only there does `f` do anything.
 
 What to look for: docs/UAT_IMAGES.md, "UAT: Image rendering quality",
-checks 37.1 to 37.4.
+checks 37.0 to 37.4.
 
-Keys: `n` next picture, `t` what the terminal can do, Escape quits.
+Keys: `n` next picture, `t` what the terminal can do, `f` fitted or raw
+(only when `direct=off`), Escape quits.
 """
 
 from __future__ import annotations
@@ -70,41 +69,18 @@ from tkcurses._core.colors import ColorDepth
 from tkcurses._core.images import ROWS_PER_CELL
 from uat import _support
 
-TITLE = "37 - the same picture, four ways"
-
-#: Cells between the two columns, and the row each caption takes.
-GAP = 2
-CAPTION = 1
-
-#: What a picture wants to be for the four to be worth comparing. At 26x8 -
-#: which is what an 80x24 terminal gives - the differences are all there and
-#: too small to judge, which defeats the point of showing four at once.
-WANTED = (52, 16)
-
-#: The smallest terminal that actually delivers WANTED, measured rather than
-#: derived: the reduce factor is a whole number, so a panel can be big enough
-#: while the picture in it still steps down to the next factor. 110x40 gives
-#: a 54x16 panel holding a 45x14 picture; 120x44 gives 53x17.
-ROOMY = (120, 44)
+TITLE = "37 - one picture, rendered the one way"
 
 #: Where the perl-Tk demos put theirs. Used when they are installed, and
 #: stood in for when they are not, so this runs anywhere.
 DEMOS = pathlib.Path("/usr/share/doc/perl-Tk/demos/images")
 
-PANELS = (
-    ("dropped, flat", False, False),
-    ("averaged, flat", True, False),
-    ("dropped, dithered", False, True),
-    ("averaged, dithered", True, True),
-)
+#: A picture wants room before anything about its colour can be judged.
+WANTED = (52, 16)
 
 
 def built_in(root, which):
-    """A picture made here, for a machine with no perl-Tk installed.
-
-    Two of them, and they fail in different ways: a smooth ramp bands under
-    per-pixel matching, and fine stripes disappear under dropped pixels.
-    """
+    """A picture made here, for a machine with no perl-Tk installed."""
     picture = tkcurses.PhotoImage(master=root, width=192, height=120)
     if which == "ramp":
         for x in range(192):
@@ -123,82 +99,21 @@ def built_in(root, which):
     return picture
 
 
-def unavailable(colours, depth):
-    """How many of these the terminal would have to approximate."""
-    from tkcurses._core.colors import _resolve_rgb, rgb_of_number
-
-    count = 0
-    for spec in colours:
-        rgb = tuple(int(spec[i : i + 2], 16) for i in (1, 3, 5))
-        if rgb_of_number(_resolve_rgb(rgb, depth).color, depth) != rgb:
-            count += 1
-    return count
-
-
 def build(root, screen):
-    state = {"which": 0, "sources": [], "held": []}
+    state = {"which": 0, "held": [], "fitted": True}
 
     screen.line(0, f" {TITLE} ")
-    screen.footer(" n next picture   t what the terminal can do   Escape quits ")
+    screen.footer(" n next   t terminal   f fitted/raw   Escape quits ")
 
     area = _support.content_area(root, top=4, bottom=2)
-
-    names = []
-    for name in ("mickey.gif", "earth.gif"):
-        if (DEMOS / name).is_file():
-            names.append(str(DEMOS / name))
-    state["sources"] = names or ["ramp", "stripes"]
-
-    # Two by two, sized to the terminal rather than to a number chosen
-    # while writing this. The first version hard-coded 38x8 and the pictures
-    # came out at 26x8 cells - too small to judge, which is the whole job
-    # of a scenario whose point is comparison. A panel wants about 52x16.
     root.update_layout()
-    across = max(1, (area.winfo_width() - GAP) // 2)
-    down = max(1, (area.winfo_height() - 2 * CAPTION) // 2)
-    state["panel"] = (across, down)
+    shown = tkcurses.Label(area, name="picture", anchor="nw")
+    shown.place(x=0, y=0, relwidth=1.0, relheight=1.0)
 
-    labels = {}
-    captions = {}
-    for index, (caption, _, _) in enumerate(PANELS):
-        column, row = index % 2, index // 2
-        left = column * (across + GAP)
-        top = row * (down + CAPTION)
-        captions[index] = tkcurses.Label(area, text=caption, anchor="w")
-        captions[index].place(x=left, y=top, width=across)
-        shown = tkcurses.Label(area, name=f"panel{index}", anchor="nw")
-        shown.place(x=left, y=top + CAPTION, width=across, height=down)
-        labels[index] = shown
-
-    def report(picture, depth):
-        source = state["sources"][state["which"]]
-        screen.line(
-            1,
-            f"  {pathlib.Path(source).name}"
-            f"   {picture.width()}x{picture.height()} pixels"
-            f"   shown at {state.get('cells', '?')}"
-            f"   colours in the source: {len({c for r in picture.rows() for c in r if c})}",
-        )
-        drawn = state.get("drawn", (0, 0))
-        roomy = drawn[0] >= WANTED[0] and drawn[1] >= WANTED[1]
-        screen.line(
-            3,
-            ""
-            if roomy
-            else f"  the pictures are {drawn[0]}x{drawn[1]} cells."
-            f" {WANTED[0]}x{WANTED[1]} is wanted to judge them, and a terminal"
-            f" of {ROOMY[0]}x{ROOMY[1]} gives that",
-        )
-        screen.line(
-            2,
-            f"  terminal depth: {depth.name} ({int(depth)} colours)"
-            + (
-                "   - every colour is available, so the dithered panels"
-                " are identical and should be"
-                if depth >= ColorDepth.DIRECT
-                else "   - dithering has something to do here"
-            ),
-        )
+    names = [
+        str(DEMOS / n) for n in ("mickey.gif", "earth.gif") if (DEMOS / n).is_file()
+    ]
+    state["sources"] = names or ["ramp", "stripes"]
 
     def load():
         source = state["sources"][state["which"]]
@@ -207,49 +122,69 @@ def build(root, screen):
         else:
             picture = tkcurses.PhotoImage(master=root, file=source)
 
-        # Fit to whatever a panel turned out to be. A cell is two pixels
-        # tall, so the rows double on the way in.
-        wide, tall = state["panel"]
-        factor = 1
-        while (
-            picture.width() // factor > wide
-            or picture.height() // factor > tall * ROWS_PER_CELL
-        ):
-            factor += 1
+        wide = max(1, area.winfo_width())
+        tall = max(1, area.winfo_height())
+        # Resampled to the space on offer, not to whatever a whole-number
+        # factor gives. reduce(4) on a 320-wide picture in a 100-cell panel
+        # delivers 80 cells and throws away a fifth of the width.
+        across = min(wide, picture.width())
+        down = min(tall * ROWS_PER_CELL, picture.height())
+        # Keep the picture's proportions inside the space.
+        scale = min(across / picture.width(), down / picture.height())
+        small = picture.resize(
+            max(1, round(picture.width() * scale)),
+            max(1, round(picture.height() * scale)),
+        )
+        raw_pairs = small.pairs_needed()
 
         manager = getattr(root.tk, "colors", None)
-        depth = getattr(manager, "depth", ColorDepth.BASIC)
+        painter = getattr(root.tk, "painter", None)
+        # When the cells are written past curses there is no pair table to
+        # run out of, so the palette is not cut down at all. Fitting only
+        # applies where curses is doing the painting.
+        unlimited = painter is not None and painter.enabled
+        state["form"] = painter.form if painter is not None else "off"
+        # Leave some of the table for the text around the picture, which is
+        # drawn from the same table. Proportional, not a fixed 24: an
+        # eight-colour terminal has 63 pairs in total, so 24 of them is a
+        # third of everything reserved for two lines of text.
+        capacity = getattr(manager, "capacity", 255)
+        budget = max(16, capacity - max(8, capacity // 8))
+        drawn = small if unlimited or not state["fitted"] else small.fit_pairs(budget)
+        state["unlimited"] = unlimited
 
-        # Held, or an image nothing references is collected and the label
-        # draws nothing - the trap UAT 35 demonstrates on purpose.
-        state["held"] = [picture]
-        for index, (_, averaged, dithered) in enumerate(PANELS):
-            small = picture.reduce(factor) if averaged else picture.subsample(factor)
-            if dithered:
-                small = small.dither(depth)
-            state["held"].append(small)
-            labels[index].configure(image=small)
-            state["cells"] = f"{small.width()}x{small.cell_height()} cells"
-            state["drawn"] = (small.width(), small.cell_height())
-            # Two numbers, and the second is the one to check. Dithering
-            # does not add colours - it snaps every pixel to one the
-            # terminal actually has, which on an averaged image REDUCES the
-            # count, from 261 to 45 on mickey. What it guarantees is that
-            # nothing is left needing approximation, so the dithered panels
-            # must read "0 unavailable" and the flat ones usually will not.
-            used = {c for row in small.rows() for c in row if c}
-            # Kept short deliberately: the panel is 38 cells and the first
-            # wording ran to 41, so the word that mattered was clipped off
-            # the end and the check could not be made at all.
-            captions[index].configure(
-                text=(
-                    f"{PANELS[index][0]}  "
-                    f"{unavailable(used, depth)}/{len(used)} unavailable"
-                )
-            )
-
+        state["held"] = [picture, small, drawn]
+        shown.configure(image=drawn)
         root.update_layout()
-        report(picture, depth)
+
+        colours = len({c for row in drawn.rows() for c in row if c})
+        screen.line(
+            1,
+            f"  {pathlib.Path(source).name}"
+            f"   {picture.width()}x{picture.height()} pixels"
+            f"   resampled to {drawn.width()}x{drawn.cell_height()} cells"
+            f"   {colours} colours",
+        )
+        screen.line(
+            2,
+            f"  pairs wanted: {drawn.pairs_needed()}"
+            + (
+                f"   written past curses as {state['form']}, so the 255-pair"
+                " ceiling does not apply"
+                if unlimited
+                else f" of {budget} budget"
+                f"   (unfitted it would want {raw_pairs})"
+                f"   {'FITTED' if state['fitted'] else 'RAW - press f'}"
+            ),
+        )
+        roomy = drawn.width() >= WANTED[0] and drawn.cell_height() >= WANTED[1]
+        screen.line(
+            3,
+            ""
+            if roomy
+            else f"  only {drawn.width()}x{drawn.cell_height()} cells;"
+            f" {WANTED[0]}x{WANTED[1]} is wanted to judge colour",
+        )
         screen.refresh()
 
     def next_picture(event=None):
@@ -258,21 +193,30 @@ def build(root, screen):
         load()
         return "break"
 
+    def toggle_fit(event=None):
+        del event
+        state["fitted"] = not state["fitted"]
+        load()
+        return "break"
+
     def explain(event=None):
         del event
         manager = getattr(root.tk, "colors", None)
         depth = getattr(manager, "depth", ColorDepth.BASIC)
         screen.line(
-            2,
-            f"  depth={depth.name}  pairs allocated={getattr(manager, 'allocated', 0)}"
+            3,
+            f"  depth={depth.name} ({int(depth)} colours)"
+            f"  pairs allocated={getattr(manager, 'allocated', 0)}"
+            f"/{getattr(manager, 'capacity', 0)}"
             f"  exhausted={getattr(manager, 'exhausted', False)}"
-            f"  - a pair per (foreground, background), and only 255 can be named",
+            f"  direct={state.get('form', 'off')}",
         )
         screen.refresh()
         return "break"
 
     root.bind("<Key-n>", next_picture)
     root.bind("<Key-t>", explain)
+    root.bind("<Key-f>", toggle_fit)
 
     root.update_layout()
     load()

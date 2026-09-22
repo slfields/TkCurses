@@ -398,20 +398,46 @@ def test_scaling_by_a_non_positive_factor_raises(root, factor):
 
 
 def test_reduce_averages_the_block_it_covers(root):
-    """Where subsample keeps one pixel of four, this is the mean of all four."""
+    """Where subsample keeps one pixel of four, this is the mean of all four.
+
+    Half black and half white averages to ``#bcbcbc``, 188, and NOT to the
+    ``#7f7f7f`` this test asserted for a long time. 127 is the mean of the
+    two *bytes*; 188 is the byte of the mean *light*. sRGB carries roughly a
+    2.2 gamma, so those are different numbers and only the second is what a
+    camera pointed at the checkerboard would record.
+
+    Getting this wrong darkens every edge in a shrunken picture - measured at
+    14.69 levels mean and 74 worst on mickey.gif. TkCurses-wn3.
+    """
     photo = PhotoImage(
         master=root, data=[["#000000", "#ffffff"], ["#ffffff", "#000000"]]
     )
-    assert photo.reduce(2).rows() == [["#7f7f7f"]]
+    assert photo.reduce(2).rows() == [["#bcbcbc"]]
     # subsample keeps the top-left and knows nothing of the other three.
     assert photo.subsample(2).rows() == [["#000000"]]
+
+
+def test_reduce_averages_light_rather_than_bytes(root):
+    """The same rule stated on its own, because it is easy to 'fix' back.
+
+    A block that is nine tenths black is still much darker than mid grey;
+    what the gamma changes is where the middle sits, not the direction.
+    """
+    photo = PhotoImage(master=root, data=[["#000000"] * 9 + ["#ffffff"]])
+    only = photo.reduce(10, 1).rows()[0][0]
+    # A tenth of full light is 0.1 linear, and 1.055 * 0.1**(1/2.4) - 0.055
+    # is 0.349, so 89 - which is 0x59. Averaging the bytes would give 0x19.
+    assert only == "#595959", (
+        f"one white pixel in ten came out {only!r}; averaging the bytes would "
+        "give #191919, which is far too dark for a tenth of full light"
+    )
 
 
 def test_reduce_takes_separate_factors(root):
     photo = PhotoImage(
         master=root, data=[["#000000", "#ffffff"], ["#000000", "#ffffff"]]
     )
-    assert photo.reduce(2, 1).rows() == [["#7f7f7f"], ["#7f7f7f"]]
+    assert photo.reduce(2, 1).rows() == [["#bcbcbc"], ["#bcbcbc"]]
 
 
 def test_reduce_reports_its_new_size_in_both_units(root):
@@ -827,4 +853,333 @@ def test_dithering_a_gradient_beats_matching_it_pixel_by_pixel(root):
     spread = error(blurred(as_rgb(photo.dither(ColorDepth.BASIC))), reference)
     assert spread < plain / 2, (
         f"dithering {spread:.1f} should beat matching {plain:.1f}"
+    )
+
+
+# ------------------------------------------------- a palette of its own
+
+
+def rainbow(root, width, height, step=1):
+    """A picture whose pixels walk the colour cube, for palette tests."""
+    art = PhotoImage(master=root, width=width, height=height)
+    for y in range(height):
+        for x in range(width):
+            index = (y * width + x) * step
+            art.put(
+                f"#{index % 256:02x}{(index * 5) % 256:02x}{(index * 11) % 256:02x}",
+                to=(x, y, x + 1, y + 1),
+            )
+    return art
+
+
+def test_quantize_holds_the_palette_to_the_number_asked_for(root):
+    art = rainbow(root, 12, 12)
+    assert len(colours_of(art)) > 16
+    assert len(colours_of(art.quantize(16))) <= 16
+
+
+def test_quantize_leaves_an_image_that_already_fits_alone(root):
+    """Flat art never needed this, and must not be damaged by it."""
+    art = PhotoImage(master=root, width=4, height=4)
+    art.put("red", to=(0, 0, 4, 2))
+    art.put("blue", to=(0, 2, 4, 4))
+    assert art.quantize(16).rows() == art.rows()
+
+
+def test_quantize_keeps_holes_as_holes(root):
+    """A hole is not a colour, so it must not be given one.
+
+    Read through rows() rather than get(), which answers black for an unset
+    pixel exactly as Tk's does - so it cannot tell a hole from a black one.
+    """
+    art = rainbow(root, 8, 4)
+    art.put("red", to=(0, 0, 8, 1))  # something to quantise alongside
+    for x in range(8):
+        art.transparency_set(x, 3, True)
+    quantised = art.quantize(2)
+    assert len(colours_of(art)) > 2, "the picture has to need quantising"
+    assert quantised.rows()[3] == [None] * 8
+
+
+def test_quantize_keeps_the_colour_that_covers_the_picture(root):
+    """A colour most of the picture is made of must survive the cut.
+
+    Deliberately NOT a test of where the box is split. Both the median-pixel
+    split this uses and the median-colour one it was compared against keep a
+    dominant colour, because the representative is a pixel-weighted average
+    either way - a first version of this test claimed to prove median-pixel
+    was necessary and passed just as happily without it. What is asserted
+    here is the property that actually holds and that callers rely on.
+    """
+    art = PhotoImage(master=root, width=10, height=10)
+    art.put("#c80000", to=(0, 0, 10, 10))
+    for x in range(5):
+        art.put(f"#0000{0x40 + x * 8:02x}", to=(x, 0, x + 1, 1))
+    red, green, blue = art.quantize(2).get(0, 5)
+    assert (red, green, blue) == pytest.approx((200, 0, 0), abs=6), (
+        f"95 of 100 pixels are #c80000 and came back as "
+        f"{(red, green, blue)!r}; the palette was spent elsewhere"
+    )
+
+
+def test_the_stand_in_colour_is_weighted_by_how_many_pixels_it_covers(root):
+    """One entry for two colours must land near the one that is mostly there.
+
+    ``quantize(1)`` is what makes this sharp: it forces both colours into the
+    same box, so the representative is the average and the weighting is the
+    whole of what is being tested. The previous test cannot do this job -
+    with two entries the colours land in boxes of their own, where a weighted
+    and an unweighted average agree exactly.
+
+    Nine tenths red, one tenth blue: weighted gives about (229, 0, 25), a
+    plain mean gives (127, 0, 127).
+    """
+    art = PhotoImage(master=root, width=10, height=10)
+    art.put("#ff0000", to=(0, 0, 10, 9))
+    art.put("#0000ff", to=(0, 9, 10, 10))
+    red, green, blue = art.quantize(1).get(0, 0)
+    assert red > 200 and blue < 60, (
+        f"the single palette entry came back as {(red, green, blue)!r}; the "
+        "picture is nine tenths red, so an unweighted mean was taken"
+    )
+
+
+def test_quantize_refuses_a_palette_of_nothing(root):
+    with pytest.raises(TclError):
+        rainbow(root, 4, 4).quantize(0)
+
+
+# ----------------------------------------------- sizing to a pair budget
+
+
+def test_pairs_needed_counts_combinations_not_colours(root):
+    """A pair is (fg, bg), so the two numbers are different on purpose.
+
+    The foregrounds must be the SAME in both cells and the backgrounds
+    different, or counting foregrounds gives the right answer by accident -
+    which is exactly what the first version of this test did.
+    """
+    art = PhotoImage(master=root, width=2, height=2)
+    art.put("red", to=(0, 0, 1, 1))
+    art.put("blue", to=(0, 1, 1, 2))
+    art.put("red", to=(1, 0, 2, 1))
+    art.put("green", to=(1, 1, 2, 2))
+    # One foreground, two backgrounds: red over blue and red over green.
+    assert {fore for _, fore, _ in compose(art.lit()).values()} == {"red"}
+    assert art.pairs_needed() == 2
+
+
+def test_fit_pairs_brings_a_picture_under_the_budget(root):
+    art = rainbow(root, 20, 20)
+    assert art.pairs_needed() > 40
+    assert art.fit_pairs(40).pairs_needed() <= 40
+
+
+def test_fit_pairs_spends_as_much_of_the_budget_as_it_can(root):
+    """Reducing further than necessary throws away colour for nothing."""
+    art = rainbow(root, 20, 20)
+    fitted = art.fit_pairs(60)
+    assert fitted.pairs_needed() > 30, (
+        f"only {fitted.pairs_needed()} pairs used of a 60 budget, which means "
+        "the search stopped well short of what would have fitted"
+    )
+
+
+def test_fit_pairs_leaves_a_picture_that_already_fits_untouched(root):
+    art = PhotoImage(master=root, width=4, height=4)
+    art.put("red", to=(0, 0, 4, 4))
+    assert art.fit_pairs(255).rows() == art.rows()
+
+
+def test_fit_pairs_refuses_a_budget_of_nothing(root):
+    with pytest.raises(TclError):
+        rainbow(root, 8, 8).fit_pairs(0)
+
+
+def test_fit_pairs_survives_a_budget_of_one(root):
+    """The smallest budget that is still a budget, rather than an error."""
+    fitted = rainbow(root, 12, 12).fit_pairs(1)
+    assert fitted.pairs_needed() <= 1
+
+
+def test_fit_pairs_does_not_rebuild_the_palette_for_every_probe(root, monkeypatch):
+    """The cut is grown once, not restarted for each candidate size.
+
+    The first version binary-searched the palette size and rebuilt the whole
+    median cut for every probe. The splits are identical every time, so it
+    did the same work ten times over: measured at 8.7 SECONDS for one
+    photograph, against 200ms once it grew the palette a colour at a time.
+
+    Counted rather than timed, so a slow runner cannot make it flake. A
+    rebuilding implementation performs O(k) splits per probe and so lands
+    far above the palette it settles on; growing performs O(k) in total.
+    """
+    from tkcurses._core import images
+
+    splits = 0
+    real = images._split_once
+
+    def counted(boxes):
+        nonlocal splits
+        splits += 1
+        return real(boxes)
+
+    monkeypatch.setattr(images, "_split_once", counted)
+    art = rainbow(root, 40, 40)
+    fitted = art.fit_pairs(120)
+    colours = len(colours_of(fitted))
+    assert splits < colours * 4 + 40, (
+        f"{splits} splits to settle on {colours} colours; the palette is "
+        "being rebuilt for each candidate size rather than grown"
+    )
+
+
+# ------------------------------------------------ resampling to a size
+
+
+def test_resize_gives_exactly_the_size_asked_for(root):
+    """The point of it. reduce() gives whatever a whole factor happens to."""
+    art = rainbow(root, 32, 20)
+    out = art.resize(13, 7)
+    assert (out.width(), out.height()) == (13, 7)
+
+
+def test_resize_handles_a_ratio_no_whole_number_could(root):
+    """320 into 106 is 3.019 per pixel, which reduce(3) cannot express.
+
+    reduce(3) on a 320-wide picture gives 106 columns covering 318 pixels and
+    drops the last two; the grid drifts across the picture as it goes. This
+    covers all 320.
+    """
+    art = rainbow(root, 320, 20)
+    out = art.resize(106, 7)
+    assert out.width() == 106
+    # The last output column must be built from the last input column, which
+    # is exactly what the dropped remainder would lose.
+    art.put("#ff00ff", to=(319, 0, 320, 20))
+    marked = art.resize(106, 7)
+    assert marked.rows()[0][-1] != out.rows()[0][-1], (
+        "changing the last input column changed nothing in the output, so "
+        "the right-hand edge of the picture is being discarded"
+    )
+
+
+def test_resize_averages_the_fraction_of_each_pixel_it_covers(root):
+    """Half a black pixel and half a white one is the mean of the two lights."""
+    art = PhotoImage(master=root, data=[["#000000", "#ffffff"]])
+    # One output pixel covering both inputs equally.
+    assert art.resize(1, 1).rows() == [["#bcbcbc"]]
+
+
+def test_resize_weights_by_how_much_of_each_pixel_is_covered(root):
+    """Not a plain mean of whichever pixels are touched.
+
+    Three inputs into two outputs: the first output covers all of input 0 and
+    half of input 1, so it must be weighted 2:1, not 1:1.
+    """
+    art = PhotoImage(master=root, data=[["#000000", "#000000", "#ffffff"]])
+    first, second = art.resize(2, 1).rows()[0]
+    assert first == "#000000", "the first output covers only black"
+    assert second != "#ffffff", "the second output covers half a black pixel"
+
+
+def test_resize_keeps_a_mostly_hole_block_a_hole(root):
+    art = PhotoImage(master=root, width=4, height=2)
+    art.put("red", to=(0, 0, 1, 1))
+    assert art.resize(2, 1).rows()[0][1] is None
+
+
+def test_resize_can_enlarge(root):
+    art = PhotoImage(master=root, data=[["#ff0000", "#00ff00"]])
+    out = art.resize(4, 2)
+    assert (out.width(), out.height()) == (4, 2)
+    assert out.rows()[0][0] == "#ff0000"
+    assert out.rows()[0][-1] == "#00ff00"
+
+
+def test_resize_refuses_a_size_of_nothing(root):
+    for width, height in ((0, 4), (4, 0), (-1, 4)):
+        with pytest.raises(TclError):
+            rainbow(root, 8, 8).resize(width, height)
+
+
+def test_resize_is_not_a_pixel_by_pixel_hex_parse(root):
+    """Colours are converted once each, not once per visit.
+
+    A pixel on a block boundary is looked at by several output pixels, and
+    parsing its hex every time was most of the cost - 231ms against 32ms for
+    one photograph. Counted rather than timed so a slow runner cannot flake.
+    """
+    from tkcurses._core import images
+
+    calls = 0
+    real = images.rgb_of
+
+    def counted(spec):
+        nonlocal calls
+        calls += 1
+        return real(spec)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(images, "rgb_of", counted)
+    try:
+        art = rainbow(root, 60, 40, step=1)
+        distinct = len(colours_of(art))
+        art.resize(20, 12)
+    finally:
+        monkeypatch.undo()
+    assert calls <= distinct + 5, (
+        f"{calls} colour conversions for {distinct} distinct colours; they "
+        "are being re-parsed per visit rather than once each"
+    )
+
+
+def test_pairs_needed_counts_what_the_terminal_will_resolve_to(root):
+    """The stored combinations are not the ones the terminal allocates.
+
+    A picture holds hex colours; a terminal with eight of them lands the lot
+    on at most sixty-four combinations. Counting the stored ones made
+    fit_pairs believe an eight-colour terminal was eighteen hundred pairs
+    short - so it crushed the picture to five colours and threw away three
+    quarters of what that terminal could have shown.
+    """
+    art = rainbow(root, 60, 40)
+    stored = art.pairs_needed(ColorDepth.DIRECT)
+    eight = art.pairs_needed(ColorDepth.BASIC)
+    assert stored > 200, "the fixture needs plenty of distinct combinations"
+    assert eight <= 64, (
+        f"{eight} pairs claimed for an eight-colour terminal, which has at "
+        "most 8x8 of them"
+    )
+    assert eight < stored / 4
+
+
+def test_pairs_needed_rises_with_the_palette(root):
+    """More colours, more distinct combinations - in that order."""
+    art = rainbow(root, 60, 40)
+    counts = [
+        art.pairs_needed(depth)
+        for depth in (
+            ColorDepth.BASIC,
+            ColorDepth.BRIGHT,
+            ColorDepth.EXTENDED,
+            ColorDepth.DIRECT,
+        )
+    ]
+    assert counts == sorted(counts), counts
+    assert counts[0] < counts[-1]
+
+
+def test_fit_pairs_leaves_a_picture_alone_when_the_palette_already_fits(root):
+    """Eight colours cannot need more than sixty-four pairs, so nothing to do.
+
+    This is the check that would have caught the reported bug: at eight
+    colours the picture came back with five colours where it should have
+    come back untouched.
+    """
+    art = rainbow(root, 60, 40)
+    fitted = art.fit_pairs(55, depth=ColorDepth.BASIC)
+    assert fitted.rows() == art.rows(), (
+        f"the picture was cut down to {len(colours_of(fitted))} colours for "
+        "an eight-colour terminal that had room for it as it was"
     )

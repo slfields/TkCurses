@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import contextlib
 import curses
+import math
 import os
 from dataclasses import dataclass
 from enum import IntEnum
@@ -242,8 +243,14 @@ def rgb_for(spec: str) -> tuple[int, int, int] | None:
     return red, green, blue
 
 
+@lru_cache(maxsize=65536)
 def rgb_of(spec: str) -> tuple[int, int, int] | None:
     """The RGB a colour specification actually renders as, or None.
+
+    **Cached, and it has to be.** A picture asks this twice per cell, every
+    time it is drawn - a 58x36 window is 4,176 calls a repaint - and each
+    one parsed the hex again. That alone was most of the cost of drawing an
+    image once the cells were being written past curses as well.
 
     ``rgb_for`` answers only for ``#rgb`` forms, because that is all the
     resolver needs. This one also answers for the names, by resolving the
@@ -333,6 +340,19 @@ _EXTENDED_PALETTE = _extended_palette()
 
 #: Which palette each tier approximates against. DIRECT has none: a colour
 #: number *is* the colour there, so nothing is approximated at all.
+#: The entries of :data:`_PALETTE_RGB` that need no attribute to be shown.
+#:
+#: A background can only ever be one of these. Curses will not brighten a
+#: background - A_BOLD applies to the foreground alone - so resolving a
+#: background against the full table picks a colour on the strength of
+#: brightness it will never get. Measured, the mid grey (130, 131, 128) at
+#: the centre of a gradient resolved to black plus A_BOLD, meaning grey 127,
+#: and arrived as (0, 0, 0): the single WORST of the eight, when yellow,
+#: cyan, magenta and white were all nearer.
+_PLAIN_PALETTE: tuple[tuple[tuple[int, int, int], ResolvedColor], ...] = tuple(
+    entry for entry in _PALETTE_RGB if not entry[1].attr
+)
+
 _PALETTES: dict[ColorDepth, tuple[tuple[tuple[int, int, int], ResolvedColor], ...]] = {
     ColorDepth.BASIC: _PALETTE_RGB,
     ColorDepth.BRIGHT: _BRIGHT_PALETTE,
@@ -388,22 +408,194 @@ def rgb_of_direct(number: int) -> tuple[int, int, int]:
     return ((number >> 16) & 0xFF, (number >> 8) & 0xFF, number & 0xFF)
 
 
+def to_linear(value: int) -> float:
+    """One sRGB channel, 0-255, as linear light.
+
+    sRGB is not linear in light - it carries roughly a 2.2 gamma - so the
+    mean of two channel *bytes* is not the byte of the mean *brightness*.
+    Anything averaging colour together has to come through here first and go
+    back through :func:`from_linear` afterwards.
+
+    The standard sRGB transfer function, IEC 61966-2-1. Noticed while reading
+    chafa (https://hpjansson.org/chafa/, LGPL-3.0-or-later), which linearises
+    before it does arithmetic on a colour; implemented here from the
+    published function rather than from chafa's code. See ``TkCurses-e9l``.
+    """
+    v = value / 255.0
+    return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+
+
+def from_linear(value: float) -> int:
+    """Linear light back to one sRGB channel, 0-255. Inverse of the above."""
+    v = 0.0 if value < 0.0 else (1.0 if value > 1.0 else value)
+    v = v * 12.92 if v <= 0.0031308 else 1.055 * v ** (1 / 2.4) - 0.055
+    return round(v * 255)
+
+
+#: sRGB byte to linear light, worked out once. :meth:`PhotoImage._average`
+#: runs this over every pixel of a photograph, so it must not be a pow().
+_LINEAR: tuple[float, ...] = tuple(to_linear(v) for v in range(256))
+
+
+def linear_of(value: int) -> float:
+    """:data:`_LINEAR` by index, clamped, for callers with untrusted bytes."""
+    return _LINEAR[0 if value < 0 else (255 if value > 255 else value)]
+
+
+@lru_cache(maxsize=65536)
+def din99d(rgb: tuple[int, int, int]) -> tuple[float, float, float]:
+    """An sRGB triple in the DIN99d uniform colour space.
+
+    **Why this exists: plain RGB distance is not what "nearest" means to an
+    eye.** A uniform space is one where the straight-line distance between
+    two colours is proportional to how different they look, which is exactly
+    the question :func:`_nearest` is asking and cannot answer in RGB.
+
+    Measured against the weighted-RGB distance this replaced, scored over
+    every distinct colour in each picture:
+
+        picture        depth       differs    old    din99d
+        mickey.gif     8 colours       16%   76.38    68.72
+        mickey.gif     256             53%   33.40    27.53
+        earth.gif      8 colours        2%  106.09   103.63
+        earth.gif      256             56%   27.40    23.23
+        gradient.png   8 colours       64%  119.60    65.68
+        gradient.png   16 colours      64%   70.38    47.93
+
+    Better on every picture at every depth, and the smooth gradient - where
+    the old weights disagreed with the eye about two thirds of the time - is
+    45% better at eight colours. That picture was reported as looking
+    significantly worse than another renderer's, which is what prompted this.
+
+    sRGB is linearised first (see :func:`to_linear`), converted to CIE XYZ
+    under a D65 white point, to CIE L*a*b*, and then through the DIN99d
+    correction. Implemented from the published formula; the constants are the
+    standard's. Noticed while reading chafa
+    (https://hpjansson.org/chafa/, LGPL-3.0-or-later), which matches colours
+    the same way - not taken from its code. See ``TkCurses-e9l``.
+
+    Cached, and it must stay cached: this has a cube root, a logarithm and an
+    ``atan2`` in it, and the palettes alone are 256 conversions.
+    """
+    red, green, blue = (to_linear(channel) for channel in rgb)
+    x = 0.4124564 * red + 0.3575761 * green + 0.1804375 * blue
+    y = 0.2126729 * red + 0.7151522 * green + 0.0721750 * blue
+    z = 0.0193339 * red + 0.1191920 * green + 0.9503041 * blue
+    # The DIN99d tristimulus correction, applied before L*a*b*.
+    x = 1.12 * x - 0.12 * z
+
+    def f(value: float) -> float:
+        return (
+            value ** (1 / 3)
+            if value > 216 / 24389
+            else ((24389 / 27) * value + 16) / 116
+        )
+
+    # D65, which is what sRGB is defined against.
+    fx, fy, fz = f(x / 0.95047), f(y), f(z / 1.08883)
+    lightness = 116 * fy - 16
+    a_star = 500 * (fx - fy)
+    b_star = 200 * (fy - fz)
+
+    # A 50-degree rotation, then a 1.14 stretch of the b axis, which is what
+    # makes the space uniform where plain L*a*b* is not.
+    cos50, sin50 = 0.6427876096865393, 0.766044443118978
+    e = cos50 * a_star + sin50 * b_star
+    g = 1.14 * (cos50 * b_star - sin50 * a_star)
+    chroma = 22.5 * math.log1p(0.06 * math.hypot(e, g))
+    hue = math.atan2(g, e) + math.radians(50)
+    return (
+        325.22 * math.log1p(0.0036 * lightness) * 2.5,
+        chroma * math.cos(hue) * 2.5 + 128.0,
+        chroma * math.sin(hue) * 2.5 + 128.0,
+    )
+
+
+def _din99d_palette(
+    palette: tuple[tuple[tuple[int, int, int], ResolvedColor], ...],
+) -> tuple[tuple[tuple[float, float, float], ResolvedColor], ...]:
+    """``palette`` with every entry converted once, and kept.
+
+    Keyed by identity of the palette tuple rather than its contents: these
+    are module-level constants, there are four of them, and hashing 256
+    triples on every lookup would cost more than the search it feeds.
+    """
+    converted = _DIN99D_PALETTES.get(id(palette))
+    if converted is None:
+        converted = tuple((din99d(rgb), resolved) for rgb, resolved in palette)
+        _DIN99D_PALETTES[id(palette)] = converted
+    return converted
+
+
+#: Converted palettes by ``id()``. See :func:`_din99d_palette`.
+_DIN99D_PALETTES: dict[
+    int, tuple[tuple[tuple[float, float, float], ResolvedColor], ...]
+] = {}
+
+
+def _below_the_palette(
+    first: tuple[int, int, int],
+    second: tuple[int, int, int],
+    shown_first: tuple[int, int, int],
+    shown_second: tuple[int, int, int],
+) -> bool:
+    """True when a palette cannot honestly tell these two colours apart.
+
+    The two halves of a cell are compared against how far each of them had
+    to move to reach the palette. If they are closer to *each other* than to
+    their own approximations, the difference between them is finer than
+    anything the palette can express - so drawing them differently invents a
+    difference the picture does not have.
+
+    There is no threshold here on purpose. The question is asked relative to
+    the error already being accepted, which scales by itself: at eight
+    colours almost everything smooth is below the palette, and at 256 almost
+    nothing is.
+    """
+    apart = sum(
+        (a - b) ** 2 for a, b in zip(din99d(first), din99d(second), strict=True)
+    )
+    moved = max(
+        sum(
+            (a - b) ** 2
+            for a, b in zip(din99d(first), din99d(shown_first), strict=True)
+        ),
+        sum(
+            (a - b) ** 2
+            for a, b in zip(din99d(second), din99d(shown_second), strict=True)
+        ),
+    )
+    return apart < moved
+
+
 def _nearest(
     rgb: tuple[int, int, int],
     palette: tuple[tuple[tuple[int, int, int], ResolvedColor], ...] | None = None,
 ) -> ResolvedColor:
-    """Closest palette entry by weighted RGB distance.
+    """Closest palette entry by perceptual distance.
 
-    Green is weighted most and blue least, roughly matching how much each
-    contributes to perceived brightness, so approximations stay recognisable.
+    Measured in DIN99d - see :func:`din99d` - where a straight line is
+    proportional to how different two colours look. This used to be a
+    weighted RGB distance, green counted most and blue least, which is a
+    guess at luminance and cannot account for the eye's sensitivity varying
+    across the space. On a smooth gradient the two disagreed about two
+    thirds of the time, and the perceptual answer was 45% closer.
     """
-    red, green, blue = rgb
-
-    def distance(entry: tuple[tuple[int, int, int], ResolvedColor]) -> int:
-        (pr, pg, pb), _ = entry
-        return 2 * (red - pr) ** 2 + 4 * (green - pg) ** 2 + 3 * (blue - pb) ** 2
-
-    return min(palette or _PALETTE_RGB, key=distance)[1]
+    want = din99d(rgb)
+    best: ResolvedColor | None = None
+    closest = 0.0
+    # Strictly less than, in palette order, so the lowest colour number wins
+    # a tie - black is both colour 0 and colour 16.
+    for point, resolved in _din99d_palette(palette or _PALETTE_RGB):
+        measure = (
+            (want[0] - point[0]) ** 2
+            + (want[1] - point[1]) ** 2
+            + (want[2] - point[2]) ** 2
+        )
+        if best is None or measure < closest:
+            closest, best = measure, resolved
+    assert best is not None
+    return best
 
 
 @lru_cache(maxsize=1)
@@ -435,74 +627,72 @@ def _nearest_level(channel: int) -> int:
     return best
 
 
+@lru_cache(maxsize=65536)
 def _nearest_extended(rgb: tuple[int, int, int]) -> ResolvedColor:
-    """The nearest of the 256, without walking all of them.
+    """The nearest of the 256, by perceptual distance.
 
-    Measured: dithering a 53x33 image made 981 distinct lookups and 251,136
-    distance comparisons, which was over half the time it took. This makes
-    forty-one comparisons instead of two hundred and fifty-six, and gives
-    the same answer - the cube part is solved rather than searched.
+    **This walks all 256, and that is not a regression to be optimised away
+    again.** It used to make forty-one comparisons instead of two hundred and
+    fifty-six by *solving* the 6x6x6 cube one channel at a time rather than
+    searching it. That shortcut is only sound for a separable metric - one
+    where the best red can be chosen without knowing the green - and a
+    perceptual distance is not separable. Keeping it would have made the
+    search fast and the answer wrong.
+
+    Paid for by caching instead, at two levels: the palette is converted once
+    (:func:`_din99d_palette`) and each distinct colour is resolved once
+    (here). Measured, dithering a 53x33 image made 981 *distinct* lookups,
+    so the cache is what carries this, not the scan.
     """
-    red, green, blue = rgb
-    named, greys = _extended_index()
-
-    # In palette order, and strictly less than, because that is how a scan
-    # of all 256 breaks a tie: the lowest colour number wins. Black is both
-    # colour 0 and colour 16, and checking the cube first quietly answered
-    # 16 - which is the same colour and a different number, and enough to
-    # make this disagree with the scan it replaces on 209 of 20,000 random
-    # colours.
-    best: ResolvedColor | None = None
-    closest = 0
-    for (pr, pg, pb), resolved in named:
-        measure = 2 * (red - pr) ** 2 + 4 * (green - pg) ** 2 + 3 * (blue - pb) ** 2
-        if best is None or measure < closest:
-            closest, best = measure, resolved
-
-    levels = [_nearest_level(channel) for channel in (red, green, blue)]
-    cube_rgb = (
-        CUBE_LEVELS[levels[0]],
-        CUBE_LEVELS[levels[1]],
-        CUBE_LEVELS[levels[2]],
-    )
-    measure = (
-        2 * (red - cube_rgb[0]) ** 2
-        + 4 * (green - cube_rgb[1]) ** 2
-        + 3 * (blue - cube_rgb[2]) ** 2
-    )
-    if measure < closest:
-        closest = measure
-        best = ResolvedColor(CUBE_START + levels[0] * 36 + levels[1] * 6 + levels[2])
-
-    for (pr, pg, pb), resolved in greys:
-        measure = 2 * (red - pr) ** 2 + 4 * (green - pg) ** 2 + 3 * (blue - pb) ** 2
-        if measure < closest:
-            closest, best = measure, resolved
-    assert best is not None
-    return best
+    return _nearest(rgb, _EXTENDED_PALETTE)
 
 
-def _resolve_rgb(rgb: tuple[int, int, int], depth: ColorDepth) -> ResolvedColor:
+def _resolve_rgb(
+    rgb: tuple[int, int, int],
+    depth: ColorDepth,
+    *,
+    background: bool = False,
+) -> ResolvedColor:
     """An RGB triple as this tier expresses it.
 
     Only :data:`ColorDepth.DIRECT` can say exactly what was asked for; every
     other tier approximates against the palette it has.
+
+    Args:
+        background: True when this colour will be used as a background. At
+            :data:`ColorDepth.BASIC` that is a smaller palette - see
+            :data:`_PLAIN_PALETTE` - because brightness there is an
+            attribute, and no attribute has ever brightened a background.
+            Above BASIC brightness is a colour number, so it makes no
+            difference and is ignored.
     """
     if depth is ColorDepth.DIRECT:
         return ResolvedColor(direct_color(rgb))
     if depth is ColorDepth.EXTENDED:
         return _nearest_extended(rgb)
+    if background and depth is ColorDepth.BASIC:
+        return _nearest(rgb, _PLAIN_PALETTE)
     return _nearest(rgb, _PALETTES.get(depth, _PALETTE_RGB))
 
 
 @lru_cache(maxsize=4096)
-def parse_color(spec: str, depth: ColorDepth = ColorDepth.BASIC) -> ResolvedColor:
+def parse_color(
+    spec: str,
+    depth: ColorDepth = ColorDepth.BASIC,
+    *,
+    background: bool = False,
+) -> ResolvedColor:
     """Resolve a tkinter colour specification to a terminal colour.
 
     Args:
         spec: A name, or ``#rgb`` in any of the four widths tkinter takes.
         depth: What the terminal can show. The default is the eight, which is
             what a terminal reports when it has never been asked.
+        background: True when the answer will be used as a background. It
+            changes nothing above :data:`ColorDepth.BASIC`; at BASIC it
+            confines the answer to colours that need no attribute, because
+            the attribute would be dropped and the colour chosen on its
+            strength is then the wrong one.
 
     Raises:
         ValueError: If ``spec`` is empty or a malformed hex string. An unknown
@@ -525,19 +715,25 @@ def parse_color(spec: str, depth: ColorDepth = ColorDepth.BASIC) -> ResolvedColo
     if text in _NAMED:
         named = _NAMED[text]
         if depth is ColorDepth.BASIC:
+            if background and named.attr:
+                # `gray` is white plus A_DIM and `lime` is green plus A_BOLD.
+                # Behind text neither attribute arrives, so the name has to be
+                # matched by the colour it renders as, against what a
+                # background can hold.
+                return _nearest(palette_rgb(named), _PLAIN_PALETTE)
             return named
         # Above the eight, a name is resolved through the colour it renders
         # as, so `red` stays #cd0000 whatever the tier - and its brightness
         # becomes a colour number rather than an attribute.
-        return _resolve_rgb(palette_rgb(named), depth)
+        return _resolve_rgb(palette_rgb(named), depth, background=background)
     if text.startswith("#"):
         rgb = rgb_for(text)
         if rgb is None:
             raise ValueError(f"malformed hex colour: {spec!r}")
-        return _resolve_rgb(rgb, depth)
+        return _resolve_rgb(rgb, depth, background=background)
     known = _X11_RGB.get(text)
     if known is not None:
-        return _resolve_rgb(known, depth)
+        return _resolve_rgb(known, depth, background=background)
     raise ValueError(f"unknown colour name: {spec!r}")
 
 
@@ -591,6 +787,13 @@ class ColorManager:
         self._has_colors = False
         self._max_pairs = 0
         self._exhausted = False
+        #: Set by a renewal, cleared by the first frame that starts with
+        #: pairs still to spare. If a renewal is followed straight away by
+        #: another exhaustion, this screen genuinely wants more pairs than
+        #: the terminal has and renewing again would only repaint everything
+        #: for nothing - see :meth:`renew_if_exhausted`.
+        self._renewed = False
+        self._futile = False
         self._depth = ColorDepth.NONE
 
     # ---------------------------------------------------------- lifecycle
@@ -652,6 +855,8 @@ class ColorManager:
         self._started = False
         self._has_colors = False
         self._exhausted = False
+        self._renewed = False
+        self._futile = False
         self._depth = ColorDepth.NONE
 
     @property
@@ -677,6 +882,98 @@ class ColorManager:
     def exhausted(self) -> bool:
         """True once the terminal's supply of pairs has run out."""
         return self._exhausted
+
+    @property
+    def capacity(self) -> int:
+        """How many pairs can exist at once, at most.
+
+        Not :data:`curses.COLOR_PAIRS`, which is how many the terminal will
+        *create* - 65536 on a modern ncurses. A pair is useless unless an
+        attribute can name it, and :func:`curses.color_pair` packs the number
+        into the eight bits of ``A_COLOR``, so 255 is the real ceiling. Pair 0
+        is reserved for the terminal's own default colours and is not counted.
+
+        Zero before :meth:`start`, and on a terminal without colour.
+        """
+        return max(self._max_pairs - 1, 0)
+
+    @property
+    def remaining(self) -> int:
+        """How many more distinct ``(fg, bg)`` combinations will fit.
+
+        What anything sizing its own palette has to ask - an image cannot
+        assume it has the whole table, because widgets and text have already
+        taken some of it. See :class:`~tkcurses._core.images.PhotoImage`.
+        """
+        # The clamp cannot currently fire, and is kept deliberately:
+        # ``pair_number`` is the only thing that adds to ``_pairs`` and stops
+        # at ``_max_pairs``, so the subtraction is non-negative by
+        # construction. A mutation sweep will report removing it as an
+        # equivalent mutant - it is, today, and the guard is here so that a
+        # second way of allocating would report zero rather than a negative
+        # budget that every caller would read as "plenty".
+        return max(self.capacity - len(self._pairs), 0)
+
+    def index_of(self, rgb: tuple[int, int, int]) -> int:
+        """The palette number this colour resolves to, at this depth.
+
+        For :class:`~tkcurses._core.direct.DirectPainter`, which writes
+        ``ESC[38;5;N`` itself and so needs the number rather than a pair.
+        Cached by :func:`parse_color` and :func:`_nearest_extended` behind
+        it, so a repeated colour costs a dictionary lookup.
+        """
+        return _resolve_rgb(rgb, self._depth).color
+
+    # ------------------------------------------------------------- renewal
+
+    def renew_if_exhausted(self) -> bool:
+        """Throw an exhausted pair table away, and say whether that happened.
+
+        Called once at the start of a frame. Returns True if the caller must
+        repaint everything, because every pair number it might have painted
+        with is about to mean something else.
+
+        Pairs are allocated lazily and were never given back, so the table was
+        append-only for the life of the screen: measured on xterm-256color,
+        one demo image took 238 of the 255 and the *second* one exhausted it,
+        after which every new colour fell back to the nearest pair the first
+        image happened to leave behind. An image viewer showed its first
+        picture correctly and every later one in the wrong palette.
+
+        Throwing the table away is safe, and cheaply so, because
+        :class:`~tkcurses._core.screen.ScreenBuffer` stores a cell's colours
+        as *names*, not as pair numbers: nothing on screen holds a number
+        across a frame, and the repaint that follows re-asks for every cell.
+        So the rebuilt table contains exactly the colours still visible, and
+        the ones belonging to a picture that has gone are simply not asked
+        for again.
+
+        The attribute cache goes with it. That cache is keyed by colours but
+        *holds whole attributes*, pair numbers included, so keeping it would
+        hand out a recycled number under its old meaning - the one trap in
+        an otherwise mechanical change.
+        """
+        if not self._exhausted:
+            # A frame began with pairs still to spare, so the last renewal
+            # did its job and the next one is allowed to try again.
+            self._renewed = False
+            return False
+        if self._futile:
+            return False
+        if self._renewed:
+            # Renewed, and exhausted again before a single frame could start
+            # with room left. This screen wants more pairs than the terminal
+            # has, so renewing merely repaints everything every frame to no
+            # purpose. Degrade to nearest-pair instead, which is at least
+            # stable to look at.
+            self._futile = True
+            return False
+        self._pairs.clear()
+        self._attributes.clear()
+        self._next = 1
+        self._exhausted = False
+        self._renewed = True
+        return True
 
     # --------------------------------------------------------- allocation
 
@@ -732,6 +1029,54 @@ class ColorManager:
         """What a colour number actually shows as, at this manager's depth."""
         return rgb_of_number(number, self._depth)
 
+    def _agree(
+        self,
+        fg: str,
+        bg: str,
+        foreground: ResolvedColor,
+        background: ResolvedColor,
+    ) -> tuple[ResolvedColor, ResolvedColor]:
+        """Stop the halves of one cell being resolved against two palettes.
+
+        **Eight colours is the only tier where a cell's two halves do not get
+        the same choices**, and left alone that difference manufactures
+        stripes out of smooth pictures. A foreground may be bright, because
+        A_BOLD reaches it; a background may not. So the very same colour gets
+        two different answers depending on which half of the cell it lands
+        in. Measured on big.png, two pixels six levels apart in green:
+
+            #1e5c80  as a foreground -> black + A_BOLD, meaning grey 127
+            #1e5c80  as a background -> blue
+
+        A gradient drawn that way comes out banded in hard horizontal stripes
+        of grey over blue, which is what a person reported seeing. The
+        per-pixel error was not what was wrong - grey over blue scores better
+        than either alone - the *incoherence* was.
+
+        So when the two halves are closer to each other than to their own
+        approximations - see :func:`_below_the_palette` - both are answered
+        from the background's palette. They then agree, the cell is one flat
+        colour, and a smooth region stays smooth. A cell whose halves really
+        do differ keeps its bright foreground.
+        """
+        first, second = rgb_of(fg), rgb_of(bg)
+        if first is None or second is None:
+            return foreground, background
+        shown_fg = rgb_of_number(foreground.color, self._depth)
+        shown_bg = rgb_of_number(background.color, self._depth)
+        if shown_fg is None or shown_bg is None:
+            return foreground, background
+        if foreground.attr & curses.A_BOLD and shown_fg is not None:
+            # What the foreground will really show, which is the brightened
+            # form - otherwise this compares against a colour nobody sees.
+            brightened = rgb_of_number(foreground.color + 8, ColorDepth.BRIGHT)
+            if brightened is not None:
+                shown_fg = brightened
+        if not _below_the_palette(first, second, shown_fg, shown_bg):
+            return foreground, background
+        agreed = parse_color(fg, self._depth, background=True)
+        return agreed, agreed
+
     def attribute_for(self, fg: str, bg: str, attr: int = curses.A_NORMAL) -> int:
         """Combine colours and attributes into one curses attribute value.
 
@@ -748,7 +1093,13 @@ class ColorManager:
             # would leave neither: A_COLOR is a packed field, not a flag.
             return attr
         foreground = parse_color(fg, self._depth)
-        background = parse_color(bg, self._depth)
+        # Resolved as a background, which at eight colours is a different and
+        # smaller palette: brightness there is an attribute and an attribute
+        # never reaches a background, so asking for the nearest colour
+        # overall picks one that cannot be shown. See _PLAIN_PALETTE.
+        background = parse_color(bg, self._depth, background=True)
+        if self._depth is ColorDepth.BASIC and fg != bg:
+            foreground, background = self._agree(fg, bg, foreground, background)
         # A background cannot be bright or dim in curses, so only the
         # foreground's brightness attribute survives.
         combined = attr | foreground.attr

@@ -1960,21 +1960,102 @@ being an attribute as soon as there is somewhere better to put it. From
 becomes colour 10 with no attribute - so a bright *background* works, which
 at `BASIC` it cannot.
 
+It follows that **a background at `BASIC` must be matched against a smaller
+palette** - the eight that need no attribute. Dropping the attribute is not
+enough on its own, because the *colour* was chosen on the strength of it.
+Measured, the mid grey `#828380` at the centre of a gradient resolved to
+black plus `A_BOLD`, meaning grey 127, and arrived behind text as `(0, 0, 0)`
+— the single furthest of the eight, when yellow, cyan, magenta and white were
+all nearer. Every cell whose lower half was a mid tone painted that half pure
+black, so a gradient came out striped. `parse_color(..., background=True)`
+is what asks the right question.
+
+**And that correction needs a second one.** Restricting only the background
+leaves the two halves of a cell drawing from two different palettes, so the
+*same* colour gets two answers depending on which half it lands in:
+
+    #1e5c80  as a foreground -> black + A_BOLD, meaning grey 127
+    #1e5c80  as a background -> blue
+
+Two pixels six levels apart in green then come out as grey over blue, and a
+smooth gradient is drawn as hard horizontal stripes. This was reported
+against `big.png`, and the per-pixel error was not what was wrong - grey over
+blue scores *better* than either colour alone. The incoherence was.
+
+So at `BASIC`, when a cell's two halves are closer to each other than to
+their own approximations, both are answered from the background's palette:
+they agree, the cell is one flat colour, and a smooth region stays smooth. A
+cell whose halves genuinely differ keeps its bright foreground, so edges are
+untouched.
+
+There is deliberately **no threshold** in that rule. The comparison is made
+against the error already being accepted, which scales by itself: at eight
+colours almost everything smooth falls below the palette, and at 256 almost
+nothing does. Above `BASIC` the rule does not apply at all, because
+brightness is a colour number there and both halves already draw from the
+same sixteen.
+
 `red` is `#cd0000` at every tier. A better terminal gets closer to what was
 asked for; it does not change what was asked for.
 
 #### Hex Color Conversion
 
-A hex colour is matched against the palette the tier has, by weighted RGB
-distance - green weighted most and blue least, roughly matching how much each
-contributes to perceived brightness, so an approximation stays recognisable:
+A hex colour is matched against the palette the tier has **by perceptual
+distance, in DIN99d** - a uniform colour space, meaning one where a straight
+line between two colours is proportional to how different they look. That is
+precisely the question "which of these is nearest" is asking, and it is not
+a question RGB can answer.
+
+This used to be a weighted RGB distance, green counted most and blue least,
+as a stand-in for perceived brightness. It is a reasonable guess and it is
+measurably not good enough, because it cannot account for the eye's
+sensitivity varying across the space. Scored perceptually against the source
+over every distinct colour in a picture:
+
+| Picture | Depth | weighted RGB | DIN99d |
+|---------|-------|--------------|--------|
+| mickey.gif | 8 | 76.38 | **68.72** |
+| mickey.gif | 256 | 33.40 | **27.53** |
+| earth.gif | 256 | 27.40 | **23.23** |
+| gradient.png | 8 | 119.60 | **65.68** |
+| gradient.png | 16 | 70.38 | **47.93** |
+
+Better on every picture at every depth. The smooth gradient is the extreme
+case - the two metrics disagree there about **two thirds of the time**, and
+the perceptual answer is 45% closer at eight colours.
+
+**The visible consequence to know about: `#ff8000` resolves to bright red at
+eight and sixteen colours, not to yellow.** Measured, orange is 50.96 from
+bright red and 85.31 from yellow, so red is 1.67 times nearer. The old
+weights chose yellow because orange's green channel sits half way to
+yellow's and green was counted four times over. At 256 the question does not
+arise: cube entry 208 really is orange.
+
+sRGB is linearised before any of this (`to_linear`), because sRGB is not
+linear in light and a colour space built on the raw bytes is measuring the
+wrong thing. The same function is what makes `PhotoImage.reduce()` average
+light rather than bytes.
+
+Costs, and how they are paid: the conversion has a cube root, a logarithm
+and an `atan2`, so it is cached at both ends - the palettes convert once,
+and each distinct colour resolves once. `_nearest_extended` now walks all
+256 rather than solving the 6x6x6 cube per channel, because **that shortcut
+is only valid for a separable metric and a perceptual one is not**. Measured
+on a full-screen photograph: 69ms once for 1250 distinct colours, 1.2ms on
+every repaint after.
+
+At `DIRECT` no matching happens at all, so none of this applies:
 
 | Tier | Palette | `#ff8000` resolves to |
 |------|---------|----------------------|
-| `BASIC` | the 8, brightness as `A_BOLD`/`A_DIM` | colour 3, yellow |
-| `BRIGHT` | the 16 as colour numbers | colour 3, yellow |
+| `BASIC` | the 8, brightness as `A_BOLD`/`A_DIM` | colour 1 + bold, bright red |
+| `BRIGHT` | the 16 as colour numbers | colour 9, bright red |
 | `EXTENDED` | 16 named + 6x6x6 cube + 24 greys | colour 208, `#ff8700` |
 | `DIRECT` | none; the number *is* the colour | `0xff8000`, exactly |
+
+As a *background* at `BASIC`, orange is plain red rather than bright red -
+the attribute cannot follow it there. See the note under Extended X11 Color
+Approximations.
 
 #### The 256-colour palette
 
@@ -2019,6 +2100,49 @@ So the ceiling is `min(COLOR_PAIRS, (A_COLOR >> 8) + 1)`, and it is the
 second term that binds. This is not a tuning parameter. The pair number is
 stored per cell, so pairs cannot be recycled within a frame the way a palette
 entry could be.
+
+**The ceiling is Python's, not the terminal's**, which is worth knowing
+before anyone tries to raise it. ncurses 6 will create 65536 pairs and has
+`init_extended_pair()` for naming them; Python's `curses` does not expose it,
+and `curses.color_pair()` packs the number into eight bits. Measured on a
+real terminal: `init_pair(300, …)` succeeds, `color_pair(300) >> 8` is 44,
+and a cell painted with it shows pair 44's colours.
+
+That limit was the dominant cost when drawing a photograph, and it is why a
+renderer that writes its own escape sequences beat this one. chafa has no
+pair table at all. Measured at 106x33 cells, scored perceptually against a
+Lanczos reference:
+
+| | TkCurses, before | TkCurses, now | chafa |
+|---|---|---|---|
+| mickey.gif | 35.06, 14 colours | **6.88, 1793 colours** | 11.78, 1778 |
+| earth.gif | 62.96, 10 colours | **6.54, 4309 colours** | 7.48, 3785 |
+
+**Images are now written past curses**, in whichever form the terminal
+understands — see `_core/direct.py`. Where `COLORTERM` says it takes direct
+colour, `ESC[38;2;r;g;b`; where it merely has 256, `ESC[38;5;N` against the
+palette. **Both matter**: a palette terminal has no pair ceiling either once
+the sequences are written by hand, and going through curses costs it just as
+much.
+
+| 106x33, vs Lanczos | TkCurses | chafa |
+|---|---|---|
+| mickey.gif, 256 | **25.03**, 88 colours | 33.16, 88 colours |
+| mickey.gif, truecolor | **6.88**, 1793 colours | 11.78, 1778 |
+| earth.gif, 256 | **24.06**, 35 colours | 27.83, 36 colours |
+| earth.gif, truecolor | **6.54**, 4309 colours | 7.48, 3785 |
+
+At truecolor the remaining error is the scaler alone: 6.88 is exactly what
+`resize()` scores against the same reference before any colour is chosen.
+
+Eight- and sixteen-colour terminals are left to curses, because 8x8 is 64
+combinations and there is no ceiling to escape. `TKCURSES_DISPLAY_DIRECT_IMAGES=0`
+turns the whole thing off, for a terminal that mis-renders the sequences.
+
+The pair table is still what widgets and text use, and still what an image
+falls back on when the terminal has not said it takes direct colour. Its
+ceiling has not moved; it just no longer decides what a photograph looks
+like.
 
 Running out is handled rather than ignored. `pair_number()` falls back to
 `_nearest_pair()` — the closest pair already allocated, by the same weighted
@@ -3333,7 +3457,11 @@ All inherit from Variable with type-specific `get()` methods.
 ## Image Classes
 
 **An image is a plane of pixels, and it is the same pixel as everywhere else:
-one cell wide, half a cell tall.** See **The pixel** above. `width()` and
+one cell wide, half a cell tall.** Colour arithmetic on those pixels happens
+in linear light, and colour *matching* in DIN99d — see **Hex Color
+Conversion**; neither is optional, and getting either wrong is visible.
+
+See **The pixel** above. `width()` and
 `height()` answer in pixels, as Tk's do, so an image 8 by 4 occupies 8 cells
 across and 2 down. It is drawn by the same `compose()` that draws a canvas,
 so `▀`, `▄` and `█` are what reaches the screen.
@@ -3452,11 +3580,31 @@ terminal palette:
 
 | | 8 colours | 256 | truecolor |
 |---|---|---|---|
-| earth.gif, subsample → reduce | 1319 → 821 | 692 → 126 | 638 → 52 |
-| mickey.gif, subsample → reduce | 3051 → 1421 | 2026 → 321 | 1946 → 133 |
+| earth.gif, subsample → reduce | 25085 → 25363 | 2293 → **494** | 2106 → **260** |
+| mickey.gif, subsample → reduce | 10969 → **9569** | 7405 → **1299** | 7073 → **680** |
 
-Averaging wins at every depth on both — including the flat cartoon, which is
-the case where dropping pixels should have preserved the palette and won.
+**`resize(width, height)` is what a caller fitting a picture to a space
+should use, not `reduce`.** A whole-number factor lands the picture on
+whatever size that factor happens to give: mickey.gif at 320 wide, offered a
+100-cell panel, comes out 80 cells — a fifth of the width discarded. It also
+drifts, because an integer factor covers exactly 3 input pixels where the
+true ratio may be 3.019, dropping the remainder. Measured against a correct
+box filter at 106x66, `reduce` differed by 16.16 and `resize` by 5.12; against
+Lanczos, 17.23 and **6.88**.
+
+Averaging wins decisively from 256 colours up — including the flat cartoon,
+which is the case where dropping pixels should have preserved the palette
+and won, and still loses by 90%.
+
+**At eight colours it is a wash**, and on earth.gif fractionally worse. With
+only eight colours to land on, a careful average and a dropped pixel usually
+quantise to the same entry, and where they differ it is a coin toss.
+
+These numbers replace an earlier set that claimed a win at every depth by 38%
+to 93%. That set was measured before `_average` worked in linear light, and
+against a reference built the same way it was — so it was partly scoring the
+method against itself. The reference here is Lanczos computed in linear
+light, which shares no arithmetic with `reduce`.
 
 `dither()` is a different matter, and the honest answer is narrower than it
 first looked. Error diffusion trades colour accuracy for spatial noise, and
@@ -3465,13 +3613,18 @@ does on a monitor, where a pixel is a quarter of a millimetre. It does not
 here: a pixel is half a character cell, so the dither pattern is seen as
 itself. Measured on mickey.gif at 256 colours against an ideal reduction:
 
-| | flat | dithered |
-|---|---|---|
-| per-pixel — what a terminal shows | **13.48** | 18.50 |
-| after a 3x3 blur — what a monitor shows | 10.03 | **3.71** |
+| picture | depth | flat | dithered |
+|---|---|---|---|
+| mickey.gif | 8 | **71.58** | 90.87 |
+| mickey.gif | 256 | **29.15** | 30.05 |
+| earth.gif | 8 | 126.70 | **120.65** |
+| earth.gif | 256 | **18.95** | 24.67 |
+| gradient.png | 8 | **149.57** | 151.47 |
+| gradient.png | 256 | **29.29** | 34.60 |
 
-Across a grey ramp and two photographs at two depths, flat matching wins
-four times of six per-pixel and every time at 256 colours. So `dither()` is
+Flat wins five of six per-pixel and every time at 256 colours. After a 3x3
+blur the order reverses everywhere and by a wide margin — 26.71 dithered
+against 140.29 flat, on the gradient at 8 colours. So `dither()` is
 available for the case where the cells really are small — a large image at a
 small font — and is not what a widget or a viewer should do by default.
 

@@ -53,6 +53,38 @@ root.mainloop()
 """
 
 
+#: What a colour name renders as, so an assertion can be written with the
+#: name whichever form reached the terminal.
+_AS_RGB = {
+    "black": "000000",
+    "red": "cd0000",
+    "green": "00cd00",
+    "brown": "cdcd00",
+    "yellow": "cdcd00",
+    "blue": "0000ee",
+    "magenta": "cd00cd",
+    "cyan": "00cdcd",
+    "white": "e5e5e5",
+}
+
+
+def colour_at(term, row, column, which="fg"):
+    """The colour of one cell, as a NAME wherever one fits.
+
+    An image's cells are written past curses now - as ``ESC[38;5;N`` against
+    the palette, or ``ESC[38;2;r;g;b`` where the terminal takes direct
+    colour - so pyte reports them as hex where it used to report a name for
+    the basic ``ESC[36m`` form curses emitted. It is the same colour on the
+    terminal; only the spelling changed. This turns it back so the
+    assertions can stay written in names.
+    """
+    value = term.attrs_at(row, column)[which]
+    for name, rgb in _AS_RGB.items():
+        if value == rgb:
+            return name
+    return value
+
+
 def block(term, x, y, width, height):
     """The rectangle of screen at (x, y), as a list of row strings."""
     return [row[x : x + width] for row in term.display[y : y + height]]
@@ -127,8 +159,8 @@ def test_two_colours_share_one_cell(terminal, tmp_path):
     term.wait_for_text(UPPER)
     term.wait_for_idle()
     assert term.display[0][0] == UPPER
-    assert term.attrs_at(0, 0)["fg"] == "red"
-    assert term.attrs_at(0, 0)["bg"] == "blue"
+    assert colour_at(term, 0, 0) == "red"
+    assert colour_at(term, 0, 0, "bg") == "blue"
 
 
 def test_an_image_hides_the_text_by_default(terminal, tmp_path):
@@ -215,9 +247,9 @@ def test_a_hole_shows_what_is_behind_it(terminal, tmp_path):
     term.wait_for_text(FULL)
     term.wait_for_idle()
     assert term.display[0][0] == " "
-    assert term.attrs_at(0, 0)["bg"] == "blue"
+    assert colour_at(term, 0, 0, "bg") == "blue"
     assert term.display[0][1] == FULL
-    assert term.attrs_at(0, 1)["fg"] == "red"
+    assert colour_at(term, 0, 1) == "red"
 
 
 def test_the_image_repaints_when_it_is_written_to(terminal, tmp_path):
@@ -235,7 +267,7 @@ def test_the_image_repaints_when_it_is_written_to(terminal, tmp_path):
     )
     term.wait_for(lambda t: t.display[0][0] == UPPER, message="the repainted image")
     term.wait_for_idle()
-    assert term.attrs_at(0, 0)["fg"] == "green"
+    assert colour_at(term, 0, 0) == "green"
 
 
 def test_the_widget_grows_when_its_image_does(terminal, tmp_path):
@@ -285,7 +317,7 @@ def test_a_bitmap_draws_its_set_bits(terminal, tmp_path):
     term.wait_for_text(FULL)
     term.wait_for_idle()
     assert block(term, 0, 0, 2, 1) == [FULL * 2]
-    assert term.attrs_at(0, 0)["fg"] == "cyan"
+    assert colour_at(term, 0, 0) == "cyan"
 
 
 def test_art_stops_being_drawn_when_its_image_is_collected(terminal, tmp_path):

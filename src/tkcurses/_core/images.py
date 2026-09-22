@@ -82,7 +82,7 @@ import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from tkcurses._core.colors import rgb_of
+from tkcurses._core.colors import from_linear, linear_of, rgb_of
 from tkcurses._core.errors import TclError
 from tkcurses._core.imagefiles import decode, sniff
 
@@ -94,6 +94,16 @@ __all__ = ["BitmapImage", "Image", "PhotoImage"]
 #: A pixel with nothing in it. Not a colour: the pixel declines to paint, and
 #: what is behind it shows through. There is no alpha channel to zero.
 TRANSPARENT = None
+
+#: How many colours :meth:`PhotoImage.fit_pairs` adds between checks. One
+#: compose pass costs about as much as several splits, so checking after
+#: every single colour doubles the work to land a little nearer the budget.
+_FIT_STEP = 4
+
+#: All a curses attribute can name, and so every pair that can exist at once.
+#: Used only as the fallback budget for :meth:`PhotoImage.fit_pairs` when
+#: there is no terminal to ask; the live number is ColorManager.remaining.
+_PAIR_CEILING = 255
 
 #: One pixel: the colour it paints, or None for a hole.
 Pixel = str | None
@@ -118,6 +128,137 @@ def _rows_of(data: str | Iterable[Any]) -> list[Any]:
     if isinstance(data, str):
         return data.split("\n")
     return list(data)
+
+
+def _split_once(
+    boxes: list[list[tuple[str, int]]],
+) -> bool:
+    """Split the widest box in place. False when nothing can be split.
+
+    One step of the median cut, kept separate so the palette can be grown a
+    colour at a time. :meth:`PhotoImage.fit_pairs` needs the whole sequence
+    of palettes, and rebuilding each from scratch was measured at 8.7
+    seconds for one photograph - the splits are the same every time, so they
+    are done once.
+    """
+    chosen: list[tuple[str, int]] | None = None
+    widest = -1.0
+    axis = 0
+    for box in boxes:
+        if len(box) < 2:
+            continue
+        for channel in range(3):
+            levels = [_channel(colour, channel) for colour, _ in box]
+            # Weighted by pixels, so the box that covers more of the picture
+            # is split first when two are equally spread.
+            spread = (max(levels) - min(levels)) * sum(count for _, count in box) ** 0.5
+            if spread > widest:
+                chosen, widest, axis = box, spread, channel
+    if chosen is None:
+        return False
+    chosen.sort(key=lambda item: _channel(item[0], axis))
+    half = sum(count for _, count in chosen) / 2
+    running = 0
+    cut = 1
+    for index, (_, count) in enumerate(chosen):
+        running += count
+        if running >= half:
+            cut = max(1, min(index, len(chosen) - 1))
+            break
+    boxes.remove(chosen)
+    boxes.append(chosen[:cut])
+    boxes.append(chosen[cut:])
+    return True
+
+
+def _mapping_of(boxes: list[list[tuple[str, int]]]) -> dict[str, str]:
+    """Every colour mapped to the pixel-weighted mean of its box."""
+    mapping: dict[str, str] = {}
+    for box in boxes:
+        total = sum(count for _, count in box) or 1
+        averaged = tuple(
+            round(
+                sum(_channel(colour, channel) * count for colour, count in box) / total
+            )
+            for channel in range(3)
+        )
+        stands_in = f"#{averaged[0]:02x}{averaged[1]:02x}{averaged[2]:02x}"
+        for colour, _ in box:
+            mapping[colour] = stands_in
+    return mapping
+
+
+def _spans(source: int, target: int) -> list[list[tuple[int, float]]]:
+    """For each output index, which input indices it covers and by how much.
+
+    The whole of arbitrary-ratio resampling: output pixel ``i`` covers the
+    half-open input range ``[i * source / target, (i + 1) * source / target)``,
+    which generally starts and ends part way through an input pixel. Each
+    input index is paired with the fraction of itself that falls inside.
+
+    Worked out once per axis rather than per pixel, because the spans are the
+    same down every column and along every row.
+    """
+    spans: list[list[tuple[int, float]]] = []
+    scale = source / target
+    for index in range(target):
+        start = index * scale
+        stop = start + scale
+        first = min(int(start), source - 1)
+        # The epsilon keeps an exact boundary - which a whole-number ratio
+        # hits on every pixel - from reaching into the next input pixel for a
+        # zero-width sliver.
+        last = min(int(stop - 1e-9), source - 1)
+        covered = [
+            (where, min(stop, where + 1) - max(start, where))
+            for where in range(first, last + 1)
+            if min(stop, where + 1) > max(start, where)
+        ]
+        spans.append(covered or [(first, 1.0)])
+    return spans
+
+
+def _median_cut(counts: dict[str, int], colours: int) -> dict[str, str]:
+    """Choose ``colours`` representatives for the colours in ``counts``.
+
+    Returns a mapping from every colour present to the one that stands in for
+    it. ``counts`` is colour to pixel count, and the counts matter: a colour
+    covering half the picture has to survive a split that a hundred stray
+    colours would otherwise win.
+
+    The classic median cut. Two choices inside it were measured rather than
+    reasoned about, because the reasoning was wrong the first time:
+
+    **Which box to split** is decided by its widest channel scaled by the
+    square root of the pixels it covers. The weighting earns its place: on
+    mickey.gif reduced to 53x33, dropping it costs 15.36 against 14.45 at 16
+    colours and 11.21 against 8.98 at 32.
+
+    **Where to split it** is the median *pixel* - walk the sorted colours
+    accumulating counts, cut where half the pixels have gone past. This was
+    first documented here as the obviously right choice, on the grounds that
+    cutting at the middle of the *list* spends the palette on rare colours.
+    Measured, that is not true: median-colour is better on mickey at 8 and 16
+    colours (20.18 against 22.79, 13.11 against 14.45) and the two are within
+    noise of each other on earth.gif. Across six cases it is 3 wins to 2 with
+    a tie, which is a wash.
+
+    Median-pixel is kept because it wins in the range that actually gets
+    used: :meth:`PhotoImage.fit_pairs` settles on 24 to 29 colours for a
+    full-screen photograph, and at 32 colours median-pixel leads on mickey
+    (8.98 against 9.94) and ties on earth. It is a close-run choice and not
+    a principle, which is the honest thing to record.
+    """
+    boxes = [list(counts.items())]
+    while len(boxes) < colours and _split_once(boxes):
+        pass
+    return _mapping_of(boxes)
+
+
+def _channel(colour: str, index: int) -> int:
+    """One channel of a colour, or 0 for anything unreadable."""
+    parts = rgb_of(colour)
+    return 0 if parts is None else parts[index]
 
 
 class Image:
@@ -582,20 +723,31 @@ class PhotoImage(Image):
         the grid.
 
         Measured on the perl-Tk demo images, 320x200 reduced by six, scored
-        against a Lanczos reference *after* quantising to the terminal
-        palette - so this is the error a person actually sees:
+        against a Lanczos reference computed in linear light *after*
+        quantising to the terminal palette - so this is the error a person
+        actually sees, against a resampling this code does not share any
+        arithmetic with:
 
-            earth.gif    8 colours 1319 -> 821
-                         256        692 -> 126
-                         truecolor  638 ->  52
-            mickey.gif   8 colours 3051 -> 1421
-                         256       2026 ->  321
-                         truecolor 1946 ->  133
+            picture      depth       subsample   reduce   better by
+            earth.gif    8 colours       25085    25363       -1%
+                         256              2293      494       78%
+                         truecolor        2106      260       88%
+            mickey.gif   8 colours       10969     9569       13%
+                         256              7405     1299       82%
+                         truecolor        7073      680       90%
 
-        Averaging wins at every depth on both, by 38% to 93%. mickey.gif is
-        the interesting one: flat cartoon colour with hard edges is the case
-        where dropping pixels should keep the palette intact and averaging
-        should muddy it, and it still loses by 93%.
+        Averaging wins decisively from 256 colours up, and mickey.gif is the
+        interesting case: flat cartoon colour with hard edges is where
+        dropping pixels should keep the palette intact and averaging should
+        muddy it, and it still loses by 90%.
+
+        **At eight colours it is a wash**, and on earth.gif fractionally
+        worse. With only eight colours to land on, a careful average and a
+        dropped pixel usually quantise to the same entry, and where they
+        differ it is a coin toss. The earlier version of this table claimed a
+        win at every depth; it was measured before :meth:`_average` worked in
+        linear light and against a reference built the same way, which
+        flattered it.
 
         A block that is more than half holes stays a hole, so a silhouette
         keeps its shape instead of growing a fringe of half-lit edges.
@@ -618,8 +770,23 @@ class PhotoImage(Image):
         return clone
 
     def _average(self, x: int, y: int, across: int, down: int) -> Pixel:
-        """The mean colour of one block, or None where it is mostly hole."""
-        red = green = blue = 0
+        """The mean colour of one block, or None where it is mostly hole.
+
+        **Averaged in linear light, not in sRGB bytes.** sRGB carries roughly
+        a 2.2 gamma, so the mean of two bytes is not the byte of the mean
+        brightness - and the error is always in the same direction, darker.
+        Measured on a 50/50 black-and-white checkerboard reduced to one
+        pixel: averaging the bytes gives 127 where the light says 188.
+
+        It shows up wherever a block spans an edge, so it is worst on exactly
+        the pictures that look drawn rather than photographed. Per channel,
+        against the light-correct answer, before this was fixed:
+
+            mickey.gif    mean 14.69   max 74
+            earth.gif     mean  3.10   max 32
+            gradient.png  mean  0.66   max  1
+        """
+        red = green = blue = 0.0
         lit = 0
         for row in self._pixels[y : y + down]:
             for pixel in row[x : x + across]:
@@ -628,15 +795,291 @@ class PhotoImage(Image):
                 parts = rgb_of(pixel)
                 if parts is None:
                     continue
-                red += parts[0]
-                green += parts[1]
-                blue += parts[2]
+                red += linear_of(parts[0])
+                green += linear_of(parts[1])
+                blue += linear_of(parts[2])
                 lit += 1
         if lit * 2 <= across * down:
             # More hole than colour. Averaging the few lit pixels here would
             # spread a shape's edge outwards by half a block on every side.
             return TRANSPARENT
-        return f"#{red // lit:02x}{green // lit:02x}{blue // lit:02x}"
+        return (
+            f"#{from_linear(red / lit):02x}"
+            f"{from_linear(green / lit):02x}"
+            f"{from_linear(blue / lit):02x}"
+        )
+
+    def resize(self, width: int, height: int) -> PhotoImage:
+        """A copy resampled to exactly ``width`` by ``height`` pixels.
+
+        **The one to use when fitting a picture to a space.** :meth:`reduce`
+        takes a whole-number factor, so a picture lands on whatever size a
+        whole number happens to give rather than the size on offer. Measured
+        on mickey.gif, 320 pixels wide:
+
+            panel offered   reduce() delivers   width used
+                      120           106 cells          88%
+                      100            80 cells          80%
+                       90            80 cells          88%
+
+        A fifth of the width thrown away at a 100-cell panel, and with it a
+        fifth of the detail, for nothing but arithmetic.
+
+        It costs accuracy even at a size a whole number fits. An integer
+        factor covers exactly three input pixels where the true ratio might
+        be 3.019, so the sampling grid drifts across the picture and the
+        remainder is dropped. Scored perceptually on mickey at 106x66,
+        reduce() differed from a correct box filter by 16.16 - more than a
+        correct box filter differs from Lanczos, at 9.12.
+
+        Each output pixel is the average of the input it covers, weighted by
+        how much of each input pixel falls inside it, so the ratio need not
+        be whole. In linear light, like :meth:`reduce` - see
+        :func:`~tkcurses._core.colors.to_linear`. A block more than half hole
+        stays a hole, by the same rule and for the same reason.
+
+        Raises:
+            TclError: If either dimension is not positive.
+        """
+        if width <= 0 or height <= 0:
+            raise TclError("resize needs a positive width and height")
+        if not self._pixels or not self._pixels[0]:
+            return self.copy()
+        columns = _spans(self.width(), width)
+        rows = _spans(self.height(), height)
+        # Converted once per distinct colour rather than once per visit. A
+        # pixel on a block boundary is looked at by several output pixels,
+        # and parsing its hex each time was most of the cost: measured, 231ms
+        # against 33ms for one photograph.
+        linear: dict[str, tuple[float, float, float] | None] = {}
+        for line in self._pixels:
+            for pixel in line:
+                if pixel is not None and pixel not in linear:
+                    parts = rgb_of(pixel)
+                    linear[pixel] = (
+                        None
+                        if parts is None
+                        else (
+                            linear_of(parts[0]),
+                            linear_of(parts[1]),
+                            linear_of(parts[2]),
+                        )
+                    )
+        clone = self.copy()
+        clone._pixels = [
+            [self._area(column, row, linear) for column in columns] for row in rows
+        ]
+        clone._remeasure()
+        return clone
+
+    def _area(
+        self,
+        columns: list[tuple[int, float]],
+        rows: list[tuple[int, float]],
+        linear: dict[str, tuple[float, float, float] | None],
+    ) -> Pixel:
+        """The weighted mean of one fractional block, or None where mostly hole."""
+        red = green = blue = 0.0
+        lit = total = 0.0
+        for y, down in rows:
+            line = self._pixels[y]
+            for x, across in columns:
+                weight = down * across
+                total += weight
+                pixel = line[x]
+                if pixel is None:
+                    continue
+                parts = linear.get(pixel)
+                if parts is None:
+                    continue
+                red += parts[0] * weight
+                green += parts[1] * weight
+                blue += parts[2] * weight
+                lit += weight
+        if lit * 2 <= total:
+            return TRANSPARENT
+        return (
+            f"#{from_linear(red / lit):02x}"
+            f"{from_linear(green / lit):02x}"
+            f"{from_linear(blue / lit):02x}"
+        )
+
+    def quantize(self, colours: int) -> PhotoImage:
+        """A copy using at most ``colours`` colours, chosen from this picture.
+
+        The counterpart to :meth:`dither`, and the difference between them is
+        *whose* palette is used. ``dither`` snaps every pixel to a colour the
+        terminal already has; this picks a small palette **out of the picture
+        itself**, which is only worth doing if those colours can then be
+        reproduced exactly.
+
+        That is the whole point, and it is easy to get backwards. A palette of
+        sixteen colours taken from the picture and then snapped to the 256
+        cube is *worse than not doing it at all*, because the two errors
+        stack. Measured, mean per-pixel error against the unquantised image,
+        with the distinct ``(fg, bg)`` pairs each needs:
+
+            picture   256 cube, shared   16 taken then snapped   16 exact
+            mickey    231 pairs  18.35   97 pairs  23.89         149 pairs  14.45
+            earth     230 pairs  14.34   102 pairs 16.32         143 pairs   7.50
+
+        So a small *exact* palette beats a large shared one on accuracy and
+        on pairs together - earth halves its error while using 87 fewer pairs
+        - and the same palette approximated is a regression. Use this where
+        the colours it picks will be shown as asked for.
+
+        Why pairs and not colours: a pair is a *combination* of foreground and
+        background, and there are only 255 of them on a screen. They do not
+        scale with the palette - earth.gif at full size is 253 colours but
+        8583 pairs - so :meth:`fit_pairs` is what sizes a palette to fit,
+        rather than arithmetic on this number.
+
+        Median cut, weighted by how many pixels each colour covers: split the
+        box with the widest spread along that channel, at the median pixel
+        rather than the median colour, so a colour covering half the picture
+        is not outvoted by a hundred stray ones. Holes stay holes.
+
+        Note:
+            An image already within ``colours`` comes back unchanged, so this
+            is safe to apply to flat art that never needed it.
+
+        Args:
+            colours: The most colours the result may use.
+
+        Raises:
+            TclError: If ``colours`` is not positive.
+        """
+        if colours <= 0:
+            raise TclError("quantize needs a positive number of colours")
+        counts: dict[str, int] = {}
+        for row in self._pixels:
+            for pixel in row:
+                if pixel is not None:
+                    counts[pixel] = counts.get(pixel, 0) + 1
+        clone = self.copy()
+        if len(counts) <= colours:
+            return clone
+        return self._mapped(_median_cut(counts, colours))
+
+    def pairs_needed(self, depth: Any = None) -> int:
+        """How many distinct ``(fg, bg)`` combinations drawing this would take.
+
+        The number that actually matters, because a colour pair is what the
+        terminal runs out of - 255 of them, and a pair is a *combination*, so
+        this is not the colour count and does not track it. Measured,
+        earth.gif at full size is 253 colours and 8583 pairs.
+
+        **Counted as the terminal will resolve them, not as the picture
+        stores them.** Those are wildly different numbers wherever the
+        palette is small: mickey.gif at 120x38 holds 1862 distinct
+        combinations, and on an eight-colour terminal they land on 42.
+        Counting the stored colours made :meth:`fit_pairs` believe an
+        eight-colour terminal was 1800 pairs short and crush the picture to
+        five colours - throwing away three quarters of what that terminal
+        could actually have shown.
+
+        Args:
+            depth: What the terminal can show. Defaults to whatever the
+                application's terminal reports, so the usual call takes no
+                argument at all.
+
+        Counted through the same :func:`~tkcurses._core.canvas.compose` that
+        draws the image, so it is the real demand rather than an estimate.
+        """
+        from tkcurses._core.canvas import compose
+        from tkcurses._core.colors import ColorDepth, _resolve_rgb
+
+        if depth is None:
+            manager = getattr(self._tk, "colors", None)
+            depth = getattr(manager, "depth", ColorDepth.DIRECT)
+        if depth >= ColorDepth.DIRECT:
+            # Every colour is itself, so the stored combinations are the
+            # real ones and there is nothing to resolve.
+            return len({(fore, back) for _, fore, back in compose(self.lit()).values()})
+
+        def entry(spec: str | None, background: bool) -> tuple[int, int] | None:
+            if spec is None:
+                return None
+            parts = rgb_of(spec)
+            if parts is None:
+                return None
+            resolved = _resolve_rgb(parts, depth, background=background)
+            return (resolved.color, resolved.attr)
+
+        return len(
+            {
+                (entry(fore, False), entry(back, True))
+                for _, fore, back in compose(self.lit()).values()
+            }
+        )
+
+    def fit_pairs(self, budget: int | None = None, depth: Any = None) -> PhotoImage:
+        """A copy that can be drawn within ``budget`` colour pairs.
+
+        Reduces the palette - by the same median cut :meth:`quantize` uses -
+        only as far as it has to, and not at all if the picture already fits.
+        Small or flat art comes back untouched.
+
+        This exists because the palette size cannot be a constant. Measured
+        on two pictures at the same 53x33 size, a 32-colour palette needs 275
+        pairs on one and 304 on the other, both over the 255 ceiling, while
+        16 colours needs 149 and 143 and sits comfortably under. Which size
+        fits depends on the picture, on how large it is drawn, and on what
+        else is on screen - so it is found by asking rather than assumed.
+
+        **Grown one colour at a time rather than searched.** The first
+        version binary-searched the palette size and rebuilt the whole median
+        cut for each probe, which measured **8.7 seconds** on earth.gif - the
+        splits are identical every time, so they are now done once and the
+        pair count checked as the palette grows. The same call is 40ms.
+
+        Args:
+            budget: The most pairs the result may need. Defaults to what the
+                terminal has left right now, which is the honest number: an
+                image cannot assume the whole table, because widgets and text
+                have already taken some of it.
+
+        Raises:
+            TclError: If ``budget`` is not positive.
+        """
+        if budget is None:
+            manager = getattr(self._tk, "colors", None)
+            budget = getattr(manager, "remaining", 0) or _PAIR_CEILING
+        if budget <= 0:
+            raise TclError("fit_pairs needs a positive budget")
+        if self.pairs_needed(depth) <= budget:
+            return self.copy()
+
+        counts: dict[str, int] = {}
+        for row in self._pixels:
+            for pixel in row:
+                if pixel is not None:
+                    counts[pixel] = counts.get(pixel, 0) + 1
+
+        boxes = [list(counts.items())]
+        best = self._mapped(_mapping_of(boxes))
+        while len(boxes) < len(counts):
+            # Checked every few colours rather than every one: a compose pass
+            # costs about as much as several splits, and the pair count moves
+            # smoothly enough that landing a little under the budget is
+            # better than paying to land exactly on it.
+            for _ in range(_FIT_STEP):
+                if not _split_once(boxes):
+                    break
+            candidate = self._mapped(_mapping_of(boxes))
+            if candidate.pairs_needed(depth) > budget:
+                return best
+            best = candidate
+        return best
+
+    def _mapped(self, mapping: dict[str, str]) -> PhotoImage:
+        """A copy with every pixel replaced through ``mapping``. Holes stay."""
+        clone = self.copy()
+        clone._pixels = [
+            [TRANSPARENT if pixel is None else mapping[pixel] for pixel in row]
+            for row in self._pixels
+        ]
+        return clone
 
     def dither(self, depth: Any = None) -> PhotoImage:
         """A copy whose every pixel is a colour the terminal really has.
@@ -663,17 +1106,24 @@ class PhotoImage(Image):
         A pixel here is half a character cell - tens of screen pixels - and
         the eye merges nothing. You see the dither pattern itself.
 
-        Measured on mickey.gif reduced to 53x33 and quantised to the 256
-        palette, scored against an ideal reduction:
+        Measured against the fitted source, over two photographs and a
+        gradient at two depths:
 
-            per-pixel        flat 13.48   dithered 18.50   flat is better
-            after a 3x3 blur flat 10.03   dithered  3.71   dither is better
+            picture        depth      flat   dithered
+            mickey.gif     8         71.58      90.87
+            mickey.gif     256       29.15      30.05
+            earth.gif      8        126.70     120.65
+            earth.gif      256       18.95      24.67
+            gradient.png   8        149.57     151.47
+            gradient.png   256       29.29      34.60
 
-        Both numbers are true and they disagree, because they assume
-        different viewers. The first is what a terminal shows. Across a grey
-        ramp and two photographs at two depths, flat matching wins four
-        times out of six on the per-pixel score, and every time at 256
-        colours; the two it loses are at 8 colours where both are poor.
+        Flat wins five of those six per-pixel, and every time at 256
+        colours. After a 3x3 blur the order reverses everywhere and by a
+        wide margin - on the gradient at 8 colours, 26.71 dithered against
+        140.29 flat.
+
+        Both sets are true and they disagree, because they assume different
+        viewers. The first is what a terminal shows.
 
         So this is a tool and not a default. It is worth having for the case
         where the cells really are small - a large image at a small font -

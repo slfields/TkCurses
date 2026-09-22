@@ -29,6 +29,17 @@ import pytest
 pytestmark = pytest.mark.tty
 
 
+#: The canvas is 40x12 at (0, 0), so on a 12-row terminal it covers every
+#: row there is. A test that writes a marker into the screen BUFFER and then
+#: waits for it is writing underneath an opaque panel, and whether it ever
+#: shows depends on what repaints that panel afterwards - which is why those
+#: tests asked for 13 rows and put the marker on row 12.
+#:
+#: This was TkCurses-txk's second shape: "the program exited with code 0
+#: while waiting for text 'ready'". The program had run, drawn, and quit
+#: normally; the marker was simply never visible. The same mistake is
+#: written up in test_redraw_cost_tty.py, which moved its own results to
+#: rows 37 and 38 for exactly this reason.
 def program(body: str) -> str:
     return f"""
 import tkcurses
@@ -242,11 +253,11 @@ def test_a_text_item_takes_a_font(terminal, tmp_path):
 
 
 def test_moving_an_item_clears_where_it_was(terminal, tmp_path):
-    term = terminal(cols=40, rows=12)
+    term = terminal(cols=40, rows=13)
     term.run_source(
         program(
             "r = c.create_rectangle(0, 0, 6, 6, fill='white', outline='')\n"
-            "buffer.write(11, 0, 'ready')\n"
+            "buffer.write(12, 0, 'ready')\n"
             "root.after(200, lambda: c.move(r, 20, 0))"
         ),
         workdir=tmp_path,
@@ -274,11 +285,11 @@ def test_deleting_an_item_clears_it(terminal, tmp_path):
 
 
 def test_a_hidden_item_is_not_drawn(terminal, tmp_path):
-    term = terminal(cols=40, rows=12)
+    term = terminal(cols=40, rows=13)
     term.run_source(
         program(
             "c.create_rectangle(0, 0, 10, 10, fill='white', state='hidden')\n"
-            "buffer.write(11, 0, 'ready')"
+            "buffer.write(12, 0, 'ready')"
         ),
         workdir=tmp_path,
     )
@@ -288,7 +299,7 @@ def test_a_hidden_item_is_not_drawn(terminal, tmp_path):
 
 
 def test_clicking_an_item_runs_its_binding(terminal, tmp_path):
-    term = terminal(cols=40, rows=12)
+    term = terminal(cols=40, rows=13)
     term.run_source(
         program(
             "def hit(event):\n"
@@ -296,7 +307,7 @@ def test_clicking_an_item_runs_its_binding(terminal, tmp_path):
             "    root.tk.screen.refresh()\n"
             "r = c.create_rectangle(0, 0, 10, 10, fill='white', outline='', tags='hot')\n"
             "c.tag_bind('hot', '<Button-1>', hit)\n"
-            "buffer.write(10, 0, 'ready')"
+            "buffer.write(12, 0, 'ready')"
         ),
         workdir=tmp_path,
     )
@@ -308,7 +319,7 @@ def test_clicking_an_item_runs_its_binding(terminal, tmp_path):
 
 
 def test_clicking_past_an_item_runs_nothing(terminal, tmp_path):
-    term = terminal(cols=40, rows=12)
+    term = terminal(cols=40, rows=13)
     term.run_source(
         program(
             "def hit(event):\n"
@@ -316,7 +327,7 @@ def test_clicking_past_an_item_runs_nothing(terminal, tmp_path):
             "    root.tk.screen.refresh()\n"
             "c.create_rectangle(0, 0, 6, 6, fill='white', outline='', tags='hot')\n"
             "c.tag_bind('hot', '<Button-1>', hit)\n"
-            "buffer.write(10, 0, 'ready')"
+            "buffer.write(12, 0, 'ready')"
         ),
         workdir=tmp_path,
     )
@@ -327,12 +338,12 @@ def test_clicking_past_an_item_runs_nothing(terminal, tmp_path):
 
 
 def test_scrolling_moves_what_is_visible(terminal, tmp_path):
-    term = terminal(cols=40, rows=12)
+    term = terminal(cols=40, rows=13)
     term.run_source(
         program(
             "c.configure(scrollregion=(0, 0, 80, 48))\n"
             "c.create_rectangle(50, 30, 70, 40, fill='white', outline='')\n"
-            "buffer.write(11, 0, 'ready')\n"
+            "buffer.write(12, 0, 'ready')\n"
             "root.after(200, lambda: (c.xview_moveto(0.5), c.yview_moveto(0.5)))"
         ),
         workdir=tmp_path,
