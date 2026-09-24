@@ -105,6 +105,12 @@ class InputSettings:
     poll_timeout: int = 50
     keypad: bool = True
     #: How long to wait for the rest of an escape sequence after ESC.
+    #:
+    #: ncurses defaults to a full second, which makes Escape - the key that
+    #: cancels things - feel broken. Every terminal in common use sends the
+    #: rest of a sequence in the same packet, so 25ms loses nothing and is
+    #: what most terminal applications settle on. A slow serial link, or a
+    #: terminal that splits a sequence across packets, wants more.
     escape_delay: int = 25
 
 

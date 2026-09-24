@@ -755,3 +755,53 @@ def test_the_terminal_flow_control_is_put_back(terminal, tmp_path):
         workdir=tmp_path,
     )
     assert term.wait_for_exit(timeout=10) == 0, term.stderr
+
+
+# ------------------------------------------------- the escape delay
+
+
+def escdelay_program() -> str:
+    """An application that reports what it really told ncurses."""
+    return """
+import curses
+import tkcurses
+
+root = tkcurses.Tk()
+buffer = root.tk.screen.buffer
+buffer.write(0, 0, 'escdelay=%d' % curses.get_escdelay())
+root.tk.screen.refresh()
+root.after(4000, root.quit)
+root.mainloop()
+"""
+
+
+def reported_delay(term) -> int:
+    row = next(line for line in term.display if "escdelay=" in line)
+    return int(row.split("escdelay=")[1].split()[0])
+
+
+def test_the_escape_delay_comes_from_the_configuration(terminal, tmp_path):
+    """**Measured through ncurses, not read back off the config.**
+
+    The config half of this was written first and was complete - the field,
+    its range, its environment variable and a test that it parses. Nothing
+    read it. `set_escdelay` was called with a hardcoded constant, so
+    TKCURSES_INPUT_ESCAPE_DELAY was accepted, validated, covered by a test
+    and changed nothing at all.
+
+    A setting that is documented and inert is worse than one that was never
+    added, because it will be believed. The test that would have caught it
+    is this one: ask ncurses what the delay actually is.
+    """
+    term = terminal(cols=30, rows=6, env={"TKCURSES_INPUT_ESCAPE_DELAY": "300"})
+    term.run_source(escdelay_program(), workdir=tmp_path)
+    term.wait_for_text("escdelay=")
+    assert reported_delay(term) == 300
+
+
+def test_the_escape_delay_defaults_to_25_without_configuration(terminal, tmp_path):
+    """ncurses' own default is a full second, which makes Escape feel broken."""
+    term = terminal(cols=30, rows=6, env={"TKCURSES_INPUT_ESCAPE_DELAY": ""})
+    term.run_source(escdelay_program(), workdir=tmp_path)
+    term.wait_for_text("escdelay=")
+    assert reported_delay(term) == 25

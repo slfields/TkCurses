@@ -3513,11 +3513,6 @@ class Wm:
 # The root window
 # ======================================================================
 
-#: How long ncurses waits for the rest of an escape sequence before deciding
-#: a lone Escape was meant. Tracked as TkCurses-dn5 for a config option; this
-#: is the value most terminal applications settle on.
-_ESCAPE_DELAY_MS = 25
-
 #: Longest the loop will wait on input when no timer is due. It does not sit
 #: on a blocking read forever: quit() may be called from another thread, a
 #: SIGWINCH may need servicing, and work queued through the dispatcher has to
@@ -3623,15 +3618,19 @@ class Tk(BaseWidget, Wm):
         """
         buffer = self._screen.start()
         try:
+            settings = TkCursesConfig.load()
             # ncurses cannot tell a lone Escape from the start of an escape
             # sequence until this long has passed with nothing following. The
             # default is a full second, which makes Escape - the key that
-            # cancels things - feel broken. Every terminal in use sends the
-            # rest of a sequence in the same packet, so a short wait loses
-            # nothing and makes the key usable.
+            # cancels things - feel broken.
+            #
+            # Read from the configuration, not hardcoded: a slow serial link
+            # or a terminal that splits a sequence across packets needs
+            # longer, and until this line existed the setting was accepted,
+            # validated and tested while changing nothing at all.
             with contextlib.suppress(AttributeError, _curses.error):
-                _curses.set_escdelay(_ESCAPE_DELAY_MS)
-            mouse = TkCursesConfig.load().mouse
+                _curses.set_escdelay(settings.input.escape_delay)
+            mouse = settings.mouse
             self._input = InputHandler(
                 self._screen.stdscr,
                 click_interval=mouse.click_interval,
