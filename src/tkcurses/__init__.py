@@ -119,7 +119,13 @@ from tkcurses._core.images import (
 )
 from tkcurses._core.input import InputHandler
 from tkcurses._core.menus import (
-    CASCADE,
+    # The GLYPH drawn for a submenu, not tkinter's CASCADE, which is the
+    # string 'cascade' naming an entry TYPE. Two different things with one
+    # name: importing tkinter's over this one would have drawn "File
+    # cascade" where the arrow belongs.
+    CASCADE as CASCADE_GLYPH,
+)
+from tkcurses._core.menus import (
     MenuEntry,
     measure_entries,
     place_popup,
@@ -132,14 +138,97 @@ from tkcurses._core.place import BORDERMODES, PlaceLayout, PlaceOptions
 from tkcurses._core.screen import CursesScreen
 from tkcurses._core.text import align_offset, measure, wrap, wrap_spans
 from tkcurses._core.textbuffer import Index, TextBuffer
+
+# Every constant tkinter's own module defines, re-exported so that a
+# star-import puts the same names in scope. tkinter does this with
+# ``from tkinter.constants import *``; the list is spelled out here because
+# ``tkcurses.constants`` also carries curses names - A_BOLD, KEY_UP and
+# friends - which tkinter has no equivalent for and which a star-import must
+# therefore NOT bind. A program written against tkinter should not acquire
+# names from us that tkinter would not have given it.
+#
+# A widget program stopped at import on `NameError: name 'RIGHT' is not
+# defined` while every value behind those names already worked, which is
+# TkCurses-bm8. Kept honest by a test that compares this against
+# tkinter.constants itself rather than a copy of the list.
 from tkcurses.constants import (
+    ACTIVE,
+    ALL,
     ANCHOR,
+    ARC,
+    BASELINE,
+    BEVEL,
+    BOTH,
+    BOTTOM,
+    BROWSE,
+    BUTT,
+    CASCADE,
+    CENTER,
+    CHAR,
+    CHECKBUTTON,
+    CHORD,
+    COMMAND,
+    CURRENT,
+    DISABLED,
+    DOTBOX,
     END,
+    EW,
+    EXTENDED,
+    FALSE,
+    FIRST,
     FLAT,
     GROOVE,
+    HIDDEN,
+    HORIZONTAL,
     INSERT,
+    INSIDE,
+    LAST,
+    LEFT,
+    MITER,
+    MOVETO,
+    MULTIPLE,
+    NE,
+    NO,
+    NONE,
+    NORMAL,
+    NS,
+    NSEW,
+    NUMERIC,
+    NW,
+    OFF,
+    ON,
+    OUTSIDE,
+    PAGES,
+    PIESLICE,
+    PROJECTING,
+    RADIOBUTTON,
+    RAISED,
+    RIDGE,
+    RIGHT,
+    ROUND,
+    SCROLL,
+    SE,
+    SEL,
     SEL_FIRST,
     SEL_LAST,
+    SEPARATOR,
+    SINGLE,
+    SOLID,
+    SUNKEN,
+    SW,
+    TOP,
+    TRUE,
+    UNDERLINE,
+    UNITS,
+    VERTICAL,
+    WORD,
+    YES,
+    E,
+    N,
+    S,
+    W,
+    X,
+    Y,
 )
 
 if TYPE_CHECKING:
@@ -164,8 +253,81 @@ This is free software, and you are welcome to redistribute it
 under the terms of the GNU General Public License version 3.
 See <https://www.gnu.org/licenses/gpl-3.0.html> for the full terms."""
 
+#: The constants come first, as one block, because they are a set rather
+#: than a list of individual decisions - see the import above.
 __all__ = [
+    "ACTIVE",
+    "ALL",
+    "ANCHOR",
+    "ARC",
+    "BASELINE",
+    "BEVEL",
+    "BOTH",
+    "BOTTOM",
+    "BROWSE",
+    "BUTT",
+    "CASCADE",
+    "CENTER",
+    "CHAR",
+    "CHECKBUTTON",
+    "CHORD",
+    "COMMAND",
+    "CURRENT",
+    "DISABLED",
+    "DOTBOX",
+    "END",
+    "EW",
+    "EXTENDED",
+    "FALSE",
+    "FIRST",
+    "FLAT",
+    "GROOVE",
+    "HIDDEN",
+    "HORIZONTAL",
+    "INSERT",
+    "INSIDE",
+    "LAST",
+    "LEFT",
+    "MITER",
+    "MOVETO",
+    "MULTIPLE",
+    "NE",
+    "NO",
+    "NONE",
+    "NORMAL",
     "NOTICE",
+    "NS",
+    "NSEW",
+    "NUMERIC",
+    "NW",
+    "OFF",
+    "ON",
+    "OUTSIDE",
+    "PAGES",
+    "PIESLICE",
+    "PROJECTING",
+    "RADIOBUTTON",
+    "RAISED",
+    "RIDGE",
+    "RIGHT",
+    "ROUND",
+    "SCROLL",
+    "SE",
+    "SEL",
+    "SEL_FIRST",
+    "SEL_LAST",
+    "SEPARATOR",
+    "SINGLE",
+    "SOLID",
+    "SUNKEN",
+    "SW",
+    "TOP",
+    "TRUE",
+    "UNDERLINE",
+    "UNITS",
+    "VERTICAL",
+    "WORD",
+    "YES",
     "BaseWidget",
     "BitmapImage",
     "BooleanVar",
@@ -173,6 +335,7 @@ __all__ = [
     "Canvas",
     "Checkbutton",
     "DoubleVar",
+    "E",
     "Entry",
     "Event",
     "Frame",
@@ -186,6 +349,7 @@ __all__ = [
     "Menubutton",
     "Message",
     "Misc",
+    "N",
     "NoDefaultRoot",
     "OptionMenu",
     "Pack",
@@ -193,6 +357,7 @@ __all__ = [
     "PhotoImage",
     "Place",
     "Radiobutton",
+    "S",
     "Scale",
     "Scrollbar",
     "Spinbox",
@@ -203,8 +368,11 @@ __all__ = [
     "TkCursesError",
     "Toplevel",
     "Variable",
+    "W",
     "Widget",
     "Wm",
+    "X",
+    "Y",
     "__author__",
     "__copyright__",
     "__license__",
@@ -9765,7 +9933,7 @@ class Menu(_Drawable):
             if accelerator:
                 line = line[: area.width - len(accelerator)] + accelerator
             if entry.kind == "cascade" and cascades:
-                line = line[: area.width - 1] + CASCADE
+                line = line[: area.width - 1] + CASCADE_GLYPH
             self._write_line(
                 dispatcher,
                 window,
