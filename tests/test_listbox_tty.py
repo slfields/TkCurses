@@ -63,7 +63,14 @@ def test_only_as_many_items_as_fit_are_shown(terminal, tmp_path):
 def test_the_selected_item_is_marked(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(program(LIST + "lb.selection_set(1)"), workdir=tmp_path)
-    term.wait_for(lambda t: "▶" in "\n".join(t.display), message="the marker")
+    # Both markers and the text between them, in one wait: "▶" arriving does
+    # not promise that "◀" at the other end of the row has - TkCurses-txk.
+    term.wait_for(
+        lambda t: any(
+            "▶" in line and "◀" in line and "beta" in line for line in t.display
+        ),
+        message="the marked row, both markers",
+    )
     row = next(i for i, line in enumerate(term.display) if "▶" in line)
     assert "beta" in term.display[row]
     assert "◀" in term.display[row]

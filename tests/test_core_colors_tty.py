@@ -289,7 +289,20 @@ def test_no_pair_is_ever_numbered_past_what_an_attribute_can_carry(terminal, tmp
         "    screen.stop()\n",
         workdir=tmp_path,
     )
-    term.wait_for_text("exhausted")
+    # Rows 0 and 1 are parsed for numbers, so wait for them rather than for
+    # "exhausted", which the program prints on a row of its own. An int()
+    # over a half-written row raises ValueError, which reads as a bug in the
+    # allocator rather than as a partial frame - TkCurses-txk.
+    term.wait_for(
+        lambda t: (
+            t.display[0].split()[-1:]
+            and t.display[0].split()[-1].isdigit()
+            and t.display[1].split()[-1:]
+            and t.display[1].split()[-1].isdigit()
+            and t.contains("exhausted")
+        ),
+        message="both counted rows and the exhausted line",
+    )
     screen = "\n".join(term.display)
     highest = int(term.display[0].split()[-1])
     allocated = int(term.display[1].split()[-1])
@@ -336,7 +349,13 @@ def test_running_out_of_pairs_gives_a_near_colour_not_a_default_one(terminal, tm
         "    screen.stop()\n",
         workdir=tmp_path,
     )
-    term.wait_for_text("pair ")
+    # Row 0 is what gets parsed, and "pair " alone can match before the
+    # "rgb (...)" on the same row has arrived - the split below would then
+    # raise IndexError - TkCurses-txk.
+    term.wait_for(
+        lambda t: "pair " in t.display[0] and ")" in t.display[0].split("rgb (")[-1],
+        message="the pair line with its rgb triple",
+    )
     line = term.display[0]
     assert "rgb (" in line, line
     red, green, blue = (

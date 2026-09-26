@@ -57,7 +57,16 @@ def test_a_label_wraps_at_its_wraplength(terminal, tmp_path):
         ),
         workdir=tmp_path,
     )
-    term.wait_for_text("one two")
+    # All three rows in one wait. The first line of a wrapped label can
+    # arrive before the rest - TkCurses-txk.
+    term.wait_for(
+        lambda t: (
+            t.display[0].startswith("one two")
+            and t.display[1].startswith("three")
+            and t.display[2].startswith("four")
+        ),
+        message="all three wrapped rows",
+    )
     assert term.display[0].startswith("one two")
     assert term.display[1].startswith("three")
     assert term.display[2].startswith("four")
@@ -72,7 +81,14 @@ def test_justify_aligns_the_lines_against_each_other(terminal, tmp_path):
         ),
         workdir=tmp_path,
     )
-    term.wait_for_text("longer")
+    # "longer" is row 1; row 0 is what the justification is really judged
+    # on, so it is waited for too - TkCurses-txk.
+    term.wait_for(
+        lambda t: (
+            t.display[0].startswith("     a") and t.display[1].startswith("longer")
+        ),
+        message="both justified rows",
+    )
     # The short line is pushed right to meet the long one's edge.
     assert term.display[0].startswith("     a")
     assert term.display[1].startswith("longer")

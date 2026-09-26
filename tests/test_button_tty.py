@@ -44,7 +44,16 @@ def test_a_button_shows_its_text_in_a_box(terminal, tmp_path):
         program("tkcurses.Button(root, text='OK').place(x=2, y=2)"),
         workdir=tmp_path,
     )
-    term.wait_for_text("OK")
+    # Waits for the border rows too, not only for the text between them.
+    # A wait on "OK" alone returns as soon as the label lands, and the box
+    # above and below it may still be on its way - TkCurses-txk.
+    term.wait_for(
+        lambda t: any(
+            "OK" in line and "┌" in t.display[i - 1] and "└" in t.display[i + 1]
+            for i, line in enumerate(t.display[1:-1], start=1)
+        ),
+        message="the button and the box around it",
+    )
     row = next(i for i, line in enumerate(term.display) if "OK" in line)
     assert "┌" in term.display[row - 1]
     assert "└" in term.display[row + 1]

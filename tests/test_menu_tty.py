@@ -65,7 +65,12 @@ root.mainloop()
 def test_a_menubar_is_drawn_across_the_top(terminal, tmp_path):
     term = terminal(cols=52, rows=16)
     term.run_source(MENUBAR, workdir=tmp_path)
-    term.wait_for_text("File")
+    # Both labels, not just the first: "File" landing says nothing about
+    # "View" further along the same row - TkCurses-txk.
+    term.wait_for(
+        lambda t: "File" in t.display[0] and "View" in t.display[0],
+        message="both menubar labels",
+    )
     assert "File" in term.display[0]
     assert "View" in term.display[0]
 

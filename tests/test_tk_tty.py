@@ -422,7 +422,15 @@ def test_a_widget_cut_off_by_an_edge_is_clipped_not_wrapped(terminal, tmp_path):
         ),
         workdir=tmp_path,
     )
-    term.wait_for(lambda t: "\u250c" in t.display[1], message="the wide frame")
+    # Two frames are being drawn and both are asserted on, so wait for the
+    # second one's corner as well: a wait on row 1 alone returns while the
+    # tall frame at row 5 may still be arriving, and the assertions below
+    # about rows 5 and 6+ would then be reading an unfinished screen -
+    # TkCurses-txk.
+    term.wait_for(
+        lambda t: "\u250c" in t.display[1] and "\u250c" in t.display[5],
+        message="both frames",
+    )
 
     # Cut off at the right: a top edge across the screen and no corner, since
     # the corner is off it. Row 2 is the frame's own middle row, which holds

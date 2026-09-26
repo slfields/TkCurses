@@ -44,7 +44,15 @@ def test_a_title_appears_on_the_top_border(terminal, tmp_path):
         ),
         workdir=tmp_path,
     )
-    term.wait_for_text("Settings")
+    # The corners are part of what is being checked, so they are part of the
+    # wait: the title landing does not promise the row it sits in is finished
+    # - TkCurses-txk.
+    term.wait_for(
+        lambda t: any(
+            "Settings" in line and "┌" in line and "┐" in line for line in t.display
+        ),
+        message="the title between its corners",
+    )
     row = next(i for i, line in enumerate(term.display) if "Settings" in line)
     # The title sits in the border row, between the corners.
     assert "┌" in term.display[row]

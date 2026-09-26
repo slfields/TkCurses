@@ -57,7 +57,15 @@ def test_the_value_is_shown_above_the_handle(terminal, tmp_path):
     """Tk puts it there, and it reads as belonging to the handle."""
     term = terminal(cols=40, rows=12)
     term.run_source(program(HORIZONTAL + "root.after(100, lambda: s.set(10))"))
-    term.wait_for_text("░░░░█")
+    # The value sits on the row ABOVE the trough, so waiting for the trough
+    # alone can read that row before the number reaches it - TkCurses-txk.
+    term.wait_for(
+        lambda t: any(
+            "░░░░█" in line and "10" in t.display[i - 1]
+            for i, line in enumerate(t.display[1:], start=1)
+        ),
+        message="the trough and the value above it",
+    )
     row = next(i for i, line in enumerate(term.display) if "█" in line)
     assert "10" in term.display[row - 1]
 

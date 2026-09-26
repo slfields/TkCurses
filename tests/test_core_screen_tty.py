@@ -146,7 +146,13 @@ def test_the_bottom_right_cell_can_be_written(terminal, tmp_path):
         """,
         workdir=tmp_path,
     )
-    term.wait_for_text("X")
+    # Row 0 is asserted on as well, so it is waited for as well - the X in
+    # the far corner can arrive before the row of dots at the top has
+    # finished - TkCurses-txk.
+    term.wait_for(
+        lambda t: t.display[4][19] == "X" and t.display[0] == "." * 20,
+        message="the corner cell and the filled first row",
+    )
     assert term.display[4][19] == "X"
     assert term.display[0] == "." * 20
     term.send_keys("q")
