@@ -112,7 +112,10 @@ gets the key it asked for, and **you keep a way of stopping it**.
 
 > **A program that binds none of them keeps all three signals**, which is
 > nearly every program — scenario 09 checks that `Ctrl-C` still ends an
-> application that has not asked for it.
+> application that has not asked for it. It ends it *cleanly*: the loop
+> turns the interrupt into `WM_DELETE_WINDOW`, so the application can save
+> or ask first, and gets a quiet exit rather than a traceback if it does
+> neither.
 
 ### After something goes wrong
 

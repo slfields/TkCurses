@@ -574,23 +574,33 @@ def test_control_keys_reach_the_application(terminal, tmp_path, byte, keysym):
     term.wait_for_text(f"key={keysym} state=2")
 
 
-def test_control_c_still_interrupts(terminal, tmp_path):
+def test_control_c_still_raises_a_signal(terminal, tmp_path):
     """Flow control is cleared by hand rather than with raw(), which would
-    also stop Control-C raising an interrupt - too much to give up."""
+    also stop Control-C raising an interrupt - too much to give up.
+
+    What the application then DOES with the interrupt is
+    :meth:`Tk.mainloop`'s business, and is asserted next door: the loop
+    turns it into ``WM_DELETE_WINDOW``. This test is only about the tty
+    still being configured to deliver it, which is why the proof is the
+    handler running at all. Under ``raw()`` the byte would have arrived as
+    data, no signal would be raised, nothing would close the window, and
+    the exit status would be the 9 below rather than the 7.
+    """
     term = terminal(cols=40, rows=6)
     term.run_source(
         "import tkcurses\n"
         "root = tkcurses.Tk()\n"
         "buffer = root.tk.screen.buffer\n"
-        "buffer.write(0, 0, 'ready')\n"
-        "root.tk.screen.refresh()\n"
-        "try:\n"
-        "    root.after(4000, root.quit)\n"
-        "    root.mainloop()\n"
-        "except KeyboardInterrupt:\n"
+        "def asked():\n"
         "    root.destroy()\n"
         "    raise SystemExit(7)\n"
-        "root.destroy()\n",
+        "root.protocol('WM_DELETE_WINDOW', asked)\n"
+        "buffer.write(0, 0, 'ready')\n"
+        "root.tk.screen.refresh()\n"
+        "root.after(4000, root.quit)\n"
+        "root.mainloop()\n"
+        "root.destroy()\n"
+        "raise SystemExit(9)\n",
         workdir=tmp_path,
     )
     term.wait_for_text("ready")
@@ -655,17 +665,33 @@ def test_an_unbound_signal_key_still_signals(terminal, tmp_path):
 
     Only the key actually bound is given up, so a program that binds none of
     them - which is nearly all of them - keeps every one of its signals.
+
+    "Stops" is the promise, not "kills". The signal is raised exactly as
+    before; :meth:`Tk.mainloop` catches it and asks the application to close,
+    so what a person sees is the program going away rather than a traceback.
+    Asserted through the protocol handler rather than through the exit
+    status, because SIGNAL_APP also quits on a timer and a bare ``exit == 0``
+    would pass just as well if Control-C did nothing at all.
     """
     term = terminal(cols=50, rows=8)
     term.run_source(
-        SIGNAL_APP.format(bindings='root.bind("<Key-a>", note)'), workdir=tmp_path
+        SIGNAL_APP.format(
+            bindings='root.bind("<Key-a>", note)\n'
+            "def asked():\n"
+            '    buffer.write(3, 0, "asked to close")\n'
+            "    root.tk.screen.refresh()\n"
+            "    root.destroy()\n"
+            'root.protocol("WM_DELETE_WINDOW", asked)'
+        ),
+        workdir=tmp_path,
     )
     # Waited for, not read once: "ready" and the claimed line are written in
     # the same refresh, and nothing says which of the two reaches the
     # terminal first.
     term.wait_for_text("claimed=[]")
     term.send(b"\x03")
-    assert term.wait_for_exit(timeout=10) != 0, "Control-C should have interrupted"
+    term.wait_for_text("asked to close")
+    assert term.wait_for_exit(timeout=10) == 0, "and it should leave cleanly"
 
 
 def test_one_signal_key_is_given_up_without_the_others(terminal, tmp_path):
@@ -697,7 +723,12 @@ def test_unbinding_gives_the_signal_back(terminal, tmp_path):
             '    root.unbind("<Control-c>")\n'
             '    buffer.write(3, 0, "now=%s   " % sorted(root.tk.input.signal_keys))\n'
             "    root.tk.screen.refresh()\n"
-            'root.bind("<Key-u>", drop)'
+            'root.bind("<Key-u>", drop)\n'
+            "def asked():\n"
+            '    buffer.write(4, 0, "asked to close")\n'
+            "    root.tk.screen.refresh()\n"
+            "    root.destroy()\n"
+            'root.protocol("WM_DELETE_WINDOW", asked)'
         ),
         workdir=tmp_path,
     )
@@ -707,7 +738,10 @@ def test_unbinding_gives_the_signal_back(terminal, tmp_path):
     term.send(b"u")
     term.wait_for_text("now=[]")
     term.send(b"\x03")
-    assert term.wait_for_exit(timeout=10) != 0, "the interrupt should be back"
+    # Back to the signal, and so back to the default for an application that
+    # has not bound the key: the loop treats it as a request to close.
+    term.wait_for_text("asked to close")
+    assert term.wait_for_exit(timeout=10) == 0
 
 
 def test_a_claimed_signal_key_is_given_back_on_the_way_out(terminal, tmp_path):

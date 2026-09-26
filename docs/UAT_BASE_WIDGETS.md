@@ -161,7 +161,9 @@ Run it four times, ending it differently each time: `q`, `c`, `x`, and Ctrl-C.
 - [ ] each of them reads normally: every line starts at the left edge, not
       stepping further right down the screen
 - [ ] `x` — the application ends, terminal usable
-- [ ] Ctrl-C — the application ends, terminal usable
+- [ ] Ctrl-C — the application ends, terminal usable, and **no traceback**:
+      nothing bound `<Control-c>`, so the loop treats it as a request to
+      close, the same as a window manager's close button
 - [ ] After all four: prompt back, cursor visible, typing echoed, no `reset`
       needed
 

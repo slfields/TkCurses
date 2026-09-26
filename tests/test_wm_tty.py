@@ -455,24 +455,22 @@ def modes_in(raw: bytes) -> dict[str, str]:
     return out
 
 
-def test_an_interrupt_gives_the_terminal_back_and_still_reaches_the_program(
-    terminal, tmp_path
-):
+def test_an_interrupt_closes_the_window_and_gives_the_terminal_back(terminal, tmp_path):
     """Ctrl-C on an application that has not bound it.
 
-    Two things have to be true at once, and only one of them was.
+    This used to assert the opposite - that KeyboardInterrupt reached the
+    traceback - on the reasoning that a program is entitled to catch it
+    around its own mainloop() and decide what to do. The mechanism was
+    right and the conclusion was wrong: the deciding is what
+    ``WM_DELETE_WINDOW`` is for, and the loop now routes the interrupt
+    there, so a program still gets its say (ask about unsaved work, or
+    simply return and carry on) without every program that does not bind
+    anything ending in a traceback. See ARCHITECTURE.md, "Ctrl-C".
 
-    The interrupt must still REACH the application: nothing bound
-    <Control-c>, so the tty turned it into SIGINT, and a program is entitled
-    to catch KeyboardInterrupt around its own mainloop() and decide what to
-    do - ask about unsaved work, say. Swallowing it here would take that
-    away, which is why this does not.
-
-    And the terminal must be given back BEFORE the traceback is printed.
-    Measured before this fix: the alternate screen and the hidden cursor
-    were both still set, so the shell needed `reset` - and the traceback
-    itself was written onto the alternate screen, where it was swapped away
-    unread.
+    A traceback here is therefore now the failure, not the pass. What stays
+    unchanged is the other half: the terminal must be given back. Measured
+    before that fix, the alternate screen and the hidden cursor were both
+    still set, so the shell needed `reset`.
     """
     term = terminal(cols=40, rows=10)
     term.run_source(
@@ -480,12 +478,12 @@ def test_an_interrupt_gives_the_terminal_back_and_still_reaches_the_program(
         workdir=tmp_path,
     )
     term.wait_for_text("running")
-    term.wait_for_exit(timeout=20)
+    assert term.wait_for_exit(timeout=20) == 0, "closing is not a failure"
 
     stderr = bytes(term._stderr).decode("utf-8", "replace")
-    assert "KeyboardInterrupt" in stderr, (
-        "the interrupt no longer reaches the program, so an application "
-        "cannot handle Ctrl-C itself"
+    assert "KeyboardInterrupt" not in stderr, (
+        "an unhandled interrupt reached the top level, so a program that "
+        "binds nothing still ends in a traceback"
     )
     assert modes_in(bytes(term._received)) == {
         "alt screen": "restored",

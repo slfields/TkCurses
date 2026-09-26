@@ -26,6 +26,7 @@ is checked rather than trusted.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -40,19 +41,58 @@ COPYRIGHT = f"# Copyright (C) 2026  {AUTHOR}"
 SPDX = "# SPDX-License-Identifier: GPL-3.0-only"
 
 
+def tracked() -> set[Path] | None:
+    """The files git actually has, or None if git cannot say.
+
+    Asked of git rather than of the filesystem because "the project" means
+    what is committed, not what happens to be sitting in a working copy. A
+    scratch script a developer drops in `src/` to try the library out is not
+    part of the project and does not need the notice - it is theirs. The
+    check exists to catch a file added *to the project* without one, and
+    such a file is by definition tracked.
+    """
+    found = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-z", *SOURCE_DIRS],
+        capture_output=True,
+        check=False,
+    )
+    if found.returncode != 0:
+        return None
+    return {
+        ROOT / name
+        for name in found.stdout.decode("utf-8").split("\0")
+        if name.endswith(".py")
+    }
+
+
 def source_files() -> list[Path]:
     """Every Python file the project is made of."""
+    known = tracked()
     return sorted(
         path
         for directory in SOURCE_DIRS
         for path in (ROOT / directory).rglob("*.py")
-        if "__pycache__" not in path.parts
+        if "__pycache__" not in path.parts and (known is None or path in known)
     )
 
 
 def test_there_are_source_files_to_check():
     """A glob that matches nothing would make every test below vacuous."""
     assert len(source_files()) > 100
+
+
+def test_an_untracked_file_is_not_the_projects_to_check():
+    """The filter is the point, so it is asserted rather than assumed.
+
+    Without this, the suite fails on a developer's own throwaway script and
+    the honest fix looks like deleting their file.
+    """
+    known = tracked()
+    if known is None:
+        pytest.skip("not a git checkout")
+    assert known, "git listed nothing, so the filter would hide everything"
+    assert ROOT / "src" / "tkcurses" / "__init__.py" in known
+    assert (ROOT / "src" / "not_a_real_file_someone_left_here.py") not in known
 
 
 @pytest.mark.parametrize(

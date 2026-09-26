@@ -3503,11 +3503,19 @@ class Wm:
     ) -> Any:
         """Register, query, or list window manager protocol handlers.
 
-        ``WM_DELETE_WINDOW`` is the one worth having, and nothing raises it:
-        a terminal offers no close button and no user gesture that means
-        "close this window". An application that wants it must call
-        :meth:`_invoke_protocol`, typically from a key binding, and the
-        dialogs will do the same once they exist.
+        ``WM_DELETE_WINDOW`` is the one worth having, and **Ctrl-C raises
+        it**. A terminal has no close button, but it does have the gesture:
+        pressing Ctrl-C on an application that has not bound ``<Control-c>``
+        is a user saying "stop this", and :meth:`Tk.mainloop` delivers it
+        here. A handler may save, may ask, or may simply return and leave
+        the application running; with no handler the default is to close.
+
+        This docstring used to say that nothing raised it, "a terminal
+        offers no close button and no user gesture that means close this
+        window". The mechanism was right and the gesture had been missed.
+
+        An application may still invoke it directly - :meth:`_invoke_protocol`
+        from a key binding, and the dialogs do the same.
         """
         if name is None:
             return tuple(self._protocols)
@@ -3893,12 +3901,33 @@ class Tk(BaseWidget, Wm):
         the moment the screen is swapped back. Restoring first puts it
         somewhere the user can actually read.
 
-        **KeyboardInterrupt is passed on, not swallowed.** Ctrl-C arrives as
-        a signal only when nothing bound ``<Control-c>`` - see
+        **Ctrl-C is a close request, not a crash.** It arrives as a signal
+        only when nothing bound ``<Control-c>`` - see
         :meth:`~tkcurses._core.application.Application.refresh_signal_keys` -
-        and an application is entitled to catch it around its own
-        ``mainloop()`` call and decide what to do, which is what a program
-        with unsaved work should do. Eating it here would take that away.
+        and it is then delivered to ``WM_DELETE_WINDOW``, tkinter's own
+        protocol for "the user asked to close this window". A handler
+        registered with ``protocol()`` runs and decides: it may save, it may
+        ask, it may refuse and let the application carry on. With no
+        handler, the default is to close.
+
+        This is the one place TkCurses deliberately does NOT do what tkinter
+        does, and the reason is that the gesture does not mean the same
+        thing. A tkinter program is in a window, and Ctrl-C is typed at the
+        terminal that launched it - a developer interrupting from outside,
+        for whom a traceback is the right answer. A TkCurses program *is*
+        the terminal: Ctrl-C is typed at the application, by whoever is
+        using it, and it universally means "stop". Answering a user's
+        gesture with a Python traceback is not compatibility.
+
+        The mechanism was already here and unused. ``wm_protocol`` said of
+        ``WM_DELETE_WINDOW`` that "nothing raises it: a terminal offers no
+        close button and no user gesture that means close this window".
+        Ctrl-C is that gesture.
+
+        An application that wants the interrupt itself has three ways: bind
+        ``<Control-c>``, which takes the key from the tty entirely and never
+        makes a signal of it; register ``WM_DELETE_WINDOW`` and raise from
+        there; or install its own SIGINT handler.
         """
         self._running = True
         self.tk.quit_requested = False
@@ -3907,7 +3936,14 @@ class Tk(BaseWidget, Wm):
             while self._running and not self.tk.quit_requested:
                 if not self.winfo_exists():
                     break
-                self._loop_once()
+                try:
+                    self._loop_once()
+                except KeyboardInterrupt:
+                    # Handled inside the loop rather than let out of it, so
+                    # that a handler which decides NOT to close can simply
+                    # return and the application carries on - which is how
+                    # WM_DELETE_WINDOW behaves everywhere else.
+                    self._close_requested()
                 passes += 1
                 if n and passes >= n:
                     break
@@ -3922,6 +3958,20 @@ class Tk(BaseWidget, Wm):
             raise
         finally:
             self._running = False
+
+    def _close_requested(self) -> None:
+        """The user asked to close the application. Ctrl-C means this.
+
+        Routed through ``WM_DELETE_WINDOW`` so that an application says what
+        should happen using tkinter's own API, rather than one invented
+        here. With no handler registered the default is to close, which is
+        what a terminal user pressing Ctrl-C expects.
+
+        A handler that returns without quitting leaves the application
+        running, exactly as declining to close a window does elsewhere.
+        """
+        if not self._invoke_protocol("WM_DELETE_WINDOW"):
+            self.destroy()
 
     def _loop_once(self) -> None:
         """One pass: queued work, idle work, timers, input, then output.

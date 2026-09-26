@@ -1855,19 +1855,113 @@ idempotent and swallows curses errors, which is what such a hook needs.
 exception continue. The ordering is the point: something is about to print
 that traceback, and on the alternate screen it would be swapped away unread.
 
-### Ctrl-C reaches the application
+### Ctrl-C asks the application to close
 
-**KeyboardInterrupt is passed on, never swallowed.** Ctrl-C only arrives as a
-signal when nothing has bound `<Control-c>` — see `refresh_signal_keys`,
-which hands the key to an application that asks for it and otherwise leaves
-the tty to make a signal of it. An application is entitled to catch
-`KeyboardInterrupt` around its own `mainloop()` call and decide what to do,
-which is what a program with unsaved work should do. Eating it inside the
-loop would take that away.
+**Ctrl-C raises `WM_DELETE_WINDOW`.** It arrives as a signal only when
+nothing has bound `<Control-c>` — see `refresh_signal_keys`, which hands the
+key to an application that asks for it and otherwise leaves the tty to make
+a signal of it. `mainloop()` catches the `KeyboardInterrupt` around one pass
+of the loop and calls `_close_requested()`, which invokes the protocol
+handler if there is one and calls `destroy()` if there is not.
 
-So a program that ignores Ctrl-C still shows a traceback — on a terminal
-that works. Making that quiet is the application's job, by catching the
-exception or by binding the key.
+Three behaviours fall out of that, and all three are what a person expects:
+
+| the application | Ctrl-C does |
+|---|---|
+| binds `<Control-c>` | delivers an ordinary key event; no signal at all |
+| sets `WM_DELETE_WINDOW` | runs the handler — save, prompt, or decline and carry on |
+| does neither | closes the window and exits 0, no traceback |
+
+The handler is caught *inside* the loop rather than around it, so a handler
+that decides **not** to close can simply return and the application carries
+on — which is how `WM_DELETE_WINDOW` behaves everywhere else in tkinter.
+
+#### Why this diverges from tkinter, on purpose
+
+tkinter's behaviour was measured rather than assumed, on a real X display,
+over four scenarios with five repeats of the unhandled case:
+
+| | tkinter | TkCurses |
+|---|---|---|
+| idle main loop | KeyboardInterrupt after **5.4s** | close request after **0.8s** |
+| a repeating `after()` every 50ms | after 0.8s | after 0.8s |
+| one `after()` at 2s | after 1.0s | — |
+| a bound key, no timer | after 4.5s | — |
+| unhandled, five runs | traceback, exit −2, every time | clean exit 0 |
+| catchable by the program | yes, around `mainloop()` | yes, via `WM_DELETE_WINDOW` |
+
+The signal fired at 0.8s in every case, so tkinter's figures are the delay
+before it was *delivered*: its main loop is Tcl's, running in C, and a
+Python signal handler cannot run until Python code does — so an idle tkinter
+program sits on the interrupt for seconds. TkCurses waits in `select()`,
+which the signal interrupts directly.
+
+So tkinter really does end in a traceback, and TkCurses deliberately does
+not. The reason is that **the two are not in the same situation**, and
+`wm_protocol`'s own docstring is where that became clear. It used to say
+that `WM_DELETE_WINDOW` was the protocol worth having and that *nothing
+raised it*: "a terminal offers no close button and no user gesture that
+means close this window". The mechanism was right; the gesture had been
+missed.
+
+A tkinter program lives **inside a window**. The close button is the user
+saying "shut this down"; Ctrl-C comes from a *terminal somewhere else*,
+typed by a developer at the shell that launched it, and a traceback is the
+right answer to a developer.
+
+A TkCurses program **is the terminal**. There is no close button and there
+never will be, and Ctrl-C is not arriving from outside — it is the only
+"close this" gesture an end user has. Treating it as a developer's interrupt
+would leave the library's own premise unsatisfied: the one protocol worth
+having would have nothing that raises it, and a plain application would have
+no way out at all. The divergence is in the *delivery*, and it exists to
+keep the *semantics* matching: in both libraries, the user's close gesture
+runs `WM_DELETE_WINDOW`.
+
+That was not a theoretical gap. The editor scenario — `Tk`, a `Text`, a
+`Scrollbar`, no key bindings — had no exit. Ctrl-C printed a traceback, which
+is not an exit; it is a crash that happens to stop the program.
+
+#### What is actually going on underneath
+
+Worth recording, because the layers are easy to conflate:
+
+- **SIGINT is signal 2**, and its default action terminates the process. It
+  is catchable — unlike SIGKILL — which is the whole reason any of this is
+  available to us.
+- The terminal driver sends it to the **foreground process group**, not to
+  one process, and only because the tty is configured to: the `ISIG` flag
+  plus the `VINTR` control character. `claim_signal_keys` changes `VINTR`
+  per key rather than clearing `ISIG`, so giving up Ctrl-C does not also
+  give up Ctrl-\ — which is what a person reaches for when an application
+  stops responding.
+- Python installs `default_int_handler`, which raises `KeyboardInterrupt`
+  in the main thread. That exception is what `mainloop()` catches; the
+  signal itself is never handled by TkCurses.
+
+#### Two corrections recorded
+
+Both nearly sent this the wrong way.
+
+An early single probe of tkinter appeared to show the interrupt being
+*ignored entirely*, and on that basis a quiet exit looked like an
+improvement rather than a divergence. Four scenarios and five repeats say
+otherwise. One measurement of a timing-dependent behaviour was not a
+measurement.
+
+Then, knowing tkinter's real behaviour, the first conclusion was "match it,
+so there is nothing to change". That treated *identical mechanism* as
+*identical meaning*. The question is not what tkinter does with a signal;
+it is what the user's close gesture is, and in a terminal that gesture is
+Ctrl-C.
+
+#### The terminal still comes back first
+
+Unchanged, and still the reason the section above exists: whatever leaves
+the loop, the terminal is restored before anything else runs. An application
+that raises out of a `WM_DELETE_WINDOW` handler gets its traceback on a
+terminal that works, not on the alternate screen where it would be swapped
+away unread.
 
 ---
 
