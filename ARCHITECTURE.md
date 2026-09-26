@@ -1828,6 +1828,49 @@ Add configuration module to `_core/`:
 
 ---
 
+## Leaving, and giving the terminal back
+
+**Starting curses changes the terminal, and a process that exits without
+undoing that hands the user a shell they cannot use.** cbreak mode, the
+alternate screen, a hidden cursor, sometimes mouse reporting — all of it has
+to come back, whichever way the program leaves.
+
+It is not enough to undo them in `destroy()`, because a program is not
+obliged to call it. tkinter's documented way to leave a main loop is
+`quit()`, after which a great many programs simply fall off the end of the
+file. Measured, before this was fixed:
+
+| how the program left | terminal |
+|---|---|
+| `destroy()` | restored |
+| `quit()`, then end of file | **alternate screen and hidden cursor left set** |
+| Ctrl-C | **left set**, and a traceback printed onto the alternate screen |
+| an uncaught exception | **left set** |
+
+`CursesScreen.start()` therefore registers an `atexit` hook, and `stop()`
+unregisters it so an orderly shutdown is not undone twice. `stop()` is
+idempotent and swallows curses errors, which is what such a hook needs.
+
+`mainloop()` additionally restores the terminal **before** letting an
+exception continue. The ordering is the point: something is about to print
+that traceback, and on the alternate screen it would be swapped away unread.
+
+### Ctrl-C reaches the application
+
+**KeyboardInterrupt is passed on, never swallowed.** Ctrl-C only arrives as a
+signal when nothing has bound `<Control-c>` — see `refresh_signal_keys`,
+which hands the key to an application that asks for it and otherwise leaves
+the tty to make a signal of it. An application is entitled to catch
+`KeyboardInterrupt` around its own `mainloop()` call and decide what to do,
+which is what a program with unsaved work should do. Eating it inside the
+loop would take that away.
+
+So a program that ignores Ctrl-C still shows a traceback — on a terminal
+that works. Making that quiet is the application's job, by catching the
+exception or by binding the key.
+
+---
+
 ## Data Flow
 
 ### Cell Structure

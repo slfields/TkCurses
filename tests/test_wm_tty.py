@@ -420,3 +420,127 @@ def test_a_window_that_still_fits_is_not_moved_at_all(resizing):
     settle(resizing, 48, 17)
 
     assert "at 30,10" in resizing.row(0), resizing.describe()
+
+
+# ------------------------------------- leaving, and giving the terminal back
+
+
+LEAVING = """
+import os, signal, tkcurses
+root = tkcurses.Tk()
+tkcurses.Label(root, text='running').place(x=0, y=0)
+root.update_layout()
+root.tk.screen.refresh()
+
+def leave():
+    {action}
+
+root.after(400, leave)
+root.after(9000, root.quit)
+root.mainloop()
+"""
+
+
+def modes_in(raw: bytes) -> dict[str, str]:
+    """For each terminal mode, whether it was set and whether it was undone."""
+    out = {}
+    for name, on, off in (
+        ("alt screen", b"\x1b[?1049h", b"\x1b[?1049l"),
+        ("cursor", b"\x1b[?25l", b"\x1b[?25h"),
+    ):
+        if on not in raw:
+            out[name] = "never set"
+        else:
+            out[name] = "restored" if off in raw else "left set"
+    return out
+
+
+def test_an_interrupt_gives_the_terminal_back_and_still_reaches_the_program(
+    terminal, tmp_path
+):
+    """Ctrl-C on an application that has not bound it.
+
+    Two things have to be true at once, and only one of them was.
+
+    The interrupt must still REACH the application: nothing bound
+    <Control-c>, so the tty turned it into SIGINT, and a program is entitled
+    to catch KeyboardInterrupt around its own mainloop() and decide what to
+    do - ask about unsaved work, say. Swallowing it here would take that
+    away, which is why this does not.
+
+    And the terminal must be given back BEFORE the traceback is printed.
+    Measured before this fix: the alternate screen and the hidden cursor
+    were both still set, so the shell needed `reset` - and the traceback
+    itself was written onto the alternate screen, where it was swapped away
+    unread.
+    """
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        LEAVING.format(action="os.kill(os.getpid(), signal.SIGINT)"),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("running")
+    term.wait_for_exit(timeout=20)
+
+    stderr = bytes(term._stderr).decode("utf-8", "replace")
+    assert "KeyboardInterrupt" in stderr, (
+        "the interrupt no longer reaches the program, so an application "
+        "cannot handle Ctrl-C itself"
+    )
+    assert modes_in(bytes(term._received)) == {
+        "alt screen": "restored",
+        "cursor": "restored",
+    }
+
+
+@pytest.mark.parametrize(
+    ("what", "action"),
+    [
+        # quit() is tkinter's documented way to leave a main loop, and a
+        # great many programs then simply fall off the end of the file.
+        # Measured before the exit hook: every mode left set.
+        ("quit and fall off the end", "root.quit()"),
+        ("destroy", "root.destroy()"),
+        ("sys.exit", "__import__('sys').exit(0)"),
+    ],
+)
+def test_the_terminal_is_given_back_however_the_program_leaves(
+    terminal, tmp_path, what, action
+):
+    """Not only on the tidy path.
+
+    curses puts the terminal in cbreak mode, on the alternate screen, with
+    the cursor hidden. A program that leaves without undoing those hands the
+    user a shell that needs `reset` - so it cannot depend on the program
+    remembering to call destroy().
+    """
+    term = terminal(cols=40, rows=10)
+    term.run_source(LEAVING.format(action=action), workdir=tmp_path)
+    term.wait_for_text("running")
+    term.wait_for_exit(timeout=20)
+    assert modes_in(bytes(term._received)) == {
+        "alt screen": "restored",
+        "cursor": "restored",
+    }, what
+
+
+def test_a_fault_gives_the_terminal_back_before_the_traceback(terminal, tmp_path):
+    """The other way out, and it was broken in the same way.
+
+    A genuine fault should still be seen - it is not an interrupt and
+    swallowing it would hide a bug. But the traceback is about to be printed
+    on this terminal, so the terminal is put right first.
+    """
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        LEAVING.format(action="raise RuntimeError('boom')"), workdir=tmp_path
+    )
+    term.wait_for_text("running")
+    term.wait_for_exit(timeout=20)
+
+    stderr = bytes(term._stderr).decode("utf-8", "replace")
+    assert "RuntimeError" in stderr, "the fault must still be reported"
+    assert modes_in(bytes(term._received)) == {
+        "alt screen": "restored",
+        "cursor": "restored",
+    }

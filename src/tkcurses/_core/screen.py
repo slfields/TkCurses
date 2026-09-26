@@ -33,6 +33,7 @@ without a pty in the loop.
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import curses
 import os
@@ -347,11 +348,26 @@ class CursesScreen:
         return self._buffer
 
     def start(self) -> ScreenBuffer:
-        """Initialise curses and return the buffer sized to the terminal."""
+        """Initialise curses and return the buffer sized to the terminal.
+
+        **Registers an exit hook that gives the terminal back.** From here
+        on the terminal is in cbreak mode, on the alternate screen, with the
+        cursor hidden - and a process that leaves without undoing those
+        hands the user a shell that needs ``reset``.
+
+        It is not enough to undo them in ``destroy()``, because a program is
+        not obliged to call it. tkinter's own documented way to leave a main
+        loop is ``quit()``, after which a great many programs simply fall off
+        the end of the file: measured, that left every one of those modes
+        set. An interrupt did too. The hook catches all of them, and
+        :meth:`stop` unregisters it so an orderly shutdown is not undone
+        twice.
+        """
         if self._stdscr is not None:
             raise RuntimeError("screen is already started")
         stdscr = curses.initscr()
         self._stdscr = stdscr
+        atexit.register(self.stop)
         try:
             curses.noecho()
             curses.cbreak()
@@ -368,6 +384,7 @@ class CursesScreen:
 
     def stop(self) -> None:
         """Restore the terminal. Safe to call more than once."""
+        atexit.unregister(self.stop)
         if self._stdscr is None:
             return
         stdscr, self._stdscr = self._stdscr, None

@@ -3879,9 +3879,26 @@ class Tk(BaseWidget, Wm):
                 takes the same argument; it is what lets a test drive the
                 loop a step at a time.
 
-        The terminal is restored on the way out however the loop ends,
-        including an exception escaping a callback that
-        :meth:`report_callback_exception` chose to re-raise.
+        **The terminal is given back however the loop ends**, and that is
+        not a nicety: curses has put the terminal in cbreak mode, hidden the
+        cursor, switched to the alternate screen and possibly turned mouse
+        reporting on. A program that exits without undoing those leaves the
+        shell unusable until ``reset``. This docstring claimed as much
+        before it was true - measured, Ctrl-C left every one of them set.
+
+        **An exception restores the terminal before it continues**, which
+        is the whole of the change here. It is not tidiness: whatever
+        printed that traceback is about to write it to a terminal that is
+        still on the alternate screen, where it will scroll past and vanish
+        the moment the screen is swapped back. Restoring first puts it
+        somewhere the user can actually read.
+
+        **KeyboardInterrupt is passed on, not swallowed.** Ctrl-C arrives as
+        a signal only when nothing bound ``<Control-c>`` - see
+        :meth:`~tkcurses._core.application.Application.refresh_signal_keys` -
+        and an application is entitled to catch it around its own
+        ``mainloop()`` call and decide what to do, which is what a program
+        with unsaved work should do. Eating it here would take that away.
         """
         self._running = True
         self.tk.quit_requested = False
@@ -3894,6 +3911,15 @@ class Tk(BaseWidget, Wm):
                 passes += 1
                 if n and passes >= n:
                     break
+        except BaseException:
+            # Before the exception goes on, not after: something is about to
+            # print it on this terminal, and on the alternate screen it
+            # would be swapped away unread. KeyboardInterrupt included - the
+            # application may be catching it around this call.
+            self._running = False
+            with contextlib.suppress(BaseException):
+                self.destroy()
+            raise
         finally:
             self._running = False
 
