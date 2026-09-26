@@ -422,3 +422,80 @@ def test_offset_of_agrees_with_walking_the_lines(buffer):
                 break
             start += len(text) + 1
         assert buffer.offset_of(Index(line, 2)) == walked
+
+
+# --------------------------------------------------------------------- undo
+#
+# The widget's behaviour is asserted in test_text.py against measurements of
+# real tkinter. What is checked here is what only the buffer can show: that
+# the two edit primitives are the only way in, and that replaying an edit
+# does not record itself.
+
+
+def test_nothing_is_recorded_until_it_is_asked_for():
+    buffer = TextBuffer()
+    buffer.insert("1.0", "x")
+    assert not buffer.can_undo
+
+
+def test_both_primitives_reach_the_stack():
+    """insert() and delete() are the only two ways the text can change.
+
+    If a third ever appears it must record too, and this is what notices:
+    the count below is of GROUPS, and each primitive opened its own.
+    """
+    buffer = TextBuffer()
+    buffer.undo_enabled = True
+    buffer.insert("1.0", "abc")
+    buffer.edit_separator()
+    buffer.delete("1.0", "1.1")
+    assert buffer.can_undo
+    buffer.edit_undo()
+    assert buffer.text == "abc\n"
+    buffer.edit_undo()
+    assert buffer.text == "\n"
+    assert not buffer.can_undo
+
+
+def test_undoing_does_not_record_its_own_reversal():
+    """Without suppression the stack never empties.
+
+    Each undo would push the inverse edit it just made, so the next undo
+    would put the text straight back and the two would alternate for ever.
+    """
+    buffer = TextBuffer()
+    buffer.undo_enabled = True
+    buffer.insert("1.0", "one")
+    buffer.edit_undo()
+    assert not buffer.can_undo
+    assert buffer.can_redo
+    buffer.edit_redo()
+    assert buffer.can_undo
+    assert not buffer.can_redo
+
+
+def test_a_group_is_reversed_newest_edit_first():
+    """The only order that works: earlier offsets describe earlier text."""
+    buffer = TextBuffer()
+    buffer.undo_enabled = True
+    buffer.insert("1.0", "hello")
+    buffer.delete("1.0", "1.2")
+    buffer.insert("end", "!")
+    assert buffer.text == "llo!\n"
+    buffer.edit_undo()
+    assert buffer.text == "\n"
+
+
+def test_a_round_trip_leaves_the_text_identical():
+    buffer = TextBuffer()
+    buffer.undo_enabled = True
+    for chunk in ("alpha\n", "beta\n", "gamma"):
+        buffer.edit_separator()
+        buffer.insert("end", chunk)
+    wanted = buffer.text
+    for _ in range(3):
+        buffer.edit_undo()
+    assert buffer.text == "\n"
+    for _ in range(3):
+        buffer.edit_redo()
+    assert buffer.text == wanted

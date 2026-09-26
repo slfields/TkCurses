@@ -144,3 +144,124 @@ def test_a_scenario_runs_when_the_runner_is_given_its_path(terminal):
     term.send(ESCAPE)
     assert term.wait_for_exit(timeout=10) == 0
     assert "Traceback" not in term.stderr
+
+
+def test_scenario_38_actually_undoes_searches_and_reports_a_cell(uat_terminal):
+    """The smoke test above only proves a scenario starts and stops.
+
+    A scenario whose keys had quietly stopped working would still pass it,
+    which is how a UAT rots: the checklist says press Ctrl-Z, the person
+    presses it, nothing happens, and they report a bug in the widget. This
+    drives the three things the checklist asks about, so that a break is a
+    failed test rather than a wasted acceptance run.
+    """
+    term = uat_terminal(cols=100, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_38_text_editing"])
+    term.wait_for_text("insert 1.0")
+
+    term.send(b"hello world")
+    term.wait_for_text("insert 1.11")
+
+    term.send(b"\x1a")  # Ctrl-Z
+    term.wait_for_text("insert 1.0")  # the whole run, not one letter
+    term.send(b"\x19")  # Ctrl-Y
+    term.wait_for_text("insert 1.11")
+
+    term.send(b"\x12")  # Ctrl-R loads the paragraph
+    term.wait_for_text("noticed")
+
+    term.send(b"\x06")  # Ctrl-F to the Find box
+    term.send(b"dog\r")
+    term.wait_for_text("in the text altogether")
+
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+    assert "Traceback" not in term.stderr
+
+
+def test_scenario_38_shows_what_autoseparators_does(uat_terminal):
+    """The option was set once and never exercised, which a person caught.
+
+    A scenario that configures something and never lets you see it do
+    anything is not acceptance for it. The group count is what makes
+    grouping visible, so this drives the toggle and watches the count stop
+    rising - the same thing the checklist asks a person to watch.
+    """
+    term = uat_terminal(cols=100, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_38_text_editing"])
+    term.wait_for_text("undo groups=0")
+
+    term.send(b"ab")
+    term.send_keys("<Left>")
+    term.send(b"cd")
+    term.wait_for_text("undo groups=2")
+
+    term.send(b"\x14")  # Ctrl-T turns autoseparators off
+    term.wait_for_text("autosep=OFF")
+    term.send(b"ef")
+    term.send_keys("<Left>")
+    term.send(b"gh")
+    # Nothing to wait for - the assertion is that the count does NOT move -
+    # so give the same gestures the time the ones above took to land.
+    term.send_keys("<Left>")
+    term.wait_for_text("insert 1.3")
+    assert any("undo groups=2" in row for row in term.display), (
+        "with autoseparators off the count should have stopped rising"
+    )
+
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+
+
+def test_scenario_38_types_a_tab_rather_than_leaving_the_editor(uat_terminal):
+    """Tab belongs to the editor here, as it does in tkinter.
+
+    TkCurses puts focus traversal on the ``all`` tag, so by default Tab
+    moves the focus out of a Text - a sensible default for a terminal,
+    where Control-Tab cannot be relied on, and the wrong one for something
+    pretending to be an editor. The scenario takes Tab back; this makes
+    sure it kept it, because the whole point is that the scenario should
+    not disagree with tkinter about what Tab does.
+    """
+    term = uat_terminal(cols=100, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_38_text_editing"])
+    term.wait_for_text("insert 1.0")
+
+    term.send(b"ab")
+    term.wait_for_text("insert 1.2")
+    term.send(b"\t")
+    term.wait_for_text("insert 1.3")  # the tab went INTO the text
+    term.send(b"cd")
+    term.wait_for_text("insert 1.5")
+
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+
+
+def test_scenario_38_does_not_paint_over_the_find_box(uat_terminal):
+    """It did, and a person spotted it before any test could.
+
+    The status line was placed on the Entry's bottom border. An Entry is
+    three rows tall - border, text, border - and the layout was written as
+    though it were two. Asserted here because the fix is a row number, and
+    a row number is exactly the sort of thing a later edit moves back.
+    """
+    term = uat_terminal(cols=100, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_38_text_editing"])
+    term.wait_for_text("Find:")
+    term.wait_for_text("undo groups=0")
+
+    rows = term.display
+    # The Find box, not the scenario's own outer frame: both have a bottom
+    # border, and taking the last one found the frame and passed whatever
+    # the layout did. Anchoring on the "Find:" label is what makes this
+    # test about the box it is named after - written that way after the
+    # first version passed with the fault put back.
+    label = next(n for n, row in enumerate(rows) if "Find:" in row)
+    bottom = label + 1
+    assert "\u2514" in rows[bottom], (
+        f"expected the Find box's bottom border on row {bottom}, got {rows[bottom]!r}"
+    )
+    assert "insert" not in rows[bottom], (
+        f"the status line is sitting on the Find box border, row {bottom}"
+    )

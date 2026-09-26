@@ -4961,6 +4961,7 @@ class _Drawable(Widget):
         rows, columns = dispatcher.call(window.getmaxyx)
         if not 0 <= row < rows or not 0 <= column < columns:
             return
+        text = _one_cell_each(text)
         text = text[: columns - column]
         if not text:
             return
@@ -4971,6 +4972,41 @@ class _Drawable(Widget):
                 dispatcher.call(window.insstr, row, columns - 1, text[-1], attribute)
             else:
                 dispatcher.call(window.addstr, row, column, text, attribute)
+
+
+#: What a character that is not one printable cell is drawn as instead.
+#: A tab becomes a space because a tab IS whitespace - it simply does not
+#: advance to a tab stop yet; see TkCurses-wy7. Everything else becomes a
+#: question mark, which is visible: a stray control character in a widget is
+#: a bug somewhere, and silently drawing nothing hides it.
+_STAND_IN = {"\t": " "}
+
+
+def _one_cell_each(text: str) -> str:
+    """Replace anything that would not occupy exactly one cell.
+
+    Every column calculation in this library - clipping to a window, the
+    insert cursor, ``bbox``, mapping a click back to an index - assumes one
+    character is one cell. A control character breaks that assumption at the
+    only point where it cannot be checked: curses draws it as the terminal
+    sees fit, and the arithmetic has already been done.
+
+    Measured before this existed: a Text holding "\tAB" drew A at column 10
+    while reporting it at column 4, because curses expanded the tab to a tab
+    stop and the widget had counted it as one. A Label holding "A\tB" lost
+    the B entirely, and an Entry holding "C\tD" pushed the D seven columns
+    into a twenty-column box. Every widget was affected, because they all
+    write through here.
+
+    The substitution is length-preserving on purpose, so the clipping either
+    side of it stays correct.
+    """
+    if text.isprintable():
+        return text
+    return "".join(
+        character if character.isprintable() else _STAND_IN.get(character, "?")
+        for character in text
+    )
 
 
 class Frame(_Drawable):
@@ -7570,12 +7606,14 @@ class Text(_Drawable):
     """
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "autoseparators": True,
         "exportselection": True,
         "font": "",
         "height": 24,
         "relief": "sunken",
         "state": "normal",
         "takefocus": True,
+        "undo": False,
         "width": 80,
         "wrap": "char",
         "xscrollcommand": None,
@@ -7607,9 +7645,9 @@ class Text(_Drawable):
             master: Parent widget; the implicit root when omitted.
             cnf: Options as a dictionary, merged with the keywords.
             name: Path component, generated when omitted.
-            **kw: ``width``, ``height``, ``wrap``, ``state``,
-                ``xscrollcommand``, ``yscrollcommand``, and the standard
-                options.
+            **kw: ``width``, ``height``, ``wrap``, ``state``, ``undo``,
+                ``autoseparators``, ``xscrollcommand``, ``yscrollcommand``,
+                and the standard options.
         """
         self._buffer = TextBuffer()
         self._top = 0
@@ -7618,7 +7656,15 @@ class Text(_Drawable):
         self._dragging = False
         self._tag_options: dict[str, dict[str, Any]] = {}
         self._tag_order: list[str] = []
+        #: Tk's "has this been changed since it was last saved" flag. It is
+        #: NOT the undo stack: it works with ``-undo false``, and clearing
+        #: it leaves the stack alone.
+        self._modified = False
+        #: What the last recorded edit was, so autoseparators can break the
+        #: group when the user switches between typing and deleting.
+        self._last_edit: str | None = None
         super().__init__(master, cnf, name=name, **kw)
+        self._buffer.undo_enabled = self.getboolean(self._options["undo"])
         self._buffer.mark_set("insert", "1.0")
         self._buffer.mark_set("current", "1.0")
         # The selection is a tag like any other, which is why sel.first works
@@ -7659,6 +7705,10 @@ class Text(_Drawable):
         if {"width", "height"} & set(given):
             self._apply_requested_size()
             self._invalidate_layout()
+        if "undo" in given:
+            # Turning it off does NOT throw the stack away: Tk keeps it, so
+            # switching undo off and on again leaves the history intact.
+            self._buffer.undo_enabled = self.getboolean(self._options["undo"])
         self._clamp_view()
         self._redraw()
         self._report_view()
@@ -7736,7 +7786,237 @@ class Text(_Drawable):
         self.see("insert")
         self._redraw()
         self._report_view()
+        self._set_modified(True)
+
+    def _set_modified(self, state: bool) -> None:
+        """Move the modified flag, announcing it only when it moves.
+
+        Measured against Tk: ``<<Modified>>`` fires on the CHANGE, not on
+        the edit. Two inserts in a row give one event, and clearing the flag
+        with ``edit_modified(False)`` gives another - it is an event about
+        the flag, not about the text. This used to fire on every edit, so a
+        handler that saved on it saved far more often than Tk would.
+        """
+        if state == self._modified:
+            return
+        self._modified = state
         self.event_generate("<<Modified>>")
+
+    # -------------------------------------------------------------- geometry
+
+    def dlineinfo(self, index: Any) -> tuple[int, int, int, int, int] | None:
+        """Where the display line holding ``index`` is, in cells.
+
+        Returns ``(x, y, width, height, baseline)`` relative to this widget,
+        or None when that line is not on screen - which is what tkinter
+        does, and what makes this worth asking rather than calculating: the
+        answer depends on where the view has been scrolled to.
+
+        ``height`` is always 1 and ``baseline`` is always 0. Tk measures
+        both in pixels, and in a character grid the row is one cell tall
+        with nothing below the letters, so 0 is the honest answer rather
+        than a placeholder. ``width`` is the length of the line's text, not
+        the width of the widget.
+
+        A *display* line, note, not a logical one: a wrapped paragraph has
+        one of these per row on screen.
+        """
+        found = self._row_and_column(index)
+        if found is None:
+            return None
+        row, _, (line_start, line_stop) = found
+        area = self._text_area()
+        y = area.y + (row - self._top)
+        if not 0 <= y - area.y < area.height:
+            return None
+        return (area.x - self._left, y, line_stop - line_start, 1, 0)
+
+    def bbox(self, index: Any) -> tuple[int, int, int, int] | None:
+        """Where the character at ``index`` is, as ``(x, y, width, height)``.
+
+        One cell, so the size is always ``1, 1``. None when the character
+        is not on screen, horizontally as well as vertically: a long line
+        scrolled sideways puts characters out of view without putting their
+        line out of view, and Tk returns None for those too.
+        """
+        found = self._row_and_column(index)
+        if found is None:
+            return None
+        row, column, _ = found
+        area = self._text_area()
+        x = area.x + (column - self._left)
+        y = area.y + (row - self._top)
+        if not 0 <= x - area.x < area.width:
+            return None
+        if not 0 <= y - area.y < area.height:
+            return None
+        return (x, y, 1, 1)
+
+    def _row_and_column(self, index: Any) -> tuple[int, int, tuple[int, int]] | None:
+        """The display row and column for an index, and that row's extent.
+
+        The inverse of :meth:`_index_at_cell`, and deliberately written as
+        such: the two have to agree, or a click and a bbox disagree about
+        where the same character is. Both work in rows across the whole
+        document; the caller takes ``_top`` and ``_left`` off to reach the
+        screen.
+        """
+        rows = self._display_lines()
+        if not rows:
+            return None
+        resolved = self._resolve(index)
+        row, column = self._display_position(resolved, rows)
+        _, start, stop = rows[row]
+        return row, column, (start, stop)
+
+    # ---------------------------------------------------------------- search
+
+    def search(
+        self,
+        pattern: str,
+        index: Any,
+        stopindex: Any = None,
+        forwards: bool | None = None,
+        backwards: bool | None = None,
+        exact: bool | None = None,
+        regexp: bool | None = None,
+        nocase: bool | None = None,
+        count: Any = None,
+        elide: bool | None = None,
+    ) -> str:
+        """Find ``pattern``, returning where it starts as ``line.char``.
+
+        Returns the empty string when there is no match, which is what
+        tkinter returns and what calling code tests for.
+
+        Args:
+            pattern: Text to find, or a regular expression with ``regexp``.
+            index: Where to start looking.
+            stopindex: Where to give up. Without it the search WRAPS -
+                forwards runs off the end and round to the beginning, and
+                backwards the other way. This surprises people, and it is
+                what Tk does.
+            forwards: Search towards the end. The default.
+            backwards: Search towards the beginning instead.
+            exact: Match the pattern literally. The default.
+            regexp: Match it as a regular expression, **line by line** - so
+                ``^`` and ``$`` are the edges of a line and nothing matches
+                across a newline. An exact search has no such limit and
+                will happily match across one.
+            nocase: Ignore case.
+            count: A variable to put the match length in, in characters.
+                Anything with a ``set`` method, as in tkinter, where it is
+                usually an ``IntVar``.
+            elide: Accepted and ignored. Tk skips elided text with this;
+                nothing is ever elided here because there is no ``elide``
+                tag option, so there is nothing for it to do. Taking it and
+                doing nothing is better than rejecting a call that would
+                work in tkinter.
+
+        Passing both ``exact`` and ``regexp`` is not an error: ``regexp``
+        wins, which is measured behaviour rather than a choice made here.
+        """
+        del forwards, exact, elide  # Defaults; named so the signature matches.
+        found = self._buffer.search(
+            pattern,
+            self._resolve(index),
+            None if stopindex is None else self._resolve(stopindex),
+            backwards=bool(backwards),
+            regexp=bool(regexp),
+            nocase=bool(nocase),
+        )
+        if found is None:
+            return ""
+        where, length = found
+        if count is not None:
+            count.set(length)
+        return str(where)
+
+    # ------------------------------------------------------------------ undo
+
+    def edit_undo(self) -> None:
+        """Take back the most recent group of edits.
+
+        Raises:
+            TclError: If there is nothing to undo, as tkinter does.
+
+        With ``-undo false`` this does nothing at all and raises nothing,
+        which is also measured rather than assumed: Tk treats "undo is off"
+        and "undo is on but the stack is empty" as two different situations,
+        and only the second is an error.
+        """
+        if not self.getboolean(self._options["undo"]):
+            return
+        if not self._buffer.edit_undo():
+            raise TclError("nothing to undo")
+        self._last_edit = None
+        self._after_undo()
+
+    def edit_redo(self) -> None:
+        """Put back the most recently undone group.
+
+        Raises:
+            TclError: If there is nothing to redo, as tkinter does.
+        """
+        if not self.getboolean(self._options["undo"]):
+            return
+        if not self._buffer.edit_redo():
+            raise TclError("nothing to redo")
+        self._last_edit = None
+        self._after_undo()
+
+    def _after_undo(self) -> None:
+        """Repaint after the stack moved the text under the cursor.
+
+        The insert mark is moved by the same ``_shift`` that moves every
+        other mark, so it is already somewhere sensible - but it may be off
+        screen, and the scrollbars no longer describe what is there.
+        """
+        self.see("insert")
+        self._redraw()
+        self._report_view()
+        self._set_modified(True)
+
+    def edit_separator(self) -> None:
+        """Break the undo group, so the next edit undoes on its own."""
+        self._buffer.edit_separator()
+        self._last_edit = None
+
+    def edit_reset(self) -> None:
+        """Throw away the undo and redo history, keeping the text."""
+        self._buffer.edit_reset()
+        self._last_edit = None
+
+    def edit_modified(self, arg: Any = None) -> int | None:
+        """Read the modified flag, or set it.
+
+        Returns 0 or 1 rather than a bool, which is what tkinter returns and
+        what code written against it compares against.
+        """
+        if arg is None:
+            return int(self._modified)
+        self._set_modified(self.getboolean(arg))
+        return None
+
+    def _separate_if_asked(self, kind: str | None) -> None:
+        """Start a new undo group when the user changes what they are doing.
+
+        With ``-autoseparators true`` a run of typing undoes as a run, and
+        the run ends where a person would say it ended: when they move the
+        cursor, click somewhere else, or switch from typing to deleting.
+        Without this every character is its own group and undo becomes
+        backspace with extra steps.
+
+        Programmatic ``insert()`` and ``delete()`` deliberately do NOT come
+        here. Measured against Tk: three ``insert()`` calls in a row with
+        autoseparators on are one group, because Tk's separators come from
+        the key bindings rather than from the widget command.
+        """
+        if not self.getboolean(self._options["autoseparators"]):
+            return
+        if kind is None or kind != self._last_edit:
+            self._buffer.edit_separator()
+        self._last_edit = kind
 
     # ----------------------------------------------------------------- marks
 
@@ -7918,6 +8198,9 @@ class Text(_Drawable):
         wherever it was anchored to wherever the cursor has got to. Without
         it the selection is dropped, which is what a plain arrow does.
         """
+        # Moving the cursor ends whatever was being typed: the next edit is
+        # somewhere else, so it is a new thing to undo.
+        self._separate_if_asked(None)
         insert = self._buffer.mark_index("insert") or Index(1, 0)
         if isinstance(where, tuple):
             kind, count = where
@@ -7999,6 +8282,9 @@ class Text(_Drawable):
         """Put typed characters in, replacing the selection if there is one."""
         if not self._editable:
             return
+        # A newline ends the run: undoing a paragraph should not also take
+        # back the one before it.
+        self._separate_if_asked("\n" if "\n" in characters else "type")
         self._delete_selection()
         insert = self._buffer.mark_index("insert") or Index(1, 0)
         self._buffer.insert(insert, characters)
@@ -8009,6 +8295,7 @@ class Text(_Drawable):
         """Delete the selection, or the character before the cursor."""
         if not self._editable:
             return
+        self._separate_if_asked("erase")
         if not self._delete_selection():
             insert = self._buffer.mark_index("insert") or Index(1, 0)
             start = self._buffer.index(f"{insert} -1c")
@@ -8021,6 +8308,7 @@ class Text(_Drawable):
         """Delete the selection, or the character after the cursor."""
         if not self._editable:
             return
+        self._separate_if_asked("erase")
         if not self._delete_selection():
             insert = self._buffer.mark_index("insert") or Index(1, 0)
             self._buffer.delete(insert)
@@ -8469,6 +8757,7 @@ def _text_press(event: Event) -> None:
     """Take the focus, put the cursor where the click was, and start a drag."""
     text = event.widget
     text.focus_set()
+    text._separate_if_asked(None)
     index = text._index_at_cell(event.x, event.y)
     text._buffer.mark_set("insert", index)
     text._buffer.mark_set("current", index)

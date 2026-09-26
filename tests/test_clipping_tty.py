@@ -113,3 +113,73 @@ def test_the_canvas_fills_only_the_cells_it_has(clipped):
     assert filled, clipped.describe()
     for row in filled:
         assert not row[:EDGE].strip(), clipped.describe()
+
+
+# A control character breaks the same assumption from the other side: not a
+# write running past the edge, but a write whose characters are not the
+# width the caller counted on. TkCurses-wy7 covers real tab stops; this is
+# about the display never disagreeing with the widget's own arithmetic.
+
+CONTROL_CHARACTERS = """
+import tkcurses
+
+root = tkcurses.Tk()
+
+text = tkcurses.Text(root, name='tx', wrap='none')
+text.place(x=0, y=0, width=24, height=3)
+text.insert('1.0', '\\tAB')
+
+tkcurses.Label(root, name='lb', text='A\\tB').place(x=0, y=4)
+
+entry = tkcurses.Entry(root, name='en', width=20)
+entry.place(x=0, y=6, width=20)
+entry.insert(0, 'C\\tD')
+
+root.update_layout()
+
+def report():
+    # After a frame, not before: the widgets have not drawn themselves at
+    # the point this file is read, so asking now would compare a bbox
+    # against a blank screen.
+    buffer = root.tk.screen.buffer
+    buffer.write(9, 0, 'bbox=%s' % (text.bbox('1.1'),))
+    root.tk.screen.refresh()
+
+root.after(200, report)
+root.after(4000, root.quit)
+root.mainloop()
+"""
+
+
+@pytest.fixture
+def controls(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    term.run_source(CONTROL_CHARACTERS, workdir=tmp_path)
+    term.wait_for(lambda t: any("AB" in row for row in t.display), message="the text")
+    term.wait_for_text("bbox=")
+    term.wait_for_idle()
+    return term
+
+
+def test_a_tab_is_drawn_where_the_widget_says_it_is(controls):
+    """The fault the user hit: report one column, draw in another.
+
+    A tab handed straight to curses is expanded to a tab stop, so the A
+    after it landed at column 10 while bbox said column 4 - and clicking
+    the A selected a different character from the one under the pointer.
+    """
+    box = next(row for row in controls.display if "bbox=" in row)
+    x = int(box.split("(")[1].split(",")[0])
+    row = controls.display[1]
+    assert row[x] == "A", f"bbox says column {x}, found {row[x]!r} in {row.rstrip()!r}"
+
+
+def test_a_label_does_not_lose_what_follows_a_tab(controls):
+    """It lost the B entirely: the tab pushed it past the label's width."""
+    assert "A B" in controls.display[4]
+
+
+def test_an_entry_does_not_push_text_across_the_box(controls):
+    """C<tab>D put the D seven columns in, inside a twenty-column box."""
+    row = next(row for row in controls.display if "C" in row and "D" in row)
+    assert "C D" in row, row.rstrip()

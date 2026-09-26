@@ -745,3 +745,450 @@ def test_control_left_walks_back_word_by_word(tk_alike):
     tk_alike.mark_set("insert", "1.17")
     assert press(tk_alike, "Left", modifiers=MOD_CTRL) == "1.11"
     assert press(tk_alike, "Left", modifiers=MOD_CTRL) == "1.6"
+
+
+# --------------------------------------------------------------------- undo
+#
+# Every expectation below was measured against real tkinter (Tk 9.0) before
+# it was written, because the corner cases are not guessable: which edits
+# group together, when the redo stack is dropped, and which of the two ways
+# of having nothing to undo is an error.
+
+
+@pytest.fixture
+def undoable(root):
+    """A Text with undo on, otherwise the same as ``text``."""
+    widget = Text(root, name="u", width=20, height=5, wrap="none", undo=True)
+    widget._allocate(Rect(0, 0, 22, 7))
+    widget._map()
+    return widget
+
+
+def test_undo_is_off_unless_asked_for(text):
+    """Tk's default, and it means edit_undo does nothing rather than fail."""
+    text.insert("1.0", "x")
+    assert text.edit_undo() is None
+    assert text.get("1.0", "end-1c") == "x"
+
+
+def test_nothing_to_undo_is_an_error_only_when_undo_is_on(undoable, text):
+    """The two ways of having nothing to undo are not the same thing.
+
+    Measured: with -undo true an empty stack raises, with -undo false the
+    call is a no-op. Treating them alike would either make a plain Text
+    raise on a keystroke or make a real empty stack silently succeed.
+    """
+    with pytest.raises(TclError, match="nothing to undo"):
+        undoable.edit_undo()
+    with pytest.raises(TclError, match="nothing to redo"):
+        undoable.edit_redo()
+    assert text.edit_undo() is None
+
+
+def test_programmatic_edits_group_together(undoable):
+    """Three insert() calls are ONE undo, even with autoseparators on.
+
+    Measured against Tk, and the opposite of what the option name suggests:
+    separators come from the key bindings, not from the widget command. A
+    program that wants them apart calls edit_separator itself.
+    """
+    undoable.insert("1.0", "one")
+    undoable.insert("end-1c", " two")
+    undoable.insert("end-1c", " three")
+    undoable.edit_undo()
+    assert undoable.get("1.0", "end-1c") == ""
+
+
+def test_a_separator_splits_the_group(undoable):
+    undoable.insert("1.0", "one")
+    undoable.edit_separator()
+    undoable.insert("end-1c", " two")
+    undoable.edit_undo()
+    assert undoable.get("1.0", "end-1c") == "one"
+    undoable.edit_undo()
+    assert undoable.get("1.0", "end-1c") == ""
+
+
+def test_redo_puts_back_one_group_at_a_time(undoable):
+    undoable.insert("1.0", "one")
+    undoable.edit_separator()
+    undoable.insert("end-1c", " two")
+    undoable.edit_undo()
+    undoable.edit_undo()
+    undoable.edit_redo()
+    assert undoable.get("1.0", "end-1c") == "one"
+    undoable.edit_redo()
+    assert undoable.get("1.0", "end-1c") == "one two"
+
+
+def test_a_new_edit_drops_the_redo_stack(undoable):
+    """Measured against Tk, and easy to miss.
+
+    Keeping what was undone would let redo reapply an edit to text that has
+    since changed under it.
+    """
+    undoable.insert("1.0", "a")
+    undoable.edit_separator()
+    undoable.insert("end-1c", "b")
+    undoable.edit_undo()
+    undoable.insert("end-1c", "Z")
+    with pytest.raises(TclError, match="nothing to redo"):
+        undoable.edit_redo()
+
+
+def test_undo_takes_back_a_deletion(undoable):
+    undoable.insert("1.0", "abc")
+    undoable.edit_separator()
+    undoable.delete("1.0", "1.1")
+    assert undoable.get("1.0", "end-1c") == "bc"
+    undoable.edit_undo()
+    assert undoable.get("1.0", "end-1c") == "abc"
+
+
+def test_edit_reset_forgets_both_stacks(undoable):
+    undoable.insert("1.0", "q")
+    undoable.edit_reset()
+    with pytest.raises(TclError, match="nothing to undo"):
+        undoable.edit_undo()
+
+
+def test_turning_undo_off_keeps_the_history(undoable):
+    """Tk keeps the stack across the option, so off-then-on is not a reset."""
+    undoable.insert("1.0", "kept")
+    undoable.configure(undo=False)
+    undoable.configure(undo=True)
+    undoable.edit_undo()
+    assert undoable.get("1.0", "end-1c") == ""
+
+
+def test_typing_undoes_as_a_run_not_a_letter(undoable):
+    """What autoseparators is actually for.
+
+    Without grouping, undo is backspace with extra steps - the thing that
+    makes an editor feel broken while every individual edit is correct.
+    """
+    typed(undoable, "hello")
+    undoable.edit_undo()
+    assert undoable.get("1.0", "end-1c") == ""
+
+
+def test_moving_the_cursor_ends_the_run(undoable):
+    """Two runs typed in different places undo separately."""
+    typed(undoable, "ab")
+    undoable._handle(KeyEvent(keysym="Left", char=""))
+    typed(undoable, "XY")
+    undoable.edit_undo()
+    assert undoable.get("1.0", "end-1c") == "ab"
+
+
+def test_switching_from_typing_to_deleting_ends_the_run(undoable):
+    typed(undoable, "abc")
+    undoable._backspace()
+    undoable.edit_undo()
+    assert undoable.get("1.0", "end-1c") == "abc"
+
+
+def test_autoseparators_off_keeps_it_all_in_one_group(root):
+    widget = Text(root, name="w", width=20, height=5, undo=True, autoseparators=False)
+    widget._allocate(Rect(0, 0, 22, 7))
+    widget._map()
+    typed(widget, "ab")
+    widget._handle(KeyEvent(keysym="Left", char=""))
+    typed(widget, "XY")
+    widget.edit_undo()
+    assert widget.get("1.0", "end-1c") == ""
+
+
+def test_autoseparators_can_be_turned_off_and_on_again(undoable):
+    """The option is read per edit, not captured when the widget is built.
+
+    The acceptance scenario toggles it at runtime to show what it does, so
+    a version that only honoured the constructor would make that scenario
+    lie while every other test still passed.
+    """
+    typed(undoable, "ab")
+    undoable._handle(KeyEvent(keysym="Left", char=""))
+    typed(undoable, "cd")
+    assert undoable._buffer.undo_depth == 2, "two runs while it is on"
+
+    undoable.configure(autoseparators=False)
+    undoable._handle(KeyEvent(keysym="Left", char=""))
+    typed(undoable, "ef")
+    assert undoable._buffer.undo_depth == 2, "off: no new group, whatever happens"
+
+    undoable.configure(autoseparators=True)
+    undoable._handle(KeyEvent(keysym="Left", char=""))
+    typed(undoable, "gh")
+    assert undoable._buffer.undo_depth == 3, "and back on again"
+
+
+def test_undo_depth_counts_groups_not_edits(undoable):
+    """What the scenario's status line shows, so it cannot drift."""
+    assert undoable._buffer.undo_depth == 0
+    undoable.insert("1.0", "one")
+    undoable.insert("end-1c", " two")
+    assert undoable._buffer.undo_depth == 1, "one group, two edits"
+    undoable.edit_separator()
+    undoable.insert("end-1c", " three")
+    assert undoable._buffer.undo_depth == 2
+    undoable.edit_undo()
+    assert undoable._buffer.undo_depth == 1
+
+
+def test_undo_restores_text_but_not_tags(undoable):
+    """Tk does the same, measured: only the characters are recorded.
+
+    Asserted rather than left as an accident, so that a later change which
+    starts restoring tags is a deliberate divergence and not a surprise.
+    """
+    undoable.insert("1.0", "hello world")
+    undoable.tag_add("t", "1.0", "1.5")
+    undoable.edit_separator()
+    undoable.delete("1.0", "1.6")
+    undoable.edit_undo()
+    assert undoable.get("1.0", "end-1c") == "hello world"
+    assert undoable.tag_ranges("t") == []
+
+
+def test_marks_come_back_where_they_were(undoable):
+    undoable.insert("1.0", "hello world")
+    undoable.mark_set("here", "1.6")
+    undoable.edit_separator()
+    undoable.delete("1.0", "1.6")
+    undoable.edit_undo()
+    assert undoable.index("here") == "1.6"
+
+
+# ----------------------------------------------------------- modified flag
+
+
+def test_the_modified_flag_starts_clear_and_is_an_int(text):
+    """tkinter returns 0 or 1, and code written against it compares to them."""
+    assert text.edit_modified() == 0
+    text.insert("1.0", "x")
+    assert text.edit_modified() == 1
+
+
+def test_the_modified_flag_can_be_cleared(text):
+    text.insert("1.0", "x")
+    text.edit_modified(False)
+    assert text.edit_modified() == 0
+
+
+def test_modified_fires_on_the_change_not_on_the_edit(text):
+    """Measured against Tk: it is an event about the FLAG, not the text.
+
+    Two inserts give one event. Clearing the flag gives another, because
+    that is a change too. This used to fire on every edit, so a handler
+    that saved on it saved far more often than tkinter would.
+    """
+    seen = []
+    text.bind("<<Modified>>", lambda event: seen.append(text.edit_modified()))
+    text.insert("1.0", "a")
+    assert seen == [1]
+    text.insert("end-1c", "b")
+    assert seen == [1], "a second edit does not change the flag"
+    text.edit_modified(False)
+    assert seen == [1, 0], "clearing it is a change, and is announced"
+    text.insert("end-1c", "c")
+    assert seen == [1, 0, 1]
+
+
+def test_the_modified_flag_works_without_undo(text):
+    """It is not part of the undo machinery, though it looks like it."""
+    assert text.cget("undo") is False
+    text.insert("1.0", "x")
+    assert text.edit_modified() == 1
+
+
+# ------------------------------------------------------------------- search
+#
+# Every case here was run against real tkinter (Tk 9.0) first and matched
+# before it was written down - including the ones that look wrong, like an
+# empty pattern returning the index it started at.
+
+
+@pytest.fixture
+def haystack(text):
+    text.insert("1.0", "Hello hello\nworld HELLO\n")
+    return text
+
+
+def test_search_finds_the_next_match(haystack):
+    assert haystack.search("hello", "1.0") == "1.6"
+
+
+def test_a_match_at_the_start_index_counts(haystack):
+    """Not "after the index": Tk reports a match that begins exactly there."""
+    assert haystack.search("hello", "1.6") == "1.6"
+
+
+def test_search_returns_empty_string_when_absent(haystack):
+    """tkinter returns "", not None, and callers test it as a string."""
+    assert haystack.search("zz", "1.0") == ""
+
+
+def test_search_wraps_round_the_end(haystack):
+    """Surprising, and what Tk does: without a stopindex there is no end."""
+    assert haystack.search("Hello", "end") == "1.0"
+
+
+def test_stopindex_is_how_a_caller_asks_for_no_wrapping(haystack):
+    assert haystack.search("world", "1.0", stopindex="1.5") == ""
+
+
+def test_search_backwards_finds_the_previous_match(haystack):
+    assert haystack.search("hello", "end", backwards=True) == "1.6"
+
+
+def test_nocase_applies_in_both_directions(haystack):
+    assert haystack.search("hello", "end", backwards=True, nocase=True) == "2.6"
+
+
+def test_an_empty_pattern_matches_where_it_started(haystack):
+    """Measured. Not "no match", and not "everything"."""
+    assert haystack.search("", "2.0") == "2.0"
+
+
+def test_count_reports_the_match_length(haystack):
+    counter = SimpleNamespace(value=None, set=lambda n: None)
+    seen = []
+    counter.set = seen.append
+    assert haystack.search("Hello", "1.0", count=counter) == "1.0"
+    assert seen == [5]
+
+
+def test_an_exact_search_matches_across_a_newline(text):
+    """The difference from a regular expression, and it is measured.
+
+    Tk's exact search runs over the text as one string; only -regexp is
+    confined to a line.
+    """
+    text.insert("1.0", "abc\ndef\nghi")
+    counter = []
+    assert text.search("abc\ndef", "1.0", count=SimpleNamespace(set=counter.append))
+    assert counter == [7]
+
+
+def test_a_regexp_is_matched_line_by_line(text):
+    """So ^ and $ are the edges of a line, and . never crosses a newline."""
+    text.insert("1.0", "abc\ndef\nghi")
+    assert text.search("c$", "1.0", regexp=True) == "1.2"
+    assert text.search("^d", "1.0", regexp=True) == "2.0"
+    assert text.search("c.d", "1.0", regexp=True) == "", "must not cross a newline"
+    assert text.search("a.*i", "1.0", regexp=True) == "", "nor span three lines"
+
+
+def test_a_regexp_anchored_to_the_line_end_still_wraps(haystack):
+    assert haystack.search("hello$", "1.0", regexp=True, nocase=True) == "1.6"
+
+
+def test_regexp_wins_over_exact_when_both_are_given(text):
+    """Not an error, measured: Tk takes the later option."""
+    text.insert("1.0", "abc")
+    assert text.search("b+", "1.0", exact=True, regexp=True) == "1.1"
+
+
+def test_search_backwards_with_a_regexp(text):
+    text.insert("1.0", "abc\ndef\nghi")
+    assert text.search("b|e", "end", regexp=True, backwards=True) == "2.1"
+
+
+def test_elide_is_accepted_and_does_nothing(haystack):
+    """Nothing is elided here, so there is nothing for it to skip.
+
+    Accepted rather than rejected, so a call that works in tkinter does not
+    fail here for the sake of an option with no meaning.
+    """
+    assert haystack.search("hello", "1.0", elide=True) == "1.6"
+
+
+# ----------------------------------------------------------------- geometry
+
+
+def test_bbox_is_one_cell(text):
+    text.insert("1.0", "hello")
+    assert text.bbox("1.0") == (1, 1, 1, 1)
+    assert text.bbox("1.3") == (4, 1, 1, 1)
+
+
+def test_dlineinfo_reports_the_line_width_not_the_widget_width(text):
+    text.insert("1.0", "hello")
+    info = text.dlineinfo("1.0")
+    assert info is not None
+    x, y, width, height, baseline = info
+    assert (x, y) == (1, 1)
+    assert width == 5, "the text on that line, not the 20 columns available"
+    assert (height, baseline) == (1, 0), "one cell tall, nothing below it"
+
+
+def test_geometry_of_a_later_line(text):
+    text.insert("1.0", "one\ntwo\nthree")
+    assert text.bbox("3.0") == (1, 3, 1, 1)
+    info = text.dlineinfo("3.0")
+    assert info is not None and info[1] == 3
+
+
+def test_an_index_scrolled_out_of_view_has_no_geometry(text):
+    """What makes this worth asking rather than calculating.
+
+    The widget shows 5 rows; line 9 is below them until the view moves.
+    """
+    text.insert("1.0", "\n".join(str(n) for n in range(1, 12)))
+    text.see("1.0")
+    assert text.bbox("9.0") is None
+    assert text.dlineinfo("9.0") is None
+    text.see("9.0")
+    assert text.bbox("9.0") is not None
+    assert text.dlineinfo("9.0") is not None
+
+
+def test_a_character_scrolled_sideways_has_no_bbox(root):
+    """Horizontally too, and only bbox notices: the LINE is still shown."""
+    widget = Text(root, name="h", width=10, height=3, wrap="none")
+    widget._allocate(Rect(0, 0, 12, 5))
+    widget._map()
+    widget.insert("1.0", "abcdefghijklmnopqrstuvwxyz")
+    widget.see("1.0")
+    assert widget.bbox("1.0") is not None
+    widget.see("1.25")
+    assert widget.bbox("1.0") is None, "scrolled off to the left"
+    info = widget.dlineinfo("1.0")
+    assert info is not None, "but its line is still on screen"
+    # tkinter does this too, measured: with the view scrolled right it
+    # answered x=-125 rather than clamping to the widget or giving up.
+    assert info[0] < 0, "and the line now starts left of the widget"
+
+
+def test_bbox_agrees_with_where_a_click_lands(text):
+    """The two are inverses, and a disagreement is a real bug.
+
+    A click resolves a cell to an index; bbox resolves an index to a cell.
+    If they drift apart, clicking a character selects a different one from
+    the one drawn there.
+    """
+    text.insert("1.0", "one\ntwo\nthree")
+    for spec in ("1.0", "1.2", "2.1", "3.4"):
+        box = text.bbox(spec)
+        assert box is not None, spec
+        x, y, _, _ = box
+        assert str(text._index_at_cell(x, y)) == text.index(spec)
+
+
+def test_geometry_follows_a_wrapped_line(root):
+    """Display lines, not logical ones: row 2 on screen is still line 1."""
+    widget = Text(root, name="w2", width=5, height=4, wrap="char")
+    widget._allocate(Rect(0, 0, 7, 6))
+    widget._map()
+    widget.insert("1.0", "abcdefgh")
+    first, second = widget.bbox("1.0"), widget.bbox("1.5")
+    assert first is not None and second is not None
+    assert second[1] == first[1] + 1, "the wrap put it on the next row"
+    assert second[0] == first[0], "and back at the left edge"
+
+
+def test_geometry_of_an_empty_widget(text):
+    """There is always one line, so there is always somewhere to point."""
+    assert text.bbox("1.0") == (1, 1, 1, 1)
+    info = text.dlineinfo("1.0")
+    assert info is not None and info[2] == 0, "no text on it yet"

@@ -69,6 +69,23 @@ _COUNT = re.compile(r"^([+-])\s*(\d+)\s*([a-z]+)$")
 _GRAVITIES = ("left", "right")
 
 
+@dataclass(frozen=True)
+class _Edit:
+    """One applied change, holding enough to reverse itself.
+
+    ``text`` is what moved: for an insertion the characters put in, for a
+    deletion the characters taken out. Undoing an insertion deletes that
+    span; undoing a deletion puts the text back at the same offset. Marks
+    and tags are then moved by :meth:`TextBuffer._shift` on the way back
+    exactly as they were on the way there, so nothing needs recording about
+    them.
+    """
+
+    at: int
+    text: str
+    inserted: bool
+
+
 class TextIndexError(ValueError):
     """An index string that means nothing."""
 
@@ -111,6 +128,21 @@ class TextBuffer:
         self._starts: list[int] | None = None
         self._marks: dict[str, tuple[int, str]] = {}
         self._tags: dict[str, list[tuple[int, int]]] = {}
+        #: Applied edits, newest last, in groups that undo together. A
+        #: separator closes the open group; see :meth:`edit_separator`.
+        self._done: list[list[_Edit]] = []
+        #: Groups taken back by :meth:`edit_undo`, newest last. Any new edit
+        #: clears it - measured against Tk, where a fresh edit after an undo
+        #: leaves "nothing to redo".
+        self._undone: list[list[_Edit]] = []
+        #: True while undoing or redoing, so the reversal is not itself
+        #: recorded. Without this the stack never empties: each undo pushes
+        #: its own inverse and the next one puts the edit straight back.
+        self._replaying = False
+        #: True when the next recorded edit should start a new group.
+        self._separate = True
+        #: Whether edits are recorded at all - the widget's ``-undo``.
+        self.undo_enabled = False
 
     # --------------------------------------------------------------- shape
 
@@ -359,6 +391,7 @@ class TextBuffer:
         if not text:
             return self.index(index)
         at = min(self.offset_of(self.index(index)), len(self._text) - 1)
+        self._record(_Edit(at, text, inserted=True))
         self._text = self._text[:at] + text + self._text[at:]
         self._lines = None
         self._starts = None
@@ -381,6 +414,7 @@ class TextBuffer:
         start = min(start, stop)
         if start == stop:
             return
+        self._record(_Edit(start, self._text[start:stop], inserted=False))
         self._text = self._text[:start] + self._text[stop:]
         self._lines = None
         self._starts = None
@@ -408,6 +442,261 @@ class TextBuffer:
         for name, ranges in self._tags.items():
             shifted = [(moved(start), moved(stop)) for start, stop in ranges]
             self._tags[name] = _merge(pair for pair in shifted if pair[0] < pair[1])
+
+    # ---------------------------------------------------------------- search
+
+    def search(
+        self,
+        pattern: str,
+        index: Index | str,
+        stopindex: Index | str | None = None,
+        *,
+        backwards: bool = False,
+        regexp: bool = False,
+        nocase: bool = False,
+    ) -> tuple[Index, int] | None:
+        """Find ``pattern``, returning where it starts and how long it is.
+
+        None when there is no match. The length is in characters and is
+        what Tk's ``-count`` reports; for a regular expression the caller
+        cannot work it out from the pattern, which is why it comes back
+        here rather than being left to them.
+
+        **Exact and regular-expression searches are two different
+        searches**, not one with a flag, and this was measured against Tk
+        rather than assumed:
+
+        - An exact search runs over the whole buffer and **can match across
+          a newline**: ``"abc\ndef"`` is found, with a count of 7.
+        - A regular expression is matched **line by line**, so ``c.d``
+          spanning a newline is not found at all, while ``c$`` and ``^d``
+          match at the end and start of their own lines.
+
+        Searching **wraps**: forwards runs to the end and round to the
+        start, backwards the other way, stopping before the index it began
+        at so a single match is never reported twice. ``stopindex`` is
+        where to give up instead, which is how a caller asks for a search
+        that does not wrap.
+
+        An empty pattern matches at ``index`` with a count of 0, which is
+        what Tk answers - not "no match", and not "everything".
+        """
+        start = self.offset_of(self.index(index))
+        stop = None if stopindex is None else self.offset_of(self.index(stopindex))
+        if not pattern:
+            return self.index_of(start), 0
+        found = self._search_span(
+            pattern, start, stop, backwards=backwards, regexp=regexp, nocase=nocase
+        )
+        if found is None:
+            return None
+        at, length = found
+        return self.index_of(at), length
+
+    def _search_span(
+        self,
+        pattern: str,
+        start: int,
+        stop: int | None,
+        *,
+        backwards: bool,
+        regexp: bool,
+        nocase: bool,
+    ) -> tuple[int, int] | None:
+        """The offsets to look through, in order, and the first hit in them.
+
+        Wrapping is expressed as two ranges rather than as arithmetic on a
+        modulus: it is the same search run twice, and saying so keeps the
+        two directions from needing different code.
+        """
+        size = len(self._text)
+        if stop is not None:
+            spans = [(stop, start)] if backwards else [(start, min(stop, size))]
+        elif backwards:
+            # Behind the cursor first, then round from the end back to it.
+            spans = [(0, start), (start, size)]
+        else:
+            spans = [(start, size), (0, start)]
+        for begin, end in spans:
+            if begin >= end:
+                continue
+            hit = self._first_in(
+                pattern, begin, end, backwards=backwards, regexp=regexp, nocase=nocase
+            )
+            if hit is not None:
+                return hit
+        return None
+
+    def _first_in(
+        self,
+        pattern: str,
+        begin: int,
+        end: int,
+        *,
+        backwards: bool,
+        regexp: bool,
+        nocase: bool,
+    ) -> tuple[int, int] | None:
+        """The first match within one span, or the last one going backwards."""
+        if regexp:
+            return self._regexp_in(
+                pattern, begin, end, backwards=backwards, nocase=nocase
+            )
+        haystack = self._text[begin:end]
+        needle = pattern
+        if nocase:
+            haystack, needle = haystack.lower(), needle.lower()
+        at = haystack.rfind(needle) if backwards else haystack.find(needle)
+        if at < 0:
+            return None
+        return begin + at, len(pattern)
+
+    def _regexp_in(
+        self,
+        pattern: str,
+        begin: int,
+        end: int,
+        *,
+        backwards: bool,
+        nocase: bool,
+    ) -> tuple[int, int] | None:
+        """Match a regular expression line by line, as Tk does.
+
+        Each line is matched on its own rather than the span as a whole,
+        which is what makes ``^`` and ``$`` mean the edges of a line and
+        what stops ``.`` reaching across a newline.
+        """
+        expression = re.compile(pattern, re.IGNORECASE if nocase else 0)
+        best: tuple[int, int] | None = None
+        for line_start, line in self._lines_between(begin, end):
+            for match in expression.finditer(line):
+                at = line_start + match.start()
+                if not begin <= at < end:
+                    continue
+                hit = (at, match.end() - match.start())
+                if not backwards:
+                    return hit
+                best = hit
+        return best
+
+    def _lines_between(self, begin: int, end: int) -> list[tuple[int, str]]:
+        """Each line touching the span, as ``(offset of its start, text)``.
+
+        Whole lines, deliberately: a pattern anchored with ``^`` has to see
+        the real beginning of the line even when the span starts part way
+        through it. Matches outside the span are filtered out afterwards.
+        """
+        starts = self._line_starts
+        out = []
+        for number, line in enumerate(self.lines):
+            line_start = starts[number]
+            if line_start >= end:
+                break
+            if line_start + len(line) < begin:
+                continue
+            out.append((line_start, line))
+        return out
+
+    # ------------------------------------------------------------------ undo
+
+    def _record(self, edit: _Edit) -> None:
+        """Note an edit that is about to be applied.
+
+        Called from :meth:`insert` and :meth:`delete`, which is every path
+        that changes the text - typing, backspace, deleting a selection and
+        a program calling ``insert()`` all arrive at one of those two. There
+        is no fourth way in, so nothing can quietly escape the stack.
+        """
+        if not self.undo_enabled or self._replaying:
+            return
+        # Measured against Tk: an edit made after an undo drops what was
+        # undone, leaving "nothing to redo". The alternative - keeping it -
+        # would let redo reapply an edit to text it no longer fits.
+        self._undone.clear()
+        if self._separate or not self._done:
+            self._done.append([])
+            self._separate = False
+        self._done[-1].append(edit)
+
+    def edit_separator(self) -> None:
+        """End the current group, so the next edit begins a new one."""
+        self._separate = True
+
+    def edit_reset(self) -> None:
+        """Forget everything on both stacks."""
+        self._done.clear()
+        self._undone.clear()
+        self._separate = True
+
+    @property
+    def undo_depth(self) -> int:
+        """How many groups are waiting to be undone.
+
+        Internal, with no counterpart in Tk: grouping is the part of undo
+        that is invisible from outside and the part that is worth checking,
+        since a stack that groups wrongly is correct edit by edit. The
+        acceptance scenario shows this number so a person can watch a run
+        of typing become one group rather than infer it from pressing
+        Ctrl-Z and counting what comes back.
+        """
+        return len(self._done)
+
+    @property
+    def can_undo(self) -> bool:
+        """Whether there is a group to take back."""
+        return bool(self._done)
+
+    @property
+    def can_redo(self) -> bool:
+        """Whether there is a group to put back."""
+        return bool(self._undone)
+
+    def edit_undo(self) -> bool:
+        """Take back the newest group. False when there is nothing to take.
+
+        The group is reversed newest edit first, which is the only order
+        that works: the offsets in each record describe the text as it was
+        when that edit was applied, so an earlier one cannot be undone until
+        the later ones are gone.
+
+        **Text comes back; tags do not.** A tag whose whole range was
+        deleted is gone for good, because only the characters are recorded.
+        That is not a shortcut - Tk does exactly the same, measured: tag a
+        range, delete across it, undo, and ``tag_ranges`` is still empty
+        while the text is back. Marks do return, because they are moved by
+        :meth:`_shift` rather than stored.
+        """
+        if not self._done:
+            return False
+        group = self._done.pop()
+        self._apply(reversed(group), forward=False)
+        self._undone.append(group)
+        self._separate = True
+        return True
+
+    def edit_redo(self) -> bool:
+        """Put back the newest undone group. False when there is none."""
+        if not self._undone:
+            return False
+        group = self._undone.pop()
+        self._apply(group, forward=True)
+        self._done.append(group)
+        self._separate = True
+        return True
+
+    def _apply(self, edits: Iterable[_Edit], *, forward: bool) -> None:
+        """Replay edits, or reverse them, without recording what that does."""
+        self._replaying = True
+        try:
+            for edit in edits:
+                putting_in = edit.inserted if forward else not edit.inserted
+                if putting_in:
+                    self.insert(self.index_of(edit.at), edit.text)
+                else:
+                    stop = self.index_of(edit.at + len(edit.text))
+                    self.delete(self.index_of(edit.at), stop)
+        finally:
+            self._replaying = False
 
     # ----------------------------------------------------------------- marks
 
