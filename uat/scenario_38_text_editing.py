@@ -97,10 +97,16 @@ def build(root, screen):
     # row of text, and anything placed on 18 lands on that bottom edge.
     finder.place(x=8, y=16, width=30)
 
-    status = tkcurses.Label(root, name="status", anchor="w")
-    status.place(x=2, y=20, relwidth=1.0, width=-4)
+    # Two lines, not one. On one line this ran to 98 of 100 columns with the
+    # paragraph loaded, and "undo groups" lost its number off the right edge -
+    # the one figure the autoseparators checklist asks a person to watch. At
+    # 80 columns, which is the common case, far more went.
+    where = tkcurses.Label(root, name="where", anchor="w")
+    where.place(x=2, y=20, relwidth=1.0, width=-4)
+    state = tkcurses.Label(root, name="state", anchor="w")
+    state.place(x=2, y=21, relwidth=1.0, width=-4)
     found = tkcurses.Label(root, name="found", anchor="w")
-    found.place(x=2, y=21, relwidth=1.0, width=-4)
+    found.place(x=2, y=22, relwidth=1.0, width=-4)
 
     def report(event=None):
         """Say where the cursor is, by both accounts, and what undo holds.
@@ -110,16 +116,16 @@ def build(root, screen):
         grouping is invisible from outside, so without it a person can only
         infer it by pressing Ctrl-Z and counting what comes back.
         """
-        where = editor.index("insert")
+        at = editor.index("insert")
         box = editor.bbox("insert")
         line = editor.dlineinfo("insert")
         cell = "off screen" if box is None else f"cell x={box[0]} y={box[1]}"
         row = "-" if line is None else f"row y={line[1]} width={line[2]}"
         autosep = "on" if editor.cget("autoseparators") else "OFF"
-        status.configure(
-            text=f"insert {where}   {cell}   dlineinfo {row}"
-            f"   modified={editor.edit_modified()}"
-            f"   autosep={autosep}   undo groups={editor._buffer.undo_depth}"
+        where.configure(text=f"insert {at}   {cell}   dlineinfo {row}")
+        state.configure(
+            text=f"modified={editor.edit_modified()}   autosep={autosep}"
+            f"   undo groups={editor._buffer.undo_depth}"
         )
         root.after(100, report)
 

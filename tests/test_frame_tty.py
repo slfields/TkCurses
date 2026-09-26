@@ -47,7 +47,14 @@ def test_a_frame_with_a_relief_draws_a_box(terminal, tmp_path):
         ),
         workdir=tmp_path,
     )
+    # Idle, not just "a corner has appeared": the top-left is drawn first,
+    # so a wait that stops there can read a half-drawn frame and find the
+    # bottom corners still blank. Measured - this failed on Python 3.14 in
+    # CI with the bottom-left reading " " while every other job passed, and
+    # never reproduced locally in twenty runs. The wait condition was
+    # weaker than the assertions under it.
     term.wait_for(lambda t: "┌" in "\n".join(t.display), message="a bordered frame")
+    term.wait_for_idle()
     assert term.display[2][2] == "┌"
     assert term.display[2][2 + 19] == "┐"
     assert term.display[2 + 4][2] == "└"
@@ -103,6 +110,7 @@ def test_a_raised_frame_draws_a_different_line_style(terminal, tmp_path):
     )
     term.wait_for(lambda t: t.display[1].strip() != "", message="both frames")
     term.wait_for_idle()
+    term.wait_for_idle()
     # ridge is drawn in double lines, solid in single ones.
     assert term.display[1][1] == "╔"
     assert term.display[1][20] == "┌"
@@ -146,6 +154,7 @@ def test_a_nested_frame_draws_inside_its_parent(terminal, tmp_path):
     )
     term.wait_for(lambda t: "┌" in "\n".join(t.display), message="the frames")
     term.wait_for_idle()
+    term.wait_for_idle()
     # The outer frame's corner, then the inner one's, one cell in from the
     # outer frame's own border plus its padding.
     assert term.display[1][1] == "┌"
@@ -164,6 +173,7 @@ def test_packed_frames_tile_the_screen(terminal, tmp_path):
         workdir=tmp_path,
     )
     term.wait_for(lambda t: t.display[0].count("┌") == 3, message="three frames")
+    term.wait_for_idle()
     corners = [i for i, char in enumerate(term.display[0]) if char == "┌"]
     assert corners[0] == 0
     # Evenly divided: each frame gets a third of forty columns.

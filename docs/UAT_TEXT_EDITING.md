@@ -168,6 +168,13 @@ real tkinter rather than assuming:
 
 ## Found by this checklist
 
+The status was one line and ran to **98 of 100 columns** with the paragraph
+loaded — and `undo groups` lost its number off the right edge, which is the
+one figure the autoseparators section asks you to watch. At 80 columns, the
+common terminal, far more went. Split across two lines, with a test at 80
+columns because that is the width that actually hurt.
+
+
 Running the Tab item above found a real bug, in every widget rather than just
 this one. A raw tab reached curses, which expanded it to a tab stop, while
 every column calculation in the library counted it as one character — so a

@@ -238,6 +238,37 @@ def test_scenario_38_types_a_tab_rather_than_leaving_the_editor(uat_terminal):
     assert term.wait_for_exit(timeout=10) == 0
 
 
+def test_scenario_38_keeps_the_undo_count_on_screen_at_80_columns(uat_terminal):
+    """The figure the checklist asks a person to watch must not fall off.
+
+    On one line the status ran to 98 of 100 columns with the paragraph
+    loaded and "undo groups" lost its number off the right edge - and 80
+    columns is the common terminal, where far more went. Split across two
+    lines now. Checked at 80 rather than 100 because that is the width that
+    actually hurt.
+    """
+    term = uat_terminal(cols=80, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_38_text_editing"])
+    term.wait_for_text("insert 1.0")
+    term.send(b"\x12")  # Ctrl-R: the paragraph, which is what made it long
+    term.wait_for_text("noticed")
+    term.send(b"\x06")
+    term.send(b"dog\r")  # and move the cursor deep into a line
+    term.wait_for_text("altogether")
+    term.wait_for_idle()
+
+    line = next(row for row in term.display if "undo groups=" in row)
+    count = line.split("undo groups=")[1].split()
+    assert count and count[0].isdigit(), (
+        f"the undo count was cut off: {line.rstrip()!r}"
+    )
+    for row in term.display:
+        assert len(row.rstrip()) <= 80, f"row ran past 80 columns: {row!r}"
+
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+
+
 def test_scenario_38_does_not_paint_over_the_find_box(uat_terminal):
     """It did, and a person spotted it before any test could.
 
