@@ -296,3 +296,178 @@ def test_scenario_38_does_not_paint_over_the_find_box(uat_terminal):
     assert "insert" not in rows[bottom], (
         f"the status line is sitting on the Find box border, row {bottom}"
     )
+
+
+def test_scenario_39_shows_tab_stops_lining_up(uat_terminal):
+    """The columns must land where the ruler says, or the scenario teaches
+    the wrong thing.
+
+    Driven rather than eyeballed because the ruler is the scenario's whole
+    affordance: if it and the text disagree, every reading a person takes
+    off it is wrong, and the checklist would be worse than nothing.
+    """
+    term = uat_terminal(cols=100, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_39_tabs_and_indentation"])
+    term.wait_for_text("insert 1.0")
+    term.send(b"\x12")  # Ctrl-R
+    term.wait_for_text("Widget")
+    term.wait_for_idle()
+
+    row = next(line for line in term.display if "Qty" in line)
+    body = row.strip("│ ")
+    assert body.index("Qty") == 8, f"default stops put Qty at 8: {body!r}"
+    assert body.index("Price") == 16, body
+
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+    assert "Traceback" not in term.stderr
+
+
+def test_scenario_39_indent_keys_do_not_raise(uat_terminal):
+    """All four of them, because one did.
+
+    tag_configure(..., lmargin1=0, **options) is a duplicate keyword the
+    moment options names lmargin1, and the block-indent key did exactly
+    that: the screen went blank on Ctrl-G. A scenario whose keys raise is
+    worse than a missing scenario, because it reads as a bug in the widget.
+    """
+    term = uat_terminal(cols=100, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_39_tabs_and_indentation"])
+    term.wait_for_text("insert 1.0")
+    term.send(b"\x12")
+    term.wait_for_text("Widget")
+
+    for key, expected in (
+        (b"\x02", "block indent"),
+        (b"\x07", "hanging indent"),
+        (b"\x05", "right margin"),
+        (b"\x0e", "no margins"),
+    ):
+        term.send(key)
+        term.wait_for_text(expected)
+
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+    assert "Traceback" not in term.stderr
+
+
+def test_scenario_39_a_hanging_indent_reshapes_the_paragraph(uat_terminal):
+    """The claim the whole cycle rests on, driven end to end.
+
+    An indent NARROWS the rows it indents, so the paragraph breaks sooner.
+    A version that only shifted the text would leave the wrapped rows
+    ending where they did, and this is what notices.
+    """
+    term = uat_terminal(cols=100, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_39_tabs_and_indentation"])
+    term.wait_for_text("insert 1.0")
+    term.send(b"\x12")
+    term.wait_for_text("Widget")
+    term.wait_for_idle()
+
+    def paragraph_rows():
+        """The rows inside the border, with their LEADING SPACES kept.
+
+        Stripping spaces here would remove the indent this test is about -
+        which it did on the first attempt, and the failure read as the
+        widget not indenting at all.
+        """
+        wanted = ("paragraph is here", "only way", "merely moving", "sideways across")
+        out = []
+        for line in term.display:
+            if any(key in line for key in wanted):
+                out.append(line.split("│")[1] if "│" in line else line)
+        return out
+
+    plain = paragraph_rows()
+    assert plain, "the paragraph should be on screen"
+    first_plain = len(plain[0].rstrip())
+
+    term.send(b"\x07")  # Ctrl-G, hanging indent
+    term.wait_for_text("hanging indent")
+    term.wait_for_idle()
+    hung = paragraph_rows()
+    assert hung, "the paragraph should still be on screen"
+
+    assert len(hung[0].rstrip()) == first_plain, "the FIRST row keeps its full width"
+    assert hung[1].startswith(" "), "and the wrapped rows are indented"
+    assert len(hung[1].rstrip()) < first_plain, (
+        f"the indented rows must be NARROWER, not merely moved: {hung[1].rstrip()!r}"
+    )
+
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+
+
+def test_scenario_39_indenting_the_paragraph_leaves_the_table_alone(uat_terminal):
+    """Tab stops are measured from the widget, not from where a line starts.
+
+    So a tabbed table keeps its columns when something else on screen is
+    indented. This is the rule that would have been got wrong by the natural
+    implementation, and the checklist asks a person to confirm it.
+    """
+    term = uat_terminal(cols=100, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_39_tabs_and_indentation"])
+    term.wait_for_text("insert 1.0")
+    term.send(b"\x12")
+    term.wait_for_text("Widget")
+    term.wait_for_idle()
+    before = next(line for line in term.display if "Qty" in line)
+
+    term.send(b"\x02")  # Ctrl-B, block indent on the paragraph
+    term.wait_for_text("block indent")
+    term.wait_for_idle()
+    after = next(line for line in term.display if "Qty" in line)
+    assert after == before, "indenting the paragraph moved the table"
+
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+
+
+def test_scenario_39_first_line_and_hanging_indents_are_opposites(uat_terminal):
+    """The primary use, and the one it is most easily confused with.
+
+    A first-line indent is lmargin1 alone: the paragraph's first line moves
+    in and the rest stay flush, the way a paragraph is set in a book. A
+    hanging indent is lmargin2 alone and does the opposite. They are the
+    same two options with their values swapped, so a version that mixed
+    them up would look plausible under either key on its own - which is why
+    both are driven here and compared against each other.
+    """
+    term = uat_terminal(cols=100, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_39_tabs_and_indentation"])
+    term.wait_for_text("insert 1.0")
+    term.send(b"\x12")
+    term.wait_for_text("Widget")
+    term.wait_for_idle()
+
+    def rows():
+        """Paragraph rows with leading spaces kept - they are the indent."""
+        out = []
+        for line in term.display:
+            if "│" not in line:
+                continue
+            out.append(line.split("│")[1])
+        # Past the table's four rows: the paragraph is what follows.
+        return [row for row in out if row.strip()][4:]
+
+    term.send(b"\x10")  # Ctrl-P, first-line
+    term.wait_for_text("FIRST-LINE")
+    term.wait_for_idle()
+    first = rows()
+    assert first[0].startswith("      "), f"first line should be indented: {first[0]!r}"
+    assert not first[1].startswith(" "), f"the rest should be flush: {first[1]!r}"
+
+    term.send(b"\x0e")  # Ctrl-N
+    term.wait_for_text("no margins")
+    term.send(b"\x07")  # Ctrl-G, hanging
+    term.wait_for_text("hanging indent")
+    term.wait_for_idle()
+    hung = rows()
+    assert not hung[0].startswith(" "), f"first line should be flush: {hung[0]!r}"
+    assert hung[1].startswith("      "), f"the rest should be indented: {hung[1]!r}"
+
+    assert first[0] != hung[0], "the two indents must not look the same"
+
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0

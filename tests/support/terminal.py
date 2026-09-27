@@ -471,6 +471,19 @@ class TerminalHarness:
             if pid:
                 self._exit_status = status
                 self._pid = None
+                # Drained AFTER reaping, not only before. The loop above
+                # drains and then checks, so whatever the child wrote
+                # between the last drain and its exit is still sitting in
+                # the pty - and a test that reads .display after this
+                # returns would miss it. Seen once the scenario listing
+                # grew: it passed alone and failed in the full suite, which
+                # is the TkCurses-txk signature.
+                #
+                # _exited_without already does this, with the comment
+                # "whatever it managed to say on the way out". The harness
+                # knew it was necessary in one place and not in the other.
+                while self._drain(0):
+                    pass
                 return self.exit_code
         raise TerminalTimeout(f"child did not exit within {budget}s\n{self.describe()}")
 

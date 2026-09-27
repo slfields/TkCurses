@@ -48,7 +48,7 @@ import time
 import traceback
 import weakref
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from tkcurses._core.application import Application
 from tkcurses._core.attributes import (
@@ -138,6 +138,14 @@ from tkcurses._core.place import BORDERMODES, PlaceLayout, PlaceOptions
 from tkcurses._core.screen import CursesScreen
 from tkcurses._core.text import align_offset, measure, wrap, wrap_spans
 from tkcurses._core.textbuffer import Index, TextBuffer
+from tkcurses._core.textlayout import (
+    WORDPROCESSOR,
+    TabStops,
+    char_at,
+    column_of,
+    parse_tabs,
+    render,
+)
 
 # Every constant tkinter's own module defines, re-exported so that a
 # star-import puts the same names in scope. tkinter does this with
@@ -7581,6 +7589,11 @@ def _spinbox_click(event: Event) -> None:
         _entry_click(event)
 
 
+#: The tag options whose values are cells and therefore move text about.
+#: Setting one of these is what makes a Text pay for margin resolution.
+_MARGIN_OPTIONS = frozenset({"lmargin1", "lmargin2", "rmargin"})
+
+
 class Text(_Drawable):
     """An editable block of text, with marks and tags.
 
@@ -7612,6 +7625,8 @@ class Text(_Drawable):
         "height": 24,
         "relief": "sunken",
         "state": "normal",
+        "tabs": "",
+        "tabstyle": "tabular",
         "takefocus": True,
         "undo": False,
         "width": 80,
@@ -7620,15 +7635,30 @@ class Text(_Drawable):
         "yscrollcommand": None,
     }
 
-    #: What a tag can be given. Deliberately smaller than Tk's: the options
-    #: with no meaning in a character grid - borders, spacing, margins,
-    #: bitmaps - are left out rather than accepted and ignored, so setting
-    #: one fails loudly instead of quietly doing nothing.
+    #: What a tag can be given. Smaller than Tk's, but no longer by as much:
+    #: this list used to exclude MARGINS, on the grounds that they have "no
+    #: meaning in a character grid". That was wrong, and the correction is
+    #: worth keeping visible. What has no meaning in a character grid is a
+    #: PIXEL, not a margin - an indent of four cells is perfectly meaningful,
+    #: and the project already maps every other screen distance to cells
+    #: (padx, pady, place coordinates, winfo_fpixels at ten to the inch).
+    #: Indentation in Tk is a tag feature rather than a tab feature, so
+    #: dropping these dropped indentation altogether - TkCurses-wy7.
+    #:
+    #: Still left out, and correctly: ``offset`` is a sub-cell baseline shift
+    #: for super- and subscripts, and ``spacing1/2/3`` are vertical and would
+    #: have to be whole rows. Borders and bitmaps have no cell equivalent.
+    #: Setting one of those still fails loudly rather than quietly doing
+    #: nothing.
     _TAG_OPTIONS: ClassVar[dict[str, Any]] = {
         "background": "",
         "foreground": "",
         "font": "",
         "justify": "",
+        "lmargin1": 0,
+        "lmargin2": 0,
+        "lmargincolor": "",
+        "rmargin": 0,
         "underline": False,
     }
 
@@ -7663,8 +7693,16 @@ class Text(_Drawable):
         #: What the last recorded edit was, so autoseparators can break the
         #: group when the user switches between typing and deleting.
         self._last_edit: str | None = None
+        #: Whether ANY tag sets a margin. Almost none ever do, and resolving
+        #: margins means asking which tags cover a row and walking the raise
+        #: order - per row, inside wrapping, which is hot. Measured: doing it
+        #: unconditionally took a Text repaint from under 25ms to 31.6ms and
+        #: failed the redraw budget. This is the flag that keeps the common
+        #: case free.
+        self._margined = False
         super().__init__(master, cnf, name=name, **kw)
         self._buffer.undo_enabled = self.getboolean(self._options["undo"])
+        self._stops = parse_tabs(self._options["tabs"], self.winfo_fpixels)
         self._buffer.mark_set("insert", "1.0")
         self._buffer.mark_set("current", "1.0")
         # The selection is a tag like any other, which is why sel.first works
@@ -7709,6 +7747,8 @@ class Text(_Drawable):
             # Turning it off does NOT throw the stack away: Tk keeps it, so
             # switching undo off and on again leaves the history intact.
             self._buffer.undo_enabled = self.getboolean(self._options["undo"])
+        if "tabs" in given:
+            self._stops = parse_tabs(self._options["tabs"], self.winfo_fpixels)
         self._clamp_view()
         self._redraw()
         self._report_view()
@@ -7825,11 +7865,29 @@ class Text(_Drawable):
         if found is None:
             return None
         row, _, (line_start, line_stop) = found
+        rows = self._display_lines()
+        number = rows[row][0]
+        left, _ = self._row_margins(number, line_start)
         area = self._text_area()
         y = area.y + (row - self._top)
         if not 0 <= y - area.y < area.height:
             return None
-        return (area.x - self._left, y, line_stop - line_start, 1, 0)
+        # The row's width in COLUMNS, not in characters: a tab is wider than
+        # one cell, and the indent is not part of the text. Tk reports the
+        # indent in x - measured, it answered x=64 for an eight-column
+        # margin - and the text's own width beside it.
+        text = self._row_text(number, line_start, line_stop)
+        width = (
+            column_of(
+                text,
+                len(text),
+                start=left,
+                stops=self._stops,
+                style=str(self._options["tabstyle"]),
+            )
+            - left
+        )
+        return (area.x + left - self._left, y, width, 1, 0)
 
     def bbox(self, index: Any) -> tuple[int, int, int, int] | None:
         """Where the character at ``index`` is, as ``(x, y, width, height)``.
@@ -8122,6 +8180,11 @@ class Text(_Drawable):
             if resolved not in self._TAG_OPTIONS:
                 raise TclError(f'unknown option "-{option}"')
             options[resolved] = value
+            if resolved in _MARGIN_OPTIONS and value not in (0, "", None):
+                # Latches on rather than being recomputed: a margin set and
+                # then cleared is rare, and paying for the scan once is
+                # cheaper than checking every tag on every configure.
+                self._margined = True
         self._redraw()
         return None
 
@@ -8349,10 +8412,87 @@ class Text(_Drawable):
         mode = self._wrap_mode()
         rows: list[tuple[int, int, int]] = []
         for number, line in enumerate(self._buffer.lines, start=1):
-            rows.extend(
-                (number, start, stop) for start, stop in wrap_spans(line, width, mode)
-            )
+            rows.extend(self._wrap_line(number, line, width, mode))
         return rows or [(1, 0, 0)]
+
+    def _wrap_line(
+        self, number: int, line: str, width: int, mode: str
+    ) -> list[tuple[int, int, int]]:
+        """Break one buffer line into the rows it occupies.
+
+        Not ``wrap_spans``, which counts CHARACTERS and assumes every row is
+        the same width. Neither holds here any more:
+
+        - a tab is as wide as the gap to its next stop, so a row has to be
+          measured in columns;
+        - ``lmargin2`` indents the wrapped rows and not the first, so the
+          width available CHANGES from one row to the next, and ``rmargin``
+          narrows them all. Measured against Tk: a hanging indent of eight
+          in a forty-column widget gave a first row of 38 characters and
+          later rows of 28 and 29.
+
+        So each row asks for its own margins before it is filled, which is
+        the whole reason this exists rather than a width argument.
+        """
+        if mode == "none" or not line:
+            return [(number, 0, len(line))]
+        # FAST PATH, and it is not an optimisation so much as a repair. With
+        # no margins and no tab in the line, a character is a cell and every
+        # row is the same width - exactly what wrap_spans assumes - so the
+        # arithmetic below is not needed and must not be paid for.
+        #
+        # Measured: without this, 5000 short lines cost a string slice, a
+        # list allocation and a Python loop EACH, on every _display_lines
+        # call. On Python 3.14 that was +1.5% and invisible; on 3.10 and
+        # 3.11 it took the repaint from under 100ms to 146 and 132, and CI
+        # failed on those two versions while the other three passed.
+        # TkCurses-a0u covers the headroom that made it fatal rather than
+        # merely slower.
+        if not self._margined and "\t" not in line:
+            return [
+                (number, start, stop) for start, stop in wrap_spans(line, width, mode)
+            ]
+        style = str(self._options["tabstyle"])
+        rows: list[tuple[int, int, int]] = []
+        start = 0
+        while True:
+            left, right = self._row_margins(number, start)
+            room = max(1, width - left - right)
+            stop = self._fits(line, start, left, room, style)
+            if mode == "word" and stop < len(line):
+                cut = line.rfind(" ", start, stop)
+                if cut > start:
+                    stop = cut + 1
+            rows.append((number, start, stop))
+            if stop >= len(line):
+                return rows
+            if stop <= start:  # A single character wider than the row.
+                rows[-1] = (number, start, start + 1)
+                stop = start + 1
+            start = stop
+
+    def _fits(self, line: str, start: int, left: int, room: int, style: str) -> int:
+        """How much of ``line`` from ``start`` fits in ``room`` columns.
+
+        Walks and stops at the edge rather than laying the whole remainder
+        out and then reading it: the first version built a column for every
+        character after ``start``, once per row, which is quadratic in the
+        length of a line and was wasted work even when it was affordable.
+        """
+        edge = left + room
+        column = left
+        tab = 0
+        for offset in range(start, len(line)):
+            if column >= edge:
+                return offset
+            if line[offset] != "\t":
+                column += 1
+                continue
+            number = self._stops.index_after(column) if style == WORDPROCESSOR else tab
+            target = self._stops.nth(number)
+            column = target if target > column else column + 1
+            tab += 1
+        return len(line)
 
     def _row_of(
         self, index: Index, rows: list[tuple[int, int, int]] | None = None
@@ -8371,19 +8511,79 @@ class Text(_Drawable):
         # the first character of the next row there into the bargain.
         for row, (line, start, stop) in enumerate(rows):
             if line == index.line and start <= index.char < stop:
-                return row, index.char - start
+                return row, self._column_in(line, start, stop, index.char)
         # Nothing contains it, so it is at the end of a line: the last row of
         # that line is where it goes.
         for row, (line, start, stop) in enumerate(rows):
             if line == index.line and index.char == stop:
-                return row, index.char - start
+                return row, self._column_in(line, start, stop, index.char)
         # `end` on a buffer whose last line has text is a line past every
         # display row, so it has none of its own; it belongs at the end of
         # the last one. Without this the cursor came back at column 0 and
         # blanked the first character of the bottom line.
         last = max(0, len(rows) - 1)
-        _, start, stop = rows[last]
-        return last, stop - start
+        line, start, stop = rows[last]
+        return last, self._column_in(line, start, stop, stop)
+
+    def _margin_at(self, line: int, start: int, option: str) -> int:
+        """A margin in cells, from the tags covering a display line's start.
+
+        Tk decides by "the first non-elided character of the display line",
+        not by the tag under the cursor and not by any tag overlapping the
+        row - measured: a tag added from part way through the first row
+        still indents the wrapped row below it, because that row's first
+        character is inside the tag.
+
+        The last tag in the raise order wins, which is how tag priority
+        works everywhere else in this widget.
+        """
+        value = 0
+        at = Index(line, start)
+        covering = set(self._buffer.tag_names(at))
+        for name in self._tag_order:
+            if name not in covering:
+                continue
+            setting = self._tag_options.get(name, {}).get(option)
+            if setting not in (None, ""):
+                value = round(self.winfo_fpixels(cast("str | int | float", setting)))
+        return max(0, value)
+
+    def _row_margins(self, line: int, start: int) -> tuple[int, int]:
+        """The left and right margins of one display row, in cells.
+
+        ``start == 0`` is what makes a row the FIRST of its text line, which
+        is the whole difference between lmargin1 and lmargin2: the first
+        display line takes lmargin1 and every wrapped one takes lmargin2.
+        """
+        if not self._margined:
+            return 0, 0
+        left = self._margin_at(line, start, "lmargin1" if start == 0 else "lmargin2")
+        return left, self._margin_at(line, start, "rmargin")
+
+    def _row_text(self, line: int, start: int, stop: int) -> str:
+        """The characters one display row holds."""
+        lines = self._buffer.lines
+        return lines[line - 1][start:stop] if line <= len(lines) else ""
+
+    def _column_in(self, line: int, start: int, stop: int, char: int) -> int:
+        """Which column of its row a character sits in.
+
+        Was ``char - start`` until tabs existed, and still is for a row
+        without any: a character is a cell everywhere else in this library.
+        A tab is the exception, so the answer comes from the layout rather
+        than from arithmetic - TkCurses-wy7.
+        """
+        text = self._row_text(line, start, stop)
+        left, _ = self._row_margins(line, start)
+        if "\t" not in text:
+            return left + char - start
+        return column_of(
+            text,
+            char - start,
+            start=left,
+            stops=self._stops,
+            style=str(self._options["tabstyle"]),
+        )
 
     def _index_at_cell(self, x: int, y: int) -> Index:
         """The index at a cell within this widget, for a click or ``@x,y``."""
@@ -8392,7 +8592,15 @@ class Text(_Drawable):
         row = min(max(self._top + (y - area.y), 0), len(rows) - 1)
         line, start, stop = rows[row]
         column = max(0, x - area.x) + self._left
-        return self._buffer.clamp(Index(line, min(start + column, stop)))
+        left, _ = self._row_margins(line, start)
+        offset = char_at(
+            self._row_text(line, start, stop),
+            column,
+            start=left,
+            stops=self._stops,
+            style=str(self._options["tabstyle"]),
+        )
+        return self._buffer.clamp(Index(line, min(start + offset, stop)))
 
     # --------------------------------------------------------------- the view
 
@@ -8574,6 +8782,20 @@ class Text(_Drawable):
         """Draw one display row, then whatever tags cover part of it."""
         line, start, stop = span
         text = lines[line - 1][start:stop] if line <= len(lines) else ""
+        left, _ = self._row_margins(line, start)
+        # Built so that an index into this string IS a column: the margin as
+        # leading blanks, then the drawn form of the text. A tab is the gap
+        # it spans - handing a raw one to curses is what made every widget
+        # disagree with its own arithmetic (TkCurses-zrm).
+        if "\t" in text:
+            text = render(
+                text,
+                start=left,
+                stops=self._stops,
+                style=str(self._options["tabstyle"]),
+            )
+        text = " " * left + text
+        self._draw_margin(dispatcher, window, area, offset, span, left)
         visible = text[self._left : self._left + area.width]
         self._write_line(
             dispatcher, window, area.y + offset, area.x, visible, attribute
@@ -8582,6 +8804,44 @@ class Text(_Drawable):
             self._draw_tagged(
                 dispatcher, window, area, offset, span, visible, name, attribute
             )
+
+    def _draw_margin(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        area: Rect,
+        offset: int,
+        span: tuple[int, int, int],
+        left: int,
+    ) -> None:
+        """Paint the cells an indent leaves empty, if a tag asks for it.
+
+        Tk's ``-lmargincolor``: "the background color to use in regions that
+        do not contain characters because they are indented". There is no
+        text there to carry the colour, so it is written as blanks.
+        """
+        line, start, _ = span
+        if left <= 0 or self._left >= left:
+            return
+        colour = ""
+        covering = set(self._buffer.tag_names(Index(line, start)))
+        for name in self._tag_order:
+            if name in covering:
+                setting = self._tag_options.get(name, {}).get("lmargincolor")
+                if setting:
+                    colour = str(setting)
+        if not colour:
+            return
+        colors = self.tk.colors
+        if colors is None:
+            return
+        attribute = colors.attribute_for(
+            str(self._options["foreground"] or "white"), colour
+        )
+        width = min(left - self._left, area.width)
+        self._write_line(
+            dispatcher, window, area.y + offset, area.x, " " * width, attribute
+        )
 
     def _draw_tagged(
         self,

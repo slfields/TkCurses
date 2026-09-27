@@ -1192,3 +1192,353 @@ def test_geometry_of_an_empty_widget(text):
     assert text.bbox("1.0") == (1, 1, 1, 1)
     info = text.dlineinfo("1.0")
     assert info is not None and info[2] == 0, "no text on it yet"
+
+
+# --------------------------------------------------------------- tab stops
+#
+# The layout arithmetic is tested in test_core_textlayout.py against
+# measurements of real tkinter. What is checked here is the WIRING: that the
+# options reach it, and that the widget's own three answers - where a
+# character is drawn, which character a click lands on, and what is painted -
+# all agree with each other on a line containing tabs.
+
+
+@pytest.fixture
+def tabbed(root):
+    widget = Text(root, name="tb", width=30, height=5, wrap="none")
+    widget._allocate(Rect(0, 0, 32, 7))
+    widget._map()
+    return widget
+
+
+def test_tabs_default_to_every_eight_columns(tabbed):
+    """Tk's default. Exact here rather than an average character width."""
+    tabbed.insert("1.0", "a\tb")
+    assert tabbed.bbox("1.2") is not None
+    assert tabbed.bbox("1.2")[0] - tabbed.bbox("1.0")[0] == 8
+
+
+def test_the_tabs_option_moves_the_stops(tabbed):
+    tabbed.configure(tabs=4)
+    tabbed.insert("1.0", "a\tb")
+    assert tabbed.bbox("1.2")[0] - tabbed.bbox("1.0")[0] == 4
+
+
+def test_tabs_takes_tk_s_list_with_alignments(tabbed):
+    """'10 right' is one stop, not two."""
+    tabbed.configure(tabs="10 right")
+    tabbed.insert("1.0", "a\tXY")
+    # Right-aligned: the run ends AT the stop, so it starts two before it.
+    assert tabbed.bbox("1.2")[0] - tabbed.bbox("1.0")[0] == 8
+
+
+def test_a_screen_distance_is_converted_like_every_other(tabbed):
+    """The project's existing rule - ten cells to the inch."""
+    tabbed.configure(tabs="1i")
+    tabbed.insert("1.0", "a\tb")
+    assert tabbed.bbox("1.2")[0] - tabbed.bbox("1.0")[0] == 10
+
+
+def test_tab_stops_must_increase(tabbed):
+    with pytest.raises(TclError, match="increase"):
+        tabbed.configure(tabs=(10, 4))
+
+
+def test_a_tab_stop_must_be_positive(tabbed):
+    with pytest.raises(TclError, match="positive"):
+        tabbed.configure(tabs=0)
+
+
+def test_numeric_alignment_says_it_is_not_implemented(tabbed):
+    """Loudly, and naming the issue - the pattern wm_manage already uses.
+
+    Accepting it and quietly left-aligning would put numbers in the wrong
+    column and look like a bug in the caller's own code.
+    """
+    with pytest.raises(TclError, match="eq2"):
+        tabbed.configure(tabs=(10, "numeric"))
+
+
+def test_tabstyle_wordprocessor_takes_the_next_stop_to_the_right(tabbed):
+    tabbed.configure(tabs=(4, 20), tabstyle="wordprocessor")
+    tabbed.insert("1.0", "abcdefgh\tX")
+    assert tabbed.bbox("1.9")[0] - tabbed.bbox("1.0")[0] == 20
+
+
+def test_tabstyle_tabular_falls_back_to_one_space(tabbed):
+    """The same line, the default style: one space rather than a jump."""
+    tabbed.configure(tabs=(4, 20))
+    tabbed.insert("1.0", "abcdefgh\tX")
+    assert tabbed.bbox("1.9")[0] - tabbed.bbox("1.0")[0] == 9
+
+
+def test_a_click_in_a_tab_lands_on_the_tab(tabbed):
+    """Measured from tkinter: every column the tab spans answers with it."""
+    tabbed.configure(tabs=10)
+    tabbed.insert("1.0", "ab\tcd")
+    left = tabbed.bbox("1.0")[0]
+    for column in range(2, 10):
+        assert str(tabbed._index_at_cell(left + column, 1)) == "1.2", column
+    assert str(tabbed._index_at_cell(left + 10, 1)) == "1.3"
+
+
+def test_bbox_and_a_click_agree_on_a_tabbed_line(tabbed):
+    """The property the whole epic rests on, at widget level.
+
+    If these drift, clicking a character selects a different one from the
+    one drawn under the pointer, and neither side looks wrong alone.
+    """
+    tabbed.configure(tabs=(6, 14))
+    tabbed.insert("1.0", "a\tbb\tccc")
+    for offset in range(len("a\tbb\tccc")):
+        box = tabbed.bbox(f"1.{offset}")
+        assert box is not None, offset
+        assert str(tabbed._index_at_cell(box[0], box[1])) == f"1.{offset}"
+
+
+def test_a_tab_is_drawn_as_the_gap_it_spans(tabbed):
+    """Not as a raw tab handed to curses - that is TkCurses-zrm."""
+    from tkcurses._core.textlayout import TabStops, render
+
+    assert render("ab\tcd", stops=TabStops((10,))) == "ab        cd"
+
+
+def test_turning_tabs_back_to_the_default(tabbed):
+    tabbed.configure(tabs=4)
+    tabbed.configure(tabs="")
+    tabbed.insert("1.0", "a\tb")
+    assert tabbed.bbox("1.2")[0] - tabbed.bbox("1.0")[0] == 8
+
+
+# ---------------------------------------------------------------- margins
+#
+# Indentation in Tk is a TAG feature rather than a tab feature, which is why
+# it was missing: the tag option list excluded margins as having "no meaning
+# in a character grid". A pixel has no meaning in a character grid; a margin
+# in cells does. TkCurses-wy7.
+#
+# The wrap points below were compared against real tkinter - all four margin
+# shapes, every row breaking at the same character.
+
+
+@pytest.fixture
+def wrapped(root):
+    """40 usable columns, wrapping on words. The border takes the other two."""
+    widget = Text(root, name="wr", width=40, height=12, wrap="word")
+    widget._allocate(Rect(0, 0, 42, 14))
+    widget._map()
+    assert widget._view_size()[0] == 40
+    return widget
+
+
+PARAGRAPH = (
+    "alpha bravo charlie delta echo foxtrot golf hotel india juliet "
+    "kilo lima mike november oscar papa quebec romeo sierra tango"
+)
+
+
+def starts(widget):
+    return [start for _, start, _ in widget._display_lines()]
+
+
+def test_margins_are_accepted_as_tag_options(wrapped):
+    """They were rejected before - the omission this epic exists for."""
+    wrapped.tag_configure("m", lmargin1=4, lmargin2=2, rmargin=1, lmargincolor="blue")
+    assert wrapped.tag_cget("m", "lmargin1") == 4
+
+
+def test_an_option_with_no_cell_meaning_is_still_refused(wrapped):
+    """offset is a sub-cell baseline shift. Correcting the margin decision
+    does not mean accepting everything."""
+    with pytest.raises(TclError):
+        wrapped.tag_configure("m", offset=3)
+
+
+def test_without_margins_the_wrap_points_are_unchanged(wrapped):
+    wrapped.insert("1.0", PARAGRAPH)
+    assert starts(wrapped) == [0, 39, 78, 118], "measured from tkinter"
+
+
+def test_lmargin1_indents_and_narrows_only_the_first_row(wrapped):
+    wrapped.tag_configure("m", lmargin1=8)
+    wrapped.insert("1.0", PARAGRAPH, "m")
+    assert starts(wrapped) == [0, 31, 68, 105], "measured from tkinter"
+
+
+def test_lmargin2_is_the_hanging_indent(wrapped):
+    """The first row keeps the full width and the rest are narrower - which
+    is why the second row starts where it does."""
+    wrapped.tag_configure("m", lmargin2=8)
+    wrapped.insert("1.0", PARAGRAPH, "m")
+    assert starts(wrapped) == [0, 39, 68, 98], "measured from tkinter"
+
+
+def test_both_margins_is_a_block_indent(wrapped):
+    wrapped.tag_configure("m", lmargin1=8, lmargin2=8)
+    wrapped.insert("1.0", PARAGRAPH, "m")
+    assert starts(wrapped) == [0, 31, 63, 93], "measured from tkinter"
+
+
+def test_rmargin_narrows_every_row_without_moving_it(wrapped):
+    wrapped.tag_configure("m", rmargin=8)
+    wrapped.insert("1.0", PARAGRAPH, "m")
+    assert starts(wrapped) == [0, 31, 63, 93], "measured from tkinter"
+
+
+def test_a_hanging_indent_wraps_earlier_than_none(wrapped):
+    """Stated as its own test because it is the whole point.
+
+    The rows under a hanging indent are narrower, so the paragraph breaks
+    sooner. A version that merely shifted the text without narrowing it
+    would pass every other test here and fail this one.
+    """
+    wrapped.insert("1.0", PARAGRAPH)
+    plain = starts(wrapped)
+    wrapped.delete("1.0", "end")
+    wrapped.tag_configure("m", lmargin2=8)
+    wrapped.insert("1.0", PARAGRAPH, "m")
+    assert starts(wrapped)[2] < plain[2]
+
+
+def test_an_indented_row_is_drawn_at_its_margin(wrapped):
+    wrapped.tag_configure("m", lmargin1=6)
+    wrapped.insert("1.0", "hello", "m")
+    box = wrapped.bbox("1.0")
+    assert box is not None
+    assert box[0] == wrapped._text_area().x + 6
+
+
+def test_dlineinfo_reports_the_indent_in_x(wrapped):
+    """Tk does: an eight-column margin came back in x, with the text's own
+    width beside it rather than the indent folded into it."""
+    wrapped.tag_configure("m", lmargin1=6)
+    wrapped.insert("1.0", "hello", "m")
+    info = wrapped.dlineinfo("1.0")
+    assert info is not None
+    assert info[0] == wrapped._text_area().x + 6
+    assert info[2] == 5, "the text, not the text plus the indent"
+
+
+def test_a_click_on_an_indented_line_lands_on_the_right_character(wrapped):
+    """The inverse again, now with a margin in the way."""
+    wrapped.tag_configure("m", lmargin1=6)
+    wrapped.insert("1.0", "hello", "m")
+    for offset in range(5):
+        box = wrapped.bbox(f"1.{offset}")
+        assert box is not None
+        assert str(wrapped._index_at_cell(box[0], box[1])) == f"1.{offset}"
+
+
+def test_the_tag_at_the_start_of_each_display_row_decides(wrapped):
+    """Tk's rule: "the first non-elided character of the display line".
+
+    Measured: a tag added part way through the first row still indents the
+    wrapped row below, because that row's first character is inside it.
+    """
+    wrapped.insert("1.0", PARAGRAPH)
+    wrapped.tag_configure("m", lmargin2=8)
+    wrapped.tag_add("m", "1.20", "end")
+    assert starts(wrapped) == [0, 39, 68, 98]
+
+
+def test_a_text_with_no_margins_does_not_pay_for_them(wrapped):
+    """The fast path, asserted so it cannot quietly become the slow one.
+
+    Resolving margins means asking which tags cover a row and walking the
+    raise order, per row, inside wrapping. Measured: doing that
+    unconditionally took a Text repaint from under 25ms to 31.6ms and failed
+    the redraw budget in test_redraw_cost_tty.
+    """
+    wrapped.insert("1.0", PARAGRAPH)
+    assert wrapped._margined is False
+    assert wrapped._row_margins(1, 0) == (0, 0)
+
+
+def test_setting_a_margin_turns_the_slow_path_on(wrapped):
+    """And the flag must latch, or the feature silently stops working."""
+    wrapped.tag_configure("m", lmargin1=4)
+    assert wrapped._margined is True
+    wrapped.insert("1.0", "hi", "m")
+    assert wrapped._row_margins(1, 0) == (4, 0)
+
+
+def test_a_colour_only_tag_leaves_the_fast_path_alone(wrapped):
+    """Colours move nothing, so they must not cost the margin scan."""
+    wrapped.tag_configure("c", foreground="red")
+    assert wrapped._margined is False
+
+
+def test_a_blank_line_inside_a_tag_is_indented(wrapped):
+    """Measured against Tk, because the natural expectation is the opposite.
+
+    An empty line has no characters to hang a margin on, so it looks as
+    though it should collapse to the left edge. It does not: Tk reported
+    bbox.x and dlineinfo.x of exactly the margin on an empty line and on a
+    whitespace-only line, the same as on lines with text. Compared side by
+    side, 5/5.
+
+    The margin applies where the TAG applies. That is the whole rule, and it
+    is why a blank line between two indented paragraphs stays indented.
+    """
+    wrapped.tag_configure("m", lmargin1=6, lmargin2=6)
+    wrapped.insert("1.0", "first\n\nthird\n   \nfifth\n", "m")
+    area = wrapped._text_area().x
+    for line in range(1, 6):
+        box = wrapped.bbox(f"{line}.0")
+        assert box is not None, line
+        assert box[0] - area == 6, f"line {line} should be indented like the rest"
+
+
+@pytest.mark.xfail(
+    reason="tags extend over text inserted at their trailing edge - TkCurses-lx3",
+    strict=True,
+)
+def test_a_line_outside_the_tag_is_not_indented(wrapped):
+    """The other half, and the real explanation for a line at the left edge.
+
+    Measured in Tk: pressing Return at the end of a tagged paragraph gives a
+    new line the tag does NOT cover, so it sits at x=0 - and it stays there
+    when text is typed into it, because the tag still does not cover it.
+    There is no moment where the text "pops" rightwards.
+    """
+    wrapped.tag_configure("m", lmargin1=6)
+    wrapped.insert("1.0", "tagged\n", "m")
+    wrapped.insert("end", "untagged\n")
+    area = wrapped._text_area().x
+    assert wrapped.bbox("1.0")[0] - area == 6
+    # XFAIL: ours tags the inserted line because a tag's trailing edge moves
+    # with an insertion sitting on it. Tk applies the INTERSECTION of the
+    # tags either side, which at the end of a range is empty. TkCurses-lx3.
+    assert wrapped.bbox("2.0")[0] - area == 0, "no tag, no margin"
+
+
+def test_plain_lines_skip_the_tab_arithmetic(wrapped):
+    """The fast path, and it is a repair rather than an optimisation.
+
+    With no margins and no tab, a character is a cell and every row is the
+    same width, which is what wrap_spans already assumes - so the layout
+    walk is not needed and must not be paid for. Measured: doing it for
+    every line cost a string slice, a list allocation and a Python loop
+    each, and the redraw-cost test holds 5000 lines. On Python 3.14 that was
+    +1.5% and invisible; on 3.10 and 3.11 it took the repaint past its
+    budget and CI failed on exactly those two versions.
+
+    Asserted through the wrap points rather than by timing, because a timing
+    test here would be the flaky kind. If the fast path and the slow path
+    ever disagree, this is what notices.
+    """
+    wrapped.insert("1.0", PARAGRAPH)
+    plain = starts(wrapped)
+    assert not wrapped._margined, "the fast path should be live"
+
+    # Force the slow path with a margin of zero: same geometry, different code.
+    wrapped.tag_configure("z", lmargin1=0)
+    wrapped._margined = True
+    assert starts(wrapped) == plain, "the two paths must agree on where rows break"
+
+
+def test_a_line_with_a_tab_takes_the_slow_path_even_without_margins(wrapped):
+    """A tab is wider than a cell, so the fast path cannot handle it."""
+    wrapped.configure(tabs=10)
+    wrapped.insert("1.0", "a\tb")
+    assert wrapped.bbox("1.2")[0] - wrapped.bbox("1.0")[0] == 10
