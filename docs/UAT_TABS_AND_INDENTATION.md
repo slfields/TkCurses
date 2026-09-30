@@ -34,8 +34,17 @@ From anywhere else: `python3 /path/to/TkCurses/uat 39`. The scenario exits on
 |---|---|
 | Terminal | |
 | Size | |
-| Date | |
-| Result | |
+| Date | 2026-09-27 |
+| Result | **Accepted.** Run by the author; terminal and size not recorded. |
+
+The checklist items above are left unticked on purpose: the acceptance was
+given as a whole rather than item by item, and ticking them individually
+would claim a record that was not taken. What was driven mechanically, and
+therefore is on the record, is in `tests/test_uat_scenarios_tty.py`: the
+columns landing where the ruler says, all four indent keys surviving, a
+hanging indent narrowing rather than shifting, the table keeping its columns
+while the paragraph is indented, and the first-line and hanging indents being
+opposites.
 
 ---
 
