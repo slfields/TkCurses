@@ -46,7 +46,16 @@ jobs:
       - name: Test
         # The suite drives real pseudo-terminals; runners provide them, but a
         # hung curses read would otherwise stall the job until the 6h limit.
-        timeout-minutes: 10
+        #
+        # 20 and not 10, measured. This step takes 7.9-9.0 minutes on master
+        # depending on the interpreter, so at 10 the slowest of them (3.14)
+        # was running at 85% of its own limit and every pull request that
+        # added a minute of tests failed on 3.14 for reasons that had nothing
+        # to do with the change - which is what happened, and cost a round of
+        # CI to diagnose. The job limit was never the thing protecting against
+        # a hang anyway: pytest's own 60s per-test timeout is, as the note
+        # below says. This one only has to be shorter than 6 hours.
+        timeout-minutes: 20
         env:
           # Every wait budget in the harness was chosen on a development
           # machine. A shared runner is several times slower - measured, a
