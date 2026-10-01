@@ -1489,10 +1489,6 @@ def test_a_blank_line_inside_a_tag_is_indented(wrapped):
         assert box[0] - area == 6, f"line {line} should be indented like the rest"
 
 
-@pytest.mark.xfail(
-    reason="tags extend over text inserted at their trailing edge - TkCurses-lx3",
-    strict=True,
-)
 def test_a_line_outside_the_tag_is_not_indented(wrapped):
     """The other half, and the real explanation for a line at the left edge.
 
@@ -1506,9 +1502,6 @@ def test_a_line_outside_the_tag_is_not_indented(wrapped):
     wrapped.insert("end", "untagged\n")
     area = wrapped._text_area().x
     assert wrapped.bbox("1.0")[0] - area == 6
-    # XFAIL: ours tags the inserted line because a tag's trailing edge moves
-    # with an insertion sitting on it. Tk applies the INTERSECTION of the
-    # tags either side, which at the end of a range is empty. TkCurses-lx3.
     assert wrapped.bbox("2.0")[0] - area == 0, "no tag, no margin"
 
 

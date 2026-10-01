@@ -117,6 +117,11 @@ def _utf8_locale() -> str:
 UTF8_LOCALE = _utf8_locale()
 
 #: Environment forced on the child so rendering is deterministic across hosts.
+#: Passes _drain_fully will make before giving up on a reaped child. A pty
+#: delivers what is left in chunks, so one empty pass is the end and the cap
+#: only exists so a pathological case cannot spin: it is a bound, not a budget.
+_DRAIN_PASSES = 64
+
 _CHILD_ENV = {
     "TERM": "xterm-256color",
     "LANG": UTF8_LOCALE,
@@ -482,8 +487,7 @@ class TerminalHarness:
                 # _exited_without already does this, with the comment
                 # "whatever it managed to say on the way out". The harness
                 # knew it was necessary in one place and not in the other.
-                while self._drain(0):
-                    pass
+                self._drain_fully()
                 return self.exit_code
         raise TerminalTimeout(f"child did not exit within {budget}s\n{self.describe()}")
 
@@ -535,6 +539,21 @@ class TerminalHarness:
             fd, termios.TIOCSWINSZ, struct.pack("HHHH", self.rows, self.cols, 0, 0)
         )
 
+    def _drain_fully(self) -> None:
+        """Read both channels until neither has anything left.
+
+        Used once the child has been reaped, when there is a definite end to
+        read up to. ``_drain``'s own return value reports terminal output
+        only - ``wait_for_idle`` depends on that - so looping on it would stop
+        while stderr still had bytes waiting, which is how a child's dying
+        words got lost. This watches both buffers instead.
+        """
+        for _ in range(_DRAIN_PASSES):
+            before = (len(self._received), len(self._stderr))
+            self._drain(0)
+            if (len(self._received), len(self._stderr)) == before:
+                return
+
     def _drain(self, budget: float) -> bool:
         """Read whatever is available for up to ``budget`` seconds.
 
@@ -545,10 +564,23 @@ class TerminalHarness:
         """
         got = False
         deadline = time.monotonic() + budget
+        # polled, not elapsed: a budget of 0 means "take what has already
+        # arrived and do not wait", which is ONE non-blocking pass - not zero
+        # passes. Comparing the deadline first made _drain(0) return before it
+        # read anything, so six callers that meant "collect what is there"
+        # collected nothing: both post-reap drains, the mode check in
+        # send_keys, and the received, stderr and application_cursor_keys
+        # properties. That is TkCurses-9q7 - the scenario listing lost
+        # whatever was still in the pty when the child was reaped, at a point
+        # that moved with load, and the stderr a child wrote on its way out
+        # was never read at all.
+        polled = False
         while True:
             remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            if remaining <= 0 and polled:
                 return got
+            remaining = max(0.0, remaining)
+            polled = True
             watch = [fd for fd in (self._master, self._err_read) if fd is not None]
             if not watch:
                 return got
@@ -629,8 +661,7 @@ class TerminalHarness:
                 # test must wait for every cell it asserts on. This can only
                 # ever collect bytes that have already arrived, never ones
                 # the program has not written yet.
-                while self._drain(0):
-                    pass
+                self._drain_fully()
                 return
             # A dead child will not start satisfying the predicate later, so
             # waiting out the rest of the budget only delays the report and

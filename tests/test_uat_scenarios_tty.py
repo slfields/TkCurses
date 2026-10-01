@@ -29,6 +29,7 @@ import contextlib
 import io
 import os
 import sys
+from pathlib import Path
 
 import pytest
 from uat.__main__ import scenarios, show
@@ -75,6 +76,19 @@ def test_a_scenario_starts_renders_and_exits_cleanly(uat_terminal, scenario):
     assert "Traceback" not in term.stderr
 
 
+def _listing_text() -> str:
+    """The whole listing, produced in this process.
+
+    The yardstick for both of the tests below: how many rows it needs, and
+    how many bytes a child that finished writing it would have written.
+    Both were formulas once and both drifted.
+    """
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        show()
+    return printed.getvalue()
+
+
 def _listing_rows() -> int:
     """Rows the whole listing needs, counted by running it.
 
@@ -85,18 +99,80 @@ def _listing_rows() -> int:
     terminal one row too short. Asking the listing how long it is cannot
     drift.
     """
-    printed = io.StringIO()
-    with contextlib.redirect_stdout(printed):
-        show()
-    return printed.getvalue().count("\n") + 2
+    return _listing_text().count("\n") + 2
 
 
-def test_the_runner_lists_every_scenario(uat_terminal):
-    term = uat_terminal(cols=80, rows=_listing_rows())
+def test_the_runner_lists_every_scenario(uat_terminal, tmp_path):
+    """Every scenario reachable from the runner's own listing.
+
+    TkCurses-9q7: this fails on CI on Python 3.13, with the listing truncated
+    at a point that varies between runs, the footer absent, and the child
+    exiting 0. Not reproduced locally in a dozen attempts.
+
+    The child is instrumented through sitecustomize rather than wrapped, so
+    the numbers in a failure describe THIS child. An earlier attempt ran a
+    wrapper module alongside and compared: the wrapper reported writing the
+    whole listing while this one truncated, which looked like proof the pty
+    was at fault and is not - the two ran at different moments under
+    different load, and timing is the thing under investigation. A wrapper
+    can only report on itself.
+
+    So a failure now says which of the two it is, from one process:
+
+        BYTES-WRITTEN 4672, RECEIVED 947  -> the pty loses output
+        BYTES-WRITTEN 947                 -> the child stopped writing
+
+    and LAST names the line it stopped after, which is the import it did not
+    return from: show() prints a line per scenario and imports the next
+    scenario between them.
+
+    The failure message is term.describe() and not the raw display, because
+    the raw display is long enough that pytest elides its middle - and an
+    elided screen is what made two CI failures unreadable. I misread that
+    elision as blank rows once already.
+    """
+    tally = tmp_path / "sitecustomize.py"
+    tally.write_text(
+        (Path(__file__).parent / "support" / "tally_stdout.py").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
+    rows = _listing_rows()
+    term = uat_terminal(
+        cols=80,
+        rows=rows,
+        env={"PYTHONPATH": os.pathsep.join([str(tmp_path), str(PROJECT_ROOT)])},
+    )
     term.run([sys.executable, "-m", "uat"])
     assert term.wait_for_exit(timeout=10) == 0
-    for scenario in scenarios():
-        assert scenario in "\n".join(term.display)
+    shown = "\n".join(term.display)
+    missing = [scenario for scenario in scenarios() if scenario not in shown]
+    # The listing's own FOOTER is a second, independent read on the same
+    # question: show() prints the scenarios and then the "What to look for"
+    # block, so the footer is the last thing written.
+    #
+    #   footer present, scenarios missing  -> the harness lost the MIDDLE
+    #   footer absent                      -> the child stopped writing
+    footer = "docs/UAT_IMAGES.md"
+    state = (
+        "PRESENT - the middle was lost"
+        if footer in shown
+        else "ABSENT - the child stopped writing"
+    )
+    reported = [
+        line for line in term.stderr.splitlines() if line.startswith("BYTES-WRITTEN")
+    ]
+    told = reported[0] if reported else "NOTHING - the instrument did not report"
+    assert not missing, (
+        f"{len(missing)} of {len(scenarios())} scenarios are not on the "
+        f"listing, asked for {rows} rows.\n"
+        f"FOOTER {state}\n"
+        f"CHILD SAID {told}\n"
+        f"RECEIVED {len(bytes(term._received))} bytes, "
+        f"of {len(_listing_text().encode())} the whole listing is\n"
+        f"missing: {missing}\n{term.describe()}"
+    )
 
 
 def test_the_runner_refuses_a_scenario_that_does_not_exist(uat_terminal):

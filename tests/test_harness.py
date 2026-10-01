@@ -23,6 +23,8 @@ against plain curses programs before any TkCurses code depends on it.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from tests.support import TerminalTimeout
@@ -525,3 +527,61 @@ root.mainloop()
     term.wait_for_text("ready")
     term.wait_for_cell(2, 0, lambda cell: cell.data == "X", message="the late cell")
     assert term.char_at(2, 0).data == "X"
+
+
+def test_a_zero_budget_drain_collects_what_has_arrived(terminal, tmp_path):
+    """``_drain(0)`` means "take what is already here", not "do nothing".
+
+    TkCurses-9q7, and the reason it took a dozen experiments to find. _drain
+    computed its remaining budget and returned when it was spent - before
+    reading anything - so a budget of 0 read nothing at all. Six callers meant
+    "collect whatever has arrived" and collected nothing: both post-reap
+    drains, the mode check in send_keys, and the received, stderr and
+    application_cursor_keys properties.
+
+    What it cost was the tail of the scenario listing. The waiting loop drains
+    for 0.05s and then checks for the child, so whatever was written between
+    the last poll and the exit sat in the pty, and the drain that was supposed
+    to pick it up afterwards did nothing. The cut moved with load, which is
+    why it failed on one Python version on a loaded runner and never here.
+
+    This is deliberately not an end-to-end test of that race: locally the
+    0.05s polls win and collect everything, so a test through wait_for_exit
+    passes with the fault present - measured, both ways round. It pins the
+    contract instead, with nothing draining before the assertion.
+    """
+    term = terminal(cols=80, rows=24)
+    term.run_source('print("arrived", flush=True)', workdir=tmp_path)
+    # Long enough that the bytes are certainly sitting in the pty, and no
+    # drain of any kind between the child writing them and the read below.
+    time.sleep(0.5)
+    assert "arrived" in term.received.decode(), (
+        "a zero-budget drain read nothing, so bytes already waiting in the "
+        "pty were invisible to every caller that asked for them"
+    )
+
+
+def test_stderr_written_on_the_way_out_is_collected(terminal, tmp_path):
+    """The same fault on the other channel, where it hid a diagnostic.
+
+    The stderr property drains with a budget of 0, so it read nothing ever. An
+    instrument that reported a byte count from the child's atexit handler came
+    back as "the instrument did not report", and that was nearly read as the
+    child having died before running it. The child ran it; nothing collected
+    it. A harness that cannot report what a child said about its own failure
+    turns one bug into two.
+    """
+    term = terminal(cols=80, rows=24)
+    term.run_source(
+        """
+        import atexit, os, sys
+        atexit.register(lambda: os.write(2, b"LAST WORDS\\n"))
+        print("done", flush=True)
+        sys.exit(0)
+        """,
+        workdir=tmp_path,
+    )
+    time.sleep(0.5)
+    assert "LAST WORDS" in term.stderr, (
+        "the child's dying words were written to the stderr pipe and never read"
+    )

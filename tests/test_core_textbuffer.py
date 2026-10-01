@@ -499,3 +499,65 @@ def test_a_round_trip_leaves_the_text_identical():
     for _ in range(3):
         buffer.edit_redo()
     assert buffer.text == wanted
+
+
+# ------------------------------------------------------- tag inheritance
+#
+# Tk's rule for text inserted with no tags of its own, from the manual:
+# "the new text will receive the tags of the characters both before and
+# after the insertion point; if a tag is present on only one of these
+# characters then it will not be applied to the new text."
+#
+# The INTERSECTION, and all five positions below were measured against real
+# tkinter before being written down. The last one is the decisive case: it
+# rules out "the tags of the character before" and "of the character after"
+# alike, because the answer is neither.
+
+
+def tagged(*steps):
+    """Build a buffer from (index, text, tags) steps and read 1.3's tags."""
+    buffer = TextBuffer()
+    for where, text, tags in steps:
+        start = buffer.index(where)
+        end = buffer.insert(where, text)
+        for tag in tags:
+            buffer.tag_add(tag, start, end)
+    return tuple(sorted(buffer.tag_names("1.3")))
+
+
+def test_text_inserted_inside_a_tagged_run_inherits_the_tag():
+    """Both sides carry it, so the intersection has it. This is what makes
+    typing in the middle of bold text stay bold."""
+    assert tagged(("1.0", "aaabbb", "m"), ("1.3", "X", "")) == ("m",)
+
+
+def test_text_inserted_at_a_tags_leading_edge_does_not_inherit():
+    assert tagged(("1.0", "aaa", ""), ("1.3", "bbb", "m"), ("1.3", "X", "")) == ()
+
+
+def test_text_inserted_at_a_tags_trailing_edge_does_not_inherit():
+    """The bug this rule was written for: the tag used to swallow whatever
+    was typed after it, so an indented paragraph spread its indent and a
+    bold run made the next word bold. TkCurses-lx3."""
+    assert tagged(("1.0", "aaa", "m"), ("1.3", "bbb", ""), ("1.3", "X", "")) == ()
+
+
+def test_text_inserted_between_two_different_tags_inherits_neither():
+    assert tagged(("1.0", "aaa", "m"), ("1.3", "bbb", "n"), ("1.3", "X", "")) == ()
+
+
+def test_only_the_tag_present_on_both_sides_is_inherited():
+    """The decisive case, and the reason this is the intersection rather than
+    either side: 'm' and 'n' before, 'n' after, and the answer is 'n' alone.
+    Measured against tkinter, which agrees."""
+    assert tagged(("1.0", "aaa", "mn"), ("1.3", "bbb", "n"), ("1.3", "X", "")) == ("n",)
+
+
+def test_a_tag_still_grows_when_text_is_added_inside_it():
+    """The other half of the same gravity rule, asserted so a fix for the
+    edges cannot quietly break the middle."""
+    buffer = TextBuffer()
+    buffer.insert("1.0", "aaabbb")
+    buffer.tag_add("m", "1.0", "1.6")
+    buffer.insert("1.3", "XYZ")
+    assert [str(i) for i in buffer.tag_ranges("m")] == ["1.0", "1.9"]

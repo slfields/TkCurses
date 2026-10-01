@@ -440,7 +440,27 @@ class TextBuffer:
             for name, (offset, gravity) in self._marks.items()
         }
         for name, ranges in self._tags.items():
-            shifted = [(moved(start), moved(stop)) for start, stop in ranges]
+            # A tag's two edges have OPPOSITE gravity, and that is what gives
+            # Tk's rule for text inserted with no tags of its own: "the new
+            # text will receive the tags of the characters both before and
+            # after the insertion point; if a tag is present on only one of
+            # these characters then it will not be applied" - the
+            # INTERSECTION of the two sides.
+            #
+            # A start edge sitting exactly on the insertion moves right, so
+            # the new text falls outside the tag. An end edge sitting there
+            # stays, so the new text falls outside that one too. Text inside
+            # a run has the start behind it and the end ahead of it, so it is
+            # covered. Measured against Tk across five positions - inside a
+            # run, both edges, between two different tags, and where one of
+            # two tags continues - and the gravity rule reproduces all five.
+            #
+            # Both edges used right gravity before, which let a tag swallow
+            # whatever was typed after it: an indented paragraph spread its
+            # indent, a bold run made the next word bold. TkCurses-lx3.
+            shifted = [
+                (moved(start), moved(stop, gravity="left")) for start, stop in ranges
+            ]
             self._tags[name] = _merge(pair for pair in shifted if pair[0] < pair[1])
 
     # ---------------------------------------------------------------- search
