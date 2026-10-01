@@ -75,6 +75,13 @@ THEMED = (
 )
 
 #: Options real ttk has that we do not, each with the issue that owns it.
+#:
+#: It shrank by eight on 2026-10-01 (TkCurses-ale): the scroll and validation
+#: callbacks on Entry, Spinbox, Combobox and Treeview are implemented, not
+#: merely accepted. The entry that said "a tree cannot take a scrollbar" was
+#: the most consequential thing in this list - it meant the standard pairing,
+#: ttk.Treeview(yscrollcommand=bar.set) with ttk.Scrollbar(command=tree.yview),
+#: raised rather than ran.
 #: A gap not listed here is a test failure, which is the point: this list may
 #: shrink and must never silently grow.
 KNOWN_GAPS: dict[str, dict[str, str]] = {
@@ -90,8 +97,6 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
     "Combobox": {
         "placeholder": "Tk 9.0 ghost text",
         "placeholderforeground": "Tk 9.0 ghost text",
-        "invalidcommand": "scroll and validation callbacks",
-        "xscrollcommand": "scroll and validation callbacks",
     },
     # Entry and Spinbox share these: ttk's Spinbox IS an Entry - measured, its
     # MRO begins Spinbox, Entry, Widget, Entry - so a gap in one is a gap in
@@ -99,15 +104,11 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
     "Entry": {
         "placeholder": "Tk 9.0 ghost text",
         "placeholderforeground": "Tk 9.0 ghost text",
-        "invalidcommand": "scroll and validation callbacks",
-        "xscrollcommand": "scroll and validation callbacks",
         "exportselection": "TkCurses-163: no widget offers it",
     },
     "Spinbox": {
         "placeholder": "Tk 9.0 ghost text",
         "placeholderforeground": "Tk 9.0 ghost text",
-        "invalidcommand": "scroll and validation callbacks",
-        "xscrollcommand": "scroll and validation callbacks",
         "exportselection": "TkCurses-163: no widget offers it",
         "from": "TkCurses-y5q: we report from_, tkinter reports from",
     },
@@ -116,8 +117,6 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
         "selecttype": "Tk 9.0 additions",
         "titlecolumns": "Tk 9.0 additions",
         "titleitems": "Tk 9.0 additions",
-        "xscrollcommand": "scroll callbacks - a tree cannot take a scrollbar",
-        "yscrollcommand": "scroll callbacks - a tree cannot take a scrollbar",
     },
 }
 

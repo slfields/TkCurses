@@ -6395,6 +6395,12 @@ class Entry(_Drawable):
         "textvariable": None,
         "validate": "none",
         "validatecommand": None,
+        # The third of Tk's validation trio, and -xscrollcommand, both of which
+        # this widget lacked: validatecommand could say what was valid and
+        # nothing could say what to do when an edit was refused, and an entry
+        # could not be attached to a scrollbar. TkCurses-ale.
+        "invalidcommand": None,
+        "xscrollcommand": None,
         "width": 20,
     }
 
@@ -6609,13 +6615,50 @@ class Entry(_Drawable):
     selection_adjust = selection_to
     select_adjust = selection_to
 
-    def xview(self, index: Any = None) -> int:
-        """Get or set the first character shown."""
-        if index is not None:
-            self._field.move_to(self.index(index))
-            self._refresh_view()
-            self._redraw()
-        return self._field.view
+    def xview(self, *args: Any) -> Any:
+        """Report or move the view, as Tk's entry does.
+
+        With nothing it answers the pair of fractions a scrollbar wants; with
+        ``("moveto", fraction)`` or ``("scroll", count, "units"|"pages")`` it is
+        a scrollbar driving the entry. An index still works, because that is
+        what this used to take.
+
+        It used to return the first visible character as an INT, which meant
+        -xscrollcommand could not be honoured and that this widget disagreed
+        with its own siblings: Text and Canvas already answer with fractions and
+        accept the scrollbar arguments, and so does real tkinter's Entry -
+        measured, ``xview()`` on a 10-wide entry holding 43 characters answers
+        ``(0.0, 0.023255813953488372)``. TkCurses-ale.
+        """
+        if not args:
+            return self._view_fractions()
+        if args[0] == "moveto":
+            self._field.move_to(int(float(args[1]) * max(1, len(self.get()))))
+        elif args[0] == "scroll":
+            count = int(args[1])
+            step = max(1, self._text_area().width) if args[2] == "pages" else 1
+            self._field.move_to(self._field.view + count * step)
+        else:
+            self._field.move_to(self.index(args[0]))
+        self._refresh_view()
+        self._redraw()
+        return None
+
+    def _view_fractions(self) -> tuple[float, float]:
+        """Where the visible run sits in the text, as two fractions."""
+        total = len(self.get())
+        if total <= 0:
+            return (0.0, 1.0)
+        width = max(1, self._text_area().width)
+        first = self._field.view
+        return (first / total, min(1.0, (first + width) / total))
+
+    def _publish_view(self) -> None:
+        """Tell a scrollbar where the view is, if one is listening."""
+        command = self._options.get("xscrollcommand")
+        if command is not None:
+            first, last = self._view_fractions()
+            command(first, last)
 
     # -------------------------------------------------------------- editing
 
@@ -6634,9 +6677,26 @@ class Entry(_Drawable):
         if command is None:
             return True
         try:
-            return bool(command(proposed))
+            allowed = bool(command(proposed))
         except Exception:
-            return False
+            allowed = False
+        if not allowed:
+            self._refused()
+        return allowed
+
+    def _refused(self) -> None:
+        """Run the ``invalidcommand``, which is what Tk does on a refusal.
+
+        The third of Tk's validation trio, and it was missing: a program could
+        say what counted as valid and not what to do when an edit did not. As
+        with validatecommand, anything it raises is swallowed - a handler for a
+        rejected keystroke should not take the application down with it.
+        """
+        command = self._options.get("invalidcommand")
+        if command is None:
+            return
+        with contextlib.suppress(Exception):
+            command()
 
     def _edit(self, change: Callable[[], None], proposed: str) -> None:
         """Apply an edit if the state and the validator both allow it."""
@@ -6652,8 +6712,9 @@ class Entry(_Drawable):
         self._redraw()
 
     def _refresh_view(self) -> None:
-        """Scroll so the cursor is on screen."""
+        """Scroll so the cursor is on screen, and say where the view ended up."""
         self._field.scroll_into_view(self._text_area().width)
+        self._publish_view()
 
     # ------------------------------------------------------------- painting
 

@@ -893,3 +893,101 @@ def test_choosing_an_entry_changes_the_button_and_calls_the_command(options):
     options.wait_for_idle()
     assert "picked=['gamma']" in options.row(0), options.describe()
     assert "gamma" in options.display[BUTTON_ROW], options.describe()
+
+
+TREE_AND_BAR = """
+import tkcurses
+from tkcurses import ttk
+
+root = tkcurses.Tk()
+buffer = root.tk.screen.buffer
+frame = tkcurses.Frame(root)
+frame.pack(fill='both', expand=True)
+bar = ttk.Scrollbar(frame, orient='vertical')
+bar.pack(side='right', fill='y')
+tree = ttk.Treeview(frame, show='tree', yscrollcommand=bar.set)
+tree.pack(side='left', fill='both', expand=True)
+bar.configure(command=tree.yview)
+for number in range(30):
+    tree.insert('', 'end', text='row %02d' % number)
+root.update_layout()
+root.tk.screen.refresh()
+buffer.write(13, 0, 'ready')
+root.tk.screen.refresh()
+root.after(4000, root.quit)
+root.mainloop()
+"""
+
+
+def test_a_scrollbar_drives_a_treeview(terminal, tmp_path):
+    """The standard pairing works, which is what TkCurses-ale was filed for.
+
+        tree = ttk.Treeview(root, yscrollcommand=bar.set)
+        bar = ttk.Scrollbar(root, command=tree.yview)
+
+    The first line raised "unknown option" before this: our Treeview is built on
+    Frame, which has no scroll options, so a tree could not be attached to a
+    scrollbar at all - the way a tree is used in almost every program that has
+    one.
+
+    Driven rather than asserted on numbers, because the two halves can each look
+    right alone. A thumb that reports a position while the tree does not move,
+    or a tree that scrolls while the thumb sits still, both pass a test of either
+    side on its own.
+    """
+    term = terminal(cols=30, rows=15)
+    term.run_source(TREE_AND_BAR, workdir=tmp_path)
+    term.wait_for_text("ready")
+    term.wait_for_idle()
+
+    def rows_on_screen():
+        return [line for line in term.display if "row " in line]
+
+    def thumb_rows():
+        column = next(
+            x
+            for x in range(term.cols)
+            if any(term.char_at(y, x).data == "█" for y in range(term.rows))
+        )
+        return [y for y in range(term.rows) if term.char_at(y, column).data == "█"]
+
+    first_visible = rows_on_screen()[0]
+    thumb_before = thumb_rows()
+    assert thumb_before, f"no thumb drawn on the scrollbar\n{term.describe()}"
+    assert "row 00" in first_visible, (
+        f"the tree did not start at the top: {first_visible!r}"
+    )
+
+    # A click low on the trough is a page down, which is the scrollbar asking
+    # the tree to move rather than the tree moving itself.
+    column = next(
+        x
+        for x in range(term.cols)
+        if any(term.char_at(y, x).data == "█" for y in range(term.rows))
+    )
+    term.send_mouse(column, max(thumb_before) + 2, action="press")
+    term._drain(0.08)
+    term.send_mouse(column, max(thumb_before) + 2, action="release")
+
+    # Positive, and never comparing against an empty screen. The first version
+    # of this said `"row 00" not in (rows_on_screen() or [""])[0]`, and that
+    # fallback made it pass whenever no rows were drawn at all - so disabling
+    # yview's moveto and scroll handling left it green. Found by doing exactly
+    # that.
+    def scrolled_away():
+        rows = rows_on_screen()
+        return bool(rows) and rows[0] != first_visible
+
+    term.wait_for(
+        lambda t: scrolled_away(),
+        message="the tree to scroll when the scrollbar is clicked",
+    )
+    after = rows_on_screen()
+    assert after, f"the tree stopped drawing rows entirely\n{term.describe()}"
+    assert "row 00" not in after[0], (
+        f"the top row is still {after[0]!r} after a page down"
+    )
+    assert thumb_rows() != thumb_before, (
+        "the tree scrolled and the thumb stayed where it was, so the tree is not "
+        f"reporting its view back\n{term.describe()}"
+    )

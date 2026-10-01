@@ -361,14 +361,20 @@ def test_an_entry_asks_for_its_width_plus_its_border(entry):
 
 
 def test_the_view_follows_the_cursor(entry):
+    """Typing past the right edge scrolls the view along with the cursor.
+
+    Asserted on the FIRST FRACTION rather than on a character index: xview now
+    answers the pair a scrollbar wants, as Tk's does and as Text and Canvas here
+    already did. TkCurses-ale.
+    """
     entry.insert(0, "x" * 50)
-    assert entry.xview() > 0
+    assert entry.xview()[0] > 0
 
 
 def test_the_view_comes_back_when_the_cursor_does(entry):
     entry.insert(0, "x" * 50)
     entry.icursor(0)
-    assert entry.xview() == 0
+    assert entry.xview()[0] == 0.0
 
 
 def test_an_entry_too_short_for_its_border_still_shows_its_text(root):
@@ -396,3 +402,89 @@ def test_an_entry_with_room_for_its_border_keeps_it(root):
     entry._map()
     assert entry._border_drawn
     assert entry._text_area().width == 10
+
+
+def test_the_invalidcommand_runs_when_an_edit_is_refused(entry):
+    """The third of Tk's validation trio, which this widget did not have.
+
+    A program could say what counted as valid and nothing could say what to do
+    when an edit was refused. Measured against real Tk: a digits-only entry sent
+    an 'x' calls validatecommand, calls invalidcommand, and keeps the text empty.
+
+    TkCurses-ale, where it surfaced as ttk.Combobox lacking the option - and the
+    answer was that the classic Entry lacked it too, so the mixin had nothing to
+    expose.
+    """
+    refused = []
+    entry.configure(
+        validate="key",
+        validatecommand=lambda proposed: proposed.isdigit(),
+        invalidcommand=lambda: refused.append(1),
+    )
+    typed(entry, "x")
+    assert entry.get() == ""
+    assert refused == [1], "the edit was refused and invalidcommand never ran"
+
+
+def test_the_invalidcommand_stays_quiet_when_an_edit_is_allowed(entry):
+    refused = []
+    entry.configure(
+        validate="key",
+        validatecommand=lambda proposed: proposed.isdigit(),
+        invalidcommand=lambda: refused.append(1),
+    )
+    typed(entry, "7")
+    assert entry.get() == "7"
+    assert refused == []
+
+
+def test_an_invalidcommand_that_raises_is_swallowed(entry):
+    """As with the validator: a handler for a rejected keystroke must not take
+    the application down with it."""
+
+    def broken():
+        raise RuntimeError("handler is broken")
+
+    entry.configure(
+        validate="key",
+        validatecommand=lambda proposed: proposed.isdigit(),
+        invalidcommand=broken,
+    )
+    typed(entry, "x")
+    assert entry.get() == ""
+
+
+def test_xview_answers_the_fractions_a_scrollbar_wants(entry):
+    """Tk's contract, which this widget was the only one here not to follow.
+
+    Measured on real tkinter: a 10-wide entry holding 43 characters answers
+    ``xview() == (0.0, 0.023255813953488372)``. Ours returned the first visible
+    character as an int, so -xscrollcommand could not be honoured - and Text and
+    Canvas in this same codebase already answered with fractions.
+    """
+    entry.configure(width=10)
+    entry.insert(0, "the quick brown fox jumps over the lazy dog")
+
+    first, last = entry.xview()
+    assert 0.0 <= first < last <= 1.0
+
+    entry.xview("moveto", 0.0)
+    assert entry.xview()[0] == 0.0
+
+
+def test_a_scrollbar_is_told_where_the_entry_view_is(entry):
+    """``-xscrollcommand`` reaches a scrollbar, which is why xview changed.
+
+    Asserted through the callback rather than through xview alone: the option
+    existing and the callback never firing is the failure this is here for.
+    """
+    reported: list[tuple[float, float]] = []
+    entry.configure(
+        width=10,
+        xscrollcommand=lambda first, last: reported.append((float(first), float(last))),
+    )
+    entry.insert(0, "the quick brown fox jumps over the lazy dog")
+
+    assert reported, "nothing was reported to the xscrollcommand"
+    first, last = reported[-1]
+    assert 0.0 <= first < last <= 1.0

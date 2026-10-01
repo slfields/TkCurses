@@ -2129,6 +2129,17 @@ class Treeview(Widget, tkcurses.Frame):
         # keyboard. Frame's default is False, and inheriting it left the
         # widget unreachable by Tab.
         "takefocus": True,
+        # Without these a tree cannot be attached to a scrollbar, which is how
+        # a tree is used in almost every program that has one:
+        #
+        #     tree = ttk.Treeview(root, yscrollcommand=bar.set)
+        #     bar = ttk.Scrollbar(root, command=tree.yview)
+        #
+        # The first line raised "unknown option" until TkCurses-ale. They are
+        # not Tk 9.0 additions, they are the ordinary scroll callbacks, and
+        # this is built on Frame which has none.
+        "yscrollcommand": None,
+        "xscrollcommand": None,
     }
 
     #: What ``item()`` answers for, with Tk's defaults.
@@ -2454,7 +2465,71 @@ class Treeview(Widget, tkcurses.Frame):
             position = rows.index(item)
             height = max(1, self._content_height())
             self._top = max(min(self._top, position), position - height + 1)
+        self._clamp_view()
         self._redraw()
+
+    # -------------------------------------------------------------- scrolling
+
+    def yview(self, *args: Any) -> Any:
+        """Report or move the vertical view, as a scrollbar expects.
+
+        Called with nothing it answers the pair of fractions a scrollbar wants.
+        Called by a scrollbar it takes Tk's own arguments - ``("moveto",
+        fraction)`` or ``("scroll", count, "units"|"pages")`` - which is what
+        lets any scrollbar drive any widget without either knowing what the
+        other is. The same contract tkcurses.Listbox and tkcurses.Text already
+        implement; this copies it rather than inventing a second one.
+        """
+        if not args:
+            return self._view_fractions()
+        rows = len(self._visible())
+        if args[0] == "moveto":
+            self._top = int(float(args[1]) * rows)
+        elif args[0] == "scroll":
+            count = int(args[1])
+            step = max(1, self._content_height()) if args[2] == "pages" else 1
+            self._top += count * step
+        else:  # a bare index, as Tk also accepts
+            self._top = int(args[0])
+        self._clamp_view()
+        self._redraw()
+        return None
+
+    def xview(self, *args: Any) -> Any:
+        """Report the horizontal view.
+
+        A tree here never scrolls sideways - its columns are sized in cells to
+        fit the width it has - so the view is always the whole of it. The method
+        exists because ``-xscrollcommand`` does: a scrollbar wired to it must get
+        an answer rather than an AttributeError, and what it gets says "all of
+        me is showing", which is the truth.
+        """
+        del args
+        return (0.0, 1.0)
+
+    def _view_fractions(self) -> tuple[float, float]:
+        """Where the visible rows are, as two fractions of the whole tree."""
+        rows = len(self._visible())
+        if rows <= 0:
+            return (0.0, 1.0)
+        height = max(1, self._content_height())
+        return (self._top / rows, min(1.0, (self._top + height) / rows))
+
+    def _clamp_view(self) -> None:
+        """Keep the visible rows inside the tree."""
+        height = max(1, self._content_height())
+        rows = len(self._visible())
+        self._top = max(0, min(self._top, max(0, rows - height)))
+
+    def _publish_view(self) -> None:
+        """Tell the scrollbars where the view is, if any are listening."""
+        vertical = self._options["yscrollcommand"]
+        if vertical is not None:
+            first, last = self._view_fractions()
+            vertical(first, last)
+        horizontal = self._options["xscrollcommand"]
+        if horizontal is not None:
+            horizontal(0.0, 1.0)
 
     # ------------------------------------------------------------ painting
 
@@ -2510,15 +2585,30 @@ class Treeview(Widget, tkcurses.Frame):
         area = self._rows_area()
         return max(0, area.height - (1 if self._shows_headings else 0))
 
+    def _shown(self) -> tuple[str, ...]:
+        """What ``-show`` asks for, whether given as words or as a sequence.
+
+        ``tuple("tree")`` is ``("t", "r", "e", "e")``, so reading the option
+        directly made ``show="tree"`` ask for neither the tree column nor the
+        headings and draw an empty box. Measured on real ttk, which parses the
+        string into words: ``show="tree"`` reads back as ``("tree",)`` and
+        ``show="tree headings"`` as both. Found by writing a scrollbar test that
+        used the natural string form (TkCurses-ale).
+        """
+        value = self._options["show"]
+        if isinstance(value, str):
+            return tuple(value.split())
+        return tuple(value)
+
     @property
     def _shows_headings(self) -> bool:
         """Whether a heading row is drawn."""
-        return "headings" in tuple(self._options["show"])
+        return "headings" in self._shown()
 
     @property
     def _shows_tree(self) -> bool:
         """Whether the tree column is drawn."""
-        return "tree" in tuple(self._options["show"])
+        return "tree" in self._shown()
 
     def _row_text(self, iid: str, width: int) -> str:
         """One row as it is drawn: the marker, the text, then the columns."""
@@ -2575,6 +2665,16 @@ class Treeview(Widget, tkcurses.Frame):
         return area.x + INDENT * self._depth(iid)
 
     def _redraw(self) -> None:
+        # Every change that repaints also clamps the view and tells the
+        # scrollbar where it is. Done here rather than in insert, delete, move,
+        # open and close separately, because driving the widget showed both
+        # halves going wrong: thirty rows could go in while the bar still read
+        # (0.0, 1.0) - a full-size thumb on a tree showing a sixth of itself -
+        # and deleting twenty rows left _top past the end, so the tree reported
+        # a first fraction of 1.5. A repaint must not draw from a stale view
+        # either, so the clamp belongs here with it.
+        self._clamp_view()
+        self._publish_view()
         """Paint the headings and whichever rows are in view."""
         window = self._window
         if window is None or self.tk.screen is None:
