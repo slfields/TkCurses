@@ -1229,12 +1229,23 @@ class Misc:
             # this is the one place that decides what a container offers.
             rect = Rect(rect.x, rect.y + 1, rect.width, max(0, rect.height - 1))
         return content_rect(
-            rect,
-            bordered=self._border_drawn,
-            padding=Insets.symmetric(
-                horizontal=int(self._options.get("padx", 0)),
-                vertical=int(self._options.get("pady", 0)),
-            ),
+            rect, bordered=self._border_drawn, padding=self._content_padding()
+        )
+
+    def _content_padding(self) -> Insets:
+        """Space inside the border that this container keeps from its children.
+
+        One method because TWO things need the same answer - :meth:`_content_rect`
+        places the children and :meth:`_outer_size` asks the parent for room -
+        and a container whose two halves disagree either clips its children or
+        leaves a gap. The scrollbar that drew seven of its nine rows was two
+        predicates disagreeing in exactly this way.
+
+        Overridable so a themed widget can add ttk's ``-padding`` to it.
+        """
+        return Insets.symmetric(
+            horizontal=int(self._options.get("padx", 0) or 0),
+            vertical=int(self._options.get("pady", 0) or 0),
         )
 
     def _outer_size(self, content: Size) -> Size:
@@ -1253,10 +1264,12 @@ class Misc:
         row tall.
         """
         edge = 2 * BORDER_WIDTH if self._bordered else 0
-        padx = 2 * int(self._options.get("padx", 0) or 0)
-        pady = 2 * int(self._options.get("pady", 0) or 0)
+        padding = self._content_padding()
         menu = 1 if self._options.get("menu") is not None else 0
-        return Size(content.width + edge + padx, content.height + edge + pady + menu)
+        return Size(
+            content.width + edge + padding.width,
+            content.height + edge + padding.height + menu,
+        )
 
     @property
     def _bordered(self) -> bool:

@@ -69,7 +69,7 @@ import tkcurses
 from tkcurses._core.attributes import BorderStyle
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.errors import TclError
-from tkcurses._core.geometry import BORDER_WIDTH, Rect
+from tkcurses._core.geometry import BORDER_WIDTH, Insets, Rect
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -162,6 +162,45 @@ class Theme:
                 for style, options in self.states.items()
             },
         )
+
+
+def parse_padding(value: Any) -> Insets:
+    """ttk's ``-padding`` as per-edge insets.
+
+    One to four screen distances, in Tk's order - left, top, right, bottom -
+    with right defaulting to left and bottom to top. Accepts the forms tkinter
+    does: a number, a string of numbers, or a sequence of either.
+
+    Anything unparseable is no padding rather than an error, because the option
+    is also read back and compared, and a widget that refused to render because
+    of a malformed pad would be worse than one that ignored it. Tk itself
+    raises; matching that is TkCurses-avy's own follow-up if it ever matters.
+    """
+    if value is None or value == "":
+        return Insets()
+    pieces: Any
+    if isinstance(value, (int, float)):
+        pieces = [value]
+    elif isinstance(value, str):
+        pieces = value.split()
+    else:
+        pieces = value
+    # One guard around every form, not only the sequence one. The first version
+    # of this guarded the sequence branch and let a malformed STRING raise,
+    # while its own docstring promised otherwise - a docstring describing
+    # behaviour the code did not have, which is the same fault TkCurses-avy is
+    # about.
+    try:
+        parts = [int(float(piece)) for piece in pieces]
+    except (TypeError, ValueError):
+        return Insets()
+    if not parts or any(part < 0 for part in parts):
+        return Insets()
+    left = parts[0]
+    top = parts[1] if len(parts) > 1 else left
+    right = parts[2] if len(parts) > 2 else left
+    bottom = parts[3] if len(parts) > 3 else top
+    return Insets(left, top, right, bottom)
 
 
 def style_chain(style: str) -> list[str]:
@@ -623,6 +662,37 @@ class Widget:
         """
         options = getattr(self, "_options", {})
         return str(options.get("style") or "") or self.winfo_class()
+
+    def _content_padding(self) -> Insets:
+        """The classic padding, plus ttk's ``-padding``.
+
+        TkCurses-avy: five widgets declared this option and none of them did
+        anything with it, so code written for ttk that padded a frame got no
+        error and no padding - the layout quietly wrong with nothing to point
+        at. It is added to ``padx``/``pady`` rather than replacing them,
+        because a themed widget still answers to both and a caller who set
+        each meant each.
+
+        The side order is MEASURED, not recalled, because it is the kind of
+        thing that is easy to have backwards. Real ttk 9.0, a 200x120 frame
+        with a child filling it:
+
+            padding="5"         child at 5,5    sized 190x110
+            padding="2 8"       child at 2,8    sized 196x104
+            padding="2 8 20"    child at 2,8    sized 178x104
+            padding="2 8 20 30" child at 2,8    sized 178x82
+
+        which is LEFT, TOP, RIGHT, BOTTOM, with right defaulting to left and
+        bottom defaulting to top.
+        """
+        base = super()._content_padding()  # type: ignore[misc]
+        extra = parse_padding(getattr(self, "_options", {}).get("padding"))
+        return Insets(
+            base.left + extra.left,
+            base.top + extra.top,
+            base.right + extra.right,
+            base.bottom + extra.bottom,
+        )
 
     def _background_attribute(self) -> int:
         """Colours resolved against the style database, not only the options.

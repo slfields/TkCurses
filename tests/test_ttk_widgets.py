@@ -48,6 +48,7 @@ from tkcurses.ttk import (
     Sizegrip,
     Style,
     Treeview,
+    parse_padding,
 )
 
 
@@ -1337,3 +1338,113 @@ def test_a_themed_radiobutton_shares_the_default_variable(pressable_root):
     assert shared.get() == "a"
     second.invoke()
     assert shared.get() == "b"
+
+
+# ----------------------------------------------------------------- padding
+
+
+@pytest.fixture
+def padded_root(root):
+    """A root a container can be allocated and mapped in."""
+    from types import SimpleNamespace
+
+    from tkcurses._core.geometry import Rect
+    from tkcurses._core.panels import PanelStack
+
+    root.tk.panels = PanelStack(
+        window_factory=lambda rect: SimpleNamespace(rect=rect), panel_factory=None
+    )
+    root._rect = Rect(0, 0, 60, 30)
+    root._mapped = True
+    return root
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        (None, (0, 0, 0, 0)),
+        ("", (0, 0, 0, 0)),
+        (5, (5, 5, 5, 5)),
+        ("5", (5, 5, 5, 5)),
+        ("2 8", (2, 8, 2, 8)),
+        ("2 8 20", (2, 8, 20, 8)),
+        ("2 8 20 30", (2, 8, 20, 30)),
+        ((1, 2), (1, 2, 1, 2)),
+    ],
+)
+def test_padding_follows_tks_side_order(given, expected):
+    """Left, top, right, bottom - measured on real ttk, not recalled.
+
+    A 200x120 ttk.Frame with a child filling it, Tk 9.0::
+
+        padding="5"         child at 5,5    sized 190x110
+        padding="2 8"       child at 2,8    sized 196x104
+        padding="2 8 20"    child at 2,8    sized 178x104
+        padding="2 8 20 30" child at 2,8    sized 178x82
+
+    So right defaults to left and bottom to top, and the pairs are NOT
+    horizontal-then-vertical the way padx/pady would suggest.
+    """
+    insets = parse_padding(given)
+    assert (insets.left, insets.top, insets.right, insets.bottom) == expected
+
+
+@pytest.mark.parametrize("given", ["oops", -3, ["a"], object()])
+def test_an_unparseable_padding_is_no_padding(given):
+    """Rather than an exception from inside a layout pass.
+
+    Tk itself raises on a malformed pad, and matching that is worth doing one
+    day; drawing nothing because of it is not. The first version of the parser
+    guarded only the sequence form and let a malformed STRING raise, while its
+    docstring promised otherwise.
+    """
+    assert parse_padding(given) == tkcurses._core.geometry.Insets()
+
+
+def test_padding_shrinks_what_a_themed_container_offers(padded_root):
+    """The option does something, which is the whole of TkCurses-avy.
+
+    Five widgets declared -padding and none honoured it, so code written for ttk
+    got no error and no padding and a layout quietly one or two cells out.
+    """
+    from tkcurses._core.geometry import Rect
+
+    plain = Frame(padded_root, name="plain", relief="flat")
+    plain._allocate(Rect(0, 0, 20, 10))
+    plain._map()
+    assert (plain._content_rect().width, plain._content_rect().height) == (20, 10)
+
+    padded = Frame(padded_root, name="padded", relief="flat", padding="1 2 3 4")
+    padded._allocate(Rect(0, 0, 20, 10))
+    padded._map()
+    content = padded._content_rect()
+    assert (content.x, content.y) == (1, 2), "the top-left moves in by left, top"
+    assert (content.width, content.height) == (20 - 1 - 3, 10 - 2 - 4)
+
+
+def test_a_padded_container_asks_its_parent_for_the_room(padded_root):
+    """``_outer_size`` agrees with ``_content_rect``, or children are clipped.
+
+    The two halves of a container's arithmetic: one places the children, the
+    other asks the parent for space. They now share ``_content_padding`` because
+    two places computing the same thing is how the scrollbar came to draw seven
+    of its nine rows.
+    """
+    from tkcurses._core.geometry import Rect, Size
+
+    padded = Frame(padded_root, name="p", relief="flat", padding="1 2 3 4")
+    padded._allocate(Rect(0, 0, 20, 10))
+    padded._map()
+    outer = padded._outer_size(Size(5, 5))
+    assert (outer.width, outer.height) == (5 + 1 + 3, 5 + 2 + 4)
+
+
+def test_padding_adds_to_padx_and_pady_rather_than_replacing_them(padded_root):
+    """A themed widget still answers to both, and a caller meant each."""
+    from tkcurses._core.geometry import Rect
+
+    both = Frame(padded_root, name="both", relief="flat", padding=1, padx=2, pady=3)
+    both._allocate(Rect(0, 0, 20, 20))
+    both._map()
+    content = both._content_rect()
+    assert (content.x, content.y) == (2 + 1, 3 + 1)
