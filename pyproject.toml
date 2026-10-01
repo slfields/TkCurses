@@ -46,6 +46,7 @@ test = [
 ]
 dev = [
     "tkcurses[test]",
+    "pytest-xdist>=3.0",
     # Pinned to a minor series, not a floor. Ruff and mypy both add rules in
     # minor releases, so an open floor lets CI run a stricter checker than the
     # developer did and fail on code that was clean locally - which is exactly
@@ -82,6 +83,19 @@ python_functions = ["test_*"]
 addopts = [
     "--strict-markers",
     "--tb=short",
+]
+# Python warns on os.fork() from a process that has threads, every time, and
+# pytest-xdist's workers have threads - so a parallel run of the tty suite emits
+# one of these per child, 684 of them, which would bury any warning worth
+# reading. Silenced with a reason rather than left to be scrolled past.
+#
+# The HAZARD it warns about is real and is addressed separately: the forked child
+# makes only async-signal-safe syscalls before it execs, which
+# tests/test_harness.py checks mechanically. The warning cannot tell a child that
+# execs immediately from one that allocates, so it fires either way.
+# TkCurses-kwv.
+filterwarnings = [
+    "ignore:This process .* is multi-threaded, use of fork.*:DeprecationWarning",
 ]
 markers = [
     "tty: test drives a real pty and asserts on emulated terminal output",

@@ -381,9 +381,23 @@ class TerminalHarness:
         # into the terminal would corrupt the very output under assertion.
         err_r, err_w = os.pipe()
 
+        # Built BEFORE the fork, and this is the whole point of the arrangement.
+        # Forking a process that has threads is only safe if the child does
+        # nothing but async-signal-safe syscalls before it execs: another
+        # thread can hold the allocator or the import lock at the moment of the
+        # fork, and in the child that lock is held by a thread that does not
+        # exist. The child used to build this dict and WRITE A FILE - the quit
+        # timer shim - between the fork and the exec, which is a deadlock
+        # waiting for a reason. pytest-xdist's workers are threaded, so running
+        # this suite in parallel is exactly that reason. TkCurses-kwv.
+        env = self._child_env()
+        # list(argv) in the child would allocate too - a small thing that a
+        # mechanical check caught and a careful reading did not.
+        command = list(argv)
+
         pid = os.fork()
         if pid == 0:  # pragma: no cover - runs only in the forked child
-            self._child_exec(argv, slave, master, err_r, err_w)
+            self._child_exec(command, env, slave, master, err_r, err_w)
 
         os.close(slave)
         os.close(err_w)
@@ -392,9 +406,41 @@ class TerminalHarness:
         self._err_read = err_r
         self._pid = pid
 
+    def _child_env(self) -> dict[str, str]:
+        """Everything the child's environment needs, assembled in the PARENT.
+
+        Separate from :meth:`_child_exec` so that none of it - a dict
+        comprehension, a file written for the quit timer shim, a path joined -
+        happens between the fork and the exec. See the note in :meth:`run`.
+        """
+        env = {**os.environ, **_CHILD_ENV, **self._extra_env}
+        shim = self._install_quit_timer_shim()
+        if shim is not None:
+            existing = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = (
+                f"{shim}{os.pathsep}{existing}" if existing else str(shim)
+            )
+        env["COLUMNS"] = str(self.cols)
+        env["LINES"] = str(self.rows)
+        return env
+
     def _child_exec(
-        self, argv: Sequence[str], slave: int, master: int, err_r: int, err_w: int
+        self,
+        argv: list[str],
+        env: dict[str, str],
+        slave: int,
+        master: int,
+        err_r: int,
+        err_w: int,
     ) -> None:  # pragma: no cover - child process
+        """Syscalls only, then exec. Nothing here may allocate.
+
+        What is left is setsid, ioctl, dup2, close and execvpe - all of them
+        async-signal-safe, which is what makes this fork safe from a threaded
+        parent. The only allocating code is the error path below, and that runs
+        when the exec has already failed: a deadlock there costs a diagnosable
+        hang instead of a silent one, which is the better trade.
+        """
         try:
             os.setsid()
             fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
@@ -404,16 +450,7 @@ class TerminalHarness:
             for fd in (master, slave, err_r, err_w):
                 if fd > 2:
                     os.close(fd)
-            env = {**os.environ, **_CHILD_ENV, **self._extra_env}
-            shim = self._install_quit_timer_shim()
-            if shim is not None:
-                existing = env.get("PYTHONPATH", "")
-                env["PYTHONPATH"] = (
-                    f"{shim}{os.pathsep}{existing}" if existing else str(shim)
-                )
-            env["COLUMNS"] = str(self.cols)
-            env["LINES"] = str(self.rows)
-            os.execvpe(argv[0], list(argv), env)
+            os.execvpe(argv[0], argv, env)
         except BaseException:
             # Say why, before going. A bare _exit(127) here produced the
             # least diagnosable failure this suite has: a blank screen, no

@@ -585,3 +585,64 @@ def test_stderr_written_on_the_way_out_is_collected(terminal, tmp_path):
     assert "LAST WORDS" in term.stderr, (
         "the child's dying words were written to the stderr pipe and never read"
     )
+
+
+def test_nothing_allocates_between_the_fork_and_the_exec():
+    """The child must make only async-signal-safe calls before it execs.
+
+    Forking a process that has threads is safe only if the child does nothing
+    but syscalls before the exec: another thread can hold the allocator or the
+    import lock at the moment of the fork, and in the child that lock is held
+    by a thread which does not exist. It deadlocks, intermittently, under load.
+
+    This harness forks, and pytest-xdist's workers are threaded - which is why
+    running the suite in parallel reported 676 of "This process is
+    multi-threaded, use of fork() may lead to deadlocks in the child". The child
+    used to build its environment dict and WRITE A FILE, the quit timer shim,
+    inside that window. Both now happen in the parent. TkCurses-kwv.
+
+    Checked by reading the code rather than by hoping, because the property is
+    invisible: nothing fails until something hangs once in a thousand runs, and
+    this suite has already spent days on two intermittent tty faults
+    (TkCurses-txk, TkCurses-9q7). The mechanical check also earned its place
+    immediately - it caught ``list(argv)``, which a careful reading of mine had
+    passed as clean.
+
+    The except branch is excluded deliberately. It formats a traceback, which
+    allocates, and it runs only when the exec has already failed: a diagnosable
+    hang there beats the silent _exit(127) that preceded it.
+    """
+    import ast
+    import inspect
+
+    from tests.support import terminal as harness
+
+    source = inspect.getsource(harness)
+    function = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef) and node.name == "_child_exec"
+    )
+    attempt = next(node for node in function.body if isinstance(node, ast.Try))
+    called = {
+        ast.unparse(node.func)
+        for node in ast.walk(ast.Module(body=attempt.body, type_ignores=[]))
+        if isinstance(node, ast.Call)
+    }
+
+    #: Every call POSIX lists as safe to make in a forked child before exec.
+    permitted = {
+        "os.setsid",
+        "os.dup2",
+        "os.close",
+        "os.execvpe",
+        "os.execv",
+        "os._exit",
+        "fcntl.ioctl",
+    }
+    assert called <= permitted, (
+        f"_child_exec calls {sorted(called - permitted)} between the fork and "
+        "the exec. Anything that allocates, imports, or touches a file can "
+        "deadlock a child forked from a threaded parent - move it into "
+        "_child_env or into run(), before the fork."
+    )
