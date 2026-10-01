@@ -516,3 +516,227 @@ def test_scenario_39_first_line_and_hanging_indents_are_opposites(uat_terminal):
 
     term.send(ESCAPE)
     assert term.wait_for_exit(timeout=10) == 0
+
+
+# ------------------------------------------------- scenario 40, the themed core
+#
+# These drive GESTURES, which is the whole reason the scenario exists. A themed
+# widget that draws correctly and answers nothing passes every other kind of
+# test here: ttk.Panedwindow shipped from TkCurses-3h5.2 with its sash bindings
+# registered under the classic widget's name, so the sash drew perfectly and
+# could not be moved, and 4365 tests were green.
+
+
+def _scenario_40(uat_terminal):
+    """The scenario, up and settled, with the response line on screen."""
+    term = uat_terminal(cols=100, rows=30)
+    term.run([sys.executable, "-m", "uat.scenario_40_ttk_core_widgets"])
+    term.wait_for_text("nothing yet")
+    term.wait_for_idle()
+    return term
+
+
+def _responded(term):
+    return next((row.strip() for row in term.display if "responded" in row), "")
+
+
+def _click(term, x, y):
+    """Press and release, with a drain between.
+
+    The drain is not politeness. Sent back to back both escape sequences land
+    in one read and ncurses holds the release until something else arrives -
+    a property of this harness rather than of any real mouse, recorded in
+    tests/test_button_tty.py. Omitting it made a working scenario look like
+    one where nothing answered a click.
+    """
+    term.send_mouse(x, y, action="press")
+    term._drain(0.08)
+    term.send_mouse(x + 1, y, action="release")
+
+
+def test_scenario_40_a_themed_button_answers_a_click(uat_terminal):
+    """The gesture arrives, which no option-surface test can show."""
+    term = _scenario_40(uat_terminal)
+    _click(term, 8, 3)
+    term.wait_for(
+        lambda t: "ttk.Button" in _responded(t),
+        message="the themed button to report a click",
+    )
+
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+    assert "Traceback" not in term.stderr
+
+
+def test_scenario_40_a_themed_button_answers_tab_and_space(uat_terminal):
+    """Focus traversal reaches it too, not only the mouse."""
+    term = _scenario_40(uat_terminal)
+    term.send(b"\t")
+    term._drain(0.08)
+    term.send(b" ")
+    term.wait_for(
+        lambda t: "ttk.Button" in _responded(t),
+        message="the themed button to report Tab then space",
+    )
+
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+
+
+def test_scenario_40_the_paned_sash_can_be_dragged(uat_terminal):
+    """The bug this scenario was written too late to prevent.
+
+    ttk.Panedwindow bound sash press, motion, release and keys under
+    "PanedWindow" while reporting TPanedwindow, so it received none of them.
+    Asserted by where the sash ENDS UP rather than by the report line alone:
+    a handler that fires and moves nothing would satisfy the report.
+    """
+    term = _scenario_40(uat_terminal)
+
+    def sash_columns():
+        return [
+            x
+            for y, row in enumerate(term.display)
+            for x, cell in enumerate(row)
+            if cell == "┃" and x > 45
+        ]
+
+    before = sash_columns()
+    assert before, f"no sash on screen to drag\n{term.describe()}"
+    column = before[0]
+    row = next(
+        y
+        for y, line in enumerate(term.display)
+        if len(line) > column and line[column] == "┃"
+    )
+
+    term.send_mouse(column, row, action="press")
+    term._drain(0.08)
+    term.send_mouse(column - 3, row, action="move", button=1)
+    term._drain(0.08)
+    term.send_mouse(column - 3, row, action="release")
+
+    term.wait_for(
+        lambda t: bool(sash_columns()) and sash_columns()[0] < column,
+        message="the sash to move left",
+    )
+
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+    assert "Traceback" not in term.stderr
+
+
+#: Glyphs a border is drawn from, in any theme the library ships.
+_BORDERS = set("─│┌┐└┘═║╔╗╚╝-|+╒╕╘╛┃.'`")
+
+
+def _border_glyphs(term):
+    return {cell for row in term.display[:20] for cell in row if cell in _BORDERS}
+
+
+def test_scenario_40_the_theme_and_restyle_keys_are_live(uat_terminal):
+    """The keys themselves work - what they reach is the test below."""
+    term = _scenario_40(uat_terminal)
+    term.send(b"\x14")  # Ctrl-T
+    term.wait_for_text("theme ascii")
+    term.send(b"\x12")  # Ctrl-R
+    term.wait_for_text("restyled")
+
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+    assert "Traceback" not in term.stderr
+
+
+def test_scenario_40_a_theme_change_redraws_the_themed_widgets(uat_terminal):
+    """Changing the theme changes how the themed widgets LOOK.
+
+    TkCurses-5vu, reported by the author running this scenario: Ctrl-T cycled
+    the theme and nothing on screen moved. Nine widgets - Frame, Labelframe,
+    Button, Checkbutton, Radiobutton, Menubutton, Entry, Spinbox and Scrollbar -
+    inherited the classic widget's drawing entirely, so a theme reached none of
+    them. They now take their box from the theme's glyph set.
+
+    **The test this replaces asserted that the theme LABEL changed**, which is
+    the scenario's own Label and says nothing about any themed widget. It passed
+    throughout, which is how the gap reached a person instead of being caught
+    here, and it is why this one reads the drawn characters.
+    """
+    term = _scenario_40(uat_terminal)
+    before = _border_glyphs(term)
+    term.send(b"\x14")  # Ctrl-T, to ascii
+    term.wait_for_text("theme ascii")
+    term.wait_for_idle()
+
+    assert _border_glyphs(term) != before, (
+        "the theme changed and not one border glyph did, so nothing on screen "
+        f"is drawn from the theme: {sorted(before)}\n{term.describe()}"
+    )
+
+
+def _horizontal_runs(term, row, glyph):
+    """A column from each run of ``glyph`` along ``row``, left to right.
+
+    Used to find the themed box and the classic one beside it without naming
+    their columns, which move whenever the scenario is rearranged.
+    """
+    line = term.display[row]
+    columns, inside = [], False
+    for column, cell in enumerate(line):
+        if cell == glyph and not inside:
+            columns.append(column)
+            inside = True
+        elif cell != glyph:
+            inside = False
+    return columns
+
+
+def test_scenario_40_a_restyle_reaches_the_themed_column_only(uat_terminal):
+    """``Style.configure`` recolours the themed widgets and not the classic ones.
+
+    The second half of what UAT 40 asks, and the second thing a person found
+    that no test had: Ctrl-R reported "restyled" and not one cell on screen
+    changed colour. Every themed widget built on an ordinary one painted through
+    the classic _background_attribute, which reads the widget's own options and
+    never the style database.
+
+    Both directions are asserted, because each failure means something
+    different. The themed border not changing means the style database is not
+    reaching the widget at all; the classic border changing too would mean the
+    style is not scoped to the themed classes, and a program using both would
+    find its plain widgets repainted under it.
+    """
+    term = _scenario_40(uat_terminal)
+
+    def colours_at(row, column):
+        cell = term.char_at(row, column)
+        return (cell.fg, cell.bg)
+
+    # Found rather than hardcoded. The first version named columns 3 and 31,
+    # and then the scenario's classic column moved to make room for a list -
+    # so the test compared a border against an empty cell and failed in the
+    # gate. A test that knows the layout by heart breaks every time the layout
+    # is improved.
+    row = 2
+    runs = _horizontal_runs(term, row, "─")
+    assert len(runs) >= 2, (
+        f"expected at least two bordered boxes on row {row}, found {len(runs)}"
+        f"\n{term.describe()}"
+    )
+    themed, classic = (row, runs[0]), (row, runs[1])
+    was_themed = colours_at(*themed)
+    was_classic = colours_at(*classic)
+
+    term.send(b"\x12")  # Ctrl-R
+    term.wait_for_text("restyled")
+    term.wait_for(
+        lambda t: colours_at(*themed) != was_themed,
+        message="the themed border to take the restyled colours",
+    )
+    assert colours_at(*classic) == was_classic, (
+        "the classic widget was recoloured too, so the style is not scoped to "
+        f"the themed classes: {colours_at(*classic)}\n{term.describe()}"
+    )
+
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+    assert "Traceback" not in term.stderr

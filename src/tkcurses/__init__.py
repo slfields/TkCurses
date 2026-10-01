@@ -52,6 +52,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from tkcurses._core.application import Application
 from tkcurses._core.attributes import (
+    BorderStyle,
     for_state,
     from_font,
     style_for_relief,
@@ -4911,6 +4912,18 @@ class _Drawable(Widget):
             str(self._options["background"] or "black"),
         )
 
+    def _border_style(self) -> BorderStyle:
+        """The characters this widget's border is drawn with.
+
+        Its own method so that a subclass can answer differently: a themed
+        widget takes its box from the theme's glyph set rather than from the
+        relief, which is what makes ``Style.theme_use`` visible on screen.
+        Before this existed, the nine themed widgets built on ordinary ones
+        drew the relief's own characters and a theme change reached none of
+        them - TkCurses-5vu, found by a person pressing Ctrl-T in UAT 40.
+        """
+        return style_for_relief(str(self._options["relief"]) or FLAT)
+
     def _draw_border(
         self,
         dispatcher: CursesDispatcher,
@@ -4925,7 +4938,7 @@ class _Drawable(Widget):
         because a relief is a choice of line style - single, double, heavy -
         and ``border`` only knows one.
         """
-        style = style_for_relief(str(self._options["relief"]) or FLAT)
+        style = self._border_style()
         attribute |= style.attr
         # The window can be smaller than the widget: one clipped by a screen
         # edge gets only the part of itself that fits, because curses will
@@ -5739,15 +5752,24 @@ class Button(_TextWidget):
         ``"break"`` - which is what tkinter's binding order is for, and what
         lets an application override a default without removing it.
         """
-        if "Button" in self.tk.bound_classes:
+        # winfo_class() and not the literal "Button": a subclass that reports
+        # another name - ttk.Button reports TButton - binds under that name,
+        # and binding under this one would leave it with no bindings at all.
+        # Binding tags name one class rather than a chain, so a themed button
+        # would have been a button that answered nothing. _ChoiceWidget and
+        # Menubutton already ask; this one did not, and it is the same fault
+        # that has bitten Spinbox/Entry, OptionMenu/Menubutton and
+        # ScrolledText/Text from the other direction.
+        name = self.winfo_class()
+        if name in self.tk.bound_classes:
             return
-        self.tk.bound_classes.add("Button")
-        self.bind_class("Button", "<Button-1>", _button_press)
-        self.bind_class("Button", "<ButtonRelease-1>", _button_release)
-        self.bind_class("Button", "<Key-Return>", _button_key)
-        self.bind_class("Button", "<Key-space>", _button_key)
-        self.bind_class("Button", "<FocusIn>", _button_refresh)
-        self.bind_class("Button", "<FocusOut>", _button_refresh)
+        self.tk.bound_classes.add(name)
+        self.bind_class(name, "<Button-1>", _button_press)
+        self.bind_class(name, "<ButtonRelease-1>", _button_release)
+        self.bind_class(name, "<Key-Return>", _button_key)
+        self.bind_class(name, "<Key-space>", _button_key)
+        self.bind_class(name, "<FocusIn>", _button_refresh)
+        self.bind_class(name, "<FocusOut>", _button_refresh)
 
     # ------------------------------------------------------------ behaviour
 
@@ -6392,14 +6414,18 @@ class Entry(_Drawable):
 
     def _install_class_bindings(self) -> None:
         """Register the editing keys for every Entry in this application."""
-        if "Entry" in self.tk.bound_classes:
+        # winfo_class() and not the literal: a subclass reporting another name
+        # - every ttk widget does - must bind under THAT name or it receives
+        # nothing, because binding tags name one class and not a chain.
+        name = self.winfo_class()
+        if name in self.tk.bound_classes:
             return
-        self.tk.bound_classes.add("Entry")
+        self.tk.bound_classes.add(name)
         bind = self.bind_class
-        bind("Entry", "<Any-Key>", _entry_key)
-        bind("Entry", "<Button-1>", _entry_click)
-        bind("Entry", "<FocusIn>", _entry_refresh)
-        bind("Entry", "<FocusOut>", _entry_refresh)
+        bind(name, "<Any-Key>", _entry_key)
+        bind(name, "<Button-1>", _entry_click)
+        bind(name, "<FocusIn>", _entry_refresh)
+        bind(name, "<FocusOut>", _entry_refresh)
 
     # ---------------------------------------------------------------- state
 
@@ -7353,14 +7379,18 @@ class Spinbox(Entry):
         not inherit Entry's class bindings and has to say the same things
         again - which is also the chance to put Up and Down in front of them.
         """
-        if "Spinbox" in self.tk.bound_classes:
+        # winfo_class() and not the literal: a subclass reporting another name
+        # - every ttk widget does - must bind under THAT name or it receives
+        # nothing, because binding tags name one class and not a chain.
+        name = self.winfo_class()
+        if name in self.tk.bound_classes:
             return
-        self.tk.bound_classes.add("Spinbox")
+        self.tk.bound_classes.add(name)
         bind = self.bind_class
-        bind("Spinbox", "<Any-Key>", _spinbox_key)
-        bind("Spinbox", "<Button-1>", _spinbox_click)
-        bind("Spinbox", "<FocusIn>", _entry_refresh)
-        bind("Spinbox", "<FocusOut>", _entry_refresh)
+        bind(name, "<Any-Key>", _spinbox_key)
+        bind(name, "<Button-1>", _spinbox_click)
+        bind(name, "<FocusIn>", _entry_refresh)
+        bind(name, "<FocusOut>", _entry_refresh)
 
     # --------------------------------------------------------------- values
 
@@ -7716,21 +7746,25 @@ class Text(_Drawable):
 
     def _install_class_bindings(self) -> None:
         """Register the editing keys and the mouse for every Text here."""
-        if "Text" in self.tk.bound_classes:
+        # winfo_class() and not the literal: a subclass reporting another name
+        # - every ttk widget does - must bind under THAT name or it receives
+        # nothing, because binding tags name one class and not a chain.
+        name = self.winfo_class()
+        if name in self.tk.bound_classes:
             return
-        self.tk.bound_classes.add("Text")
+        self.tk.bound_classes.add(name)
         bind = self.bind_class
-        bind("Text", "<Any-Key>", _text_key)
-        bind("Text", "<Button-1>", _text_press)
+        bind(name, "<Any-Key>", _text_key)
+        bind(name, "<Button-1>", _text_press)
         # A drag arrives as Motion - curses reports motion-with-a-button and
         # there is no Button1 modifier to match against - and the implicit
         # grab keeps it with the widget that was pressed.
-        bind("Text", "<Motion>", _text_motion)
-        bind("Text", "<ButtonRelease-1>", _text_release)
-        bind("Text", "<Button-4>", _text_wheel)
-        bind("Text", "<Button-5>", _text_wheel)
-        bind("Text", "<FocusIn>", _text_refresh)
-        bind("Text", "<FocusOut>", _text_refresh)
+        bind(name, "<Motion>", _text_motion)
+        bind(name, "<ButtonRelease-1>", _text_release)
+        bind(name, "<Button-4>", _text_wheel)
+        bind(name, "<Button-5>", _text_wheel)
+        bind(name, "<FocusIn>", _text_refresh)
+        bind(name, "<FocusOut>", _text_refresh)
 
     # --------------------------------------------------------------- options
 
@@ -9176,16 +9210,20 @@ class Canvas(_Drawable):
 
     def _install_class_bindings(self) -> None:
         """Route mouse events to whichever item is under the pointer."""
-        if "Canvas" in self.tk.bound_classes:
+        # winfo_class() and not the literal: a subclass reporting another name
+        # - every ttk widget does - must bind under THAT name or it receives
+        # nothing, because binding tags name one class and not a chain.
+        name = self.winfo_class()
+        if name in self.tk.bound_classes:
             return
-        self.tk.bound_classes.add("Canvas")
+        self.tk.bound_classes.add(name)
         for sequence in (
             "<Button-1>",
             "<ButtonRelease-1>",
             "<Motion>",
             "<Double-Button-1>",
         ):
-            self.bind_class("Canvas", sequence, _canvas_mouse)
+            self.bind_class(name, sequence, _canvas_mouse)
 
     # --------------------------------------------------------------- options
 
@@ -10028,13 +10066,17 @@ class Menu(_Drawable):
 
     def _install_class_bindings(self) -> None:
         """Register the keys and clicks every Menu answers."""
-        if "Menu" in self.tk.bound_classes:
+        # winfo_class() and not the literal: a subclass reporting another name
+        # - every ttk widget does - must bind under THAT name or it receives
+        # nothing, because binding tags name one class and not a chain.
+        name = self.winfo_class()
+        if name in self.tk.bound_classes:
             return
-        self.tk.bound_classes.add("Menu")
+        self.tk.bound_classes.add(name)
         bind = self.bind_class
-        bind("Menu", "<Any-Key>", _menu_key)
-        bind("Menu", "<Button-1>", _menu_click)
-        bind("Menu", "<Motion>", _menu_motion)
+        bind(name, "<Any-Key>", _menu_key)
+        bind(name, "<Button-1>", _menu_click)
+        bind(name, "<Motion>", _menu_motion)
 
     # ---------------------------------------------------------- making entries
 
@@ -10818,20 +10860,24 @@ class Listbox(_Drawable):
 
     def _install_class_bindings(self) -> None:
         """Register the list keys for every Listbox in this application."""
-        if "Listbox" in self.tk.bound_classes:
+        # winfo_class() and not the literal: a subclass reporting another name
+        # - every ttk widget does - must bind under THAT name or it receives
+        # nothing, because binding tags name one class and not a chain.
+        name = self.winfo_class()
+        if name in self.tk.bound_classes:
             return
-        self.tk.bound_classes.add("Listbox")
+        self.tk.bound_classes.add(name)
         bind = self.bind_class
-        bind("Listbox", "<Any-Key>", _listbox_key)
-        bind("Listbox", "<Button-1>", _listbox_click)
+        bind(name, "<Any-Key>", _listbox_key)
+        bind(name, "<Button-1>", _listbox_click)
         # A separate binding, because modifiers match exactly: <Button-1>
         # does not fire for a shifted click, in Tk or here. Binding the plain
         # one and expecting both is a mistake this rule makes easy.
-        bind("Listbox", "<Shift-Button-1>", _listbox_click)
-        bind("Listbox", "<Button-4>", _listbox_wheel)
-        bind("Listbox", "<Button-5>", _listbox_wheel)
-        bind("Listbox", "<FocusIn>", _listbox_refresh)
-        bind("Listbox", "<FocusOut>", _listbox_refresh)
+        bind(name, "<Shift-Button-1>", _listbox_click)
+        bind(name, "<Button-4>", _listbox_wheel)
+        bind(name, "<Button-5>", _listbox_wheel)
+        bind(name, "<FocusIn>", _listbox_refresh)
+        bind(name, "<FocusOut>", _listbox_refresh)
 
     def _apply_requested_size(self) -> None:
         """Ask for the configured rows and columns, plus border and padding."""
@@ -11279,20 +11325,24 @@ class PanedWindow(_Drawable):
 
     def _install_class_bindings(self) -> None:
         """Register sash dragging and the keys that move one."""
-        if "PanedWindow" in self.tk.bound_classes:
+        # winfo_class() and not the literal: a subclass reporting another name
+        # - every ttk widget does - must bind under THAT name or it receives
+        # nothing, because binding tags name one class and not a chain.
+        name = self.winfo_class()
+        if name in self.tk.bound_classes:
             return
-        self.tk.bound_classes.add("PanedWindow")
+        self.tk.bound_classes.add(name)
         bind = self.bind_class
-        bind("PanedWindow", "<Button-1>", _paned_press)
-        bind("PanedWindow", "<Motion>", _paned_motion)
-        bind("PanedWindow", "<ButtonRelease-1>", _paned_release)
-        bind("PanedWindow", "<Any-Key>", _paned_key)
+        bind(name, "<Button-1>", _paned_press)
+        bind(name, "<Motion>", _paned_motion)
+        bind(name, "<ButtonRelease-1>", _paned_release)
+        bind(name, "<Any-Key>", _paned_key)
         # The sash marks itself as the focused thing, so it has to be
         # repainted when the focus arrives and again when it leaves. A click
         # repainted it as a side effect of starting a drag; Tab had nothing
         # to trigger a repaint, so the focus moved in silence.
-        bind("PanedWindow", "<FocusIn>", _paned_refresh)
-        bind("PanedWindow", "<FocusOut>", _paned_refresh)
+        bind(name, "<FocusIn>", _paned_refresh)
+        bind(name, "<FocusOut>", _paned_refresh)
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, re-laying the panes out as the change requires."""
@@ -11665,17 +11715,21 @@ class Scrollbar(_Drawable):
 
     def _install_class_bindings(self) -> None:
         """Register the click behaviour for every Scrollbar in this application."""
-        if "Scrollbar" in self.tk.bound_classes:
+        # winfo_class() and not the literal: a subclass reporting another name
+        # - every ttk widget does - must bind under THAT name or it receives
+        # nothing, because binding tags name one class and not a chain.
+        name = self.winfo_class()
+        if name in self.tk.bound_classes:
             return
-        self.tk.bound_classes.add("Scrollbar")
+        self.tk.bound_classes.add(name)
         bind = self.bind_class
-        bind("Scrollbar", "<Button-1>", _scrollbar_press)
+        bind(name, "<Button-1>", _scrollbar_press)
         # The three together are what makes the thumb draggable, and Tk binds
         # exactly these three. The press holds the implicit grab, so a drag
         # that wanders off the bar still arrives here - with coordinates
         # outside it, which is what the arithmetic wants.
-        bind("Scrollbar", "<B1-Motion>", _scrollbar_drag)
-        bind("Scrollbar", "<ButtonRelease-1>", _scrollbar_release)
+        bind(name, "<B1-Motion>", _scrollbar_drag)
+        bind(name, "<ButtonRelease-1>", _scrollbar_release)
 
     @property
     def _vertical(self) -> bool:
@@ -11774,8 +11828,21 @@ class Scrollbar(_Drawable):
     # -------------------------------------------------------------- geometry
 
     def _length(self) -> int:
-        """Cells along the scrollbar's own direction."""
-        edge = 2 * BORDER_WIDTH if self._bordered else 0
+        """Cells along the scrollbar's own direction.
+
+        ``_border_drawn`` and not ``_bordered``, which is the whole bug a
+        person found in UAT 40: a vertical scrollbar is one cell WIDE, so
+        ``_border_drawn`` is False - it needs two cells each way - while
+        ``_bordered`` is True, because the relief is not flat. This method took
+        two rows off for a border, and ``_redraw`` inset the glyphs by nothing,
+        so a scrollbar nine rows tall drew seven cells from the top and left two
+        rows that still took clicks and still painted their background. A
+        restyle made it obvious: the blue ran two rows past the last glyph.
+
+        ``_border_drawn``'s own docstring says everything measuring the space
+        left inside has to agree with the painting. This did not.
+        """
+        edge = 2 * BORDER_WIDTH if self._border_drawn else 0
         span = self._rect.height if self._vertical else self._rect.width
         return max(0, span - edge)
 

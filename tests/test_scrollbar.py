@@ -306,3 +306,41 @@ def test_fraction_takes_coordinates_within_the_widget(root):
     bar._map()
     assert bar.fraction(0, 1) == 0.0
     assert bar.fraction(0, 11) == 1.0
+
+
+def test_a_one_cell_wide_bar_fills_every_row_it_was_given(root):
+    """Its drawn length is its whole allocation, border or no border.
+
+    Reported from UAT 40: a scrollbar placed nine rows tall drew seven cells
+    and the eighth row still answered clicks, and a restyle showed blue running
+    two rows past the last glyph.
+
+    The cause was two predicates disagreeing. A vertical scrollbar is one cell
+    WIDE, so ``_border_drawn`` is False - it wants two cells each way - while
+    ``_bordered`` is True, because the relief is not flat. ``_length`` took two
+    rows off for a border that ``_redraw`` then inset by nothing, so the glyphs
+    ran out before the window did. ``_border_drawn``'s own docstring says
+    everything measuring the space inside has to agree with the painting.
+
+    Asserted across several heights rather than the one that was reported, so a
+    fix that merely shifted the off-by-two would not pass.
+    """
+    for height in (3, 5, 9, 12):
+        bar = Scrollbar(root, name=f"b{height}", orient="vertical")
+        bar._allocate(Rect(0, 0, 1, height))
+        bar._map()
+        assert bar._length() == height, (
+            f"a bar {height} rows tall measured {bar._length()} rows of glyphs, "
+            "so the rest of it is drawn blank while still taking clicks"
+        )
+        # one arrow at each end, trough between: the cells actually painted
+        assert 2 + bar._trough_bounds() == height
+
+
+def test_a_horizontal_bar_fills_its_width_too(root):
+    """The same arithmetic on the other axis, which is one cell TALL."""
+    for width in (3, 8, 15):
+        bar = Scrollbar(root, name=f"h{width}", orient="horizontal")
+        bar._allocate(Rect(0, 0, width, 1))
+        bar._map()
+        assert bar._length() == width

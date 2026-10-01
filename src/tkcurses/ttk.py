@@ -66,6 +66,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import tkcurses
+from tkcurses._core.attributes import BorderStyle
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.errors import TclError
 from tkcurses._core.geometry import BORDER_WIDTH, Rect
@@ -510,15 +511,38 @@ class Widget:
     #: each of them repeating it. Empty by default, which is what tkinter
     #: answers too - an unset style means "use my class name", resolved in
     #: :meth:`_style_name` rather than stored.
-    _widget_options: ClassVar[dict[str, Any]] = {"style": ""}
+    _widget_options: ClassVar[dict[str, Any]] = {"style": "", "class": ""}
 
     def winfo_class(self) -> str:
         """The themed class name - ``TButton``, not ``Button``.
 
         This is what puts the widget's bindings and its default style under
         the ttk name, and what keeps the classic widget's bindings off it.
+
+        ``-class`` OVERRIDES it, which is what that option is for. Measured
+        against Tk 9.0: ``ttk.Label(class_="Custom").winfo_class()`` answers
+        ``"Custom"``, so the style and the class bindings both resolve
+        against the given name instead of ``TLabel``. It defaults to empty,
+        and an empty one means "use my own class".
         """
-        return self._ttk_class
+        given = getattr(self, "_options", {}).get("class", "")
+        return str(given) if given else self._ttk_class
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, refusing to change ``-class`` after construction.
+
+        Tk makes ``-class`` read-only: measured, configuring it afterwards
+        raises "attempt to change read-only option". It has to be, because
+        the widget's bindings were installed under the name it had when it
+        was built, and letting it move would leave them behind.
+        """
+        given = {**(cnf or {}), **kw}
+        current = getattr(self, "_options", {}).get("class", "")
+        if "class" in given and given["class"] != current:
+            raise TclError("attempt to change read-only option")
+        return super().configure(cnf, **kw)  # type: ignore[misc]
+
+    config = configure
 
     # ---------------------------------------------------------- the states
 
@@ -599,6 +623,62 @@ class Widget:
         """
         options = getattr(self, "_options", {})
         return str(options.get("style") or "") or self.winfo_class()
+
+    def _background_attribute(self) -> int:
+        """Colours resolved against the style database, not only the options.
+
+        The classic method reads ``self._options`` and nothing else, so
+        ``Style.configure("TButton", background="blue")`` reached none of the
+        widgets built on ordinary ones - every one of them paints with this.
+        Redirecting it to :meth:`_themed_attribute` is what makes a restyle
+        visible, and that method keeps the right precedence: a widget handed
+        ``foreground=`` directly still wins, because a caller who named a
+        colour meant it.
+
+        The companion to :meth:`_border_style`. That one fixed WHICH characters
+        a themed widget draws (TkCurses-5vu); this one fixes what colour they
+        are drawn in. Both were reported by a person using UAT 40 - Ctrl-T for
+        the characters, Ctrl-R for the colours - and neither was caught by a
+        test, because the tests compared option surfaces and the scenario's own
+        status label.
+        """
+        return self._themed_attribute()
+
+    def _border_style(self) -> BorderStyle:
+        """The box this widget draws, taken from the theme.
+
+        A themed widget's appearance belongs to the theme, so the glyphs come
+        from the theme's set rather than from the relief's. The relief still
+        decides the WEIGHT - its attribute, bold for raised and dim for sunken
+        - because that is a distinction a theme's glyph set does not carry, and
+        ``flat`` still draws nothing at all: a theme must not put a box around
+        a widget that asked for none.
+
+        This is TkCurses-5vu. Nine widgets built on ordinary ones - Frame,
+        Labelframe, Button, Checkbutton, Radiobutton, Menubutton, Entry,
+        Spinbox and Scrollbar - inherited the classic drawing and a theme
+        change reached none of them. Found by a person pressing Ctrl-T in UAT
+        40 and seeing only the label change, after an automated test asserted
+        that same label and so never looked at a widget.
+
+        One override rather than nine, because every one of them paints through
+        ``_Drawable._draw_border``.
+        """
+        options = getattr(self, "_options", {})
+        relief = str(options.get("relief", "") or tkcurses.FLAT)
+        base: BorderStyle = super()._border_style()  # type: ignore[misc]
+        if relief == tkcurses.FLAT:
+            return base
+        glyphs = Style(self).glyphs()  # type: ignore[arg-type]
+        return BorderStyle(
+            glyphs.top_left,
+            glyphs.top_right,
+            glyphs.bottom_left,
+            glyphs.bottom_right,
+            glyphs.horizontal,
+            glyphs.vertical,
+            base.attr,
+        )
 
     def _themed_attribute(self) -> int:
         """The curses attribute this widget should draw with.
@@ -1963,6 +2043,12 @@ class Treeview(Widget, tkcurses.Frame):
     _ttk_class = "Treeview"
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        # Real ttk.Treeview has -padding and ours did not. Measured widget by
+        # widget rather than assumed: ttk carries it on Label, Notebook,
+        # Treeview and LabeledScale, and NOT on Separator, Sizegrip,
+        # Progressbar, Combobox or Scale - so it is added to the two that
+        # lacked it and to nothing else.
+        "padding": "",
         "columns": (),
         "displaycolumns": ("#all",),
         "show": ("tree", "headings"),
@@ -2582,6 +2668,10 @@ class LabeledScale(Widget, tkcurses.Frame):
 
     _ttk_class = "TFrame"
 
+    #: ttk.LabeledScale carries -padding; ours did not. See Treeview for why
+    #: this list is per widget rather than given to everything themed.
+    _widget_options: ClassVar[dict[str, Any]] = {"padding": ""}
+
     def __init__(
         self,
         master: Misc | None = None,
@@ -2814,3 +2904,346 @@ class Scale(Widget, tkcurses.Scale):
         super().__init__(master, cnf, name=name, **kw)
         if value is not None:
             self.set(float(value))
+
+
+class Frame(Widget, tkcurses.Frame):
+    """A container with a themed border. ``ttk.Frame``.
+
+    The least behaviour of any themed widget: a region, a border taken from
+    the style, and children laid out in it. Nothing is bound to ``TFrame``.
+
+    ``padding`` is accepted and **not yet honoured** - see the note on
+    :class:`Labelframe`.
+    """
+
+    _ttk_class = "TFrame"
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "padding": "",
+    }
+
+
+class Labelframe(Widget, tkcurses.LabelFrame):
+    """A frame with a caption in its border. ``ttk.Labelframe``.
+
+    Spelled both ways, as in tkinter: ``Labelframe`` is the class and
+    ``LabelFrame`` is a second name for the same one. Measured against ttk
+    9.0, where ``ttk.LabelFrame is ttk.Labelframe`` is True - they are one
+    class, not two implementations, so this is an assignment rather than a
+    subclass and the two can never drift apart.
+
+    ``underline`` and ``labelwidget`` are ttk additions the classic widget
+    does not have; ``labelanchor`` and ``text`` it already had.
+
+    **``padding`` is accepted and does nothing yet.** It is declared because
+    the option surface is compared against real ttk's and a missing option is
+    a test failure, and it is inert because no themed widget here honours it -
+    ``Notebook``, ``Treeview`` and ``LabeledScale`` declare it the same way.
+    Saying so rather than leaving it to be discovered: ``TkCurses-avy``.
+    """
+
+    _ttk_class = "TLabelframe"
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "padding": "",
+        "underline": "",
+        "labelwidget": "",
+    }
+
+
+#: ttk's other spelling. One class, two names, exactly as tkinter has it.
+LabelFrame = Labelframe
+
+
+class Panedwindow(Widget, tkcurses.PanedWindow):
+    """Panes with draggable sashes between them. ``ttk.Panedwindow``.
+
+    The one themed widget whose tkinter counterpart is also built on the
+    classic one - measured, ``ttk.Panedwindow.__mro__`` begins
+    ``Panedwindow, Widget, PanedWindow`` - so the shape here is the shape
+    real ttk uses, rather than a convenience.
+
+    It drops sixteen of the classic widget's options, all of them about
+    drawing the sash by hand: ``sashwidth``, ``sashrelief``, ``sashpad``,
+    ``sashcursor``, ``showhandle``, ``handlepad``, ``handlesize``, the
+    ``proxy*`` three, ``opaqueresize``, and the colours. Under ttk a sash is
+    the theme's business. They are still accepted here, because every themed
+    widget in this module is deliberately wider than ttk rather than
+    narrower - see ``test_a_themed_widget_is_wider_than_ttk_on_purpose``.
+
+    It adds two methods the classic widget has no counterpart for,
+    :meth:`pane` and :meth:`sashpos`, and one pane option, ``weight``.
+
+    **``weight`` is stored and reported, and does not yet change the
+    layout.** ttk gives surplus space to panes in proportion to their
+    weights, with ``weight=0`` meaning "do not resize"; the layout underneath
+    spreads surplus evenly across every pane instead, which is what the
+    classic widget documents and what its tests assert. Honouring weight
+    means a weighted distribution that the two widgets cannot share, so it is
+    its own piece of work rather than something smuggled in here:
+    ``TkCurses-2v2``. Until then ``pane(index)`` answers what was set, so
+    code that round-trips a weight sees what it wrote.
+    """
+
+    _ttk_class = "TPanedwindow"
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "height": 0,
+        "width": 0,
+    }
+
+    #: What a pane's weight is when nobody sets one. ttk's default.
+    DEFAULT_WEIGHT = 0
+
+    def _weights(self) -> dict[str, int]:
+        """Per-pane weights, which the layout underneath does not store.
+
+        Keyed by the pane's widget PATH and not by the widget, because
+        ``panes()`` answers paths - ``['.p.a']`` - exactly as Tk does. Keying
+        by the widget made ``pane(0)`` look up a string in a dict of widgets
+        and conclude the pane was not managed here.
+        """
+        weights: dict[str, int] | None = getattr(self, "_pane_weights", None)
+        if weights is None:
+            weights = {}
+            self._pane_weights = weights
+        return weights
+
+    def _pane_at(self, index: Any) -> Any:
+        """The pane named by a position, a widget path, or a widget itself.
+
+        All three are things ttk accepts where a pane is wanted, and the one
+        that comes back from ``panes()`` is the path.
+        """
+        slaves = self._paned.slaves()
+        if isinstance(index, int):
+            if not -len(slaves) <= index < len(slaves):
+                raise TclError(f"pane index out of range: {index}")
+            return slaves[index]
+        wanted = str(index)
+        for child in slaves:
+            if child._w == wanted:
+                return child
+        raise TclError(f'not managed by this window: "{index}"')
+
+    def add(self, child: Any, **kw: Any) -> None:
+        """Add a pane at the end.
+
+        Args:
+            child: The widget to put in it.
+            **kw: ``weight``, plus the pane options the classic widget takes.
+        """
+        weight = kw.pop("weight", self.DEFAULT_WEIGHT)
+        super().add(child, **kw)
+        self._weights()[child._w] = int(weight)
+
+    def insert(self, index: Any, child: tkcurses.Widget, **kw: Any) -> None:
+        """Add a pane at a position.
+
+        The first argument is named ``index`` and tkinter's ttk names it
+        ``pos``. Positionally they are the same; a caller writing
+        ``insert(pos=0, ...)`` would differ. It follows the classic widget
+        here because overriding with a different name is a typing error - the
+        base promises a parameter called ``index`` and callers may use it -
+        and the two spellings cannot both be right. Same shape as
+        ``TkCurses-y5q``, where we report ``from_`` and tkinter reports
+        ``from``.
+
+        Args:
+            index: Index to insert before, or ``"end"``.
+            child: The widget to put in it.
+            **kw: ``weight``, plus the pane options the classic widget takes.
+        """
+        weight = kw.pop("weight", self.DEFAULT_WEIGHT)
+        super().insert(index, child, **kw)
+        self._weights()[child._w] = int(weight)
+
+    def forget(self, child: tkcurses.Widget | None = None) -> None:
+        """Remove a pane.
+
+        Dropping the weight with it is housekeeping and nothing more: no
+        caller can tell. A forgotten pane is out of the layout, so
+        :meth:`pane` refuses it either way, and :meth:`add` writes a weight
+        every time, so one added back cannot inherit a stale value. It is here
+        to stop the dict growing without bound in a program that forgets panes
+        it never adds again.
+
+        Said plainly because it was nearly covered by a test that could not
+        fail - asserting that pane() raises afterwards, which it does whether
+        or not this line runs.
+        """
+        super().forget(child)
+        if child is not None:
+            self._weights().pop(child._w, None)
+
+    def pane(self, index: Any, **kw: Any) -> Any:
+        """Read or set one pane's options.
+
+        Args:
+            index: Which pane, by position or by widget.
+            **kw: Options to set; omit them to read instead.
+
+        Returns:
+            Reading: a dict of the pane's ttk options. Measured against ttk
+            9.0, that is ``{'weight': N}`` and nothing else.
+        """
+        child = self._pane_at(index)
+        weights = self._weights()
+        if not kw:
+            return {"weight": weights.get(child._w, self.DEFAULT_WEIGHT)}
+        if "weight" in kw:
+            weights[child._w] = int(kw.pop("weight"))
+        if kw:
+            self.paneconfigure(child, **kw)
+        return None
+
+    def sashpos(self, index: int, newpos: int | None = None) -> int:
+        """Read or move a sash, as one number.
+
+        Args:
+            index: Which sash, counting from zero.
+            newpos: Where to put it, in cells from this widget's left or top
+                edge. Omit it to read the position instead.
+
+        Returns:
+            Where the sash is - after the move, when one was asked for.
+
+        The classic widget has no such method: it offers ``sash_coord`` and
+        ``sash_place``, which are two-dimensional because a classic paned
+        window will tell you both coordinates. A ttk one takes and gives the
+        single number along its own orientation, so this is not a rename.
+        """
+        if newpos is not None:
+            area = self._content_area()
+            if self._paned.vertical:
+                self.sash_place(index, area.x, area.y + int(newpos))
+            else:
+                self.sash_place(index, area.x + int(newpos), area.y)
+        x, y = self.sash_coord(index)
+        area = self._content_area()
+        return (y - area.y) if self._paned.vertical else (x - area.x)
+
+
+#: ttk's other spelling, as with Labelframe.
+PanedWindow = Panedwindow
+
+
+class Button(Widget, tkcurses.Button):
+    """A button drawn from the style database. ``ttk.Button``.
+
+    Measured against Tk 9.0, its bindtags are
+    ``('.!button', 'TButton', '.', 'all')`` - ``Button`` is not among them, so
+    none of the classic button's class bindings reach it and it installs its
+    own. The classic widget's ``_install_class_bindings`` binds under
+    ``winfo_class()``, which answers ``TButton`` here, so inheriting it is
+    enough: the six binds land on the themed tag. It did not always - see the
+    commit that stopped it hardcoding the name.
+    """
+
+    _ttk_class = "TButton"
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "padding": "",
+    }
+
+
+class Checkbutton(Widget, tkcurses.Checkbutton):
+    """A box that remembers whether it is ticked. ``ttk.Checkbutton``.
+
+    ``onvalue`` and ``offvalue`` are ``1`` and ``0``, the same as the classic
+    widget's - measured, rather than assumed either way, because the issue
+    that asked for this widget suspected ttk of differing and it does not.
+
+    Bindings come from ``_ChoiceWidget``, which already binds under
+    ``winfo_class()``: the space bar and not Return, so that Return still
+    reaches a dialog's default button from wherever the focus is.
+    """
+
+    _ttk_class = "TCheckbutton"
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "padding": "",
+    }
+
+
+class Radiobutton(Widget, tkcurses.Radiobutton):
+    """One of a set, where choosing it unchooses the others.
+    ``ttk.Radiobutton``.
+
+    Its default variable is ``selectedButton``, shared by every radiobutton
+    that is not given one - the same name the classic widget defaults to.
+    Measured: ttk reports it fully qualified as ``::selectedButton`` and the
+    classic one as ``selectedButton``, which is the same global under Tcl's
+    namespace rules rather than a difference.
+    """
+
+    _ttk_class = "TRadiobutton"
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "padding": "",
+    }
+
+
+class Menubutton(Widget, tkcurses.Menubutton):
+    """A button that opens a menu. ``ttk.Menubutton``.
+
+    ``direction`` defaults to ``below``, as ttk's does.
+    """
+
+    _ttk_class = "TMenubutton"
+
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "padding": "",
+    }
+
+
+class Entry(Widget, tkcurses.Entry):
+    """A one-line text field drawn from the style. ``ttk.Entry``.
+
+    ``validate`` and ``validatecommand`` come from the classic widget and
+    behave the same way; ``invalidcommand`` is the one piece of the validation
+    trio missing here, listed as a known gap rather than quietly absent.
+
+    ttk drops the long list of classic colour and insertion-cursor options -
+    ``bd``, ``bg``, ``disabledbackground``, ``insertwidth`` and the rest. They
+    are still accepted, as everywhere in this module: wider than ttk on
+    purpose.
+    """
+
+    _ttk_class = "TEntry"
+
+    _widget_options: ClassVar[dict[str, Any]] = {}
+
+
+class Spinbox(Widget, tkcurses.Spinbox):
+    """An entry with a value you can step. ``ttk.Spinbox``.
+
+    **ttk's Spinbox is an Entry, not the classic Spinbox**, which is what the
+    issue behind this widget warned to check. Measured on Tk 9.0,
+    ``ttk.Spinbox.__mro__`` begins ``Spinbox, Entry, Widget, Entry`` - it is
+    built on ``ttk.Entry``, and against the classic Spinbox it adds ``show``
+    while dropping twenty-eight options, nearly all of them about painting the
+    little buttons ttk draws from the theme instead.
+
+    Here the classic Spinbox already subclasses the classic Entry, so the same
+    relationship holds underneath and ``show`` comes with it. The two
+    hierarchies agree; only the painting options differ, and those we keep.
+    """
+
+    _ttk_class = "TSpinbox"
+
+    _widget_options: ClassVar[dict[str, Any]] = {}
+
+
+class Scrollbar(Widget, tkcurses.Scrollbar):
+    """A themed scrollbar. ``ttk.Scrollbar``.
+
+    The simplest of the three: ttk adds only ``class`` and ``style``, both from
+    the mixin, and drops the seven classic appearance options -
+    ``activebackground``, ``activerelief``, ``background`` and the rest - which
+    a theme decides instead.
+    """
+
+    _ttk_class = "TScrollbar"
+
+    _widget_options: ClassVar[dict[str, Any]] = {}

@@ -28,12 +28,21 @@ import pytest
 import tkcurses
 from tkcurses import Misc, TclError
 from tkcurses.ttk import (
+    Button,
+    Checkbutton,
     Combobox,
+    Frame,
     Label,
     LabeledScale,
+    LabelFrame,
+    Labelframe,
+    Menubutton,
     Notebook,
     OptionMenu,
+    PanedWindow,
+    Panedwindow,
     Progressbar,
+    Radiobutton,
     Scale,
     Separator,
     Sizegrip,
@@ -1075,3 +1084,256 @@ def test_the_labeled_scales_halves_are_themed(root):
 
     assert widget.label.winfo_class() == "TLabel"
     assert widget.scale.winfo_class() == "TScale"
+
+
+# ------------------------------------------------------- the containers
+
+
+def test_the_container_widgets_are_themed(root):
+    assert Frame(root, name="f").winfo_class() == "TFrame"
+    assert Labelframe(root, name="lf").winfo_class() == "TLabelframe"
+    assert Panedwindow(root, name="pw").winfo_class() == "TPanedwindow"
+
+
+def test_each_container_has_ttks_second_spelling():
+    """``LabelFrame`` and ``Labelframe`` are one class, as in tkinter.
+
+    Measured: ``ttk.LabelFrame is ttk.Labelframe`` is True on Tk 9.0, and the
+    same for the PanedWindow pair. They are names for one class rather than two
+    implementations, so this is identity and not a subclass - two classes could
+    drift apart, and a caller using tkinter's own spelling would get the one
+    that was not maintained.
+    """
+    assert LabelFrame is Labelframe
+    assert PanedWindow is Panedwindow
+
+
+# ------------------------------------------------- panes and their weights
+
+
+@pytest.fixture
+def themed_paned(root):
+    """A horizontal themed paned window, laid out, with two panes."""
+    from types import SimpleNamespace
+
+    from tkcurses._core.geometry import Rect
+    from tkcurses._core.panels import PanelStack
+
+    root.tk.panels = PanelStack(
+        window_factory=lambda rect: SimpleNamespace(rect=rect), panel_factory=None
+    )
+    root._rect = Rect(0, 0, 60, 20)
+    root._mapped = True
+    widget = Panedwindow(root, name="p", orient="horizontal")
+    widget._allocate(Rect(0, 0, 41, 10))
+    widget._map()
+    widget.add(Frame(widget, name="a"), weight=1)
+    widget.add(Frame(widget, name="b"), weight=3)
+    widget.update_layout()
+    return widget
+
+
+def test_a_pane_reports_the_weight_it_was_added_with(themed_paned):
+    assert themed_paned.pane(0) == {"weight": 1}
+    assert themed_paned.pane(1) == {"weight": 3}
+
+
+def test_weight_is_the_only_pane_option_ttk_reports(themed_paned):
+    """Measured against ttk 9.0: ``pane(0)`` answers ``{'weight': N}``.
+
+    The classic widget's pane options - minsize, sticky, width, height - are
+    still settable through ``paneconfigure``; they are simply not what a ttk
+    pane reports.
+    """
+    assert list(themed_paned.pane(0)) == ["weight"]
+
+
+def test_a_pane_can_be_named_by_position_path_or_widget(themed_paned):
+    """``panes()`` answers PATHS, which is what Tk does and what caught a bug.
+
+    The weights were first keyed by the widget object, so ``pane(0)`` looked a
+    path up in a dict of widgets and reported the pane as not managed here.
+    """
+    by_position = themed_paned.pane(1)
+    by_path = themed_paned.pane(themed_paned.panes()[1])
+    by_widget = themed_paned.pane(themed_paned._paned.slaves()[1])
+    assert by_position == by_path == by_widget == {"weight": 3}
+
+
+def test_a_weight_defaults_to_nought(themed_paned):
+    """ttk's default, and it means "do not resize" there."""
+    themed_paned.add(Frame(themed_paned, name="c"))
+    assert themed_paned.pane(2) == {"weight": 0}
+
+
+def test_a_weight_can_be_changed_afterwards(themed_paned):
+    themed_paned.pane(0, weight=5)
+    assert themed_paned.pane(0) == {"weight": 5}
+
+
+def test_a_pane_that_is_not_here_is_refused(themed_paned, root):
+    with pytest.raises(TclError):
+        themed_paned.pane(Frame(root, name="stray"))
+    with pytest.raises(TclError):
+        themed_paned.pane(99)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="TkCurses-2v2: weight is recorded and does not lay out",
+)
+def test_surplus_space_is_divided_by_weight(themed_paned):
+    """ttk's actual rule, which this does not implement yet.
+
+    A strict xfail rather than a comment: when TkCurses-2v2 lands this XPASSes
+    and the suite says so, instead of the claim quietly staying false.
+
+    The two panes have weights 1 and 3, so of the surplus the second should
+    take three cells for every one the first takes. The layout underneath has
+    no weight at all - it spreads surplus evenly, which is the CLASSIC
+    widget's documented behaviour and asserted by its own tests - so the two
+    panes come out the same size.
+    """
+    first, second = (pane.winfo_width() for pane in themed_paned._paned.slaves())
+    assert second > first
+
+
+def test_a_sash_is_read_and_moved_as_one_number(themed_paned):
+    """``sashpos`` is ttk's one-dimensional sash, not a rename.
+
+    The classic widget offers ``sash_coord`` and ``sash_place``, which are
+    two-dimensional. A ttk paned window takes and gives the single number
+    along its own orientation.
+    """
+    themed_paned.sashpos(0, 12)
+    assert themed_paned.sashpos(0) == 12
+    x, _ = themed_paned.sash_coord(0)
+    assert x == 12
+
+
+def test_a_vertical_sash_is_measured_down_the_other_axis(root):
+    from types import SimpleNamespace
+
+    from tkcurses._core.geometry import Rect
+    from tkcurses._core.panels import PanelStack
+
+    root.tk.panels = PanelStack(
+        window_factory=lambda rect: SimpleNamespace(rect=rect), panel_factory=None
+    )
+    root._rect = Rect(0, 0, 60, 20)
+    root._mapped = True
+    widget = Panedwindow(root, name="v", orient="vertical")
+    widget._allocate(Rect(0, 0, 20, 15))
+    widget._map()
+    widget.add(Frame(widget, name="a"))
+    widget.add(Frame(widget, name="b"))
+    widget.update_layout()
+    widget.sashpos(0, 6)
+    assert widget.sashpos(0) == 6
+    _, y = widget.sash_coord(0)
+    assert y == 6
+
+
+# --------------------------------------------------- the four that answer
+
+
+@pytest.fixture
+def pressable_root(root):
+    """A root a button can be pressed in, as test_button.py sets one up."""
+    from types import SimpleNamespace
+
+    from tkcurses._core.geometry import Rect
+    from tkcurses._core.panels import PanelStack
+
+    root.tk.panels = PanelStack(
+        window_factory=lambda rect: SimpleNamespace(rect=rect), panel_factory=None
+    )
+    root._rect = Rect(0, 0, 40, 12)
+    root._mapped = True
+    return root
+
+
+def test_the_four_gesture_widgets_are_themed(root):
+    assert Button(root, name="b").winfo_class() == "TButton"
+    assert Checkbutton(root, name="c").winfo_class() == "TCheckbutton"
+    assert Radiobutton(root, name="r").winfo_class() == "TRadiobutton"
+    assert Menubutton(root, name="m").winfo_class() == "TMenubutton"
+
+
+@pytest.mark.parametrize(
+    ("factory", "tag"),
+    [
+        (Button, "TButton"),
+        (Checkbutton, "TCheckbutton"),
+        (Radiobutton, "TRadiobutton"),
+        (Menubutton, "TMenubutton"),
+    ],
+)
+def test_a_themed_widget_binds_under_its_own_tag(pressable_root, factory, tag):
+    """Each installs class bindings under the themed name, not the classic one.
+
+    Measured on Tk 9.0: ``ttk.Button``'s bindtags are
+    ``('.!button', 'TButton', '.', 'all')``. ``Button`` is absent, so nothing
+    bound to the classic name reaches it - which is why each of these has to
+    register its own, and why a widget that registered under the wrong tag
+    would answer nothing at all.
+    """
+    widget = factory(pressable_root, name="w", text="OK")
+    assert widget.bindtags()[1] == tag
+    assert tag in pressable_root.tk.bound_classes
+    assert "Button" not in widget.bindtags()
+
+
+def test_a_themed_button_answers_a_press(pressable_root):
+    """The gesture actually arrives, not merely a tag in a list.
+
+    Asserted through the recovery timer the press handler sets, as
+    test_button.py's press tests do: invoking on release also needs the
+    pointer inside a laid-out widget, which would make a failure ambiguous.
+    """
+    button = Button(pressable_root, name="b", text="OK")
+    button.event_generate("<Button-1>", x=0, y=0)
+    assert getattr(button, "_press_recovery", None) is not None
+
+
+def test_a_themed_checkbutton_toggles_on_the_space_bar(pressable_root):
+    """Space and not Return, which is _ChoiceWidget's rule and ttk's.
+
+    Return is left alone so it still reaches a dialog's default button from
+    wherever the focus happens to be.
+    """
+    variable = tkcurses.IntVar(pressable_root, 0)
+    box = Checkbutton(pressable_root, name="c", text="tick", variable=variable)
+    box.event_generate("<Key-space>")
+    assert variable.get() == 1
+    box.event_generate("<Key-Return>")
+    assert variable.get() == 1, "Return must be left for a dialog's default button"
+
+
+def test_the_variable_defaults_match_the_classic_widget(pressable_root):
+    """Measured against ttk 9.0 rather than inherited on faith.
+
+    The issue behind this widget suspected ttk of differing from the classic
+    one here. It does not: onvalue and offvalue are 1 and 0 in both, and a
+    radiobutton's default variable is ``selectedButton`` in both - ttk reports
+    it fully qualified, ``::selectedButton``, which is the same global under
+    Tcl's namespace rules.
+    """
+    box = Checkbutton(pressable_root, name="c")
+    assert box.cget("onvalue") == 1
+    assert box.cget("offvalue") == 0
+
+
+def test_a_themed_radiobutton_shares_the_default_variable(pressable_root):
+    """Two radiobuttons with no variable named are in one group, as in Tk."""
+    first = Radiobutton(pressable_root, name="r1", text="a", value="a")
+    second = Radiobutton(pressable_root, name="r2", text="b", value="b")
+    shared = first._options["variable"]
+    assert shared is second._options["variable"], (
+        "the two radiobuttons were given separate variables, so choosing one "
+        "would not unchoose the other"
+    )
+    first.invoke()
+    assert shared.get() == "a"
+    second.invoke()
+    assert shared.get() == "b"

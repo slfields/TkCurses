@@ -352,3 +352,38 @@ def test_recovery_does_not_invoke_the_button(root):
     _wind_forward(root)
 
     assert calls == []
+
+
+def test_a_subclass_reporting_another_class_still_answers_a_click(root):
+    """Bindings go under the class the widget REPORTS, not under "Button".
+
+    Binding tags name one class rather than a chain: a widget whose
+    ``winfo_class()`` answers ``TButton`` is offered what is bound to
+    ``TButton`` and nothing that was bound to ``Button``. This method used to
+    bind the literal string, so a subclass reporting another name - which is
+    exactly what every ttk widget does - registered its bindings under a tag
+    it would never be offered, and came out as a button that answered nothing.
+
+    The same fault from the other direction has bitten Spinbox/Entry,
+    OptionMenu/Menubutton and ScrolledText/Text, where the subclass failed to
+    report the PARENT's class. Here the parent failed to ask.
+    """
+
+    class Themed(Button):
+        def winfo_class(self) -> str:
+            return "TButton"
+
+    button = Themed(root, name="b", text="OK")
+    assert button.winfo_class() == "TButton"
+
+    button.event_generate("<Button-1>", x=0, y=0)
+
+    # The press reaching the widget at all is the thing in question. Asserted
+    # through the recovery timer the press handler sets, as the other press
+    # tests here do, rather than through the command: invoking on release also
+    # needs the pointer inside a laid-out widget, which would make a failure
+    # ambiguous between "no binding" and "not where I clicked".
+    assert getattr(button, "_press_recovery", None) is not None, (
+        "a subclass reporting its own class name received no class bindings, "
+        "so pressing it did nothing"
+    )
