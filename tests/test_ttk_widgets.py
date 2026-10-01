@@ -1179,24 +1179,115 @@ def test_a_pane_that_is_not_here_is_refused(themed_paned, root):
         themed_paned.pane(99)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="TkCurses-2v2: weight is recorded and does not lay out",
+@pytest.fixture
+def themed_root(root):
+    """A root a paned window can be allocated and laid out in."""
+    from types import SimpleNamespace
+
+    from tkcurses._core.geometry import Rect
+    from tkcurses._core.panels import PanelStack
+
+    root.tk.panels = PanelStack(
+        window_factory=lambda rect: SimpleNamespace(rect=rect), panel_factory=None
+    )
+    root._rect = Rect(0, 0, 100, 30)
+    root._mapped = True
+    return root
+
+
+def _grown_by(root, weights, narrow, wide):
+    """How much each pane of a themed paned window gains between two widths."""
+    from tkcurses._core.geometry import Rect
+
+    def widths(width):
+        pw = Panedwindow(root, name=f"pw{width}{len(weights)}", orient="horizontal")
+        pw._allocate(Rect(0, 0, width, 8))
+        pw._map()
+        for index, weight in enumerate(weights):
+            pane = Frame(pw, name=f"p{width}{index}")
+            if weight is None:
+                pw.add(pane)
+            else:
+                pw.add(pane, weight=weight)
+        pw.update_layout()
+        return [child.winfo_width() for child in pw._paned.slaves()]
+
+    before, after = widths(narrow), widths(wide)
+    return [b - a for a, b in zip(before, after, strict=True)]
+
+
+@pytest.mark.parametrize(
+    ("weights", "grown"),
+    [
+        ([1, 3], [3, 9]),
+        ([2, 1, 1], [6, 3, 3]),
+        ([0, 1], [0, 12]),
+        # All weights zero is ttk's DEFAULT and does not mean "nobody moves":
+        # measured, the last pane takes the lot.
+        ([0, 0], [0, 12]),
+        ([0, 0, 0], [0, 0, 12]),
+    ],
 )
-def test_surplus_space_is_divided_by_weight(themed_paned):
-    """ttk's actual rule, which this does not implement yet.
+def test_surplus_space_is_divided_by_weight(themed_root, weights, grown):
+    """ttk's rule, measured on Tk 9.0 before any of it was written.
 
-    A strict xfail rather than a comment: when TkCurses-2v2 lands this XPASSes
-    and the suite says so, instead of the claim quietly staying false.
+    A horizontal ttk.Panedwindow grown by 100 pixels::
 
-    The two panes have weights 1 and 3, so of the surplus the second should
-    take three cells for every one the first takes. The layout underneath has
-    no weight at all - it spreads surplus evenly, which is the CLASSIC
-    widget's documented behaviour and asserted by its own tests - so the two
-    panes come out the same size.
+        weights [1, 3]      panes grew by [25, 75]
+        weights [2, 1, 1]                 [50, 25, 25]
+        weights [0, 1]                    [0, 100]
+        weights [0, 0]                    [0, 100]
+        weights [0, 0, 0]                 [0, 0, 100]
+
+    The issue that asked for this predicted that all-zero weights would leave
+    the panes alone. They do not: the last one absorbs everything, and since
+    zero is the default that is the case most code will meet.
+
+    This was a strict xfail from the day the widget was added, so fixing the
+    layout turned the suite red with XPASS(strict) rather than leaving a stale
+    marker claiming the feature was missing.
     """
-    first, second = (pane.winfo_width() for pane in themed_paned._paned.slaves())
-    assert second > first
+    assert _grown_by(themed_root, weights, 30, 42) == grown
+
+
+def test_an_unweighted_paned_window_still_spreads_evenly(themed_root):
+    """The CLASSIC widget's documented behaviour, which must not change.
+
+    "Surplus and shortfall are both spread across the panes rather than given to
+    one of them - which is what a person expects and what Tk's own
+    -stretch middle default does." Weights are what the themed widget adds, so a
+    pane that names none shares evenly, and the two widgets live in one layout
+    engine.
+
+    Driven through a real tkcurses.PanedWindow, not through distribute() with the
+    weights left out. The first version did the latter and was worthless:
+    sizes() passes a LIST OF NONES for a classic window, so a mutation making
+    "no weight named" count as weight zero - which hands everything to the last
+    pane - left that test green. Found by making exactly that mutation.
+    """
+    from tkcurses._core.geometry import Rect
+
+    def widths(width):
+        pw = tkcurses.PanedWindow(
+            themed_root, name=f"classic{width}", orient="horizontal"
+        )
+        pw._allocate(Rect(0, 0, width, 8))
+        pw._map()
+        for index in range(3):
+            pw.add(tkcurses.Label(pw, name=f"c{width}{index}", text="pane"))
+        pw.update_layout()
+        return [child.winfo_width() for child in pw._paned.slaves()]
+
+    grown = [b - a for a, b in zip(widths(30), widths(42), strict=True)]
+    assert grown == [4, 4, 4], (
+        f"a classic paned window shared its surplus as {grown} rather than "
+        "evenly - weights have leaked into the widget that has no such option"
+    )
+
+
+def test_shortfall_follows_the_weights_too(themed_root):
+    """Measured: [1, 3] shrinking by 100 gives up [25, 75]."""
+    assert _grown_by(themed_root, [1, 3], 42, 30) == [-3, -9]
 
 
 def test_a_sash_is_read_and_moved_as_one_number(themed_paned):

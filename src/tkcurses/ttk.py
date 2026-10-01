@@ -62,7 +62,7 @@ from __future__ import annotations
 
 import contextlib
 import curses
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import tkcurses
@@ -75,6 +75,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from tkcurses import Event, Misc
+    from tkcurses._core.paned import PaneOptions
 
 __all__ = [
     "THEMES",
@@ -3065,19 +3066,21 @@ class Panedwindow(Widget, tkcurses.PanedWindow):
     #: What a pane's weight is when nobody sets one. ttk's default.
     DEFAULT_WEIGHT = 0
 
-    def _weights(self) -> dict[str, int]:
-        """Per-pane weights, which the layout underneath does not store.
+    def _pane_options(self, given: dict[str, Any]) -> PaneOptions:
+        """The classic pane options, plus ttk's ``weight``.
 
-        Keyed by the pane's widget PATH and not by the widget, because
-        ``panes()`` answers paths - ``['.p.a']`` - exactly as Tk does. Keying
-        by the widget made ``pane(0)`` look up a string in a dict of widgets
-        and conclude the pane was not managed here.
+        The weight is carried by the layout's own PaneOptions rather than in a
+        dict beside it, so there is ONE place a pane's weight lives - the
+        thing that reads it when dividing space is the same thing :meth:`pane`
+        reports from. An earlier version kept a dict keyed by widget path and
+        the layout could not see it, which is how the option came to be
+        recorded and ignored (TkCurses-2v2).
         """
-        weights: dict[str, int] | None = getattr(self, "_pane_weights", None)
-        if weights is None:
-            weights = {}
-            self._pane_weights = weights
-        return weights
+        weight = given.pop("weight", None)
+        options = super()._pane_options(given)
+        return replace(
+            options, weight=self.DEFAULT_WEIGHT if weight is None else int(weight)
+        )
 
     def _pane_at(self, index: Any) -> Any:
         """The pane named by a position, a widget path, or a widget itself.
@@ -3103,9 +3106,7 @@ class Panedwindow(Widget, tkcurses.PanedWindow):
             child: The widget to put in it.
             **kw: ``weight``, plus the pane options the classic widget takes.
         """
-        weight = kw.pop("weight", self.DEFAULT_WEIGHT)
         super().add(child, **kw)
-        self._weights()[child._w] = int(weight)
 
     def insert(self, index: Any, child: tkcurses.Widget, **kw: Any) -> None:
         """Add a pane at a position.
@@ -3124,27 +3125,11 @@ class Panedwindow(Widget, tkcurses.PanedWindow):
             child: The widget to put in it.
             **kw: ``weight``, plus the pane options the classic widget takes.
         """
-        weight = kw.pop("weight", self.DEFAULT_WEIGHT)
         super().insert(index, child, **kw)
-        self._weights()[child._w] = int(weight)
 
     def forget(self, child: tkcurses.Widget | None = None) -> None:
-        """Remove a pane.
-
-        Dropping the weight with it is housekeeping and nothing more: no
-        caller can tell. A forgotten pane is out of the layout, so
-        :meth:`pane` refuses it either way, and :meth:`add` writes a weight
-        every time, so one added back cannot inherit a stale value. It is here
-        to stop the dict growing without bound in a program that forgets panes
-        it never adds again.
-
-        Said plainly because it was nearly covered by a test that could not
-        fail - asserting that pane() raises afterwards, which it does whether
-        or not this line runs.
-        """
+        """Remove a pane, and with it the weight the layout held for it."""
         super().forget(child)
-        if child is not None:
-            self._weights().pop(child._w, None)
 
     def pane(self, index: Any, **kw: Any) -> Any:
         """Read or set one pane's options.
@@ -3158,13 +3143,13 @@ class Panedwindow(Widget, tkcurses.PanedWindow):
             9.0, that is ``{'weight': N}`` and nothing else.
         """
         child = self._pane_at(index)
-        weights = self._weights()
+        options = self._paned.options_for(child)
+        if options is None:  # pragma: no cover - _pane_at already refused it
+            raise TclError(f'not managed by this window: "{index}"')
         if not kw:
-            return {"weight": weights.get(child._w, self.DEFAULT_WEIGHT)}
-        if "weight" in kw:
-            weights[child._w] = int(kw.pop("weight"))
-        if kw:
-            self.paneconfigure(child, **kw)
+            weight = options.weight
+            return {"weight": self.DEFAULT_WEIGHT if weight is None else weight}
+        self.paneconfigure(child, **kw)
         return None
 
     def sashpos(self, index: int, newpos: int | None = None) -> int:

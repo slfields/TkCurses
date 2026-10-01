@@ -61,10 +61,18 @@ class PaneOptions:
     minsize: int = 0
     sticky: str = "nsew"
     size: int | None = None
+    #: How this pane shares surplus and shortfall, or None to share it evenly
+    #: with every other pane. ttk's ``-weight``; the classic widget has no such
+    #: option and leaves it None, which is what keeps its documented
+    #: spread-across-everything behaviour. See :func:`distribute`.
+    weight: int | None = None
 
 
 def distribute(
-    wanted: Sequence[int], minimums: Sequence[int], available: int
+    wanted: Sequence[int],
+    minimums: Sequence[int],
+    available: int,
+    weights: Sequence[int | None] | None = None,
 ) -> list[int]:
     """Fit panes into the room there is, as fairly as the minimums allow.
 
@@ -89,22 +97,84 @@ def distribute(
     if difference == 0:
         return sizes
     if difference > 0:
-        return _grow(sizes, difference)
-    return _shrink(sizes, minimums, -difference)
+        return _grow(sizes, difference, weights)
+    return _shrink(sizes, minimums, -difference, weights)
 
 
-def _grow(sizes: list[int], surplus: int) -> list[int]:
-    """Hand out extra cells one at a time, round-robin from the first pane."""
-    grown = list(sizes)
-    index = 0
-    while surplus > 0:
-        grown[index % len(grown)] += 1
-        index += 1
-        surplus -= 1
-    return grown
+def _shares(weights: Sequence[int | None] | None, count: int) -> list[int] | None:
+    """Which panes take a share of a change, and how big a share each takes.
+
+    None when no pane named a weight, which means share it out evenly - the
+    classic widget's documented behaviour. Otherwise one number per pane, and
+    panes with nothing are passed over.
+
+    **All weights zero is not "nobody moves".** Measured on real ttk 9.0, a
+    horizontal panedwindow grown by 100 pixels:
+
+        weights [1, 3]     each pane grew by [25, 75]
+        weights [2, 1, 1]                    [50, 25, 25]
+        weights [0, 1]                       [0, 100]
+        weights [0, 0]                       [0, 100]
+        weights [0, 0, 0]                    [0, 0, 100]
+
+    so when every weight is zero the LAST pane absorbs the lot. That is ttk's
+    default state, and the issue that asked for this predicted the panes would
+    keep their sizes instead.
+    """
+    if weights is None or all(weight is None for weight in weights):
+        return None
+    shares = [0 if weight is None else max(0, weight) for weight in weights]
+    if any(shares):
+        return shares
+    last = [0] * count
+    last[-1] = 1
+    return last
 
 
-def _shrink(sizes: list[int], minimums: Sequence[int], deficit: int) -> list[int]:
+def _spread(change: int, shares: list[int] | None, count: int) -> list[int]:
+    """How much of ``change`` each pane takes, as whole cells.
+
+    Largest remainder, so the cells add up to the change exactly rather than
+    drifting by one or two: every pane takes its floor, and what is left goes
+    to the panes with the biggest fractions.
+    """
+    if shares is None:
+        base, extra = divmod(change, count)
+        return [base + (1 if index < extra else 0) for index in range(count)]
+    total = sum(shares)
+    exact = [change * share / total for share in shares]
+    taken = [int(amount) for amount in exact]
+    leftover = change - sum(taken)
+    order = sorted(
+        range(count), key=lambda index: exact[index] - taken[index], reverse=True
+    )
+    for index in order[:leftover]:
+        taken[index] += 1
+    return taken
+
+
+def _grow(
+    sizes: list[int], surplus: int, weights: Sequence[int | None] | None = None
+) -> list[int]:
+    """Hand out extra cells, by weight when any pane named one.
+
+    Without weights the cells go round-robin from the first pane, which is the
+    classic widget's documented behaviour: surplus spread across the panes
+    rather than given to one of them.
+    """
+    shares = _shares(weights, len(sizes))
+    return [
+        size + part
+        for size, part in zip(sizes, _spread(surplus, shares, len(sizes)), strict=True)
+    ]
+
+
+def _shrink(
+    sizes: list[int],
+    minimums: Sequence[int],
+    deficit: int,
+    weights: Sequence[int | None] | None = None,
+) -> list[int]:
     """Take cells back from whichever panes still have room to give.
 
     A pane at its minimum is passed over. When every pane is at its minimum
@@ -112,6 +182,16 @@ def _shrink(sizes: list[int], minimums: Sequence[int], deficit: int) -> list[int
     container will clip them, which is the only honest answer.
     """
     shrunk = list(sizes)
+    shares = _shares(weights, len(sizes))
+    if shares is not None:
+        # Shortfall follows the weights too - measured, [1, 3] shrinking by 100
+        # gives up [25, 75] - but never below a minimum, so whatever a pane
+        # cannot give up is taken from the rest by the loop below.
+        for index, part in enumerate(_spread(deficit, shares, len(sizes))):
+            room = shrunk[index] - max(1, minimums[index])
+            given = max(0, min(part, room))
+            shrunk[index] -= given
+            deficit -= given
     while deficit > 0:
         movable = [
             index for index, size in enumerate(shrunk) if size > max(1, minimums[index])
@@ -256,7 +336,8 @@ class PanedLayout:
                 self._wanted(widget, self._options[id(widget)])
                 for widget in self._order
             ]
-        self._sizes = distribute(wanted, minimums, available)
+        weights = [self._options[id(w)].weight for w in self._order]
+        self._sizes = distribute(wanted, minimums, available, weights)
         return list(self._sizes)
 
     def move_sash(self, sash: int, position: int, area: Rect) -> None:
