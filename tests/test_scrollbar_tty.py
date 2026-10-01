@@ -140,3 +140,69 @@ def test_the_thumb_follows_the_pointer_rather_than_jumping_to_it(terminal, tmp_p
     term.click(column, rows[-1])
     term.wait_for_idle()
     assert "\n".join(term.display) == before, term.describe()
+
+
+EXTENT = """
+import tkcurses
+
+root = tkcurses.Tk()
+buffer = root.tk.screen.buffer
+vertical = tkcurses.Scrollbar(root, orient='vertical')
+vertical.place(x=1, y=1, width=1, height=9)
+vertical.set(0.2, 0.6)
+horizontal = tkcurses.Scrollbar(root, orient='horizontal')
+horizontal.place(x=4, y=1, width=11, height=1)
+horizontal.set(0.0, 0.4)
+root.update_layout()
+root.tk.screen.refresh()
+buffer.write(12, 0, 'ready')
+root.tk.screen.refresh()
+root.after(4000, root.quit)
+root.mainloop()
+"""
+
+
+def test_a_scrollbar_paints_every_cell_it_was_given(terminal, tmp_path):
+    """No dead cells inside a scrollbar, measured on screen rather than inferred.
+
+    This is the test that would have caught the fault a person found in UAT 40:
+    a bar nine rows tall drew seven glyphs and left two rows that still took
+    clicks and still painted background. A restyle made it visible as blue
+    running past the last glyph.
+
+    It reads the TERMINAL, deliberately. The obvious unit check - that a widget
+    drawing no border keeps its whole allocation as content - passes with that
+    bug present, because the fault was in the scrollbar's own `_length` and not
+    in `_content_rect`. Measured both ways round before writing this: an
+    invariant over the content area is cover without protection here.
+    """
+    term = terminal(cols=20, rows=14)
+    term.run_source(EXTENT, workdir=tmp_path)
+    term.wait_for_text("ready")
+    term.wait_for_idle()
+
+    # Found rather than assumed: the bar is placed at 1,1 inside the root, and
+    # reading row 0 column 0 was reading the root's own border. Locating it by
+    # its arrow keeps the test honest if the placement changes.
+    column = next(
+        x
+        for x in range(term.cols)
+        if any(term.char_at(y, x).data == "\u25b2" for y in range(term.rows))
+    )
+    top = next(y for y in range(term.rows) if term.char_at(y, column).data == "\u25b2")
+    down = [term.char_at(top + offset, column).data for offset in range(9)]
+    assert " " not in down, (
+        f"a 9-row scrollbar left dead cells: {down!r} - every row of it should "
+        f"carry an arrow, a trough cell or the thumb.\n{term.describe()}"
+    )
+
+    row = next(
+        y
+        for y in range(term.rows)
+        if any(term.char_at(y, x).data == "\u25c4" for x in range(term.cols))
+    )
+    left = next(x for x in range(term.cols) if term.char_at(row, x).data == "\u25c4")
+    across = [term.char_at(row, left + offset).data for offset in range(11)]
+    assert " " not in across, (
+        f"an 11-column scrollbar left dead cells: {across!r}\n{term.describe()}"
+    )
