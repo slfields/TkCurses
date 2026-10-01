@@ -35,6 +35,25 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          # Coverage on ONE interpreter. It is a number about the library, not
+          # about the interpreter, so measuring it five times bought nothing -
+          # and it is the most expensive thing in the job by a wide margin.
+          # Measured locally, same tree, serial, 4318 tests:
+          #
+          #     without --cov   4:47
+          #     with --cov     12:14      +156%
+          #
+          # because pytest-cov traces the forked children too: a full run
+          # writes 587 coverage data files, one per process, and combines
+          # them at the end. The tty tests fork a child each, which is what
+          # makes this so much worse here than in an ordinary suite.
+          #
+          # 3.12 carries it, matching the interpreter the build job uses.
+          # Nothing gates on the number - no fail_under, no upload - so the
+          # other four jobs lose nothing by not computing it. TkCurses-2gh.
+          - python-version: "3.12"
+            coverage: "--cov --cov-report=term-missing"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -66,7 +85,7 @@ jobs:
           # how long a doomed wait takes to say so, and pytest's own 60s
           # per-test timeout still backstops a genuine hang.
           TKCURSES_TEST_TIMEOUT_SCALE: "4"
-        run: pytest --cov --cov-report=term-missing
+        run: pytest ${{ matrix.coverage }}
 
   build:
     name: Build distributions
