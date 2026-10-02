@@ -705,7 +705,7 @@ class TerminalHarness:
             # buries the reason. Checked after the predicate, not before: a
             # program that printed what was wanted and then exited has
             # succeeded, and the order is the whole difference.
-            if self._exited_without(message):
+            if self._exited_without(message, predicate):
                 return
             if time.monotonic() >= deadline:
                 raise TerminalTimeout(
@@ -714,12 +714,28 @@ class TerminalHarness:
                 )
             self._drain(min(0.05, max(0.0, deadline - time.monotonic())))
 
-    def _exited_without(self, message: str) -> bool:
-        """Raise if the child is gone and cannot ever satisfy the wait.
+    def _exited_without(
+        self, message: str, predicate: Callable[[TerminalHarness], bool]
+    ) -> bool:
+        """Whether the wait is over because the child has gone.
 
-        Returns False when it is still running, and never returns True - the
-        signature is a lie for the caller's benefit, so the check reads as
-        one line inside the loop.
+        Returns False while it is still running, True when it has exited AND
+        its last output satisfies the predicate, and raises when it has exited
+        without ever satisfying it.
+
+        THE PREDICATE IS RE-CHECKED AFTER THE FINAL DRAIN, and that is the whole
+        point of this method's shape. It used to drain the dying words and then
+        raise unconditionally, so output that arrived in that drain appeared in
+        the failure message - the report said "exited while waiting for text
+        'ZeroDivisionError'" and then printed a screen with ZeroDivisionError on
+        it - while never being offered to the thing waiting for it. A program
+        that writes what was asked for and exits promptly is a program that
+        succeeded, and on a slow runner that is the common case rather than the
+        rare one: it failed on the coverage job, which is the slowest, while
+        eight local runs passed.
+
+        Same family as TkCurses-9q7, where the tail of a child's output arrived
+        and nothing read it. Here it is read and then ignored.
         """
         if self._pid is None:
             return False
@@ -728,7 +744,9 @@ class TerminalHarness:
             return False
         self._exit_status = status
         self._pid = None
-        self._drain(0.05)  # whatever it managed to say on the way out
+        self._drain_fully()  # whatever it managed to say on the way out
+        if predicate(self):
+            return True
         raise TerminalTimeout(
             f"the program exited with code {self.exit_code} while waiting "
             f"for {message}\n{self.describe()}"

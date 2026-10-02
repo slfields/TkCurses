@@ -646,3 +646,58 @@ def test_nothing_allocates_between_the_fork_and_the_exec():
         "deadlock a child forked from a threaded parent - move it into "
         "_child_env or into run(), before the fork."
     )
+
+
+def test_a_wait_is_satisfied_by_what_the_child_said_on_its_way_out(terminal, tmp_path):
+    """Output that arrives as the child exits still counts.
+
+    The failure this prevents reported itself in a way that gave the game away:
+    "the program exited with code 0 while waiting for text 'ZeroDivisionError'"
+    followed by a screen with ZeroDivisionError printed on it. The text had
+    arrived, in the drain that _exited_without does before raising, and was never
+    offered to the predicate.
+
+    A program that writes what was asked for and exits promptly has succeeded. On
+    a slow runner that is the common case rather than the rare one: this failed on
+    the coverage job, which is the slowest of the five, while eight local runs of
+    the same test passed.
+
+    Same family as TkCurses-9q7, where the tail of a child's output arrived and
+    nothing read it. Here it was read and then thrown away.
+
+    THE CONTRACT IS TESTED AT THE SEAM, not through the race. The race is between
+    two drains microseconds apart - the wait loop's own, and the one inside
+    _exited_without - and it cannot be forced from outside the harness: three
+    attempts to provoke it (an immediate flushed write, an unflushed write
+    reaching the pty only at interpreter shutdown, and a delayed write) all
+    passed with the fault reintroduced, because the loop drains before it checks
+    and usually wins. Measured both ways round before settling for this.
+
+    So this calls _exited_without directly with a predicate that the child's
+    final output satisfies, and requires it to report success rather than raise.
+    That is the behaviour the CI failure needed and did not get.
+    """
+    term = terminal(cols=40, rows=8)
+    term.run_source(
+        """
+import sys
+sys.stdout.write("the last word\\r\\n")
+sys.stdout.flush()
+""",
+        workdir=tmp_path,
+    )
+    # Let it write and exit, WITHOUT draining and without reaping it: the
+    # harness has not seen a byte, and _exited_without must do the reap itself.
+    # Polling with waitpid here consumed the status and left that method with
+    # "No child processes".
+    time.sleep(0.4)
+
+    satisfied = term._exited_without(
+        "text 'the last word'", lambda t: t.contains("the last word")
+    )
+
+    assert satisfied, (
+        "the child's last output arrived in the final drain and the wait was "
+        "failed anyway - the predicate was never re-checked"
+    )
+    assert term.contains("the last word")
