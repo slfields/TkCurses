@@ -3237,6 +3237,38 @@ Selection: [John ███________]
 | `state` | NORMAL/DISABLED/READONLY | Same |
 | `justify` | LEFT/CENTER/RIGHT | Text alignment |
 | `insertwidth` | pixels | 1 cell (cursor) |
+| `validate` | validation condition | `none`, `key`, `all` act; focus modes accepted, inert |
+| `validatecommand` | registered command | Callable given the proposed text |
+| `invalidcommand` | registered command | Callable given nothing |
+
+**Validation gates `insert` and `delete`, not only keystrokes.** `-validate`
+is a condition, and the two that name an edit - `key` and `all` - apply to a
+programmatic edit exactly as to a typed one. So does `-state`: a `readonly` or
+`disabled` entry ignores `insert` and `delete` outright, and a program that
+needs to fill a locked entry writes its `textvariable`. Both were measured on
+Tcl/Tk 9.0.2 by running the same 25 scenarios through `tkinter` and through
+this library and diffing the text, the callbacks and the option afterwards.
+`TkCurses-tvj`.
+
+Two rules in that table are not guessable and carry the design:
+
+- **An edit that changes nothing runs no callback.** Inserting `""`, deleting
+  an empty range, deleting past the end - Tk's validator never sees any of
+  them.
+- **A validator that edits the entry, or that raises, turns validation off.**
+  That is Tk's recursion guard, and this library needs it for the same reason:
+  once programmatic edits are validated, a validator calling `insert` on the
+  entry it is validating calls itself forever. Tk cuts the loop by setting
+  `-validate` to `none` and leaving it there — the nested edit lands, the edit
+  being validated is discarded, and the application has to put validation
+  back. An exception from the validator is the same case (Tcl cannot read a
+  missing return as a boolean) and notably does **not** run `invalidcommand`.
+  An `invalidcommand` that edits the entry also turns validation off; one that
+  merely raises does not.
+
+The two validation conditions still missing are validation on a focus change
+(`TkCurses-jd1`) and the forced revalidation Tk runs when a `textvariable` is
+written (`TkCurses-3xb`), both measured in their issues.
 
 ---
 

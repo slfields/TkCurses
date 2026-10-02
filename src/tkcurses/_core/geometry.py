@@ -243,7 +243,7 @@ class Pad:
         """What ``pack_info`` and ``grid_info`` report, in Tk's own form.
 
         A number when both sides match, a two-tuple when they do not. Measured
-        against Tk 8.6: ``padx=(2, 2)`` reads back as ``2``, ``padx="2 8"`` as
+        against Tcl/Tk 9.0.2: ``padx=(2, 2)`` reads back as ``2``, ``padx="2 8"`` as
         ``(2, 8)``.
         """
         return self.before if self.before == self.after else (self.before, self.after)
@@ -319,7 +319,7 @@ def parse_pad(value: object) -> Pad:
 def parse_single_pad(value: object, option: str) -> int:
     """A geometry manager's ``ipadx`` or ``ipady``, which takes one distance.
 
-    Internal padding has no two-value form - measured, Tk 8.6 rejects
+    Internal padding has no two-value form - measured, Tcl/Tk 9.0.2 rejects
     ``ipadx=(2, 8)`` outright where it accepts ``padx=(2, 8)``. The asymmetry
     is Tk's, so it is kept rather than tidied away.
 

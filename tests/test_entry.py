@@ -264,11 +264,39 @@ def test_a_disabled_entry_refuses_the_focus_from_a_click(entry):
     assert entry.focus_get() is None
 
 
-def test_code_can_still_change_a_readonly_entry(entry):
-    """insert() is the program talking, not the user."""
-    entry.configure(state="readonly")
+@pytest.mark.parametrize("state", ["readonly", "disabled"])
+def test_code_cannot_change_a_readonly_or_disabled_entry(entry, state):
+    """Measured on real Tk, which this test used to assert the opposite of.
+
+    The old version read "insert() is the program talking, not the user" and
+    expected the text to land. That is a reasonable intuition and it is not
+    what Tk does: ``-state`` gates the widget commands too, which Tk's own
+    documentation says in as many words - "if this option is disabled then the
+    value may not be changed using widget commands". Measured on Tcl/Tk 9.0.2,
+    for readonly and disabled alike, insert() and delete() do nothing.
+
+    A program that needs to fill a locked entry uses the textvariable, which
+    does get through. TkCurses-tvj.
+    """
+    entry.configure(state=state)
     entry.insert(0, "set from code")
-    assert entry.get() == "set from code"
+    assert entry.get() == ""
+
+
+@pytest.mark.parametrize("state", ["readonly", "disabled"])
+def test_code_cannot_delete_from_a_readonly_or_disabled_entry(entry, state):
+    entry.insert(0, "fixed")
+    entry.configure(state=state)
+    entry.delete(0, "end")
+    assert entry.get() == "fixed"
+
+
+@pytest.mark.parametrize("state", ["readonly", "disabled"])
+def test_a_textvariable_still_fills_a_locked_entry(root, state):
+    """The way through, and why the state gate is not a lockout."""
+    var = StringVar(root, value="via the variable")
+    locked = Entry(root, name="e", textvariable=var, state=state)
+    assert locked.get() == "via the variable"
 
 
 # ------------------------------------------------------------- textvariable
@@ -338,6 +366,170 @@ def test_validation_off_ignores_the_command(entry):
     entry.configure(validate="none", validatecommand=lambda proposed: False)
     typed(entry, "x")
     assert entry.get() == "x"
+
+
+# Tk validates a programmatic edit exactly as it validates a keystroke, and
+# every expectation below was measured by running the same 25 scenarios through
+# tkinter and through this library and diffing text, callbacks and the validate
+# option afterwards. TkCurses-tvj; Tcl/Tk 9.0.2.
+
+
+@pytest.fixture
+def validated(entry):
+    """A digits-only entry that records its callbacks."""
+    log = []
+    entry.configure(
+        validate="key",
+        validatecommand=lambda proposed: (
+            log.append(("validate", proposed)) or proposed.isdigit() or proposed == ""
+        ),
+        invalidcommand=lambda: log.append(("invalid",)),
+    )
+    return entry, log
+
+
+def test_insert_asks_the_validator(validated):
+    """The bug: a program could put text in a validated entry that its own
+    validator would have refused, with nothing to tell it that had happened."""
+    entry, log = validated
+    entry.insert(0, "x")
+    assert entry.get() == ""
+    assert log == [("validate", "x"), ("invalid",)]
+
+
+def test_insert_goes_ahead_when_the_validator_allows_it(validated):
+    entry, log = validated
+    entry.insert(0, "5")
+    assert entry.get() == "5"
+    assert log == [("validate", "5")]
+
+
+def test_delete_asks_the_validator(validated):
+    entry, log = validated
+    entry.configure(validate="none")
+    entry.insert(0, "123")
+    entry.configure(validate="key", validatecommand=lambda proposed: proposed == "")
+    del log[:]
+    entry.delete(1)
+    assert entry.get() == "123"
+
+
+def test_the_validator_is_shown_the_whole_proposed_text(validated):
+    """Not the inserted fragment: Tk's %P is the value the field would hold."""
+    entry, log = validated
+    entry.insert(0, "13")
+    del log[:]
+    entry.insert(1, "2")
+    assert log == [("validate", "123")]
+    assert entry.get() == "123"
+
+
+def test_a_deletes_proposed_text_is_what_would_be_left(validated):
+    entry, log = validated
+    entry.insert(0, "12345")
+    del log[:]
+    entry.delete(1, 3)
+    assert log == [("validate", "145")]
+    assert entry.get() == "145"
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        pytest.param(lambda e: e.insert(0, ""), id="insert nothing"),
+        pytest.param(lambda e: e.delete(1, 1), id="delete an empty range"),
+        pytest.param(lambda e: e.delete(5, 9), id="delete past the end"),
+        pytest.param(lambda e: e.delete("end"), id="delete at the end"),
+    ],
+)
+def test_an_edit_that_changes_nothing_runs_no_callback(validated, edit):
+    """Measured, not an optimisation: Tk's validator never sees these."""
+    entry, log = validated
+    entry.configure(validate="none")
+    entry.insert(0, "12")
+    entry.configure(validate="key")
+    del log[:]
+    edit(entry)
+    assert log == []
+    assert entry.get() == "12"
+
+
+@pytest.mark.parametrize("mode", ["key", "all"])
+def test_the_edit_modes_gate_a_programmatic_insert(validated, mode):
+    entry, log = validated
+    entry.configure(validate=mode)
+    entry.insert(0, "x")
+    assert entry.get() == ""
+    assert log[0] == ("validate", "x")
+
+
+@pytest.mark.parametrize("mode", ["none", "focus", "focusin", "focusout"])
+def test_the_focus_modes_let_every_edit_through(validated, mode):
+    """The focus modes validate when the focus moves, not when text changes.
+
+    This library used to treat anything but "none" as gating an edit, so a
+    validate="focusout" entry vetoed keystrokes real Tk allows.
+    """
+    entry, log = validated
+    entry.configure(validate=mode)
+    entry.insert(0, "x")
+    assert entry.get() == "x"
+    assert log == []
+
+
+def test_a_validator_that_edits_the_entry_turns_validation_off(validated):
+    """Tk's recursion guard, and this library needs it for the same reason.
+
+    Once programmatic edits are validated, a validator calling insert() on the
+    entry it is validating would call itself forever. Measured on real Tk: the
+    nested edit lands, the edit being validated is discarded, and validate
+    reads "none" afterwards.
+    """
+    entry, _ = validated
+    entry.configure(validatecommand=lambda proposed: entry.insert("end", "!") or True)
+    entry.insert(0, "a")
+    assert entry.get() == "!"
+    assert str(entry.cget("validate")) == "none"
+
+
+def test_a_validator_that_raises_turns_validation_off_and_stays_quiet(validated):
+    """An exception is the one return Tcl cannot read as a boolean.
+
+    Measured: the edit is refused, validate becomes "none", and invalidcommand
+    does not run - which is the part that would have been guessed wrong.
+    """
+    entry, log = validated
+
+    def broken(proposed):
+        raise RuntimeError("validator is broken")
+
+    entry.configure(validatecommand=broken)
+    entry.insert(0, "x")
+    assert entry.get() == ""
+    assert str(entry.cget("validate")) == "none"
+    assert ("invalid",) not in log
+
+
+def test_an_invalidcommand_that_edits_the_entry_turns_validation_off(validated):
+    entry, _ = validated
+    entry.configure(invalidcommand=lambda: entry.insert("end", "?"))
+    entry.insert(0, "x")
+    assert entry.get() == "?"
+    assert str(entry.cget("validate")) == "none"
+
+
+def test_validation_can_be_turned_back_on_after_it_was_switched_off(validated):
+    """Tk leaves it off and expects the application to restore it."""
+    entry, log = validated
+    entry.configure(validate="none")
+    entry.insert(0, "a")
+    entry.configure(validate="key")
+    del log[:]
+    entry.insert("end", "b")
+    # "ab" is not digits, so the restored validator refuses it and the
+    # invalidcommand runs - the point being that the validator ran at all.
+    assert log == [("validate", "ab"), ("invalid",)]
+    assert entry.get() == "a"
 
 
 # ------------------------------------------------------------------ display

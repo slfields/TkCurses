@@ -18,7 +18,7 @@
 """What pack and grid accept for padx, pady, ipadx and ipady.
 
 One contract, two managers, so it is tested once against both rather than
-twice. Every row of ``SPECIFICATIONS`` is a measurement of real Tk 8.6 taken
+twice. Every row of ``SPECIFICATIONS`` is a measurement of real Tcl/Tk 9.0.2 taken
 by running the same matrix through ``tkinter`` and through this library and
 diffing the answers - 168 cases, including the exact wording of every error.
 That matters because the two option families disagree:

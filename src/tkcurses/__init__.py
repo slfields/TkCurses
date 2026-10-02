@@ -2814,7 +2814,7 @@ def _check_pads(options: PackOptions | GridOptions, given: dict[str, Any]) -> No
 
     ``padx``/``pady`` take a distance per side; ``ipadx``/``ipady`` take one
     distance only. The asymmetry is Tk's own, measured rather than assumed:
-    Tk 8.6 accepts ``padx=(2, 8)`` and rejects ``ipadx=(2, 8)`` with
+    Tcl/Tk 9.0.2 accepts ``padx=(2, 8)`` and rejects ``ipadx=(2, 8)`` with
     ``bad ipadx value "2 8": must be positive screen distance``.
 
     Only options named in this call are re-parsed. Ones the widget already had
@@ -6523,6 +6523,9 @@ class Entry(_Drawable):
         self._field = TextField()
         self._variable_trace: tuple[Variable, str] | None = None
         self._syncing = False
+        # True while a validation callback is running, so an edit made from
+        # inside one can be told apart from an ordinary edit. TkCurses-tvj.
+        self._validating = False
         super().__init__(master, cnf, name=name, **kw)
         self._follow_variable()
         self._apply_requested_size()
@@ -6625,16 +6628,41 @@ class Entry(_Drawable):
         return self._field.text
 
     def insert(self, index: Any, string: str) -> None:
-        """Insert ``string`` at ``index``."""
-        self._field.insert(self.index(index), string)
-        self._changed()
+        """Insert ``string`` at ``index``, if the state and validator allow it.
+
+        A programmatic edit is validated exactly as a keystroke is, and ignored
+        outright when the entry is ``disabled`` or ``readonly``. Both were
+        measured on real Tk, and this method did neither: a digits-only entry
+        sent ``insert(0, "x")`` ended up holding ``"x"``, with no callback to
+        tell the program its own validator had been bypassed. TkCurses-tvj.
+
+        An insert that would change nothing - an empty string - runs no
+        callback at all, which is also Tk's behaviour rather than an
+        optimisation.
+        """
+        if not string:
+            return
+        where = self.index(index)
+        text = self._field.text
+        self._edit(
+            lambda: self._field.insert(where, string),
+            text[:where] + string + text[where:],
+        )
 
     def delete(self, first: Any, last: Any = None) -> None:
-        """Delete from ``first`` up to but not including ``last``."""
-        self._field.delete(
-            self.index(first), None if last is None else self.index(last)
-        )
-        self._changed()
+        """Delete from ``first`` up to but not including ``last``.
+
+        Validated and state-gated like :meth:`insert`. A delete that would
+        change nothing - an empty range, or a range starting past the end -
+        runs no callback, as measured: ``delete(1, 1)`` and ``delete(5, 9)`` on
+        a two-character entry leave the validator untouched.
+        """
+        start = self.index(first)
+        end = start + 1 if last is None else self.index(last)
+        text = self._field.text
+        if start >= len(text) or end <= start:
+            return
+        self._edit(lambda: self._field.delete(start, end), text[:start] + text[end:])
 
     def icursor(self, index: Any) -> None:
         """Put the insertion cursor at ``index``."""
@@ -6769,19 +6797,68 @@ class Entry(_Drawable):
         the proposed contents directly. Anything it raises counts as a
         refusal - a validator that fails should not take the application with
         it.
+
+        Only ``key`` and ``all`` gate an edit. The focus modes validate when
+        the focus moves and let every edit through, which was measured rather
+        than assumed: a ``validate="focusout"`` entry sent an insert its
+        validator refuses keeps the text. This used to test for ``none``
+        instead, so the three focus modes vetoed keystrokes that Tk allows.
+
+        A validator that edits the entry, or that raises, turns validation off
+        - see :meth:`_turn_validation_off` for why that is Tk's answer rather
+        than a shortcut taken here.
+
+        Two of Tk's three validation conditions are still missing: validation
+        when the focus moves (TkCurses-jd1) and the forced revalidation Tk runs
+        when a ``textvariable`` is written (TkCurses-3xb). Both are measured in
+        their issues.
         """
-        if str(self._options["validate"]) in ("none", ""):
+        if str(self._options["validate"]) not in _EDIT_VALIDATED:
             return True
         command = self._options["validatecommand"]
         if command is None:
             return True
+        if self._validating:
+            # An edit from inside a validation callback. Tk does not recurse:
+            # it turns validation off and lets this edit through, which also
+            # discards the edit that was being validated - the check below.
+            self._turn_validation_off()
+            return True
+        self._validating = True
         try:
-            allowed = bool(command(proposed))
-        except Exception:
-            allowed = False
-        if not allowed:
-            self._refused()
-        return allowed
+            try:
+                allowed = bool(command(proposed))
+            except Exception:
+                # tkinter hands Tcl nothing when a Python callback raises, Tcl
+                # cannot read that as a boolean, and Tk turns validation off.
+                # Measured: the edit is refused and invalidcommand does NOT
+                # run, which is why this returns before reaching _refused.
+                self._turn_validation_off()
+                return False
+            if str(self._options["validate"]) not in _EDIT_VALIDATED:
+                return False
+            if not allowed:
+                self._refused()
+            return allowed
+        finally:
+            self._validating = False
+
+    def _turn_validation_off(self) -> None:
+        """Set ``validate`` to ``none``, as Tk does when a callback misbehaves.
+
+        Tk's own recursion guard, and the reason this library needs one: once
+        programmatic edits are validated, a validator that calls ``insert`` on
+        the entry it is validating would call itself forever. Tk cuts the loop
+        by disabling validation outright, and leaves it disabled - the
+        application has to put it back. Measured on real Tk, for a validator
+        that inserts into its own entry: the nested edit lands, the edit being
+        validated does not, and ``cget("validate")`` reads ``none`` afterwards.
+
+        Written straight to the option dict rather than through
+        :meth:`configure`, because this runs from inside a callback that
+        ``configure`` may itself have started.
+        """
+        self._options["validate"] = "none"
 
     def _refused(self) -> None:
         """Run the ``invalidcommand``, which is what Tk does on a refusal.
@@ -6912,6 +6989,11 @@ class Entry(_Drawable):
 
 
 #: Keys that move the cursor, as offsets or as absolute positions.
+#: Validation modes under which an edit is checked before it is applied.
+#: Measured on real Tk: "focus", "focusin" and "focusout" validate when the
+#: focus moves and let every edit through, so they are deliberately absent.
+_EDIT_VALIDATED = ("key", "all")
+
 _ENTRY_MOTION: dict[str, Any] = {
     "Left": -1,
     "Right": 1,
