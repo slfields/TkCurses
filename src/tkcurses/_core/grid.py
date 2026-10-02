@@ -33,9 +33,9 @@ its cell, and only ``weight`` makes the cell itself bigger.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from tkcurses._core.geometry import Rect, Size
+from tkcurses._core.geometry import Managed, Rect, Size
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -148,7 +148,7 @@ class GridLayout:
 
     def __init__(self) -> None:
         self._options: dict[int, GridOptions] = {}
-        self._widgets: dict[int, Any] = {}
+        self._widgets: dict[int, Managed] = {}
         self._hidden: dict[int, GridOptions] = {}
         self._rows: dict[int, LineConfig] = {}
         self._columns: dict[int, LineConfig] = {}
@@ -156,13 +156,13 @@ class GridLayout:
 
     # ----------------------------------------------------------- membership
 
-    def add(self, widget: Any, options: GridOptions) -> None:
+    def add(self, widget: Managed, options: GridOptions) -> None:
         """Place ``widget`` in the grid, or move it."""
         self._options[id(widget)] = options
         self._widgets[id(widget)] = widget
         self._hidden.pop(id(widget), None)
 
-    def remove(self, widget: Any, *, keep: bool = False) -> None:
+    def remove(self, widget: Managed, *, keep: bool = False) -> None:
         """Take ``widget`` out of the grid.
 
         ``keep`` remembers where it was, which is what separates
@@ -176,21 +176,21 @@ class GridLayout:
         else:
             self._hidden.pop(id(widget), None)
 
-    def remembered(self, widget: Any) -> GridOptions | None:
+    def remembered(self, widget: Managed) -> GridOptions | None:
         """Options kept by a previous ``grid_remove``, if any."""
         return self._hidden.get(id(widget))
 
-    def options_for(self, widget: Any) -> GridOptions | None:
+    def options_for(self, widget: Managed) -> GridOptions | None:
         """Where ``widget`` sits, or None if it is not gridded."""
         return self._options.get(id(widget))
 
     def slaves(
         self,
-        container: Any = None,  # noqa: ARG002 - Layout protocol
+        container: object = None,  # noqa: ARG002 - Layout protocol
         *,
         row: int | None = None,
         column: int | None = None,
-    ) -> list[Any]:
+    ) -> list[Managed]:
         """Gridded children, optionally only those in one row or column.
 
         Ordered by position - down the rows, then across - so the answer does
@@ -244,7 +244,7 @@ class GridLayout:
 
     # -------------------------------------------------------------- sizing
 
-    def requested(self, container: Any = None) -> Size:  # noqa: ARG002
+    def requested(self, container: object = None) -> Size:  # noqa: ARG002
         """Room the grid needs at its children's natural sizes."""
         columns, rows = self._natural()
         return Size(columns.total(), rows.total())
@@ -335,7 +335,7 @@ class GridLayout:
 
     # ------------------------------------------------------------- placing
 
-    def apply(self, container: Any, area: Rect) -> None:  # noqa: ARG002
+    def apply(self, container: Managed, area: Rect) -> None:  # noqa: ARG002
         """Size the lines to ``area`` and put each child in its cell."""
         columns, rows = self._natural()
         self._share(columns, area.width)
@@ -371,7 +371,7 @@ class GridLayout:
         )
         return x, y
 
-    def _place(self, widget: Any, cell: Rect, options: GridOptions) -> None:
+    def _place(self, widget: Managed, cell: Rect, options: GridOptions) -> None:
         """Put one child in its cell, honouring sticky."""
         inner = Rect(
             cell.x + options.padx,
@@ -441,12 +441,12 @@ class GridLayout:
         return -1
 
     @staticmethod
-    def _requested_of(widget: Any) -> Size:
+    def _requested_of(widget: Managed) -> Size:
         """The size a child asked for."""
         return Size(widget.winfo_reqwidth(), widget.winfo_reqheight())
 
     @staticmethod
-    def _assign(widget: Any, rect: Rect) -> None:
+    def _assign(widget: Managed, rect: Rect) -> None:
         """Give a child its region, in coordinates relative to its master."""
         master = widget.master
         origin_x = master.winfo_rootx() if master is not None else 0

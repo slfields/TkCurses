@@ -36,9 +36,8 @@ nothing on their behalf.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
-from tkcurses._core.geometry import Rect, Size
+from tkcurses._core.geometry import Container, Managed, Rect, Size
 from tkcurses._core.pack import parse_anchor
 
 __all__ = ["PlaceLayout", "PlaceOptions"]
@@ -84,34 +83,34 @@ class PlaceLayout:
     propagates = False
 
     def __init__(self) -> None:
-        self._order: list[Any] = []
+        self._order: list[Managed] = []
         self._options: dict[int, PlaceOptions] = {}
 
     # ----------------------------------------------------------- membership
 
-    def add(self, widget: Any, options: PlaceOptions) -> None:
+    def add(self, widget: Managed, options: PlaceOptions) -> None:
         """Place ``widget``, or move it."""
         if widget not in self._order:
             self._order.append(widget)
         self._options[id(widget)] = options
 
-    def remove(self, widget: Any) -> None:
+    def remove(self, widget: Managed) -> None:
         """Stop placing ``widget``."""
         if widget in self._order:
             self._order.remove(widget)
         self._options.pop(id(widget), None)
 
-    def options_for(self, widget: Any) -> PlaceOptions | None:
+    def options_for(self, widget: Managed) -> PlaceOptions | None:
         """How ``widget`` is placed, or None if it is not."""
         return self._options.get(id(widget))
 
-    def slaves(self, container: Any = None) -> list[Any]:  # noqa: ARG002
+    def slaves(self, container: Container | None = None) -> list[Managed]:  # noqa: ARG002
         """The children being placed, in the order they were added."""
         return list(self._order)
 
     # ------------------------------------------------------------ geometry
 
-    def requested(self, container: Any = None) -> Size:  # noqa: ARG002
+    def requested(self, container: Container | None = None) -> Size:  # noqa: ARG002
         """Nothing.
 
         A placed child makes no claim on its container's size - that is what
@@ -120,14 +119,18 @@ class PlaceLayout:
         """
         return Size(0, 0)
 
-    def apply(self, container: Any, area: Rect) -> None:
+    def apply(self, container: Container, area: Rect) -> None:
         """Put each child where its options say."""
         for widget in list(self._order):
             options = self._options[id(widget)]
             self._place(widget, container, area, options)
 
     def _place(
-        self, widget: Any, container: Any, area: Rect, options: PlaceOptions
+        self,
+        widget: Managed,
+        container: Container,
+        area: Rect,
+        options: PlaceOptions,
     ) -> None:
         """Work out one child's region and give it to them."""
         frame = self._frame(container, area, options.bordermode)
@@ -167,7 +170,7 @@ class PlaceLayout:
         return max(0, int(available * relative) + (absolute or 0))
 
     @staticmethod
-    def _frame(container: Any, area: Rect, bordermode: str) -> Rect:
+    def _frame(container: Container, area: Rect, bordermode: str) -> Rect:
         """The rectangle a child's coordinates are measured against.
 
         ``inside`` is the container's content area, which is what ``area``
@@ -185,7 +188,7 @@ class PlaceLayout:
         )
 
     @staticmethod
-    def _assign(widget: Any, rect: Rect) -> None:
+    def _assign(widget: Managed, rect: Rect) -> None:
         """Give a child its region, in coordinates relative to its master."""
         master = widget.master
         origin_x = master.winfo_rootx() if master is not None else 0

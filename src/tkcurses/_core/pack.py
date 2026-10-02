@@ -37,9 +37,9 @@ whatever happens to remain when the last child is reached.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from tkcurses._core.geometry import Rect, Size
+from tkcurses._core.geometry import Managed, Rect, Size
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -127,18 +127,18 @@ class PackLayout:
     propagates = True
 
     def __init__(self) -> None:
-        self._order: list[Any] = []
+        self._order: list[Managed] = []
         self._options: dict[int, PackOptions] = {}
 
     # ----------------------------------------------------------- membership
 
     def add(
         self,
-        widget: Any,
+        widget: Managed,
         options: PackOptions,
         *,
-        before: Any = None,
-        after: Any = None,
+        before: Managed | None = None,
+        after: Managed | None = None,
     ) -> None:
         """Pack ``widget``, or re-pack it with new options.
 
@@ -155,21 +155,21 @@ class PackLayout:
         elif after is not None:
             self._move(widget, self._index(after) + 1)
 
-    def remove(self, widget: Any) -> None:
+    def remove(self, widget: Managed) -> None:
         """Stop packing ``widget``. Removing what is not packed is harmless."""
         if widget in self._order:
             self._order.remove(widget)
         self._options.pop(id(widget), None)
 
-    def options_for(self, widget: Any) -> PackOptions | None:
+    def options_for(self, widget: Managed) -> PackOptions | None:
         """How ``widget`` is packed, or None if it is not."""
         return self._options.get(id(widget))
 
-    def slaves(self, container: Any = None) -> list[Any]:  # noqa: ARG002
+    def slaves(self, container: object = None) -> list[Managed]:  # noqa: ARG002
         """The children being packed, in packing order."""
         return list(self._order)
 
-    def _index(self, widget: Any) -> int:
+    def _index(self, widget: Managed) -> int:
         """Position of ``widget`` in the packing order.
 
         Raises:
@@ -181,7 +181,7 @@ class PackLayout:
         except ValueError:
             raise ValueError(f"{widget!r} is not packed in this container") from None
 
-    def _move(self, widget: Any, position: int) -> None:
+    def _move(self, widget: Managed, position: int) -> None:
         """Move ``widget`` to ``position`` in the packing order."""
         current = self._order.index(widget)
         self._order.pop(current)
@@ -191,7 +191,7 @@ class PackLayout:
 
     # ------------------------------------------------------------ geometry
 
-    def requested(self, container: Any = None) -> Size:  # noqa: ARG002
+    def requested(self, container: object = None) -> Size:  # noqa: ARG002
         """Room the packed children need altogether.
 
         Along each child's own axis the demands add up; across it they do not,
@@ -210,7 +210,7 @@ class PackLayout:
                 height = max(height, demand.height)
         return Size(width, height)
 
-    def apply(self, container: Any, area: Rect) -> None:  # noqa: ARG002
+    def apply(self, container: Managed, area: Rect) -> None:  # noqa: ARG002
         """Cut parcels out of ``area`` and put each child in its own."""
         cavity = area
         extra = self._expansion(area)
@@ -294,7 +294,7 @@ class PackLayout:
                 rest = Rect(cavity.x, cavity.y, cavity.width - width, cavity.height)
         return parcel, rest
 
-    def _place(self, widget: Any, parcel: Rect, options: PackOptions) -> None:
+    def _place(self, widget: Managed, parcel: Rect, options: PackOptions) -> None:
         """Put one child inside its parcel, honouring fill and anchor."""
         inner = Rect(
             parcel.x + options.padx,
@@ -316,12 +316,12 @@ class PackLayout:
         self._assign(widget, Rect(x, y, width, height))
 
     @staticmethod
-    def _requested_of(widget: Any) -> Size:
+    def _requested_of(widget: Managed) -> Size:
         """The size a child asked for."""
         return Size(widget.winfo_reqwidth(), widget.winfo_reqheight())
 
     @staticmethod
-    def _assign(widget: Any, rect: Rect) -> None:
+    def _assign(widget: Managed, rect: Rect) -> None:
         """Give a child its region, in coordinates relative to its master.
 
         The parcel arithmetic is done in screen cells, because that is what a
@@ -336,6 +336,6 @@ class PackLayout:
         )
 
 
-def pack_order(layout: PackLayout) -> Iterable[Any]:
+def pack_order(layout: PackLayout) -> Iterable[Managed]:
     """The packing order, for callers that only want to read it."""
     return tuple(layout.slaves())

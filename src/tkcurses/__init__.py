@@ -1386,7 +1386,13 @@ class Misc:
         manager = self._layout_manager
         if not isinstance(manager, PackLayout):
             return []
-        return list(manager.slaves(self))
+        # cast, with a reason: a geometry manager hands back exactly the
+        # objects it was given, and in this library those are always widgets.
+        # It describes them as Managed because that is all IT needs of them -
+        # see _core.geometry.Managed - while the public contract here is
+        # tkinter's, a list of widgets. The cast is the one place that
+        # difference is stated rather than papered over with Any. TkCurses-d40.
+        return cast("list[Misc]", list(manager.slaves(self)))
 
     slaves = pack_slaves
 
@@ -1397,7 +1403,13 @@ class Misc:
         manager = self._layout_manager
         if not isinstance(manager, GridLayout):
             return []
-        return list(manager.slaves(self, row=row, column=column))
+        # cast, with a reason: a geometry manager hands back exactly the
+        # objects it was given, and in this library those are always widgets.
+        # It describes them as Managed because that is all IT needs of them -
+        # see _core.geometry.Managed - while the public contract here is
+        # tkinter's, a list of widgets. The cast is the one place that
+        # difference is stated rather than papered over with Any. TkCurses-d40.
+        return cast("list[Misc]", list(manager.slaves(self, row=row, column=column)))
 
     def grid_size(self) -> tuple[int, int]:
         """The grid's extent as ``(columns, rows)``."""
@@ -1510,7 +1522,13 @@ class Misc:
         manager = self._layout_manager
         if not isinstance(manager, PlaceLayout):
             return []
-        return list(manager.slaves(self))
+        # cast, with a reason: a geometry manager hands back exactly the
+        # objects it was given, and in this library those are always widgets.
+        # It describes them as Managed because that is all IT needs of them -
+        # see _core.geometry.Managed - while the public contract here is
+        # tkinter's, a list of widgets. The cast is the one place that
+        # difference is stated rather than papered over with Any. TkCurses-d40.
+        return cast("list[Misc]", list(manager.slaves(self)))
 
     def pack_propagate(self, flag: bool | None = None) -> bool:
         """Get or set whether this container resizes to fit its children.
@@ -2619,6 +2637,15 @@ class Pack:
         # Supplied by the widget this is mixed into, declared so the contract
         # is visible and the mixin still type-checks on its own.
         master: Misc | None
+
+        # The rest of what a geometry manager needs of the widget this is
+        # mixed into - see _core.geometry.Managed, which names exactly these
+        # four. Only master was declared, so handing self to the manager
+        # type-checked against nothing at all. TkCurses-d40.
+        def winfo_reqwidth(self) -> int: ...
+        def winfo_reqheight(self) -> int: ...
+        def _allocate(self, rect: Rect) -> None: ...
+
         _manager: str
         _manager_container: Misc | None
 
@@ -2794,6 +2821,15 @@ class Grid:
 
     if TYPE_CHECKING:
         master: Misc | None
+
+        # The rest of what a geometry manager needs of the widget this is
+        # mixed into - see _core.geometry.Managed, which names exactly these
+        # four. Only master was declared, so handing self to the manager
+        # type-checked against nothing at all. TkCurses-d40.
+        def winfo_reqwidth(self) -> int: ...
+        def winfo_reqheight(self) -> int: ...
+        def _allocate(self, rect: Rect) -> None: ...
+
         _manager: str
         _manager_container: Misc | None
 
@@ -2959,6 +2995,15 @@ class Place:
 
     if TYPE_CHECKING:
         master: Misc | None
+
+        # The rest of what a geometry manager needs of the widget this is
+        # mixed into - see _core.geometry.Managed, which names exactly these
+        # four. Only master was declared, so handing self to the manager
+        # type-checked against nothing at all. TkCurses-d40.
+        def winfo_reqwidth(self) -> int: ...
+        def winfo_reqheight(self) -> int: ...
+        def _allocate(self, rect: Rect) -> None: ...
+
         _manager: str
         _manager_container: Misc | None
 

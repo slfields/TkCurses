@@ -31,10 +31,13 @@ starting at ``(1, 1)``. Widgets that ignore this overwrite their own frame.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Protocol
 
 __all__ = [
     "BORDER_WIDTH",
+    "Container",
     "Insets",
+    "Managed",
     "Point",
     "Rect",
     "Size",
@@ -99,6 +102,63 @@ class Size:
     def grown(self, dw: int, dh: int) -> Size:
         """Return this size enlarged by ``(dw, dh)``, clamped at zero."""
         return Size(max(0, self.width + dw), max(0, self.height + dh))
+
+
+class Managed(Protocol):
+    """What a geometry manager needs of a widget it places.
+
+    Derived from what pack, grid, place and paned actually use rather than from
+    what a widget happens to have - measured with ast across the four modules,
+    which touch exactly these four members on a widget and nothing else. Those
+    parameters were ``Any``, which meant the checker verified nothing about
+    them: a typo in a method name, or a value that was never a widget at all,
+    would have reached a test rather than mypy.
+
+    Deliberately NOT the whole of Misc. A geometry manager has no business with
+    a widget's options, bindings or children, and saying so in the type is how
+    that stays true. TkCurses-d40.
+    """
+
+    master: Any
+
+    def winfo_reqwidth(self) -> int:
+        """How wide the widget would like to be."""
+        ...
+
+    def winfo_reqheight(self) -> int:
+        """How tall the widget would like to be."""
+        ...
+
+    def _allocate(self, rect: Rect) -> None:
+        """Take the region the manager decided on."""
+        ...
+
+
+class Container(Protocol):
+    """What ``place`` needs of the widget it measures against.
+
+    Separate from :class:`Managed` because the two are used for different
+    things and only ``place`` needs this one: relative placement is computed
+    against the container's screen position and current size, where the other
+    three managers only ever hand out parcels of an area they were given.
+    Measured, again - ``pack``, ``grid`` and ``paned`` never touch these.
+    """
+
+    def winfo_rootx(self) -> int:
+        """The container's left edge in screen cells."""
+        ...
+
+    def winfo_rooty(self) -> int:
+        """The container's top edge in screen cells."""
+        ...
+
+    def winfo_width(self) -> int:
+        """How wide the container is now."""
+        ...
+
+    def winfo_height(self) -> int:
+        """How tall the container is now."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)

@@ -34,9 +34,9 @@ resized underneath it.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Protocol
 
-from tkcurses._core.geometry import Rect, Size
+from tkcurses._core.geometry import Managed, Rect, Size
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -46,6 +46,28 @@ __all__ = ["SASH_WIDTH", "PaneOptions", "PanedLayout", "distribute", "place_sash
 #: Cells a sash occupies between two panes. One, because a terminal has no
 #: half cells to spare on furniture and a single line reads as a divider.
 SASH_WIDTH = 1
+
+
+class Pane(Managed, Protocol):
+    """A pane: a managed widget that the paned window also operates.
+
+    Wider than :class:`~tkcurses._core.geometry.Managed`, and the difference is
+    the point. The LAYOUT needs only the four members any geometry manager
+    needs; the WIDGET that owns the layout maps its panes and reports them by
+    path. Measured from what PanedWindow uses on what ``slaves()`` hands back:
+    ``_w`` for ``panes()``, which answers paths as Tk does, and ``_map`` when a
+    pane is first shown.
+
+    Typing ``slaves()`` as returning plain ``Managed`` made both of those an
+    error, and the checker was right - the layout was promising less than its
+    own caller relies on. TkCurses-d40.
+    """
+
+    _w: str
+
+    def _map(self) -> None:
+        """Show the pane, once there is somewhere to show it."""
+        ...
 
 
 @dataclass
@@ -244,7 +266,7 @@ class PanedLayout:
 
     def __init__(self, orient: str = "horizontal") -> None:
         self.orient = orient
-        self._order: list[Any] = []
+        self._order: list[Pane] = []
         self._options: dict[int, PaneOptions] = {}
         #: Sizes as they currently are, remembered across relayouts so that a
         #: sash a person dragged stays where they put it.
@@ -257,14 +279,14 @@ class PanedLayout:
 
     # ----------------------------------------------------------- membership
 
-    def add(self, widget: Any, options: PaneOptions) -> None:
+    def add(self, widget: Pane, options: PaneOptions) -> None:
         """Add a pane, or change one already there."""
         if widget not in self._order:
             self._order.append(widget)
             self._sizes = []
         self._options[id(widget)] = options
 
-    def insert(self, index: int, widget: Any, options: PaneOptions) -> None:
+    def insert(self, index: int, widget: Pane, options: PaneOptions) -> None:
         """Add a pane at a position rather than at the end."""
         if widget in self._order:
             self._order.remove(widget)
@@ -272,24 +294,24 @@ class PanedLayout:
         self._options[id(widget)] = options
         self._sizes = []
 
-    def remove(self, widget: Any) -> None:
+    def remove(self, widget: Pane) -> None:
         """Take a pane out."""
         if widget in self._order:
             self._order.remove(widget)
         self._options.pop(id(widget), None)
         self._sizes = []
 
-    def options_for(self, widget: Any) -> PaneOptions | None:
+    def options_for(self, widget: Pane) -> PaneOptions | None:
         """One pane's options, or None if it is not in this window."""
         return self._options.get(id(widget))
 
-    def slaves(self, container: Any = None) -> list[Any]:  # noqa: ARG002
+    def slaves(self, container: Pane | None = None) -> list[Pane]:  # noqa: ARG002
         """The panes, in order."""
         return list(self._order)
 
     # -------------------------------------------------------------- geometry
 
-    def requested(self, container: Any = None) -> Size:  # noqa: ARG002
+    def requested(self, container: Pane | None = None) -> Size:  # noqa: ARG002
         """What the panes together need, sashes included."""
         if not self._order:
             return Size(0, 0)
@@ -303,7 +325,7 @@ class PanedLayout:
         along += SASH_WIDTH * (len(self._order) - 1)
         return Size(across, along) if self.vertical else Size(along, across)
 
-    def _wanted(self, widget: Any, options: PaneOptions) -> int:
+    def _wanted(self, widget: Pane, options: PaneOptions) -> int:
         """How long one pane wants to be, along the window's direction."""
         if options.size is not None:
             return max(options.size, options.minsize)
@@ -313,7 +335,7 @@ class PanedLayout:
             natural = int(widget.winfo_reqwidth())
         return max(natural, options.minsize)
 
-    def _across_of(self, widget: Any) -> int:
+    def _across_of(self, widget: Pane) -> int:
         """How wide one pane wants to be, across the window's direction."""
         return int(
             widget.winfo_reqwidth() if self.vertical else widget.winfo_reqheight()
@@ -352,7 +374,7 @@ class PanedLayout:
             return 0
         return sum(self._sizes[: sash + 1]) + sash * SASH_WIDTH
 
-    def apply(self, container: Any, area: Rect) -> None:
+    def apply(self, container: Managed, area: Rect) -> None:
         """Give each pane its strip of the window, then redraw the sashes.
 
         The container is repainted here rather than left to the engine
@@ -375,7 +397,7 @@ class PanedLayout:
             redraw()
 
     @staticmethod
-    def _assign(widget: Any, rect: Rect) -> None:
+    def _assign(widget: Pane, rect: Rect) -> None:
         """Give a pane its region, in coordinates relative to its master."""
         master = widget.master
         origin_x = master.winfo_rootx() if master is not None else 0
