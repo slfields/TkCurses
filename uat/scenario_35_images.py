@@ -154,9 +154,15 @@ def build(root, screen):
     far.place(x=59, y=0, relheight=1.0, relwidth=1.0, width=-59)
 
     def labelled(parent, text, row):
-        """A caption in column 0 of ``parent``'s grid."""
+        """A caption in column 0 of ``parent``'s grid.
+
+        One cell of clearance on the right of the caption and none on its
+        left, which is what this wanted all along: it had to settle for
+        ``padx=1`` on both sides until grid learned Tk's pair form
+        (TkCurses-l8f).
+        """
         tkcurses.Label(parent, text=text, anchor="nw").grid(
-            row=row, column=0, sticky="nw", padx=1
+            row=row, column=0, sticky="nw", padx=(0, 1)
         )
 
     # Four widgets over one image, so that a change to the image is visibly

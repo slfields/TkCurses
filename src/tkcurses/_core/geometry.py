@@ -30,6 +30,8 @@ starting at ``(1, 1)``. Widgets that ignore this overwrite their own frame.
 
 from __future__ import annotations
 
+import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -38,6 +40,7 @@ __all__ = [
     "Container",
     "Insets",
     "Managed",
+    "Pad",
     "Point",
     "Rect",
     "Size",
@@ -45,6 +48,9 @@ __all__ = [
     "clip_text",
     "content_rect",
     "content_size",
+    "parse_distance",
+    "parse_pad",
+    "parse_single_pad",
 ]
 
 #: Cells consumed by a border on one side. Curses borders are one cell wide.
@@ -202,6 +208,150 @@ class Insets:
             self.right + other.right,
             self.bottom + other.bottom,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class Pad:
+    """One axis of a geometry manager's ``padx`` or ``pady``.
+
+    Tk's external padding is two distances, not one: ``padx=(0, 1)`` pads the
+    right of a widget and not its left. A single number sets both. The pair is
+    the only form that can express either, so it is what gets stored, and the
+    read-back form is derived from it rather than remembered separately -
+    which is also what Tk does, reporting ``(2, 2)`` back as plain ``2``.
+    """
+
+    before: int = 0
+    after: int = 0
+
+    def __post_init__(self) -> None:
+        if self.before < 0 or self.after < 0:
+            raise ValueError(f"negative pad: {self.before}, {self.after}")
+
+    @classmethod
+    def uniform(cls, amount: int) -> Pad:
+        """The same distance on both sides, which is what a number means."""
+        return cls(amount, amount)
+
+    @property
+    def total(self) -> int:
+        """Cells consumed on this axis, both sides together."""
+        return self.before + self.after
+
+    @property
+    def value(self) -> int | tuple[int, int]:
+        """What ``pack_info`` and ``grid_info`` report, in Tk's own form.
+
+        A number when both sides match, a two-tuple when they do not. Measured
+        against Tk 8.6: ``padx=(2, 2)`` reads back as ``2``, ``padx="2 8"`` as
+        ``(2, 8)``.
+        """
+        return self.before if self.before == self.after else (self.before, self.after)
+
+
+def parse_distance(value: object) -> int:
+    """One of Tk's screen distances, in cells.
+
+    Rounds rather than truncates, as Tk does: ``2.6`` is three cells and
+    ``0.5`` is one. Tk's unit suffixes (``2c``, ``1i``) have no meaning on a
+    character grid and are not accepted - TkCurses-2qo.
+
+    Raises:
+        ValueError: If the value is not a number or a string holding one.
+    """
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if not isinstance(value, (float, str)):
+        raise ValueError(f"not a screen distance: {value!r}")
+    try:
+        number = float(value)
+    except ValueError:
+        raise ValueError(f"not a screen distance: {value!r}") from None
+    return math.floor(number + 0.5)
+
+
+def _pad_parts(value: object) -> list[object]:
+    """The parts of a pad specification, before any of them are converted.
+
+    A number is one part; a string is split on whitespace, which is how Tk
+    spells a pair in a single argument; any other sequence is its own parts.
+    """
+    if isinstance(value, (int, float)):
+        return [value]
+    if isinstance(value, str):
+        return list(value.split())
+    if isinstance(value, Iterable):
+        return list(value)
+    return [value]
+
+
+def parse_pad(value: object) -> Pad:
+    """A geometry manager's ``padx`` or ``pady``, as a distance per side.
+
+    Accepts every form Tk does: a number, a one- or two-element sequence, or a
+    string holding one or two numbers. One part pads both sides equally.
+
+    Raises:
+        ValueError: With Tk's own wording, so the caller can hand the message
+            straight to a ``TclError``.
+    """
+    parts = _pad_parts(value)
+    if len(parts) not in (1, 2):
+        raise ValueError("wrong number of parts to pad specification")
+    distances = []
+    for part in parts:
+        try:
+            distance = parse_distance(part)
+        except ValueError:
+            distance = -1  # reported the same way a negative one is
+        if distance < 0:
+            raise ValueError(
+                f'bad pad value "{part}": must be positive screen distance'
+            )
+        distances.append(distance)
+    if len(distances) == 1:
+        return Pad.uniform(distances[0])
+    return Pad(distances[0], distances[1])
+
+
+def parse_single_pad(value: object, option: str) -> int:
+    """A geometry manager's ``ipadx`` or ``ipady``, which takes one distance.
+
+    Internal padding has no two-value form - measured, Tk 8.6 rejects
+    ``ipadx=(2, 8)`` outright where it accepts ``padx=(2, 8)``. The asymmetry
+    is Tk's, so it is kept rather than tidied away.
+
+    A sequence is joined and parsed as the one distance Tcl would have been
+    handed, which is why ``ipadx=(2,)`` is accepted and ``ipadx=(2, 8)`` is
+    not: tkinter stringifies both, and only the first spells a distance. The
+    first version of this rejected the one-element form, which the differential
+    probe against real Tk caught.
+
+    Raises:
+        ValueError: With Tk's own wording, which names the option and quotes
+            the whole value rather than the offending part.
+    """
+    spec = _as_tcl(value) if isinstance(value, Iterable) else value
+    try:
+        distance = parse_distance(spec)
+    except ValueError:
+        distance = -1
+    if distance < 0:
+        raise ValueError(
+            f'bad {option} value "{_as_tcl(value)}": must be positive screen distance'
+        )
+    return distance
+
+
+def _as_tcl(value: object) -> str:
+    """A value as Tcl would have seen it, for quoting in an error message."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Iterable):
+        return " ".join(str(part) for part in value)
+    return str(value)
 
 
 @dataclass(frozen=True, slots=True)

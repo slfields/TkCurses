@@ -35,7 +35,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from tkcurses._core.geometry import Managed, Rect, Size
+from tkcurses._core.geometry import Managed, Pad, Rect, Size
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -74,8 +74,10 @@ class GridOptions:
         columnspan: How many columns.
         sticky: Sides of the cell the child is stuck to; stretching between
             two opposite sides, aligning against a single one.
-        padx: Cells of space either side of the child, inside its cell.
-        pady: Cells above and below.
+        padx: Cells of space left and right of the child, inside its cell.
+            The two sides are separate - ``padx=(0, 1)`` pads only the right -
+            which is why this is a :class:`Pad` and not a number.
+        pady: Cells above and below, likewise per side.
         ipadx: Cells added to the child's own width.
         ipady: Cells added to the child's own height.
     """
@@ -85,16 +87,18 @@ class GridOptions:
     rowspan: int = 1
     columnspan: int = 1
     sticky: str = ""
-    padx: int = 0
-    pady: int = 0
+    # default_factory, not Pad(), only to satisfy RUF009: a frozen Pad is
+    # safe to share, but the rule cannot tell one from a mutable default.
+    padx: Pad = field(default_factory=Pad)
+    pady: Pad = field(default_factory=Pad)
     ipadx: int = 0
     ipady: int = 0
 
     def demand(self, requested: Size) -> Size:
         """Room this child needs in its cell, padding included."""
         return Size(
-            requested.width + 2 * self.ipadx + 2 * self.padx,
-            requested.height + 2 * self.ipady + 2 * self.pady,
+            requested.width + 2 * self.ipadx + self.padx.total,
+            requested.height + 2 * self.ipady + self.pady.total,
         )
 
 
@@ -374,10 +378,10 @@ class GridLayout:
     def _place(self, widget: Managed, cell: Rect, options: GridOptions) -> None:
         """Put one child in its cell, honouring sticky."""
         inner = Rect(
-            cell.x + options.padx,
-            cell.y + options.pady,
-            max(0, cell.width - 2 * options.padx),
-            max(0, cell.height - 2 * options.pady),
+            cell.x + options.padx.before,
+            cell.y + options.pady.before,
+            max(0, cell.width - options.padx.total),
+            max(0, cell.height - options.pady.total),
         )
         sides = parse_sticky(options.sticky)
         requested = self._requested_of(widget)

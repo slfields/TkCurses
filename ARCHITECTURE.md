@@ -2944,10 +2944,22 @@ once per manager; there is one container and one setting, so `pack_propagate`,
 | `fill` | NONE/X/Y/BOTH | Same (cell fill) |
 | `expand` | bool | Same |
 | `anchor` | N/S/E/W/CENTER/etc. | Same (cell anchor) |
-| `padx` | pixels | Cells |
-| `pady` | pixels | Cells |
+| `padx` | pixels, one or two | Cells, one or two |
+| `pady` | pixels, one or two | Cells, one or two |
 | `ipadx` | pixels | Cells |
 | `ipady` | pixels | Cells |
+
+**External padding takes a distance per side; internal padding does not.**
+`padx=(0, 1)` pads the right of a widget and not its left, and `padx="0 1"`
+spells the same thing in one string. `ipadx` has no two-value form at all:
+`ipadx=(2, 8)` is an error where `padx=(2, 8)` is fine. That asymmetry is
+Tk's, measured rather than assumed: the same 168-case matrix was run through
+`tkinter` and through this library and the answers diffed, error wording
+included. `tests/test_pad_options.py` carries that measurement as a table, one
+row per form, checked against both managers and both axes. One parser serves both managers -
+`parse_pad` and `parse_single_pad` in `_core/geometry.py`, with `Pad` holding
+the two sides and deriving the form `pack_info` reads back, so there is no
+second copy of the normalisation to keep in step. `TkCurses-l8f`.
 
 #### Grid Class
 
@@ -2968,8 +2980,8 @@ once per manager; there is one container and one setting, so `pack_propagate`,
 | `rowspan` | int | Same |
 | `columnspan` | int | Same |
 | `sticky` | N/S/E/W combinations | Same |
-| `padx` | pixels | Cells |
-| `pady` | pixels | Cells |
+| `padx` | pixels, one or two | Cells, one or two |
+| `pady` | pixels, one or two | Cells, one or two |
 | `ipadx` | pixels | Cells |
 | `ipady` | pixels | Cells |
 

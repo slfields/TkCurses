@@ -290,6 +290,45 @@ def test_ipadx_grows_the_widget(root):
     assert box.winfo_width() == 14
 
 
+def test_an_asymmetric_padx_pads_one_side_of_the_cell(root):
+    """``padx=(0, 3)`` keeps the widget against the left of its cell.
+
+    The three cells come off the right instead, where ``padx=3`` would have
+    taken three from each side. TkCurses-l8f wanted exactly this, for a caption
+    needing one cell of clearance on its right only.
+    """
+    root.grid_columnconfigure(0, weight=1)
+    box = Box(root, "a", width=10, height=2)
+    box.grid(row=0, column=0, sticky="ew", padx=(0, 3))
+    root.update_layout()
+    assert (box.winfo_x(), box.winfo_width()) == (0, 37)
+
+
+def test_the_near_side_of_an_asymmetric_padx_moves_the_widget(root):
+    root.grid_columnconfigure(0, weight=1)
+    box = Box(root, "a", width=10, height=2)
+    box.grid(row=0, column=0, sticky="ew", padx=(3, 0))
+    root.update_layout()
+    assert (box.winfo_x(), box.winfo_width()) == (3, 37)
+
+
+def test_an_asymmetric_pady_pads_the_bottom_without_moving_the_top(root):
+    root.grid_rowconfigure(0, weight=1)
+    box = Box(root, "a", width=10, height=2)
+    box.grid(row=0, column=0, sticky="ns", pady=(0, 4))
+    root.update_layout()
+    assert (box.winfo_y(), box.winfo_height()) == (0, 8)
+
+
+def test_an_asymmetric_pad_widens_the_column_by_its_total(root):
+    """A pair contributes left plus right, not twice either half."""
+    Box(root, "a", width=10, height=2).grid(row=0, column=0, padx=(1, 3))
+    right = Box(root, "b", width=4, height=2)
+    right.grid(row=0, column=1)
+    root.update_layout()
+    assert right.winfo_x() == 14
+
+
 def test_padding_widens_the_column(root):
     Box(root, "a", width=10, height=2).grid(row=0, column=0, padx=2)
     right = Box(root, "b", width=4, height=2)

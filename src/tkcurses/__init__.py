@@ -105,6 +105,8 @@ from tkcurses._core.geometry import (
     clamp,
     clip_text,
     content_rect,
+    parse_pad,
+    parse_single_pad,
 )
 from tkcurses._core.grid import (
     GridLayout,
@@ -2730,8 +2732,8 @@ class Pack:
             "fill": options.fill,
             "expand": options.expand,
             "anchor": options.anchor,
-            "padx": options.padx,
-            "pady": options.pady,
+            "padx": options.padx.value,
+            "pady": options.pady.value,
             "ipadx": options.ipadx,
             "ipady": options.ipady,
         }
@@ -2803,13 +2805,39 @@ def _pack_options(
     except ValueError as error:
         raise TclError(str(error)) from None
     options.expand = bool(options.expand)
-    for name in ("padx", "pady", "ipadx", "ipady"):
-        value = getattr(options, name)
-        try:
-            setattr(options, name, max(0, int(value)))
-        except (TypeError, ValueError):
-            raise TclError(f'bad pad value "{value}"') from None
+    _check_pads(options, given)
     return options
+
+
+def _check_pads(options: PackOptions | GridOptions, given: dict[str, Any]) -> None:
+    """Parse the four pad options of whichever manager is being configured.
+
+    ``padx``/``pady`` take a distance per side; ``ipadx``/``ipady`` take one
+    distance only. The asymmetry is Tk's own, measured rather than assumed:
+    Tk 8.6 accepts ``padx=(2, 8)`` and rejects ``ipadx=(2, 8)`` with
+    ``bad ipadx value "2 8": must be positive screen distance``.
+
+    Only options named in this call are re-parsed. Ones the widget already had
+    are already :class:`Pad` instances, and feeding a ``Pad`` back through
+    :func:`parse_pad` would be a second, lossy conversion.
+
+    Raises:
+        TclError: With Tk's wording, for a value Tk would refuse.
+    """
+    for name in ("padx", "pady"):
+        if name not in given:
+            continue
+        try:
+            setattr(options, name, parse_pad(getattr(options, name)))
+        except ValueError as error:
+            raise TclError(str(error)) from None
+    for name in ("ipadx", "ipady"):
+        if name not in given:
+            continue
+        try:
+            setattr(options, name, parse_single_pad(getattr(options, name), name))
+        except ValueError as error:
+            raise TclError(str(error)) from None
 
 
 class Grid:
@@ -2924,8 +2952,8 @@ class Grid:
             "rowspan": options.rowspan,
             "columnspan": options.columnspan,
             "sticky": options.sticky,
-            "padx": options.padx,
-            "pady": options.pady,
+            "padx": options.padx.value,
+            "pady": options.pady.value,
             "ipadx": options.ipadx,
             "ipady": options.ipady,
         }
@@ -2971,12 +2999,13 @@ def _grid_options(
         parse_sticky(options.sticky)
     except ValueError as error:
         raise TclError(str(error)) from None
-    for name in ("row", "column", "padx", "pady", "ipadx", "ipady"):
+    for name in ("row", "column"):
         value = getattr(options, name)
         try:
             setattr(options, name, max(0, int(value)))
         except (TypeError, ValueError):
             raise TclError(f'expected integer but got "{value}"') from None
+    _check_pads(options, given)
     for name in ("rowspan", "columnspan"):
         value = getattr(options, name)
         try:

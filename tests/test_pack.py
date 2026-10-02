@@ -277,6 +277,41 @@ def test_ipady_grows_the_widget_itself(root):
     assert box.winfo_height() == 4
 
 
+def test_an_asymmetric_padx_pads_one_side_and_not_the_other(root):
+    """``padx=(0, 2)`` is two cells on the right and none on the left.
+
+    The widget stays against the left edge of its parcel and loses the two
+    cells off its width, where ``padx=2`` would have moved it to x=2 and lost
+    four. This is what TkCurses-l8f wanted and could not say.
+    """
+    box = Box(root, "a", width=10, height=2)
+    box.pack(fill="x", padx=(0, 2))
+    root.update_layout()
+    assert geometry(box) == (0, 0, 38, 2)
+
+
+def test_the_near_side_of_an_asymmetric_padx_moves_the_widget(root):
+    box = Box(root, "a", width=10, height=2)
+    box.pack(fill="x", padx=(2, 0))
+    root.update_layout()
+    assert geometry(box) == (2, 0, 38, 2)
+
+
+def test_an_asymmetric_pady_pads_the_bottom_without_moving_the_top(root):
+    box = Box(root, "a", width=10, height=2)
+    box.pack(fill="both", expand=True, pady=(0, 3))
+    root.update_layout()
+    assert geometry(box) == (0, 0, 40, 9)
+
+
+def test_an_asymmetric_pad_asks_the_container_for_both_sides(root):
+    """A pair contributes its total, not twice either half."""
+    box = Box(root, "a", width=4, height=1)
+    box.pack(padx=(1, 5), pady=(0, 3))
+    root.update_layout()
+    assert root._layout_manager.requested(root) == Size(10, 4)
+
+
 def test_padding_is_taken_out_of_the_next_childs_cavity(root):
     first = Box(root, "a", height=2)
     second = Box(root, "b", height=2)

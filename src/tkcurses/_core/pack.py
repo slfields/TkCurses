@@ -36,10 +36,10 @@ whatever happens to remain when the last child is reached.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from tkcurses._core.geometry import Managed, Rect, Size
+from tkcurses._core.geometry import Managed, Pad, Rect, Size
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -88,8 +88,10 @@ class PackOptions:
         fill: Whether the child stretches to its parcel, and in which axis.
         expand: Whether the child claims a share of the leftover space.
         anchor: Where the child sits in its parcel when it does not fill it.
-        padx: Cells of space either side of the child, inside its parcel.
-        pady: Cells of space above and below.
+        padx: Cells of space left and right of the child, inside its
+            parcel. The two sides are separate - ``padx=(0, 1)`` pads only the
+            right - which is why this is a :class:`Pad` and not a number.
+        pady: Cells of space above and below, likewise per side.
         ipadx: Cells added to the child's own width.
         ipady: Cells added to the child's own height.
     """
@@ -98,8 +100,10 @@ class PackOptions:
     fill: str = "none"
     expand: bool = False
     anchor: str = "center"
-    padx: int = 0
-    pady: int = 0
+    # default_factory, not Pad(), only to satisfy RUF009: a frozen Pad is
+    # safe to share, but the rule cannot tell one from a mutable default.
+    padx: Pad = field(default_factory=Pad)
+    pady: Pad = field(default_factory=Pad)
     ipadx: int = 0
     ipady: int = 0
 
@@ -111,8 +115,8 @@ class PackOptions:
     def demand(self, requested: Size) -> Size:
         """Room this child needs in its parcel, padding included."""
         return Size(
-            requested.width + 2 * self.ipadx + 2 * self.padx,
-            requested.height + 2 * self.ipady + 2 * self.pady,
+            requested.width + 2 * self.ipadx + self.padx.total,
+            requested.height + 2 * self.ipady + self.pady.total,
         )
 
 
@@ -297,10 +301,10 @@ class PackLayout:
     def _place(self, widget: Managed, parcel: Rect, options: PackOptions) -> None:
         """Put one child inside its parcel, honouring fill and anchor."""
         inner = Rect(
-            parcel.x + options.padx,
-            parcel.y + options.pady,
-            max(0, parcel.width - 2 * options.padx),
-            max(0, parcel.height - 2 * options.pady),
+            parcel.x + options.padx.before,
+            parcel.y + options.pady.before,
+            max(0, parcel.width - options.padx.total),
+            max(0, parcel.height - options.pady.total),
         )
         requested = self._requested_of(widget)
         width = min(inner.width, requested.width + 2 * options.ipadx)

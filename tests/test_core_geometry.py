@@ -32,6 +32,7 @@ from hypothesis import strategies as st
 from tkcurses._core.geometry import (
     BORDER_WIDTH,
     Insets,
+    Pad,
     Point,
     Rect,
     Size,
@@ -39,6 +40,9 @@ from tkcurses._core.geometry import (
     clip_text,
     content_rect,
     content_size,
+    parse_distance,
+    parse_pad,
+    parse_single_pad,
 )
 
 coords = st.integers(min_value=-50, max_value=50)
@@ -281,3 +285,73 @@ def test_intersects():
     assert not a.intersects(Rect(20, 20, 5, 5))
     # Adjacent but not overlapping: a ends at column 9, b starts at 10.
     assert not a.intersects(Rect(10, 0, 5, 5))
+
+
+# ------------------------------------------------------------------ padding
+
+
+def test_a_pad_knows_both_sides_and_their_total():
+    pad = Pad(1, 5)
+    assert (pad.before, pad.after, pad.total) == (1, 5, 6)
+
+
+def test_a_uniform_pad_is_the_same_distance_twice():
+    assert Pad.uniform(2) == Pad(2, 2)
+
+
+def test_a_negative_pad_is_rejected():
+    with pytest.raises(ValueError, match="negative pad"):
+        Pad(-1, 0)
+
+
+def test_a_pads_read_back_form_is_derived_from_its_sides():
+    """One number when the sides match, a pair when they do not.
+
+    The read-back form is not remembered separately, so there is nothing to
+    keep in step: a Pad cannot report a pair it does not hold.
+    """
+    assert Pad(2, 2).value == 2
+    assert Pad(0, 2).value == (0, 2)
+    assert Pad().value == 0
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(2, 2), (2.6, 3), (0.5, 1), (2.5, 3), ("4", 4), ("2.6", 3), (True, 1), ("+2", 2)],
+)
+def test_a_screen_distance_rounds_rather_than_truncating(value, expected):
+    assert parse_distance(value) == expected
+
+
+@pytest.mark.parametrize("value", ["x", "2c", "", None, object()])
+def test_a_value_that_is_not_a_screen_distance_is_refused(value):
+    with pytest.raises(ValueError, match="not a screen distance"):
+        parse_distance(value)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (3, Pad(3, 3)),
+        ((2, 8), Pad(2, 8)),
+        ("2 8", Pad(2, 8)),
+        ((2,), Pad(2, 2)),
+        ([0, 1], Pad(0, 1)),
+    ],
+)
+def test_a_pad_specification_becomes_a_distance_per_side(value, expected):
+    assert parse_pad(value) == expected
+
+
+def test_a_pad_counts_its_parts_before_converting_them():
+    """Three parts is the wrong shape, whatever the parts say."""
+    with pytest.raises(ValueError, match="wrong number of parts"):
+        parse_pad((1, 2, 3))
+    with pytest.raises(ValueError, match="wrong number of parts"):
+        parse_pad("x y z")
+
+
+def test_a_single_pad_is_the_one_distance_tcl_would_have_been_handed():
+    assert parse_single_pad((2,), "ipadx") == 2
+    with pytest.raises(ValueError, match='bad ipadx value "2 8"'):
+        parse_single_pad((2, 8), "ipadx")
