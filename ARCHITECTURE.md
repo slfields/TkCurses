@@ -3237,9 +3237,9 @@ Selection: [John ███________]
 | `state` | NORMAL/DISABLED/READONLY | Same |
 | `justify` | LEFT/CENTER/RIGHT | Text alignment |
 | `insertwidth` | pixels | 1 cell (cursor) |
-| `validate` | validation condition | `none`, `key`, `all` act; focus modes accepted, inert |
+| `validate` | validation condition | Same: `none`, `key`, `focus`, `focusin`, `focusout`, `all` |
 | `validatecommand` | registered command | Callable given the proposed text |
-| `invalidcommand` | registered command | Callable given nothing |
+| `invalidcommand` | registered command | Callable given the refused text, or nothing |
 
 **Validation gates `insert` and `delete`, not only keystrokes.** `-validate`
 is a condition, and the two that name an edit - `key` and `all` - apply to a
@@ -3266,9 +3266,41 @@ Two rules in that table are not guessable and carry the design:
   An `invalidcommand` that edits the entry also turns validation off; one that
   merely raises does not.
 
-The two validation conditions still missing are validation on a focus change
-(`TkCurses-jd1`) and the forced revalidation Tk runs when a `textvariable` is
-written (`TkCurses-3xb`), both measured in their issues.
+**Tk has three validation conditions, and all three are here.** `-validate`
+names which of them apply, and they are not variations on one thing — each has
+its own trigger, its own idea of what a refusal means, and its own answer when
+a callback misbehaves. The table is measured, 31 scenarios diffed against
+`tkinter`:
+
+| condition | fires when | a refusal means | modes that ask for it |
+|-----------|-----------|-----------------|----------------------|
+| edit | `insert`, `delete`, a keystroke | the edit is discarded; `invalidcommand` runs | `key`, `all` |
+| focus | the focus arrives or leaves | nothing is undone; `invalidcommand` runs | `focus`, `focusin`, `focusout`, `all` |
+| forced | the `textvariable` is written, or first attached | nothing can be undone; **validation is turned off** and `invalidcommand` stays **silent** | every mode but `none` |
+
+Three consequences worth having in mind:
+
+- **The focus condition gates nothing.** There is no proposed value to refuse,
+  only the value already in the field, so a refusal is advisory. A validator
+  that wants to reject what it sees has to change the text itself.
+- **The forced condition cannot say no.** The variable already holds the value
+  by the time the validator is asked, so Tk resolves the contradiction by
+  disabling validation instead — and uniquely, runs no `invalidcommand`.
+- **It fires on attachment too**, at construction and through `configure()`, so
+  a widget given a variable it would refuse starts with validation already off.
+
+The recursion guard is per *episode*, not per condition: any edit attempted from
+inside any validation callback is itself an edit, hits the in-progress flag, and
+that is what disables validation. Which is why a validator editing a `key`-mode
+entry is cut off while the same validator on a `focusout`-mode entry is not —
+under `focusout` the nested edit is not validated, so there is no loop to cut.
+Falling out of one rule rather than two special cases is the point.
+
+One divergence, the single disagreement in those 31 scenarios: a validator that
+edits the entry while being asked about a variable write. Tk abandons the whole
+update and leaves the widget holding the old text while the variable holds the
+new — a widget out of step with its own `textvariable`. Here both the write and
+the edit land. `TkCurses-doh` records it, with the measurement.
 
 ---
 

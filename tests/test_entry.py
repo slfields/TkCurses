@@ -518,6 +518,259 @@ def test_an_invalidcommand_that_edits_the_entry_turns_validation_off(validated):
     assert str(entry.cget("validate")) == "none"
 
 
+# ------------------------------------------- the focus and forced conditions
+#
+# Tk has three validation conditions and this library had one. The two added
+# here were measured by running 31 scenarios through tkinter and through this
+# library and diffing the callbacks, the text and the validate option: 30 agree
+# exactly and the one that does not is TkCurses-doh, recorded as a divergence.
+# TkCurses-jd1 (focus), TkCurses-3xb (forced), Tcl/Tk 9.0.2.
+
+
+@pytest.fixture
+def pair(root):
+    """Two entries, so the focus has somewhere to come from and go to."""
+    first = Entry(root, name="first")
+    first._allocate(Rect(0, 0, 22, 3))
+    first._map()
+    second = Entry(root, name="second")
+    second._allocate(Rect(0, 4, 22, 3))
+    second._map()
+    return first, second
+
+
+def watched(entry, mode, verdict=lambda proposed: False):
+    """Give an entry a recording validator and the mode under test."""
+    log = []
+    entry.configure(
+        validate="none",
+        validatecommand=lambda proposed: (
+            log.append(("validate", proposed)) or verdict(proposed)
+        ),
+        invalidcommand=lambda proposed: log.append(("invalid", proposed)),
+    )
+    entry.insert(0, "abc")
+    entry.configure(validate=mode)
+    return log
+
+
+@pytest.mark.parametrize(
+    ("mode", "on_arrival", "on_departure"),
+    [
+        ("focus", True, True),
+        ("focusin", True, False),
+        ("focusout", False, True),
+        ("all", True, True),
+        ("key", False, False),
+        ("none", False, False),
+    ],
+)
+def test_which_modes_validate_when_the_focus_moves(
+    pair, mode, on_arrival, on_departure
+):
+    """The measured table, which no amount of reading the docs settles."""
+    other, entry = pair
+    log = watched(entry, mode)
+    other.focus_set()
+    del log[:]
+
+    entry.focus_set()
+    assert bool(log) is on_arrival, f"arriving under {mode}"
+    del log[:]
+
+    other.focus_set()
+    assert bool(log) is on_departure, f"leaving under {mode}"
+
+
+def test_a_focus_validator_is_shown_the_text_that_is_there(pair):
+    other, entry = pair
+    log = watched(entry, "focusout")
+    other.focus_set()
+    entry.focus_set()
+    del log[:]
+    other.focus_set()
+    assert log == [("validate", "abc"), ("invalid", "abc")]
+
+
+def test_a_refused_focus_validation_leaves_the_text_alone(pair):
+    """The focus condition gates nothing - there is no proposal to refuse."""
+    other, entry = pair
+    watched(entry, "focusout")
+    other.focus_set()
+    entry.focus_set()
+    other.focus_set()
+    assert entry.get() == "abc"
+    assert str(entry.cget("validate")) == "focusout"
+
+
+def test_a_focus_validator_that_raises_turns_validation_off(pair):
+    other, entry = pair
+
+    def broken(proposed):
+        raise RuntimeError("validator is broken")
+
+    watched(entry, "focusout", verdict=broken)
+    other.focus_set()
+    entry.focus_set()
+    other.focus_set()
+    assert entry.get() == "abc"
+    assert str(entry.cget("validate")) == "none"
+
+
+def test_a_focus_validator_may_edit_the_entry_without_being_cut_off(pair):
+    """Under a pure focus mode there is no recursion to guard against.
+
+    The nested insert is not itself validated - focusout does not gate edits -
+    so it lands and validation stays on. Measured, and the mirror image of the
+    key-mode case where the same validator is cut off.
+    """
+    other, entry = pair
+    entry.configure(
+        validate="none",
+        validatecommand=lambda proposed: entry.insert("end", "!") or True,
+    )
+    entry.insert(0, "abc")
+    entry.configure(validate="focusout")
+    other.focus_set()
+    entry.focus_set()
+    other.focus_set()
+    assert entry.get() == "abc!"
+    assert str(entry.cget("validate")) == "focusout"
+
+
+def test_writing_the_textvariable_revalidates(root):
+    """Tk's forced condition, which this library never ran."""
+    log = []
+    var = StringVar(root, value="12")
+    entry = Entry(
+        root,
+        name="e",
+        textvariable=var,
+        validate="none",
+        validatecommand=lambda proposed: log.append(("validate", proposed)) or False,
+        invalidcommand=lambda proposed: log.append(("invalid", proposed)),
+    )
+    entry.configure(validate="key")
+    del log[:]
+    var.set("xyz")
+    assert log == [("validate", "xyz")], "the invalidcommand must stay quiet"
+    assert entry.get() == "xyz", "a forced validation cannot refuse the value"
+    assert str(entry.cget("validate")) == "none"
+
+
+@pytest.mark.parametrize("mode", ["key", "focus", "focusin", "focusout", "all"])
+def test_every_mode_but_none_revalidates_a_variable_write(root, mode):
+    """Forced is not one of the edit conditions: the focus modes fire too."""
+    log = []
+    var = StringVar(root, value="12")
+    entry = Entry(
+        root,
+        name="e",
+        textvariable=var,
+        validate="none",
+        validatecommand=lambda proposed: log.append(proposed) or True,
+    )
+    entry.configure(validate=mode)
+    del log[:]
+    var.set("xyz")
+    assert log == ["xyz"]
+
+
+def test_validation_off_ignores_a_variable_write(root):
+    log = []
+    var = StringVar(root, value="12")
+    Entry(
+        root,
+        name="e",
+        textvariable=var,
+        validate="none",
+        validatecommand=lambda proposed: log.append(proposed) or False,
+    )
+    var.set("xyz")
+    assert log == []
+
+
+def test_attaching_a_textvariable_revalidates(root):
+    """Measured: the forced condition fires when a variable is first attached,
+    at construction and through configure() alike."""
+    log = []
+    var = StringVar(root, value="attached")
+    entry = Entry(
+        root,
+        name="e",
+        validate="key",
+        validatecommand=lambda proposed: log.append(proposed) or True,
+    )
+    del log[:]
+    entry.configure(textvariable=var)
+    assert log == ["attached"]
+    assert entry.get() == "attached"
+
+
+def test_an_accepted_variable_write_leaves_validation_on(root):
+    log = []
+    var = StringVar(root, value="1")
+    entry = Entry(
+        root,
+        name="e",
+        textvariable=var,
+        validate="none",
+        validatecommand=lambda proposed: log.append(proposed) or True,
+    )
+    entry.configure(validate="key")
+    var.set("2")
+    assert str(entry.cget("validate")) == "key"
+
+
+def test_the_widget_publishing_its_own_text_is_not_a_forced_validation(root):
+    """Otherwise every accepted keystroke would validate twice.
+
+    The field writes the variable after an edit, and that write must not come
+    back round as a forced revalidation - the edit was already validated.
+    """
+    log = []
+    var = StringVar(root, value="")
+    entry = Entry(
+        root,
+        name="e",
+        textvariable=var,
+        validate="key",
+        validatecommand=lambda proposed: log.append(proposed) or True,
+    )
+    entry._allocate(Rect(0, 0, 22, 3))
+    entry._map()
+    del log[:]
+    entry.insert(0, "7")
+    assert log == ["7"], "one validation for one edit"
+
+
+def test_an_invalidcommand_is_given_the_refused_text_if_it_will_take_it(entry):
+    """Tk's invalidcommand can ask for %P; this one could ask for nothing.
+
+    A handler that takes an argument now gets the proposal. One that takes
+    none still works, which is what every existing handler does. TkCurses-1d1.
+    """
+    seen = []
+    entry.configure(
+        validate="key",
+        validatecommand=lambda proposed: proposed.isdigit(),
+        invalidcommand=lambda proposed: seen.append(proposed),
+    )
+    entry.insert(0, "x")
+    assert seen == ["x"]
+
+
+def test_an_invalidcommand_that_takes_nothing_still_works(entry):
+    called = []
+    entry.configure(
+        validate="key",
+        validatecommand=lambda proposed: proposed.isdigit(),
+        invalidcommand=lambda: called.append(1),
+    )
+    entry.insert(0, "x")
+    assert called == [1]
+
+
 def test_validation_can_be_turned_back_on_after_it_was_switched_off(validated):
     """Tk leaves it off and expects the application to restore it."""
     entry, log = validated

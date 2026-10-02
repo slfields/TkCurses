@@ -1309,8 +1309,8 @@ class Combobox(Widget, tkcurses.Entry):
         bind(self._ttk_class, "<Key-Down>", _combobox_open)
         bind(self._ttk_class, "<Key-Escape>", _combobox_escape)
         bind(self._ttk_class, "<Any-Key>", tkcurses._entry_key)
-        bind(self._ttk_class, "<FocusIn>", tkcurses._entry_refresh)
-        bind(self._ttk_class, "<FocusOut>", tkcurses._entry_refresh)
+        bind(self._ttk_class, "<FocusIn>", tkcurses._entry_focus_in)
+        bind(self._ttk_class, "<FocusOut>", tkcurses._entry_focus_out)
 
     # ---------------------------------------------------------------- state
 

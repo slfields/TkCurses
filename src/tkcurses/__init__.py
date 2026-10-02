@@ -40,6 +40,7 @@ import contextlib
 # facade the moment anybody imported it, and every reference below would
 # resolve against the wrong module. Measured, not theorised: it clobbers.
 import curses as _curses
+import inspect
 import itertools
 import os
 import re
@@ -6545,8 +6546,8 @@ class Entry(_Drawable):
         bind = self.bind_class
         bind(name, "<Any-Key>", _entry_key)
         bind(name, "<Button-1>", _entry_click)
-        bind(name, "<FocusIn>", _entry_refresh)
-        bind(name, "<FocusOut>", _entry_refresh)
+        bind(name, "<FocusIn>", _entry_focus_in)
+        bind(name, "<FocusOut>", _entry_focus_out)
 
     # ---------------------------------------------------------------- state
 
@@ -6607,6 +6608,11 @@ class Entry(_Drawable):
         if variable is None:
             return
         self._field.text = str(variable.get())
+        # Tk's "forced" condition. Measured: this fires when the variable is
+        # written AND when one is first attached, at construction or by
+        # configure(), which is why it lives here rather than in the trace
+        # handler alone. TkCurses-3xb.
+        self._validate_forced()
         self._refresh_view()
         self._redraw()
 
@@ -6815,6 +6821,29 @@ class Entry(_Drawable):
         """
         if str(self._options["validate"]) not in _EDIT_VALIDATED:
             return True
+        return self._ask_validator(proposed)
+
+    def _ask_validator(self, proposed: str, *, notify: bool = True) -> bool:
+        """Run the ``validatecommand``, and the ``invalidcommand`` after it.
+
+        The half every validation condition shares. What the answer *means* is
+        the condition's business: an edit that is refused is discarded, a focus
+        change that is refused still happens, and a ``textvariable`` write
+        cannot be refused at all. So this reports the verdict and does not act
+        on it.
+
+        Args:
+            proposed: The contents being judged - the value the field would
+                hold for an edit, the value it holds for every other condition.
+            notify: Whether a refusal runs the ``invalidcommand``. The forced
+                condition passes False, because - measured - Tk stays silent
+                when a variable write fails validation.
+
+        Returns:
+            Whether the validator approved. A validator that raises, or that
+            turns validation off by editing the entry, counts as a refusal and
+            runs no ``invalidcommand`` whatever ``notify`` says.
+        """
         command = self._options["validatecommand"]
         if command is None:
             return True
@@ -6835,13 +6864,67 @@ class Entry(_Drawable):
                 # run, which is why this returns before reaching _refused.
                 self._turn_validation_off()
                 return False
-            if str(self._options["validate"]) not in _EDIT_VALIDATED:
+            if str(self._options["validate"]) == "none":
+                # The callback turned validation off, which only editing the
+                # entry does. Whatever it returned, the edit is discarded.
                 return False
-            if not allowed:
-                self._refused()
+            if not allowed and notify:
+                self._refused(proposed)
             return allowed
         finally:
             self._validating = False
+
+    def _validate_focus(self, condition: str) -> None:
+        """Validate because the focus arrived or left, if the mode asks for it.
+
+        Tk's second validation condition, and nothing here acted on it: the
+        focus modes were accepted as values of ``validate`` and never did
+        anything. Measured on Tcl/Tk 9.0.2, with the mode on the left and the
+        condition that fires across the top:
+
+        =========== ========= =========
+        mode        focusin   focusout
+        =========== ========= =========
+        focus       yes       yes
+        focusin     yes       -
+        focusout    -         yes
+        all         yes       yes
+        key, none   -         -
+        =========== ========= =========
+
+        Unlike an edit, this gates nothing - there is no proposed value to
+        refuse, only the value already there. A refusal runs the
+        ``invalidcommand`` and leaves the text alone. TkCurses-jd1.
+        """
+        wanted = _FOCUS_IN_VALIDATED if condition == "focusin" else _FOCUS_OUT_VALIDATED
+        if str(self._options["validate"]) not in wanted:
+            return
+        self._ask_validator(self._field.text)
+
+    def _validate_forced(self) -> None:
+        """Revalidate after the ``textvariable`` was written behind our back.
+
+        Tk calls this condition ``forced``, and it is the one that cannot say
+        no: the variable already holds the value, so there is nothing to
+        refuse. Measured on Tcl/Tk 9.0.2 - the value is kept, the
+        ``invalidcommand`` does *not* run, and Tk resolves the contradiction by
+        turning validation off. It fires under every mode but ``none``,
+        including the focus modes, which is why this does not consult
+        :data:`_EDIT_VALIDATED`. TkCurses-3xb.
+
+        One deliberate divergence, the single disagreement left in a 31-case
+        differential probe: a validator that *edits* the entry while being
+        asked about a variable write. Tk abandons the whole update, discards
+        the validator's edit too, and leaves the widget holding the old text
+        while the variable holds the new - a widget out of step with its own
+        textvariable. Here the write and the edit both land. Both agree on the
+        part that matters, which is that validation is turned off.
+        TkCurses-doh.
+        """
+        if str(self._options["validate"]) == "none":
+            return
+        if not self._ask_validator(self._field.text, notify=False):
+            self._turn_validation_off()
 
     def _turn_validation_off(self) -> None:
         """Set ``validate`` to ``none``, as Tk does when a callback misbehaves.
@@ -6860,19 +6943,32 @@ class Entry(_Drawable):
         """
         self._options["validate"] = "none"
 
-    def _refused(self) -> None:
+    def _refused(self, proposed: str = "") -> None:
         """Run the ``invalidcommand``, which is what Tk does on a refusal.
 
         The third of Tk's validation trio, and it was missing: a program could
         say what counted as valid and not what to do when an edit did not. As
         with validatecommand, anything it raises is swallowed - a handler for a
-        rejected keystroke should not take the application down with it.
+        rejected keystroke should not take the application down with it, and
+        measured, an invalidcommand that raises does *not* turn validation off
+        the way a raising validator does.
+
+        The handler is given the refused text if it will take it, and called
+        with nothing if it will not. Tk's invalidcommand is a registered
+        command that may ask for any substitution or none, so both arities are
+        legitimate there; here, ``invalidcommand=lambda: ...`` was the only
+        form that worked, which left a handler no way to see what it was
+        rejecting except by reading back the text that had been *kept*.
+        TkCurses-1d1.
         """
         command = self._options.get("invalidcommand")
         if command is None:
             return
         with contextlib.suppress(Exception):
-            command()
+            if _takes_an_argument(command):
+                command(proposed)
+            else:
+                command()
 
     def _edit(self, change: Callable[[], None], proposed: str) -> None:
         """Apply an edit if the state and the validator both allow it."""
@@ -6989,10 +7085,36 @@ class Entry(_Drawable):
 
 
 #: Keys that move the cursor, as offsets or as absolute positions.
+def _takes_an_argument(command: Callable[..., Any]) -> bool:
+    """Whether a callback will accept one positional argument.
+
+    Tk's validation callbacks are registered commands that may ask for any
+    substitution or for none, so a handler written against Tk may legitimately
+    take the refused text or take nothing. Both have to work here.
+
+    A callable whose signature cannot be read - some builtins - is assumed to
+    take nothing, which is the arity that worked before this existed.
+    """
+    try:
+        signature = inspect.signature(command)
+    except (TypeError, ValueError):
+        return False
+    try:
+        signature.bind("")
+    except TypeError:
+        return False
+    return True
+
+
 #: Validation modes under which an edit is checked before it is applied.
 #: Measured on real Tk: "focus", "focusin" and "focusout" validate when the
 #: focus moves and let every edit through, so they are deliberately absent.
 _EDIT_VALIDATED = ("key", "all")
+
+#: Modes that validate when the focus arrives, and when it leaves. "focus"
+#: means both. Measured; see Entry._validate_focus for the table.
+_FOCUS_IN_VALIDATED = ("focus", "focusin", "all")
+_FOCUS_OUT_VALIDATED = ("focus", "focusout", "all")
 
 _ENTRY_MOTION: dict[str, Any] = {
     "Left": -1,
@@ -7075,8 +7197,19 @@ def _entry_click(event: Event) -> None:
     entry._redraw()
 
 
-def _entry_refresh(event: Event) -> None:
-    """Repaint after the focus moved, so the cursor appears or goes."""
+def _entry_focus_in(event: Event) -> None:
+    """Validate if the mode asks for it, then repaint so the cursor appears."""
+    event.widget._validate_focus("focusin")
+    event.widget._redraw()
+
+
+def _entry_focus_out(event: Event) -> None:
+    """Validate if the mode asks for it, then repaint so the cursor goes.
+
+    Validation first: a focus validator is allowed to edit the entry - measured
+    - and painting before it ran would show the text it was about to change.
+    """
+    event.widget._validate_focus("focusout")
     event.widget._redraw()
 
 
@@ -7644,8 +7777,8 @@ class Spinbox(Entry):
         bind = self.bind_class
         bind(name, "<Any-Key>", _spinbox_key)
         bind(name, "<Button-1>", _spinbox_click)
-        bind(name, "<FocusIn>", _entry_refresh)
-        bind(name, "<FocusOut>", _entry_refresh)
+        bind(name, "<FocusIn>", _entry_focus_in)
+        bind(name, "<FocusOut>", _entry_focus_out)
 
     # --------------------------------------------------------------- values
 

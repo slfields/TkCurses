@@ -31,6 +31,7 @@ from tkcurses.ttk import (
     Button,
     Checkbutton,
     Combobox,
+    Entry,
     Frame,
     Label,
     LabeledScale,
@@ -331,6 +332,36 @@ def combobox(root):
     box.place(x=0, y=0, width=20)
     root.update_layout()
     return box
+
+
+@pytest.mark.parametrize("factory", [Entry, Combobox], ids=["entry", "combobox"])
+def test_a_themed_entry_validates_when_the_focus_leaves(root, factory):
+    """The themed widgets bind their own focus handlers, under their own class.
+
+    So they are their own wiring, and this is the mutation that proved it: with
+    ttk's two binds pointed at a handler that does nothing, every classic Entry
+    test still passed. A themed widget with no focus validation is exactly the
+    gap TkCurses-jd1 was about, one layer up.
+    """
+    log = []
+    other = factory(root, name="other")
+    subject = factory(
+        root,
+        name="subject",
+        validate="focusout",
+        validatecommand=lambda proposed: log.append(proposed) or False,
+    )
+    for widget in (other, subject):
+        widget.place(x=0, y=0, width=20)
+    root.update_layout()
+    subject.insert(0, "abc")
+
+    other.focus_set()
+    subject.focus_set()
+    del log[:]
+    other.focus_set()
+    assert log == ["abc"], "the themed widget never validated on focus out"
+    assert subject.get() == "abc", "a focus refusal does not change the text"
 
 
 def test_a_combobox_reports_the_themed_class(combobox):
