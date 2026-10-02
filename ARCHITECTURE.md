@@ -860,6 +860,73 @@ User presses key or clicks mouse
 └──────────────────────────────────────────┘
 ```
 
+### Focus traversal: Tab, and F6 when Tab is spoken for
+
+Traversal lives on the `all` tag — the last tag consulted — so a widget that
+wants a traversal key for itself binds it and returns `"break"`. Four keys are
+bound there:
+
+| key | |
+|---|---|
+| `Tab` | focus the next widget |
+| `Shift-Tab` (`ISO_Left_Tab`) | focus the previous one |
+| `F6` | focus the next widget |
+| `Shift-F6` | focus the previous one |
+
+**tkinter does not put traversal on Tab in a `Text`**: Tk binds `<Tab>` there to
+insert a tab and keep the focus, and gives traversal to `<Control-Tab>`. That
+split is not available in a terminal, and the reason is worth knowing because it
+recurs:
+
+- **Tab, `Control-I` and `Control-Tab` are all the byte `0x09`.** Tk's bindings
+  rely on X11 keysyms where the three are distinct events. `_core/input.py`
+  already refuses to attach Control to code 9 for exactly this reason.
+- The CSI encodings that *would* distinguish them are not parsed. Measured:
+  `CSI 27;5;9~` (xterm) arrives as `;`, `9`, `~` and `CSI 9;5u` (kitty) as `;`,
+  `5`, `u` — so on a terminal with `modifyOtherKeys` or the kitty protocol
+  enabled, Control-Tab in a `Text` would type into the document. `TkCurses-99j`
+  is the work to parse them.
+
+So `F6` is the escape, with `Shift-F6` to go back, which lets an editor keep Tab
+for indentation without trapping a keyboard-only user. The choice is constrained
+from three sides:
+
+- **Alt-arrows are out**: i3 and sway bind `Mod1+Left`/`Mod1+Right` to window
+  focus by default, so the window manager consumes them first.
+- **`Alt-F6` is out**: GNOME reserves it, and `Shift-Alt-F6`, for cycling an
+  application's own windows. Hence *plain* F6 and Shift-F6.
+- **`F6` is conventional** for "next pane" in GTK and GNOME, and it survives the
+  journey — `kf6=\E[17~` arrives as `F6`.
+
+`Shift-F6` is bound as **`<Key-F18>`** as well as `<Shift-Key-F6>`, and the first
+is what actually fires: terminfo encodes shifted F1–F12 as F13–F24, so a
+terminal whose `kf18` is `\E[17;2~` reports Shift-F6 as a key named `F18` with
+no shift bit. `TkCurses-87e`.
+
+#### The rule for a widget that takes a traversal key
+
+**Never consume every way out.** A widget may claim any of the four — an editor
+claiming `Tab` for indentation is the reason the other pair exists — but it must
+leave at least one route to the next widget, because a terminal application has
+no title bar to click out of and may have no mouse at all. Two keys are claimable
+and two are the escape; taking both pairs strands the keyboard.
+
+In practice:
+
+```python
+# Fine: Tab is spoken for, F6 still traverses.
+editor.bind("<Key-Tab>", lambda event: (editor.insert("insert", "\t"), "break")[1])
+```
+
+Binding on the widget or its class is what makes this work — traversal is on
+`all`, the last tag consulted, so a nearer binding that returns `"break"` wins
+without unbinding anything. Returning `"break"` is the whole mechanism: without
+it the event continues to `all` and the focus moves as well.
+
+The same obligation applies to a composite widget that forwards keys to a child,
+and to any future widget that wants `F6` for itself: claim it, and say in the
+widget's own docstring which key still leaves.
+
 ### Input Handling Architecture
 
 Curses input handling requires careful design to capture all events without blocking the application or consuming excessive CPU.

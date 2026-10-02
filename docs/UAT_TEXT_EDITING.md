@@ -198,4 +198,26 @@ acceptance scenario should not be teaching.
 The architecture already allows for it: traversal is on `all`, the last tag
 consulted, so a widget that wants Tab binds it and returns `"break"`. This
 scenario does that, and uses `Ctrl-F` for the Find box. **TkCurses-87e**
+
+**Since then there is a keyboard escape: `F6` and `Shift-F6`.** That closes the
+hole the paragraph above describes — an editor can take `Tab` for indentation
+and a keyboard-only user can still leave it. Why those keys, measured rather
+than chosen by taste:
+
+- `Control-Tab` is not available at all. Tab, `Control-I` and `Control-Tab` are
+  the same byte, `0x09`, and the CSI encodings that would distinguish them are
+  not parsed — `CSI 27;5;9~` arrives as `;`, `9`, `~`, so pressing Control-Tab
+  in a `Text` would *type into the document*.
+- Alt-arrows were rejected: i3 and sway bind `Mod1+Left`/`Mod1+Right` to window
+  focus **by default**, so the window manager would take them first.
+- GNOME reserves `Alt-F6` and `Shift-Alt-F6` for cycling an application's own
+  windows, which is why the pair is plain `F6` and `Shift-F6` rather than
+  anything with Alt.
+- `F6` is the conventional "next pane" key in GTK and GNOME, and it survives:
+  `kf6=\E[17~` arrives as `F6`.
+
+`Shift-F6` arrives as a key **named `F18`**, which is not a mistake: terminfo
+encodes shifted F1–F12 as F13–F24, and this terminal's own `kf18` entry is
+`\E[17;2~` — F6 with shift. Both are bound, and a test fails if only the
+`<Shift-Key-F6>` spelling is.
 tracks whether the library default should change.

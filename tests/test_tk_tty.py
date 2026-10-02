@@ -912,3 +912,76 @@ root.destroy()
     term.wait_for_idle()
     # The grab holds: nothing typed since reached the field behind it.
     assert "behind='ab'" in "\n".join(term.display)
+
+
+F6_TRAVERSAL = """
+import tkcurses
+
+root = tkcurses.Tk()
+buffer = root.tk.screen.buffer
+text = tkcurses.Text(root, name='editor', width=24, height=3)
+text.place(x=0, y=1, width=24, height=3)
+entry = tkcurses.Entry(root, name='field', width=20)
+entry.place(x=0, y=5, width=20)
+
+# An editor that wants Tab for indentation, which is the whole reason F6 exists.
+text.bind('<Key-Tab>', lambda event: (text.insert('insert', '\\t'), 'break')[1])
+text.focus_set()
+
+def poll():
+    focused = root.focus_get()
+    name = focused.winfo_name() if focused else '-'
+    buffer.write(9, 0, ('focus=%s text=%r' % (name, text.get('1.0', 'end-1c')))[:70].ljust(70))
+    buffer.write(11, 0, 'ready')
+    root.tk.screen.refresh()
+    root.after(60, poll)
+
+poll()
+root.after(5000, root.quit)
+root.mainloop()
+"""
+
+
+def test_f6_moves_the_focus_when_tab_is_spoken_for(terminal, tmp_path):
+    """A Text can keep Tab for indentation and still be escapable by keyboard.
+
+    TkCurses-87e. tkinter's Text takes Tab to insert one and gives traversal to
+    Control-Tab instead. That split cannot be had in a terminal: Tab, Control-I
+    and Control-Tab are all the byte 0x09, and the modern CSI encodings of
+    Control-Tab are not parsed - measured, CSI 27;5;9~ arrives as ';' '9' '~',
+    so pressing it in a Text would type into the document.
+
+    So the escape is F6, with Shift-F6 to go back. Alt-arrows were considered and
+    rejected: i3 and sway bind Mod1+Left/Right to window focus by default and the
+    window manager would consume them. GNOME reserves Alt-F6 and Shift-Alt-F6,
+    which is why the pair is plain F6 and Shift-F6.
+
+    Driven with the escape sequences a terminal really sends - this terminal's
+    terminfo gives kf6=\\E[17~ and kf18=\\E[17;2~ - rather than with a key name,
+    because the point is what survives the journey.
+    """
+    term = terminal(cols=40, rows=13)
+    term.run_source(F6_TRAVERSAL, workdir=tmp_path)
+    term.wait_for_text("ready")
+    term.wait_for(
+        lambda t: "focus=editor" in t.row(9), message="the editor to take focus"
+    )
+
+    term.send(b"\x09")  # Tab: the editor's own binding wins
+    term.wait_for(
+        lambda t: "\\t" in t.row(9),
+        message="Tab to indent rather than traverse",
+    )
+    assert "focus=editor" in term.row(9), "Tab moved the focus despite the binding"
+
+    term.send(b"\x1b[17~")  # F6
+    term.wait_for(
+        lambda t: "focus=field" in t.row(9), message="F6 to move the focus on"
+    )
+
+    term.send(b"\x1b[17;2~")  # Shift-F6, which arrives as the key named F18
+    term.wait_for(
+        lambda t: "focus=editor" in t.row(9), message="Shift-F6 to move it back"
+    )
+
+    assert "Traceback" not in term.stderr

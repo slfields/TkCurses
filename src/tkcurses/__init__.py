@@ -3939,6 +3939,31 @@ class Tk(BaseWidget, Wm):
         self.tk.bound_classes.add("all")
         self.bind_all("<Key-Tab>", _focus_next)
         self.bind_all("<Key-ISO_Left_Tab>", _focus_previous)
+        # F6 and Shift-F6 as well, because Tab cannot always be spared.
+        #
+        # A Text wants Tab for indentation, and tkinter's Text takes it: Tk binds
+        # <Tab> to insert one and gives traversal to <Control-Tab> instead. That
+        # split is not available here - Tab, Control-I and Control-Tab are all the
+        # byte 0x09 in a terminal, and the modern CSI encodings for Control-Tab
+        # are not parsed, so pressing it would type ";9~" into the document. See
+        # TkCurses-87e for the measurements and TkCurses-99j for the parsing.
+        #
+        # F6 is the conventional "next pane" key - GTK and GNOME use it, and so do
+        # many terminal applications - and it survives the journey, measured.
+        # Alt-arrows were considered and rejected: i3 and sway bind Mod1+Left and
+        # Mod1+Right to window focus by default, so the window manager would eat
+        # them before the application saw anything. GNOME reserves Alt-F6 and
+        # Shift-Alt-F6 for cycling an application's own windows, which is why the
+        # pair here is PLAIN F6 and SHIFT-F6 rather than anything with Alt.
+        self.bind_all("<Key-F6>", _focus_next)
+        # F18, and this is not a typo. terminfo encodes the shifted function keys
+        # as F13 to F24 - this terminal's own kf18 entry is \E[17;2~, which is
+        # literally F6 with shift - so Shift-F6 arrives as a key NAMED F18 with
+        # no shift bit set. Measured: CSI 17~ gives keysym F6, CSI 17;2~ gives
+        # keysym F18, state 0 in both. The <Shift-Key-F6> form is bound too, for
+        # a terminal that reports the modifier properly instead.
+        self.bind_all("<Key-F18>", _focus_previous)
+        self.bind_all("<Shift-Key-F6>", _focus_previous)
 
     def winfo_class(self) -> str:
         """The class this root binds and reads options under."""
