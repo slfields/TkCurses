@@ -1436,9 +1436,14 @@ class Combobox(Widget, tkcurses.Entry):
     __getitem__ = cget
 
     def set(self, value: str) -> None:
-        """Replace the text. Does not fire ``<<ComboboxSelected>>``."""
-        self.delete(0, "end")
-        self.insert(0, str(value))
+        """Replace the text. Does not fire ``<<ComboboxSelected>>``.
+
+        Unvalidated and ungated by state, as Tk's is - see
+        :meth:`Entry._set_value`. This was ``delete`` then ``insert`` until
+        TkCurses-elb, so a refusing validatecommand was asked twice and kept
+        the old text, and a disabled combobox could not be set at all.
+        """
+        self._set_value(value)
 
     def current(self, newindex: int | None = None) -> int | None:
         """Get or set which of ``values`` is showing.
@@ -1579,7 +1584,12 @@ class Combobox(Widget, tkcurses.Entry):
             return
         chosen = listbox.curselection()
         if chosen:
+            # Tk's SelectEntry, word for word: current, select all, cursor to
+            # the end. The last two used to happen by accident, as a side
+            # effect of set() being delete-then-insert.
             self.set(self._values[chosen[0]])
+            self.selection_range(0, "end")
+            self.icursor("end")
         self._unpost()
         self.event_generate("<<ComboboxSelected>>")
 
@@ -4079,6 +4089,16 @@ class Spinbox(Widget, tkcurses.Spinbox):
     _ttk_class = "TSpinbox"
 
     _widget_options: ClassVar[dict[str, Any]] = {}
+
+    def set(self, value: Any) -> None:
+        """Make ``value`` the spinbox's text.
+
+        Taken as given: not checked against ``from_``/``to`` or ``values``,
+        not validated, and not refused by ``readonly`` or ``disabled`` -
+        measured, ``set(99)`` on a 0-10 spinbox reads back ``"99"`` in Tk.
+        See :meth:`Entry._set_value` for the rest of what Tk does here.
+        """
+        self._set_value(value)
 
 
 class Scrollbar(Widget, tkcurses.Scrollbar):

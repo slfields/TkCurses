@@ -176,6 +176,8 @@ NOT_INSTANTIATED = frozenset(
 #: test_every_listed_gap_is_still_missing failed naming all four, and the
 #: entries came out. That is the whole arrangement working as intended.
 #:
+#: And by one more the same day (TkCurses-elb): ttk.Spinbox.set.
+#:
 #: A gap not listed here is a test failure, which is the point: this list may
 #: shrink and must never silently grow.
 GAPS: dict[str, dict[str, str]] = {
@@ -355,9 +357,6 @@ GAPS: dict[str, dict[str, str]] = {
     },
     "ttk.Notebook": {
         "identify": "TkCurses-d5u",
-    },
-    "ttk.Spinbox": {
-        "set": "TkCurses-elb",
     },
 }
 

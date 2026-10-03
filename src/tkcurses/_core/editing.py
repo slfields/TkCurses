@@ -62,11 +62,21 @@ class TextField:
         A cursor past the end of the new text would otherwise insert into a
         position that does not exist - which is what happens when a
         textvariable is set from elsewhere while the field is being edited.
+
+        **The selection is clamped, not dropped**, and so is its anchor.
+        Measured against Tk 9.0.2, for ``tk.Entry`` and ``ttk.Entry`` through
+        a textvariable and for ``ttk.Spinbox.set``: a selection of 1-4 over
+        ``"hello"`` reads 1-2 once the text is ``"ab"``, and one that started
+        at or past the new end is gone. This dropped it outright until
+        TkCurses-elb.
         """
         self._text = value
         self._cursor = min(self._cursor, len(value))
-        self._selection = None
-        self._anchor = None
+        if self._selection is not None:
+            self._set_selection(*self._selection)
+        self._anchor = (
+            None if self._selection is None else self.clamp(self._anchor or 0)
+        )
         self._clamp_view()
 
     @property
@@ -149,6 +159,15 @@ class TextField:
             self._cursor = index
             self._selection = None
             self._anchor = None
+
+    def place_cursor(self, index: int) -> None:
+        """Put the cursor at ``index`` and leave the selection alone.
+
+        What Tk's ``icursor`` does - measured on ``tk.Entry`` and
+        ``ttk.Entry``, a selection of 1-3 survives ``icursor(0)``. Distinct
+        from :meth:`move_to`, which is a keystroke and drops it.
+        """
+        self._cursor = self.clamp(index)
 
     def move_by(self, distance: int, *, extend: bool = False) -> None:
         """Move the cursor along by ``distance`` characters."""

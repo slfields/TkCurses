@@ -48,10 +48,38 @@ def test_replacing_the_text_keeps_the_cursor_in_range(field):
     assert field.cursor == 2
 
 
-def test_replacing_the_text_drops_the_selection(field):
+def test_replacing_the_text_clamps_the_selection(field):
+    """Measured on Tk 9.0.2: 1-4 over "hello" reads 1-2 once the text is "ab".
+    This dropped the selection until TkCurses-elb."""
+    field.select_range(1, 4)
+    field.text = "ab"
+    assert field.selection == (1, 2)
+
+
+def test_replacing_the_text_keeps_a_selection_that_still_fits(field):
     field.select_range(0, 3)
     field.text = "new"
+    assert field.selection == (0, 3)
+
+
+def test_replacing_the_text_drops_a_selection_past_the_new_end(field):
+    """Measured: 3-5 over "hello" is gone after "ab", not an empty 2-2."""
+    field.select_range(3, 5)
+    field.text = "ab"
     assert field.selection is None
+
+
+def test_placing_the_cursor_keeps_the_selection(field):
+    """Tk's icursor, measured: 1-3 survives icursor(0). TkCurses-elb."""
+    field.select_range(1, 3)
+    field.place_cursor(0)
+    assert field.cursor == 0
+    assert field.selection == (1, 3)
+
+
+def test_placing_the_cursor_is_clamped(field):
+    field.place_cursor(99)
+    assert field.cursor == 5
 
 
 # ----------------------------------------------------------------- inserting

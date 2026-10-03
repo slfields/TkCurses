@@ -49,6 +49,7 @@ from tkcurses.ttk import (
     Scale,
     Separator,
     Sizegrip,
+    Spinbox,
     Style,
     Treeview,
     parse_padding,
@@ -430,6 +431,80 @@ def test_current_is_minus_one_for_a_value_not_in_the_list(combobox):
 def test_setting_a_listed_value_moves_the_index_to_it(combobox):
     combobox.set("gamma")
     assert combobox.current() == 2
+
+
+# ------------------------------------------------- set(): Combobox, Spinbox
+#
+# One routine in Tk - EntrySetValue - and measured against Tk 9.0.2 it is
+# nothing like delete-then-insert. TkCurses-elb.
+
+SETTABLE = pytest.mark.parametrize("cls", [Combobox, Spinbox], ids=lambda c: c.__name__)
+
+
+@SETTABLE
+def test_set_replaces_the_text_and_returns_none(root, cls):
+    widget = cls(root)
+    widget.insert(0, "old")
+    assert widget.set(5) is None
+    assert widget.get() == "5"
+
+
+@SETTABLE
+def test_set_is_not_validated(root, cls):
+    """A validator refusing everything is not even asked, and the value lands."""
+    asked = []
+    widget = cls(
+        root, validate="all", validatecommand=lambda *_: asked.append(1) or False
+    )
+    widget.set("anything")
+    assert widget.get() == "anything"
+    assert asked == []
+
+
+@SETTABLE
+@pytest.mark.parametrize("state", ["readonly", "disabled"])
+def test_set_ignores_the_state(root, cls, state):
+    widget = cls(root, state=state)
+    widget.set("taken")
+    assert widget.get() == "taken"
+
+
+@SETTABLE
+def test_set_writes_the_textvariable(root, cls):
+    variable = tkcurses.StringVar(root)
+    widget = cls(root, textvariable=variable)
+    widget.set("shared")
+    assert variable.get() == "shared"
+
+
+@SETTABLE
+def test_set_keeps_the_cursor_and_selection_clamped(root, cls):
+    """Measured: cursor 4 and selection 1-4 over "hello" read 2 and 1-2."""
+    widget = cls(root)
+    widget.set("hello")
+    widget.icursor(4)
+    widget.selection_range(1, 4)
+    widget.set("ab")
+    assert widget.index("insert") == 2
+    assert (widget.index("sel.first"), widget.index("sel.last")) == (1, 2)
+
+
+def test_a_spinbox_set_ignores_the_range(root):
+    spinbox = Spinbox(root, from_=0, to=10)
+    spinbox.set(99)
+    assert spinbox.get() == "99"
+
+
+def test_picking_from_the_dropdown_selects_the_value_with_the_cursor_after_it(
+    combobox,
+):
+    """Tk's ttk::combobox::SelectEntry: current, select all, cursor to end."""
+    combobox._post()
+    combobox._listbox.selection_set(1)
+    combobox._pick()
+    assert combobox.get() == "beta"
+    assert (combobox.index("sel.first"), combobox.index("sel.last")) == (0, 4)
+    assert combobox.index("insert") == 4
 
 
 def test_current_out_of_range_is_refused(combobox):

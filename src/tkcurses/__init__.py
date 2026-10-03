@@ -6740,8 +6740,13 @@ class Entry(_Drawable):
         self._edit(lambda: self._field.delete(start, end), text[:start] + text[end:])
 
     def icursor(self, index: Any) -> None:
-        """Put the insertion cursor at ``index``."""
-        self._field.move_to(self.index(index))
+        """Put the insertion cursor at ``index``, keeping any selection.
+
+        Measured on Tk 9.0.2: a selection survives ``icursor``. This dropped
+        it until TkCurses-elb, which mattered because ttk's own combobox pick
+        selects everything and then moves the cursor to the end.
+        """
+        self._field.place_cursor(self.index(index))
         self._refresh_view()
         self._redraw()
 
@@ -7121,6 +7126,25 @@ class Entry(_Drawable):
         if not self._editable or not self._validated(proposed):
             return
         change()
+        self._changed()
+
+    def _set_value(self, value: Any) -> None:
+        """Replace the whole text the way ttk's ``set`` does: unconditionally.
+
+        Tk's ``EntrySetValue``, which ``ttk::combobox set`` and
+        ``ttk::spinbox set`` both are. Measured against Tk 9.0.2, it is
+        nothing like :meth:`delete` followed by :meth:`insert`:
+
+        * **No validation.** A validatecommand that refuses everything is not
+          even called, under ``validate="all"`` or ``"key"``, and the value
+          lands anyway.
+        * **No state gate.** ``readonly`` and ``disabled`` both take the value.
+        * **The cursor and selection stay**, clamped to the new text - see
+          :attr:`TextField.text`.
+
+        The textvariable is written, as for any change.
+        """
+        self._field.text = str(value)
         self._changed()
 
     def _changed(self) -> None:

@@ -4218,7 +4218,7 @@ All TTK widgets inherit from this base with additional styling.
 |----------------|----------|-------|
 | `__init__(master=None, **kw)` | ○ | Dropdown entry |
 | `current(newindex=None)` | ✓ | Get/set index |
-| `set(value)` | ✓ | Set value |
+| `set(value)` | ✓ | Set value, unvalidated and regardless of state — see ttk.Spinbox |
 
 Inherits from Entry.
 
@@ -4232,6 +4232,33 @@ Open:   [Option 1       ▼]
         │ Option 3        │
         └─────────────────┘
 ```
+
+### ttk.Spinbox
+
+| tkinter Method | TkCurses | Notes |
+|----------------|----------|-------|
+| `__init__(master=None, **kw)` | ○ | Entry with step arrows |
+| `set(value)` | ✓ | Set value, unvalidated and regardless of state |
+
+Inherits from Entry.
+
+**`set` is not `delete` then `insert`, and the difference is all of it.**
+`ttk::spinbox set` and `ttk::combobox set` are one routine in Tk,
+`EntrySetValue`, and measured against Tk 9.0.2 it:
+
+- **validates nothing.** A validatecommand that refuses everything is not
+  called, under `validate="all"` or `"key"`, and the value lands anyway.
+- **ignores `state`.** `readonly` and `disabled` both take the value.
+- **ignores the range.** `set(99)` on a `from_=0, to=10` spinbox reads `"99"`.
+- **keeps the cursor and selection**, clamped to the new text: a selection of
+  1–4 over `"hello"` reads 1–2 after `set("ab")`, and one starting at or past
+  the new end is dropped. A textvariable write does the same, on `tk.Entry`
+  and `ttk.Entry` alike.
+
+`Combobox.set` was `delete` then `insert` until `TkCurses-elb`, so it validated
+twice, kept the old text when refused, and dropped the selection. The
+dropdown's pick now does what Tk's `ttk::combobox::SelectEntry` does — `current`,
+select all, cursor to the end — explicitly rather than as a side effect.
 
 ### ttk.Notebook
 
