@@ -2748,6 +2748,51 @@ Base mixin providing common widget functionality.
 | `setvar(name, value)` | ✓ | Set Variable value (internal storage) |
 | `getint(s)` | ✓ | Parse integer |
 | `getdouble(s)` | ✓ | Parse float |
+
+**How an option may be spelled.** Two mechanisms look alike and are not, and
+holding them in one table is what made `w.configure()["from"]` raise here while
+working in tkinter (`TkCurses-y5q`):
+
+| | example | in `configure()`'s keys | `cget` takes it | keyword takes it |
+|---|---|---|---|---|
+| **Tcl synonym** | `bg` for `background` | yes | yes | yes |
+| **Python-keyword workaround** | `from_` for `from` | **no** | **no** | yes |
+
+Tk defines exactly **six** synonyms, enumerated from the real toolkit across 18
+classic widget classes rather than guessed: `bd`, `bg`, `bgimg`, `fg`, `invcmd`
+and `vcmd`. (A synonym's `configure()` entry is a 2-tuple `(synonym, real
+name)`; a real option's is a 5-tuple. That is how `tests/test_option_spellings.py`
+reads the list off tkinter instead of hardcoding it, so it cannot fall behind a
+Tk release.) They belong everywhere the long name does. `from_` is not a synonym at all: `from` is a
+reserved word, so tkinter lets a *keyword argument* carry one trailing
+underscore and strips it (`Misc._options`: `if k[-1] == '_': k = k[:-1]`). The
+option stays `from`, and `cget("from_")` raises `unknown option "-from_"` —
+measured on Tcl/Tk 9.0.2.
+
+**Synonyms are per widget class, not global.** Measured: `tk.Entry` takes
+`vcmd` and `ttk.Entry` refuses it, though both have `validatecommand`; and no
+themed widget has a synonym at all — `ttk.Label(bg="red")` raises. A single
+global table got both directions wrong, missing `vcmd` on the classic widgets
+and offering `bg` on the themed ones. So `_option_synonyms` is a class
+attribute: `BaseWidget` declares the standard three, the classic `Entry` adds
+the validation pair, and ttk's mixin declares it **empty** — which has to be
+said rather than inherited, because every themed widget is built on a classic
+one. The most derived declaration wins, and ttk's mixin comes first in every
+themed MRO.
+
+`bgimg` is the one synonym not offered, because `-backgroundimage` does not
+exist here yet (`TkCurses-yi4`); a synonym for a missing option would only
+raise with a more confusing message.
+
+So the underscore is stripped on the keyword path only, in `_keyword_option`,
+and `cget` resolves synonyms alone. Widgets with a range — `Scale`, `Spinbox`,
+`ttk.Scale`, `ttk.Spinbox` — store `from`. `ttk.Progressbar` and
+`ttk.LabeledScale` have no such option in either library, which corrects the
+issue's own list of what needed renaming.
+
+The remaining half of this is `TkCurses-bv0`: tkinter's key set contains both
+`bg` and `background`, and ours only the long one. The values are right and
+`cget` takes either; it is `configure()`'s reported keys that are short.
 | `getboolean(s)` | ✓ | Parse boolean |
 | **Option Database** | | |
 | `option_add(pattern, value, priority)` | ◐ | Simplified options |

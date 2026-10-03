@@ -76,6 +76,13 @@ THEMED = (
 
 #: Options real ttk has that we do not, each with the issue that owns it.
 #:
+#: It shrank by two on 2026-10-02 (TkCurses-y5q): Scale and Spinbox reported
+#: the range's low end as ``from_`` where tkinter reports ``from``, so
+#: ``w.configure()["from"]`` raised KeyError here and worked in tkinter. Those
+#: two entries are what this list is for - a gap recorded rather than hidden,
+#: carrying the id of the issue that would close it, and removed by the commit
+#: that did.
+#:
 #: It shrank by eight on 2026-10-01 (TkCurses-ale): the scroll and validation
 #: callbacks on Entry, Spinbox, Combobox and Treeview are implemented, not
 #: merely accepted. The entry that said "a tree cannot take a scrollbar" was
@@ -85,7 +92,6 @@ THEMED = (
 #: A gap not listed here is a test failure, which is the point: this list may
 #: shrink and must never silently grow.
 KNOWN_GAPS: dict[str, dict[str, str]] = {
-    "Scale": {"from": "TkCurses-3h5.1 split: we report from_, tkinter reports from"},
     "Progressbar": {
         "anchor": "Tk 9.0 label-over-bar options",
         "font": "Tk 9.0 label-over-bar options",
@@ -110,7 +116,6 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
         "placeholder": "Tk 9.0 ghost text",
         "placeholderforeground": "Tk 9.0 ghost text",
         "exportselection": "TkCurses-163: no widget offers it",
-        "from": "TkCurses-y5q: we report from_, tkinter reports from",
     },
     "Treeview": {
         "striped": "Tk 9.0 additions",

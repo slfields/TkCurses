@@ -2110,14 +2110,50 @@ def _get_default_root(what: str = "create a widget") -> Misc:
 # ======================================================================
 
 #: Short spellings tkinter accepts for the options whose names are long.
+#: Tk's own short spellings for long option names. These are *Tcl* synonyms:
+#: Tk defines them, they appear in a widget's own option list, and ``cget``
+#: takes them. Python-keyword workarounds like ``from_`` are a different thing
+#: entirely and are deliberately not here - see :func:`_keyword_option`.
 _OPTION_ALIASES: dict[str, str] = {
     "bg": "background",
     "fg": "foreground",
     "bd": "borderwidth",
-    # tkinter spells Tk's -from as from_, because `from` is a keyword. Both
-    # reach the same option, so a dict of options copied out of Tcl works.
-    "from": "from_",
 }
+
+
+def _keyword_option(
+    name: str, spec: dict[str, Any], synonyms: dict[str, str] | None = None
+) -> str:
+    """The option a keyword argument names, allowing for Python's keywords.
+
+    Tk's ``-from`` cannot be written ``from=2`` in Python, so tkinter lets a
+    keyword carry one trailing underscore and strips it:
+    ``Misc._options`` does ``if k[-1] == '_': k = k[:-1]``. That is a rule
+    about *keywords*, not an alias - which is the distinction this library had
+    lost. ``from_`` was stored as the canonical name, so ``configure()``
+    reported ``from_`` where tkinter reports ``from``, and
+    ``w.configure()["from"]`` raised KeyError here while working in tkinter.
+
+    Measured on Tcl/Tk 9.0.2, and the asymmetry is the whole point:
+
+    =====================  ============  ===========
+    asked for as            ``from``      ``from_``
+    =====================  ============  ===========
+    in ``configure()``      yes           no
+    ``cget``                yes           TclError
+    keyword argument        yes           yes
+    =====================  ============  ===========
+
+    So the underscore is stripped here, on the keyword path, and nowhere else.
+    ``cget`` resolves :data:`_OPTION_ALIASES` only, which is why
+    ``cget("from_")`` now raises as tkinter's does. TkCurses-y5q.
+    """
+    table = _OPTION_ALIASES if synonyms is None else synonyms
+    option = table.get(name, name)
+    if option not in spec and option.endswith("_") and option[:-1] in spec:
+        return option[:-1]
+    return option
+
 
 #: Merged option specifications, keyed by class. Walking the MRO on every
 #: ``configure`` call would be wasted work; the spec cannot change once the
@@ -2137,6 +2173,16 @@ class BaseWidget(Misc):
     without them the check has to be explicit, and it is worth having — a
     misspelled option that silently does nothing is a long afternoon.
     """
+
+    #: Tk's short spellings for this class's options. A *class* attribute and
+    #: not a module constant, because the synonyms are per widget: measured on
+    #: Tcl/Tk 9.0.2, ``tk.Entry`` takes ``vcmd`` while ``ttk.Entry`` refuses it
+    #: although both have ``validatecommand``, and no themed widget has a
+    #: synonym at all - ``ttk.Label(bg="red")`` raises. A single global table
+    #: got both directions wrong: it was missing ``vcmd`` on the classic
+    #: widgets and offering ``bg`` on the themed ones. The most derived
+    #: declaration wins, so ttk's mixin empties it. TkCurses-oe5.
+    _option_synonyms: ClassVar[dict[str, str]] = _OPTION_ALIASES
 
     #: Options every widget accepts. The set is deliberately smaller than
     #: tkinter's: X11 options with no cell equivalent (highlightthickness,
@@ -2232,7 +2278,7 @@ class BaseWidget(Misc):
         spec = self._option_spec()
         resolved: dict[str, Any] = {}
         for name, value in given.items():
-            option = _OPTION_ALIASES.get(name, name)
+            option = _keyword_option(name, spec, self._option_synonyms)
             if option not in spec:
                 raise TclError(f'unknown option "-{name}"')
             resolved[option] = value
@@ -2262,7 +2308,7 @@ class BaseWidget(Misc):
         Raises:
             TclError: If this widget has no such option.
         """
-        option = _OPTION_ALIASES.get(key, key)
+        option = self._option_synonyms.get(key, key)
         try:
             return self._options[option]
         except KeyError:
@@ -6485,6 +6531,17 @@ class Entry(_Drawable):
     as well.
     """
 
+    #: Tk's validation pair carries short spellings on the classic Entry, and
+    #: they are the ones tkinter's own documentation uses - so a program copied
+    #: from it failed here on its first line with ``unknown option "-vcmd"``.
+    #: Measured: ttk.Entry has validatecommand and refuses vcmd, which is why
+    #: these live on this class rather than in the module table.
+    _option_synonyms: ClassVar[dict[str, str]] = {
+        **_OPTION_ALIASES,
+        "vcmd": "validatecommand",
+        "invcmd": "invalidcommand",
+    }
+
     _widget_options: ClassVar[dict[str, Any]] = {
         "font": "",
         "justify": "left",
@@ -7758,7 +7815,7 @@ class Spinbox(Entry):
     _widget_options: ClassVar[dict[str, Any]] = {
         "command": None,
         "format": "",
-        "from_": 0.0,
+        "from": 0.0,
         "increment": 1.0,
         "to": 0.0,
         "values": None,
@@ -7831,7 +7888,7 @@ class Spinbox(Entry):
         values = self._value_list()
         if values:
             return values[0]
-        return self._number_text(float(self._options["from_"]))
+        return self._number_text(float(self._options["from"]))
 
     def _number_text(self, value: float) -> str:
         """One number as text, honouring ``format`` if it was given.
@@ -7898,7 +7955,7 @@ class Spinbox(Entry):
 
     def _number_step(self, direction: int) -> str | None:
         """The next number in the range, or None at an end that does not wrap."""
-        low, high = float(self._options["from_"]), float(self._options["to"])
+        low, high = float(self._options["from"]), float(self._options["to"])
         if low == high:
             return None
         increment = abs(float(self._options["increment"])) or 1.0
@@ -12416,7 +12473,7 @@ class Scale(_Drawable):
         "command": None,
         "digits": 0,
         "font": "",
-        "from_": 0.0,
+        "from": 0.0,
         "label": "",
         "length": 20,
         "orient": "vertical",
@@ -12493,7 +12550,7 @@ class Scale(_Drawable):
             return result
         if "variable" in given:
             self._follow_variable()
-        if {"from_", "to", "resolution"} & set(given):
+        if {"from", "to", "resolution"} & set(given):
             # The value may no longer be reachable: a range that moved under
             # it has to pull it back rather than leave the handle off the end.
             self.set(self._value)
@@ -12511,7 +12568,7 @@ class Scale(_Drawable):
 
     def _range(self) -> tuple[float, float]:
         """The two ends, in the order the options name them."""
-        return float(self._options["from_"]), float(self._options["to"])
+        return float(self._options["from"]), float(self._options["to"])
 
     def _thickness(self) -> int:
         """Cells across the trough, at right angles to its length."""

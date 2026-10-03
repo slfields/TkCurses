@@ -553,6 +553,18 @@ class Widget:
     #: :meth:`_style_name` rather than stored.
     _widget_options: ClassVar[dict[str, Any]] = {"style": "", "class": ""}
 
+    #: **No themed widget has an option synonym.** Measured on Tcl/Tk 9.0.2:
+    #: ``ttk.Label`` has ``background`` and refuses ``bg``; ``ttk.Entry`` has
+    #: ``validatecommand`` and refuses ``vcmd``. Tk's synonyms live in the
+    #: classic widgets' option tables and ttk's elements do not carry them.
+    #:
+    #: This has to be declared, not inherited: every themed widget is built on
+    #: a classic one, so without emptying the set here ``ttk.Entry(vcmd=...)``
+    #: would be accepted - a divergence created by fixing the classic side.
+    #: The most derived declaration wins and this mixin comes first in every
+    #: themed MRO. TkCurses-oe5.
+    _option_synonyms: ClassVar[dict[str, str]] = {}
+
     def winfo_class(self) -> str:
         """The themed class name - ``TButton``, not ``Button``.
 
