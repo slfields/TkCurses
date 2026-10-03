@@ -4282,7 +4282,7 @@ Indeterminate:  [░░░░███░░░░░░░░░░░░░] (
 | `__init__(master=None, **kw)` | ○ | Tree/table view |
 | `bbox(item, column)` | ○ | Cell bounding box, in cells. **Not** `Misc.bbox`, which is `grid_bbox` |
 | `get_children(item=None)` | ✓ | Get children |
-| `set_children(item, *children)` | ☐ | Set children - not implemented; TkCurses-67u |
+| `set_children(item, *children)` | ✓ | Replace children, in order; what it omits is **detached**, not deleted |
 | `column(column, option, **kw)` | ○ | Column config |
 | `delete(*items)` | ✓ | Delete items |
 | `detach(*items)` | ✓ | Detach items |
@@ -4308,9 +4308,33 @@ Indeterminate:  [░░░░███░░░░░░░░░░░░░] (
 | `selection_remove(*items)` | ✓ | Remove from sel |
 | `selection_toggle(*items)` | ✓ | Toggle selection |
 | `set(item, column, value)` | ✓ | Set cell value |
-| `tag_bind(tagname, sequence, callback)` | ☐ | Bind tag event - not implemented; TkCurses-67u |
-| `tag_configure(tagname, option, **kw)` | ☐ | Tag attributes - not implemented; TkCurses-67u |
-| `tag_has(tagname, item)` | ☐ | Check tag - not implemented; TkCurses-67u |
+| `tag_bind(tagname, sequence, callback)` | ✓ | Bind an event for tagged rows; returns None in all three forms |
+| `tag_configure(tagname, option, **kw)` | ◐ | All seven tag options are stored; `background`, `foreground` and `stripedbackground` are drawn |
+| `tag_has(tagname, item)` | ✓ | The rows carrying a tag, or a bool for one row |
+
+**Four of the seven tag options are stored and never drawn.** `tag_configure`
+answers for `background`, `foreground`, `font`, `image`, `imageanchor`,
+`padding` and `stripedbackground` — seven, measured against Tcl/Tk 9.0.2,
+where `tag_configure('x')` with no option lists them all. Three of those mean
+something on a character grid and four describe pixels; all seven are accepted
+and read back, so a program that sets `font` keeps working and simply looks the
+same. One cell is one cell.
+
+`stripedbackground` is the one that matters, and it is where this and
+`-striped` (`TkCurses-xe9.4`) turn out to be one feature. The manual calls it
+*"the cell or item background color for alternate lines, if `-striped` is
+true"* — so **striping is a tag option in Tk, not a widget colour**. `-striped`
+was built first, before any tag machinery existed, and could only read
+`style.lookup("Treeview", "stripedbackground")`. A striped row now takes the
+winning tag's `stripedbackground`, then the style's, then falls back to `A_DIM`
+(see `_stripe_attribute` for why dim rather than a colour).
+
+**Tk 9.0 has `tag delete` and tkinter does not wrap it**, which is why no row
+above mentions it: `hasattr(tkinter.ttk.Treeview, "tag_delete")` is False, so
+it is outside the method-surface comparison and nothing here is missing. Tk's
+own command removes a tag from every item and cell and drops its bindings. A
+program that wants the effect here can `item(iid, tags=...)` the tag off each
+row.
 
 **Hit-testing rests on one column model, and on the tree not scrolling
 sideways.** `_column_spans()` answers where every column sits, in cells, and

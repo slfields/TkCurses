@@ -1618,6 +1618,10 @@ def test_padding_adds_to_padx_and_pady_rather_than_replacing_them(padded_root):
 # anything else with 'expected boolean value but got "..."' - and the COLOUR
 # comes from the style, not the widget: style.lookup("Treeview",
 # "stripedbackground") answers '#e8e8e8' against a white background.
+#
+# The style is only half of it, which TkCurses-67u found: stripedbackground is
+# a TAG option in Tk, and a tag's beats the style's. The tag section below
+# covers that half.
 
 
 def test_striped_defaults_to_off(tree):
@@ -1699,6 +1703,502 @@ def test_the_stripe_takes_its_colour_from_the_style_when_one_is_set(filled):
     # No colours in this harness, so it falls back - the point is that it did
     # not raise and still marks the row.
     assert filled._row_attribute(filled._visible()[1], 1, 0) & curses.A_DIM
+
+
+# ------------------------------------------- Treeview's tag API (TkCurses-67u)
+#
+# Measured against Tcl/Tk 9.0.2 and real tkinter on Python 3.14.7.
+#
+# SEVEN tag options, not the two the issue guessed, and -stripedbackground is
+# among them: striping is a TAG feature in Tk, which is why this and xe9.4 are
+# the same work seen from two sides.
+#
+# TWO DIFFERENT ORDERS, both from man ttk_treeview and neither guessable:
+# a tag OPTION is resolved by CREATION order ("tags created first receive
+# higher priority"), while a tag BINDING runs in the order of the ROW's own
+# tags list ("for each of the item's tags option ... as per bindtags(n)").
+# Anyone would assume one rule for both.
+
+#: The first row of the fixture below, in screen coordinates: the tree shows
+#: its headings by default, so row 0 is the heading and the first item is at 2.
+FIRST_ROW_Y = 2
+
+
+class _Recorder:
+    """Stands in for the colour manager, which needs a real terminal.
+
+    ``attribute_for`` is the only thing the row painter asks of it, so this
+    records the colour pair it was asked for and hands back a marker the
+    tests can see in the attribute.
+    """
+
+    MARK = 1 << 20
+
+    def __init__(self):
+        self.calls = []
+
+    def attribute_for(self, fg, bg, attr=0):
+        self.calls.append((fg, bg))
+        return self.MARK
+
+
+@pytest.fixture
+def tagged(tree):
+    """Three rows: Alpha tagged 'warn', Beta tagged 'warn' and 'cold', Gamma bare."""
+    tree.ids = (
+        tree.insert("", "end", text="Alpha", tags=("warn",)),
+        tree.insert("", "end", text="Beta", tags=("warn", "cold")),
+        tree.insert("", "end", text="Gamma"),
+    )
+    return tree
+
+
+@pytest.fixture
+def recorder(tagged):
+    """``tagged``, with the colour manager replaced by a recorder."""
+    tagged.tk.colors = _Recorder()
+    return tagged
+
+
+# ----------------------------------------------------------- tag_configure
+
+
+def test_tag_configure_answers_all_seven_options(tree):
+    """Seven, measured - the issue that asked for this named two."""
+    assert tree.tag_configure("warn") == {
+        "background": "",
+        "foreground": "",
+        "font": "",
+        "image": "",
+        "imageanchor": "",
+        "padding": "",
+        "stripedbackground": "",
+    }
+
+
+def test_tag_configure_answers_one_option(tree):
+    tree.tag_configure("warn", background="red")
+    assert tree.tag_configure("warn", "background") == "red"
+
+
+def test_an_option_never_set_answers_empty_rather_than_raising(tree):
+    tree.tag_configure("warn", background="red")
+    assert tree.tag_configure("warn", "foreground") == ""
+
+
+def test_the_leading_dash_is_accepted_on_both_forms(tree):
+    tree.tag_configure("warn", **{"-background": "red"})
+    assert tree.tag_configure("warn", "-background") == "red"
+
+
+def test_setting_a_tag_option_returns_none(tree):
+    assert tree.tag_configure("warn", background="red") is None
+
+
+def test_tag_configure_refuses_an_unknown_option(tree):
+    with pytest.raises(TclError, match='unknown option "-rubbish"'):
+        tree.tag_configure("warn", rubbish="x")
+
+
+def test_querying_a_tag_nobody_configured_is_not_an_error(tree):
+    assert tree.tag_configure("never-mentioned")["background"] == ""
+
+
+# --------------------------------------------------------------- tag_has
+
+
+def test_tag_has_lists_the_rows_carrying_a_tag(tagged):
+    alpha, beta, _gamma = tagged.ids
+    assert tagged.tag_has("warn") == (alpha, beta)
+    assert tagged.tag_has("cold") == (beta,)
+
+
+def test_tag_has_answers_a_bool_when_given_a_row(tagged):
+    alpha, _beta, gamma = tagged.ids
+    assert tagged.tag_has("warn", alpha) is True
+    assert tagged.tag_has("warn", gamma) is False
+
+
+def test_a_tag_nothing_carries_is_empty_rather_than_an_error(tagged):
+    """Measured: Tk answers (), it does not raise."""
+    assert tagged.tag_has("nosuch") == ()
+
+
+def test_a_bare_string_is_one_tag_and_not_its_characters(tree):
+    """``tags="single"`` reads back from real ttk as ``('single',)``.
+
+    Worth a test of its own rather than tidiness: iterating the string would
+    have asked whether each CHARACTER was a tag, so tag_has('s') would have
+    answered True for a row tagged 'single'.
+    """
+    iid = tree.insert("", "end", text="One", tags="single")
+    assert tree.item(iid, "tags") == ("single",)
+    assert tree.tag_has("single", iid) is True
+    assert tree.tag_has("s", iid) is False
+
+
+def test_tag_has_on_a_row_that_does_not_exist_is_false(tree):
+    assert tree.tag_has("warn", "I999") is False
+
+
+# ------------------------------------------------- which tag wins, and why
+
+
+def test_the_earliest_created_tag_wins(recorder):
+    """man ttk_treeview: "tag priority is decided by the creation order: tags
+    created first receive higher priority."
+
+    Beta carries ('warn', 'cold') in that order, and 'cold' is created first
+    here - so 'cold' wins, which is what the ROW's own order would deny. The
+    fixture names them the other way round on purpose.
+    """
+    recorder.tag_configure("cold", background="blue")
+    recorder.tag_configure("warn", background="red")
+    _alpha, beta, _gamma = recorder.ids
+    recorder._row_attribute(beta, 0, 0)
+    assert recorder.tk.colors.calls == [("white", "blue")]
+
+
+def test_configuring_a_tag_again_does_not_promote_it(recorder):
+    """Creation order, not the order of the most recent configure call."""
+    recorder.tag_configure("cold", background="blue")
+    recorder.tag_configure("warn", background="red")
+    recorder.tag_configure("cold", background="green")
+    _alpha, beta, _gamma = recorder.ids
+    recorder._row_attribute(beta, 0, 0)
+    assert recorder.tk.colors.calls == [("white", "green")]
+
+
+def test_a_tag_that_does_not_set_the_option_is_passed_over(recorder):
+    """Priority is per option. 'cold' is older but says nothing about the
+    background, so 'warn' answers for it - rather than the oldest tag
+    blanking what a younger one set."""
+    recorder.tag_configure("cold", foreground="cyan")
+    recorder.tag_configure("warn", background="red")
+    _alpha, beta, _gamma = recorder.ids
+    recorder._row_attribute(beta, 0, 0)
+    assert recorder.tk.colors.calls == [("cyan", "red")]
+
+
+def test_a_tag_setting_only_one_colour_keeps_the_widgets_own_other(recorder):
+    recorder.tag_configure("warn", background="red")
+    alpha, _beta, _gamma = recorder.ids
+    assert recorder._row_attribute(alpha, 0, 0) & _Recorder.MARK
+    assert recorder.tk.colors.calls == [("white", "red")]
+
+
+def test_an_untagged_row_is_not_recoloured(recorder):
+    recorder.tag_configure("warn", background="red")
+    _alpha, _beta, gamma = recorder.ids
+    assert recorder._row_attribute(gamma, 0, 0) == 0
+    assert recorder.tk.colors.calls == []
+
+
+def test_a_tag_with_no_colours_leaves_the_row_alone(recorder):
+    """font, image, imageanchor and padding are stored and have nothing to do
+    on a character grid - one cell is one cell. Setting one must not send the
+    row through the colour resolver."""
+    recorder.tag_configure("warn", font="Courier 12", padding=4)
+    alpha, _beta, _gamma = recorder.ids
+    assert recorder._row_attribute(alpha, 0, 0) == 0
+    assert recorder.tk.colors.calls == []
+
+
+def test_a_selected_row_ignores_its_tags(recorder):
+    """Selection wins over a tag for the same reason it wins over the stripe:
+    reverse plus a colour pair is whatever the terminal decides."""
+    recorder.tag_configure("warn", background="red")
+    alpha, _beta, _gamma = recorder.ids
+    recorder.selection_set(alpha)
+    assert recorder._row_attribute(alpha, 0, 0) == curses.A_REVERSE
+    assert recorder.tk.colors.calls == []
+
+
+# ------------------------------------ stripedbackground, where xe9.4 and this meet
+
+
+def test_a_tags_stripedbackground_is_what_a_striped_row_takes(recorder):
+    """The option is Tk's TAG option - "the cell or item background color for
+    alternate lines, if -striped is true". xe9.4 could only read the style
+    because no tag machinery existed yet."""
+    recorder.configure(striped=1)
+    recorder.tag_configure("warn", stripedbackground="purple")
+    Style(recorder).configure("Treeview", stripedbackground="blue")
+    _alpha, beta, _gamma = recorder.ids
+    assert recorder._row_attribute(beta, 1, 0) & _Recorder.MARK
+    assert recorder.tk.colors.calls == [("white", "purple")]
+
+
+def test_the_style_answers_when_no_tag_sets_one(recorder):
+    """The half of the feature Tk reaches when no tag answers, and the half
+    xe9.4 built."""
+    recorder.configure(striped=1)
+    Style(recorder).configure("Treeview", stripedbackground="blue")
+    _alpha, beta, _gamma = recorder.ids
+    recorder._row_attribute(beta, 1, 0)
+    assert recorder.tk.colors.calls == [("white", "blue")]
+
+
+def test_a_striped_row_still_takes_its_tags_foreground(recorder):
+    recorder.configure(striped=1)
+    recorder.tag_configure("warn", foreground="cyan", stripedbackground="purple")
+    _alpha, beta, _gamma = recorder.ids
+    recorder._row_attribute(beta, 1, 0)
+    assert recorder.tk.colors.calls == [("cyan", "purple")]
+
+
+def test_an_even_row_takes_the_plain_tag_colour_while_striped(recorder):
+    """The stripe is every other row, so the rows between it are still
+    coloured by their tags rather than left plain."""
+    recorder.configure(striped=1)
+    recorder.tag_configure("warn", background="red", stripedbackground="purple")
+    alpha, _beta, _gamma = recorder.ids
+    recorder._row_attribute(alpha, 0, 0)
+    assert recorder.tk.colors.calls == [("white", "red")]
+
+
+def test_a_tag_colour_survives_the_dim_fallback(recorder):
+    """A striped row whose tags name no stripedbackground still takes their
+    ORDINARY colours, and the dim banding goes on top.
+
+    The alternative was dropping them: the stripe reached A_DIM by way of the
+    plain `attribute` it was handed, so a tag that coloured every other row
+    coloured only half of them. Added because mutation found it - deleting the
+    fallback's tag lookup broke no test until this one.
+    """
+    recorder.configure(striped=1)
+    recorder.tag_configure("warn", background="red")
+    _alpha, beta, _gamma = recorder.ids
+    attribute = recorder._row_attribute(beta, 1, 0)
+    assert recorder.tk.colors.calls == [("white", "red")]
+    assert attribute & _Recorder.MARK, "the tag colour was dropped"
+    assert attribute & curses.A_DIM, "the stripe was dropped"
+
+
+def test_the_dim_fallback_stands_when_there_are_no_colours_at_all(tagged):
+    """No colour manager, nothing to resolve: the banding is all that is left,
+    and asking for a colour must not raise on the way there."""
+    tagged.tk.colors = None
+    tagged.configure(striped=1)
+    tagged.tag_configure("warn", background="red")
+    _alpha, beta, _gamma = tagged.ids
+    assert tagged._row_attribute(beta, 1, 0) == curses.A_DIM
+
+
+# -------------------------------------------------------------- tag_bind
+
+
+def test_a_tag_binding_fires_for_a_click_on_a_tagged_row(tagged):
+    fired = []
+    tagged.tag_bind("warn", "<Button-1>", lambda event: fired.append(event.y))
+    tagged.event_generate("<Button-1>", x=1, y=FIRST_ROW_Y)
+    assert fired == [FIRST_ROW_Y]
+
+
+def test_a_tag_binding_does_not_fire_for_an_untagged_row(tagged):
+    fired = []
+    tagged.tag_bind("warn", "<Button-1>", lambda event: fired.append("x"))
+    tagged.event_generate("<Button-1>", x=1, y=FIRST_ROW_Y + 2)
+    assert fired == []
+
+
+def test_a_click_below_the_last_row_reaches_nothing(tagged):
+    """There is no row there to own the event, which _row_at answers None
+    for - and None is not a row id to look tags up on."""
+    fired = []
+    tagged.tag_bind("warn", "<Button-1>", lambda event: fired.append("x"))
+    tagged.event_generate("<Button-1>", x=1, y=FIRST_ROW_Y + 6)
+    assert fired == []
+
+
+def test_a_key_binding_goes_to_the_focus_row_not_the_pointer(tagged):
+    """man ttk_treeview: key and virtual events go to the focus item, pointer
+    events to the item under the pointer. A key event has no row under it."""
+    alpha, _beta, gamma = tagged.ids
+    fired = []
+    tagged.tag_bind("warn", "<Key-Return>", lambda event: fired.append("warn"))
+    tagged.focus(gamma)
+    tagged.event_generate("<Key-Return>")
+    assert fired == []
+    tagged.focus(alpha)
+    tagged.event_generate("<Key-Return>")
+    assert fired == ["warn"]
+
+
+def test_a_key_binding_with_no_focus_row_reaches_nothing(tree):
+    fired = []
+    tree.insert("", "end", text="One", tags=("warn",))
+    tree.tag_bind("warn", "<Key-Return>", lambda event: fired.append("x"))
+    assert tree.focus() == ""
+    tree.event_generate("<Key-Return>")
+    assert fired == []
+
+
+def test_tag_bindings_run_in_the_rows_own_tag_order(tagged):
+    """The OTHER order, and the one a tag's colour does not use: man
+    ttk_treeview sends a binding to "each of the item's tags option ... in
+    order as per bindtags(n)". Beta names warn before cold while cold is
+    created first, so the two orders disagree here on purpose."""
+    order = []
+    tagged.tag_configure("cold")
+    tagged.tag_configure("warn")
+    tagged.tag_bind("cold", "<Button-1>", lambda event: order.append("cold"))
+    tagged.tag_bind("warn", "<Button-1>", lambda event: order.append("warn"))
+    tagged.event_generate("<Button-1>", x=1, y=FIRST_ROW_Y + 1)
+    assert order == ["warn", "cold"]
+
+
+def test_every_matching_tag_binding_runs(tagged):
+    both = []
+    tagged.tag_bind("warn", "<Button-1>", lambda event: both.append("warn"))
+    tagged.tag_bind("cold", "<Button-1>", lambda event: both.append("cold"))
+    tagged.event_generate("<Button-1>", x=1, y=FIRST_ROW_Y + 1)
+    assert sorted(both) == ["cold", "warn"]
+
+
+def test_tag_bind_returns_none_in_every_form(tagged):
+    """All three, measured against tkinter - including the one that looks like
+    a query, so there is no form that reads a binding back."""
+    assert tagged.tag_bind("warn") is None
+    assert tagged.tag_bind("warn", "<Button-1>") is None
+    assert tagged.tag_bind("warn", "<Button-1>", lambda event: None) is None
+
+
+def test_the_query_form_does_not_erase_a_binding(tagged):
+    """A callback of None is the query form, not an unbind - so asking must
+    not take the binding away."""
+    fired = []
+    tagged.tag_bind("warn", "<Button-1>", lambda event: fired.append("x"))
+    tagged.tag_bind("warn", "<Button-1>")
+    tagged.event_generate("<Button-1>", x=1, y=FIRST_ROW_Y)
+    assert fired == ["x"]
+
+
+def test_one_widget_binding_serves_every_tag_on_a_sequence(tagged):
+    """A tag is not a window, so the binding goes on the widget and the
+    dispatcher picks the row. One per sequence however many tags bind it,
+    or a row with two tags would be visited twice over."""
+    tagged.tag_bind("warn", "<Button-1>", lambda event: None)
+    tagged.tag_bind("cold", "<Button-1>", lambda event: None)
+    assert list(tagged._tag_dispatch) == ["<Button-1>"]
+
+
+def test_a_tag_binding_does_not_displace_the_programs_own(tagged):
+    """add='+', because a program that bound <Button-1> itself keeps it."""
+    fired = []
+    tagged.bind("<Button-1>", lambda event: fired.append("mine"))
+    tagged.tag_bind("warn", "<Button-1>", lambda event: fired.append("tag"))
+    tagged.event_generate("<Button-1>", x=1, y=FIRST_ROW_Y)
+    assert sorted(fired) == ["mine", "tag"]
+
+
+def test_clicking_a_tagged_row_still_selects_it(tagged):
+    """The dispatcher returns nothing, so the class binding that selects the
+    row still runs - a tag binding adds to the widget's behaviour rather than
+    replacing it."""
+    alpha, _beta, _gamma = tagged.ids
+    tagged.tag_bind("warn", "<Button-1>", lambda event: None)
+    tagged.event_generate("<Button-1>", x=1, y=FIRST_ROW_Y)
+    assert tagged.selection() == (alpha,)
+
+
+# ----------------------------------------------------------- set_children
+
+
+def test_set_children_replaces_the_children_in_order(filled):
+    alpha, _child, beta = filled.ids
+    filled.set_children("", beta, alpha)
+    assert filled.get_children("") == (beta, alpha)
+
+
+def test_set_children_detaches_what_it_omits_rather_than_deleting_it(filled):
+    """The name hides that this is detach, not delete: exists() still answers
+    True and move puts the row back."""
+    alpha, _child, beta = filled.ids
+    filled.set_children("", alpha)
+    assert filled.get_children("") == (alpha,)
+    assert filled.exists(beta) is True
+
+
+def test_a_detached_row_reports_no_parent(filled):
+    """Measured: Tk answers "" for a detached row's parent, which is
+    indistinguishable from a row at the top level. Tk's own quirk, and
+    'detached' is what tells the two apart.
+
+    The row dropped here is Alpha's child rather than a root child, because a
+    root child's parent is "" before anything happens to it - a test that
+    detached one would pass whether or not the parent was ever cleared.
+    """
+    alpha, child, _beta = filled.ids
+    filled.set_children(alpha)
+    assert filled.get_children(alpha) == ()
+    assert filled.parent(child) == ""
+    assert filled._items[child].detached is True
+
+
+def test_set_children_moves_a_row_from_another_parent(filled):
+    alpha, _child, beta = filled.ids
+    filled.set_children(alpha, beta)
+    assert filled.parent(beta) == alpha
+    assert filled.get_children(alpha) == (beta,)
+    assert filled.get_children("") == (alpha,)
+
+
+def test_what_the_moved_row_displaces_is_detached_in_turn(filled):
+    alpha, child, beta = filled.ids
+    filled.set_children(alpha, beta)
+    assert filled.exists(child) is True
+    assert filled.parent(child) == ""
+
+
+def test_a_row_put_back_is_no_longer_detached(filled):
+    alpha, _child, beta = filled.ids
+    filled.set_children("", alpha)
+    filled.set_children("", alpha, beta)
+    assert filled._items[beta].detached is False
+    assert filled.get_children("") == (alpha, beta)
+
+
+def test_set_children_with_nothing_detaches_every_child(filled):
+    alpha, _child, beta = filled.ids
+    filled.set_children("")
+    assert filled.get_children("") == ()
+    assert filled.exists(alpha) and filled.exists(beta)
+
+
+def test_set_children_refuses_a_row_as_its_own_child(filled):
+    alpha, _child, _beta = filled.ids
+    with pytest.raises(TclError, match="descendant"):
+        filled.set_children(alpha, alpha)
+
+
+def test_set_children_refuses_an_ancestors_row(filled):
+    """A cycle at one remove: putting Alpha under its own child would leave
+    the tree with no root for either.
+
+    The message names the refused row and then the parent it was offered
+    to - measured, Tk says ``Cannot insert I001 as descendant of I002`` for
+    ``set_children("I002", "I001")``. It once named the row twice, which a
+    test using the same row for both could never have noticed."""
+    alpha, child, _beta = filled.ids
+    with pytest.raises(
+        TclError, match=f"^Cannot insert {alpha} as descendant of {child}$"
+    ):
+        filled.set_children(child, alpha)
+
+
+def test_set_children_refuses_a_row_that_does_not_exist(filled):
+    with pytest.raises(TclError, match="not found"):
+        filled.set_children("", "I999")
+
+
+def test_a_refused_set_children_changes_nothing(filled):
+    """Both checks run over every argument before anything moves, so a call
+    that names one good row and one bad leaves the tree as it was."""
+    alpha, _child, beta = filled.ids
+    with pytest.raises(TclError):
+        filled.set_children("", beta, "I999")
+    assert filled.get_children("") == (alpha, beta)
 
 
 # ------------------------- Treeview's horizontal layout (p9h, step one)

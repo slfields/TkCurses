@@ -170,6 +170,12 @@ NOT_INSTANTIATED = frozenset(
 #:   TkCurses-5rt  five single-method gaps
 #:   TkCurses-aj1.16.1  the Canvas item types that were already owned
 #:
+#: It shrank by four on 2026-10-03 (TkCurses-67u): the ttk.Treeview tag API -
+#: tag_configure, tag_bind, tag_has - and set_children. This list's first
+#: shrink, and it was this test that demanded it: the four were implemented,
+#: test_every_listed_gap_is_still_missing failed naming all four, and the
+#: entries came out. That is the whole arrangement working as intended.
+#:
 #: A gap not listed here is a test failure, which is the point: this list may
 #: shrink and must never silently grow.
 GAPS: dict[str, dict[str, str]] = {
@@ -352,12 +358,6 @@ GAPS: dict[str, dict[str, str]] = {
     },
     "ttk.Spinbox": {
         "set": "TkCurses-elb",
-    },
-    "ttk.Treeview": {
-        "set_children": "TkCurses-67u",
-        "tag_bind": "TkCurses-67u",
-        "tag_configure": "TkCurses-67u",
-        "tag_has": "TkCurses-67u",
     },
 }
 

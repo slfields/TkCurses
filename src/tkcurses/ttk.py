@@ -62,11 +62,13 @@ from __future__ import annotations
 
 import contextlib
 import curses
+import functools
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import tkcurses
 from tkcurses._core.attributes import BorderStyle
+from tkcurses._core.bindings import parse_sequence
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.errors import TclError
 from tkcurses._core.geometry import BORDER_WIDTH, Insets, Point, Rect
@@ -2144,6 +2146,19 @@ TREE_HEIGHT = 10
 COLUMN_WIDTH = 20
 
 
+def _as_tags(value: Any) -> tuple[str, ...]:
+    """Normalise a ``tags`` value to a tuple, as Tk reports it.
+
+    A bare string is one tag, not a sequence of characters: measured,
+    ``tags="single"`` reads back from real ttk as ``('single',)``.
+    """
+    if not value:
+        return ()
+    if isinstance(value, str):
+        return (value,)
+    return tuple(str(tag) for tag in value)
+
+
 @dataclass
 class _Item:
     """One row of a treeview.
@@ -2238,6 +2253,25 @@ class Treeview(Widget, tkcurses.Frame):
         "image": "",
     }
 
+    #: What ``tag_configure()`` answers for, with Tk's defaults.
+    #:
+    #: Seven, measured against Tcl/Tk 9.0.2 - not the two the issue that asked
+    #: for this named. ``stripedbackground`` is the one that matters: the
+    #: manual calls it *"the cell or item background color for alternate
+    #: lines, if -striped is true"*, which makes striping a TAG feature rather
+    #: than a widget one. TkCurses-xe9.4 read the style for it because there
+    #: was no tag machinery to read instead; :meth:`_stripe_attribute` is
+    #: where the two meet.
+    _tag_options: ClassVar[dict[str, Any]] = {
+        "background": "",
+        "foreground": "",
+        "font": "",
+        "image": "",
+        "imageanchor": "",
+        "padding": "",
+        "stripedbackground": "",
+    }
+
     def __init__(
         self,
         master: Misc | None = None,
@@ -2256,6 +2290,13 @@ class Treeview(Widget, tkcurses.Frame):
         """
         self._items: dict[str, _Item] = {}
         self._roots: list[str] = []
+        # Insertion-ordered on purpose: Tk breaks ties between tags by
+        # creation order, earliest first, so this dict IS the priority list.
+        self._tags: dict[str, dict[str, Any]] = {}
+        self._tag_bindings: dict[str, dict[str, Any]] = {}
+        # One widget binding per sequence any tag binds, however many tags
+        # bind it: the dispatcher reads _tag_bindings when the event arrives.
+        self._tag_dispatch: dict[str, Any] = {}
         self._selection: list[str] = []
         self._focus = ""
         self._headings: dict[str, dict[str, Any]] = {}
@@ -2354,6 +2395,14 @@ class Treeview(Widget, tkcurses.Frame):
 
         Not ``delete``: ``exists()`` still answers True afterwards, and
         ``move`` puts the row back. Measured against Tk, which is the same.
+
+        **A detached row reports no parent.** Measured, ``parent()`` answers
+        ``""`` in Tk once a row is detached, which is indistinguishable from a
+        row at the top level - Tk's own quirk, and ``detached`` is what tells
+        the two apart. This kept the old parent until TkCurses-67u, which made
+        the difference reachable: ``set_children`` detaches whatever it omits,
+        so a program could see a row that was no longer among its parent's
+        children while still naming that parent.
         """
         for iid in items:
             item = self._items.get(iid)
@@ -2361,6 +2410,7 @@ class Treeview(Widget, tkcurses.Frame):
                 continue
             with contextlib.suppress(ValueError):
                 self._children_of(item.parent).remove(iid)
+            item.parent = ""
             item.detached = True
         self._redraw()
 
@@ -2388,9 +2438,18 @@ class Treeview(Widget, tkcurses.Frame):
         return self._items[item].parent
 
     def index(self, item: str) -> int:
-        """Where ``item`` sits among its siblings."""
+        """Where ``item`` sits among its siblings.
+
+        **Zero for a detached row**, which is what Tk answers - measured. A
+        detached row is in nobody's children list, and asking the list where
+        it was raised a bare ``ValueError`` out of ``list.index``: not a
+        :class:`TclError`, so not something a caller could catch by name, and
+        not a number either. ``detach`` could always reach it; TkCurses-67u
+        made it ordinary, because ``set_children`` detaches what it omits.
+        """
         entry = self._items[item]
-        return self._children_of(entry.parent).index(item)
+        siblings = self._children_of(entry.parent)
+        return siblings.index(item) if item in siblings else 0
 
     def exists(self, item: str) -> bool:
         """Whether ``item`` is a row of this tree, detached or not."""
@@ -2405,9 +2464,16 @@ class Treeview(Widget, tkcurses.Frame):
         return self._sibling(item, -1)
 
     def _sibling(self, item: str, step: int) -> str:
-        """One sibling along, or ``""`` at the end."""
+        """One sibling along, or ``""`` at the end.
+
+        A detached row has no siblings to step between - it is in nobody's
+        children list - so it answers ``""`` rather than raising out of
+        ``list.index``. See :meth:`index`.
+        """
         entry = self._items[item]
         siblings = self._children_of(entry.parent)
+        if item not in siblings:
+            return ""
         position = siblings.index(item) + step
         if 0 <= position < len(siblings):
             return siblings[position]
@@ -2493,8 +2559,185 @@ class Treeview(Widget, tkcurses.Frame):
             name = key.lstrip("-")
             if name not in self._item_options:
                 raise TclError(f'unknown option "-{name}"')
-            cleaned[name] = tuple(value) if name == "values" else value
+            if name == "values":
+                cleaned[name] = tuple(value)
+            elif name == "tags":
+                cleaned[name] = _as_tags(value)
+            else:
+                cleaned[name] = value
         return cleaned
+
+    # ---------------------------------------------------------------- tags
+
+    def tag_configure(self, tagname: str, option: str | None = None, **kw: Any) -> Any:
+        """Query or set the options of one tag.
+
+        Three forms, all measured against real ttk:
+
+        * ``tag_configure("warn")`` - every option, with ``""`` for each one
+          never set.
+        * ``tag_configure("warn", "background")`` - that option's value, or
+          ``""``.
+        * ``tag_configure("warn", background="red")`` - sets, returns None.
+
+        **Naming a tag here creates it**, which is not a detail: Tk decides
+        priority between tags by CREATION ORDER, so the order these calls
+        happen in is what decides who wins. See :meth:`_tag_value`.
+        """
+        options = self._tags.setdefault(tagname, dict(self._tag_options))
+        if kw:
+            for key, value in kw.items():
+                name = key.lstrip("-")
+                if name not in self._tag_options:
+                    raise TclError(f'unknown option "-{name}"')
+                options[name] = value
+            self._redraw()
+            return None
+        if option is not None:
+            return options[option.lstrip("-")]
+        return dict(options)
+
+    def tag_has(self, tagname: str, item: str | None = None) -> Any:
+        """Which rows carry a tag, or whether one does.
+
+        ``tag_has("warn")`` answers the tuple of rows carrying it - ``()`` for
+        a tag nothing carries, which is not an error. ``tag_has("warn", iid)``
+        answers a bool. Measured; the two return types from one method are
+        Tk's, not a convenience.
+        """
+        if item is not None:
+            return tagname in self._item_tags(item)
+        return tuple(iid for iid in self._items if tagname in self._item_tags(iid))
+
+    def tag_bind(
+        self, tagname: str, sequence: str | None = None, callback: Any = None
+    ) -> None:
+        """Bind an event for every row carrying a tag.
+
+        Returns None in all three forms, which is what tkinter does - measured,
+        including the form that looks like a query. So there is nothing here to
+        read the bindings back with, and nothing in tkinter to match if there
+        were; the form without a callback is a query and changes nothing.
+
+        **The binding goes on the widget, and the dispatcher picks the row.**
+        A tag is not a window, so there is nothing for the binding table to
+        hang a tag binding on. One ordinary ``bind`` per sequence is installed
+        instead - ``add="+"``, so it joins rather than displaces whatever the
+        program bound itself - and :func:`_treeview_tag_event` decides which
+        row the event belongs to and runs that row's tags. Which row depends
+        on the event type; see :data:`_POINTER_TAG_EVENTS`.
+        """
+        if sequence is None or callback is None:
+            return None
+        self._tag_bindings.setdefault(tagname, {})[sequence] = callback
+        if sequence not in self._tag_dispatch:
+            self._tag_dispatch[sequence] = self.bind(
+                sequence, functools.partial(_treeview_tag_event, sequence), add="+"
+            )
+        return None
+
+    def _deliver_tags(self, item: str, sequence: str, event: Event) -> None:
+        """Run what one row's tags bind for one event.
+
+        **In the order of the row's own ``tags`` list**, which is NOT the
+        order :meth:`_tag_value` walks. The two orders are different on
+        purpose and ``man ttk_treeview`` gives both: a tag OPTION is resolved
+        by creation order, *"tags created first receive higher priority"*,
+        while a tag BINDING is run *"for each of the item's tags option ...
+        in order as per bindtags(n)"*. So colour comes from the oldest tag
+        and callbacks run in the order the row names them.
+
+        Every matching binding runs, and a return value stops nothing - the
+        same as ``Canvas._deliver``, whose item bindings this mirrors.
+        """
+        for tag in self._item_tags(item):
+            callback = self._tag_bindings.get(tag, {}).get(sequence)
+            if callback is not None:
+                callback(event)
+
+    def _item_tags(self, item: str) -> tuple[str, ...]:
+        """The tags on one row, always a tuple.
+
+        ``tags="single"`` is a bare string to Tk and a one-tuple out of it -
+        measured, ``item(iid, "tags")`` answers ``('single',)`` there and
+        answered ``'single'`` here. Worth more than tidiness: iterating the
+        string would have asked whether each CHARACTER was a tag.
+        """
+        entry = self._items.get(item)
+        if entry is None:
+            return ()
+        return _as_tags(entry.options.get("tags", ""))
+
+    def _tag_value(self, item: str, option: str) -> Any:
+        """One tag option for a row, resolved the way Tk resolves it.
+
+        **Earliest-created tag wins**, and it is worth saying why that is not
+        what anyone would guess. ``man ttk_treeview``, TAG OPTIONS: *"tag
+        priority is decided by the creation order: tags created first receive
+        higher priority."* Not the last tag configured, and NOT the order of
+        the row's own ``tags`` list - so this walks the tag registry, which is
+        insertion-ordered, and never the row's tags.
+
+        ``item(iid, "image")`` and the rest of the row's own options beat any
+        tag, per the same paragraph. That is why the drawing code asks the row
+        first and only falls back to here.
+
+        Cell tags would come before item tags; this library has no cell
+        selection yet, so there are none - TkCurses-xe9.5.
+        """
+        carried = set(self._item_tags(item))
+        if not carried:
+            return ""
+        for name, options in self._tags.items():
+            if name in carried and options.get(option):
+                return options[option]
+        return ""
+
+    def set_children(self, item: str, *newchildren: str) -> None:
+        """Replace a row's children with exactly these, in this order.
+
+        **This reparents, and the name hides it.** Measured against Tk:
+
+        * What it omits is DETACHED, not deleted. ``exists()`` still answers
+          True for a dropped row, and ``move`` puts it back.
+        * A row that belonged to another parent is MOVED here, and whatever it
+          displaces is detached in turn.
+        * A cycle is refused: Tk raises ``Cannot insert I001 as descendant of
+          I002``, naming the row and then the parent it was offered to, and
+          so does this.
+
+        Raises:
+            TclError: If a row would become its own descendant.
+        """
+        for iid in newchildren:
+            if iid not in self._items:
+                raise TclError(f"Item {iid} not found")
+            if item and self._is_descendant_or_self(item, iid):
+                raise TclError(f"Cannot insert {iid} as descendant of {item}")
+        for dropped in list(self._children_of(item)):
+            if dropped not in newchildren:
+                self.detach(dropped)
+        for iid in newchildren:
+            entry = self._items[iid]
+            if not entry.detached:
+                with contextlib.suppress(ValueError):
+                    self._children_of(entry.parent).remove(iid)
+            entry.detached = False
+            entry.parent = item
+        self._children_of(item)[:] = list(newchildren)
+        self._redraw()
+
+    def _is_descendant_or_self(self, item: str, ancestor: str) -> bool:
+        """Whether ``item`` is ``ancestor`` or sits below it."""
+        walked = item
+        while walked:
+            if walked == ancestor:
+                return True
+            entry = self._items.get(walked)
+            if entry is None:
+                return False
+            walked = entry.parent
+        return False
 
     # ----------------------------------------------------------- selection
 
@@ -3051,15 +3294,52 @@ class Treeview(Widget, tkcurses.Frame):
         if iid in self._selection:
             return attribute | curses.A_REVERSE
         if self._striped() and offset % 2:
-            return self._stripe_attribute(attribute)
-        return attribute
+            return self._stripe_attribute(attribute, iid)
+        return self._tag_attribute(attribute, iid)
 
-    def _stripe_attribute(self, attribute: int) -> int:
+    def _tag_attribute(self, attribute: int, iid: str) -> int:
+        """``attribute`` recoloured by whichever tag wins for this row.
+
+        Only the two options a terminal can honour. ``font``, ``image``,
+        ``imageanchor`` and ``padding`` are accepted and stored by
+        :meth:`tag_configure` - a program that sets them keeps working - and
+        there is nothing here to do with them: one cell is one cell.
+        """
+        background = self._tag_value(iid, "background")
+        foreground = self._tag_value(iid, "foreground")
+        if not background and not foreground:
+            return attribute
+        return self._recoloured(attribute, foreground, background)
+
+    def _recoloured(self, attribute: int, foreground: Any, background: Any) -> int:
+        """``attribute`` with whichever of the two colours was given.
+
+        Falls back to the widget's own foreground and background for the half
+        that was not, so a tag setting only one colour does not blank the
+        other.
+        """
+        colors = self.tk.colors
+        if colors is None:
+            return attribute
+        fallback_fg = str(self._options["foreground"] or "white")
+        fallback_bg = str(self._options["background"] or "black")
+        return attribute | colors.attribute_for(
+            str(foreground or fallback_fg), str(background or fallback_bg)
+        )
+
+    def _stripe_attribute(self, attribute: int, iid: str = "") -> int:
         """The tint for a striped row.
 
-        ``Treeview``'s ``stripedbackground`` when the style sets one - that is
-        where Tk keeps it, measured: ``style.lookup("Treeview",
-        "stripedbackground")`` answers ``#e8e8e8`` against a white background.
+        **The winning tag's ``stripedbackground`` first**, because that is
+        where Tk puts the option: the manual describes it as a tag option,
+        *"the background color for alternate lines, if -striped is true"*.
+        TkCurses-xe9.4 built the stripe before any tag machinery existed and
+        could only read the style, which is the half of the feature Tk reaches
+        when no tag answers.
+
+        Then ``Treeview``'s ``stripedbackground`` from the style - measured,
+        ``style.lookup("Treeview", "stripedbackground")`` answers ``#e8e8e8``
+        against a white background.
 
         Otherwise **dim**, and that fallback is the point rather than a
         shortcut. This library's themes are glyph sets, not colour palettes, so
@@ -3068,12 +3348,21 @@ class Treeview(Widget, tkcurses.Frame):
         which is an option that appears to work. Dim is the terminal's own
         banding, legible at any colour depth.
         """
-        colour = Style(self).lookup(self._style_name(), "stripedbackground")
+        colour = self._tag_value(iid, "stripedbackground") if iid else ""
+        if not colour:
+            colour = Style(self).lookup(self._style_name(), "stripedbackground")
         colors = self.tk.colors
         if colour and colors is not None:
             return colors.attribute_for(
-                str(self._options["foreground"] or "white"), str(colour)
+                str(
+                    self._tag_value(iid, "foreground")
+                    or self._options["foreground"]
+                    or "white"
+                ),
+                str(colour),
             )
+        if iid:
+            attribute = self._tag_attribute(attribute, iid)
         return attribute | curses.A_DIM
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
@@ -3094,6 +3383,40 @@ class Treeview(Widget, tkcurses.Frame):
         return result
 
     config = configure
+
+
+#: Event types whose tag bindings go to the row under the pointer. Everything
+#: else goes to the row with the keyboard.
+#:
+#: ``man ttk_treeview``, under ``tag bind``: *"<KeyPress>, <KeyRelease>, and
+#: virtual events are sent to the focus item. <ButtonPress>, <ButtonRelease>,
+#: and <Motion> events are sent to the item under the mouse pointer. No other
+#: event types are supported."*
+#:
+#: Spelled in the canonical types :func:`parse_sequence` answers with, not the
+#: names a program writes: ``<ButtonPress-1>`` and ``<Button-1>`` are the same
+#: event and both parse to ``Button``.
+_POINTER_TAG_EVENTS = frozenset({"Button", "ButtonRelease", "Motion"})
+
+
+def _treeview_tag_event(sequence: str, event: Event) -> None:
+    """Deliver one event to the tag bindings of the row it belongs to.
+
+    Installed on the widget by :meth:`Treeview.tag_bind`, once per sequence.
+    A pointer event belongs to the row under the pointer and anything else to
+    the focus row - :data:`_POINTER_TAG_EVENTS`. Neither is guaranteed to
+    exist: a click can land below the last row and a tree can have no focus
+    row, and then there is nothing to deliver to.
+    """
+    tree = event.widget
+    if not isinstance(tree, Treeview):
+        return
+    if parse_sequence(sequence).type in _POINTER_TAG_EVENTS:
+        item = tree._row_at(event.y)
+    else:
+        item = tree.focus() or None
+    if item:
+        tree._deliver_tags(item, sequence, event)
 
 
 def _treeview_click(event: Event) -> Any:
