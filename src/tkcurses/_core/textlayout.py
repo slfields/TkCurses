@@ -47,10 +47,13 @@ the tab from column 2 to column 9 and ``c`` at 10; a click anywhere in 2..9
 answers with the tab's own index. So the inverse maps a whole run back to one
 character.
 
-Right, centre and numeric alignments are not here. They change where the text
-*after* a tab sits, which needs to look ahead to the next tab or the end of
-the line, and they belong with the ``-tabs`` option itself - TkCurses-wy7.2,
-and TkCurses-eq2 for numeric.
+**All four of Tk's alignments are here.** Left, right and centre measure the
+run between one tab and the next; ``numeric`` reads it, looking for a decimal
+point. Each needs to see ahead to the next tab or the end of the line, which is
+why they live with the ``-tabs`` option rather than with the stops -
+TkCurses-wy7.2, and TkCurses-eq2 for numeric, whose three rules were measured
+off a real widget because the manual states all three more loosely than Tk
+implements them. See :func:`_numeric_offset`.
 """
 
 from __future__ import annotations
@@ -84,10 +87,9 @@ DEFAULT_EVERY = 8
 TABULAR = "tabular"
 WORDPROCESSOR = "wordprocessor"
 
-#: The alignments a stop may carry. ``numeric`` is Tk's fourth and is not
-#: here: it has to read the text for a decimal point rather than measure it.
-#: TkCurses-eq2.
-ALIGNMENTS = ("left", "right", "center")
+#: The alignments a stop may carry. ``numeric`` is the only one that reads the
+#: text rather than measuring it - see :func:`_numeric_offset`.
+ALIGNMENTS = ("left", "right", "center", "numeric")
 
 
 @dataclass(frozen=True)
@@ -172,9 +174,8 @@ def parse_tabs(spec: Any, to_cells: Callable[[Any], float]) -> TabStops:
     place coordinates.
 
     Raises:
-        TclError: For an unknown alignment, for ``numeric`` (see
-            TkCurses-eq2), for a stop that is not positive, or for stops
-            that do not increase - all of which Tk rejects too.
+        TclError: For an unknown alignment, for a stop that is not positive,
+            or for stops that do not increase - all of which Tk rejects too.
     """
     items: list[Any]
     if spec is None or spec == "":
@@ -195,8 +196,6 @@ def parse_tabs(spec: Any, to_cells: Callable[[Any], float]) -> TabStops:
                 raise TclError(f"tab alignment {word!r} with no stop before it")
             alignments[-1] = word
             continue
-        if word == "numeric":
-            raise TclError("numeric tab alignment is not implemented - TkCurses-eq2")
         cells = round(to_cells(item))
         if cells <= 0:
             raise TclError(f"tab stop {item!r} is not positive")
@@ -260,18 +259,64 @@ def _walk(
     return out, column
 
 
-def _run_after(text: str, index: int) -> int:
-    """How many characters follow a tab before the next tab or the line end.
+def _run_after(text: str, index: int) -> str:
+    """The characters that follow a tab, up to the next tab or the line end.
 
-    What right and centre alignment are measured against: Tk places the run
-    between one tab and the next, not the whole rest of the line.
+    What the alignments are measured against: Tk places the run between one tab
+    and the next, not the whole rest of the line. ``numeric`` needs the text and
+    not merely its length, which is why this answers a string.
     """
     following = text.find("\t", index + 1)
     stop = len(text) if following < 0 else following
-    return stop - (index + 1)
+    return text[index + 1 : stop]
 
 
-def _aligned(stops: TabStops, number: int, run: int, column: int) -> int:
+#: What Tk accepts as a decimal point. The comma is not a guess: measured, the
+#: run ``a,b`` - no digit anywhere in it - puts its comma on the stop, so the
+#: comma is a separator in its own right rather than something only recognised
+#: between digits.
+_DECIMAL_POINTS = ".,"
+
+
+def _numeric_offset(run: str) -> int:
+    """How many columns before its stop a numeric-aligned run begins.
+
+    Tk's manual states three rules: the decimal point goes on the stop, else the
+    "least significant digit of the number" goes just left of it, else the text
+    is right-justified. All three are measured here rather than taken from that
+    wording, because all three are more specific than it says - read off a real
+    Text widget with ``bbox()`` against a stop at column 20:
+
+    ======================  =============================================
+    run                     where it lands
+    ======================  =============================================
+    ``1.5``                 ``.`` on the stop
+    ``1.5.2``               the **last** ``.`` on the stop, not the first
+    ``a,b``                 the ``,`` on the stop, with no digits at all
+    ``1.2,3``               the ``,`` - whichever separator comes last
+    ``ab12cd34``            ``12`` ends just left of the stop, not ``34``
+    ``abc``                 right-justified, ending just left of the stop
+    ======================  =============================================
+
+    So: the last ``.`` or ``,`` rather than "the decimal point"; the first run of
+    digits rather than "the number"; and the comma counts even with no digit
+    near it. The manual's third rule is the only one it describes exactly.
+    """
+    separators = [i for i, ch in enumerate(run) if ch in _DECIMAL_POINTS]
+    if separators:
+        return separators[-1]
+    digits = [i for i, ch in enumerate(run) if ch.isdigit()]
+    if digits:
+        # The FIRST run of digits, so ab12cd34 aligns on 12. Walk from the
+        # first digit until the digits stop.
+        last = digits[0]
+        while last + 1 < len(run) and run[last + 1].isdigit():
+            last += 1
+        return last + 1
+    return len(run)
+
+
+def _aligned(stops: TabStops, number: int, run: str, column: int) -> int:
     """Where the text after a tab begins, for that stop's alignment.
 
     Measured against Tk with a stop at 20 and the run ``word``: left put it
@@ -279,13 +324,22 @@ def _aligned(stops: TabStops, number: int, run: int, column: int) -> int:
 
     Centre ROUNDS UP, which is not the obvious formula and is why it was
     measured: a run of three against a stop at 10 began at 8, not 9.
+
+    ``numeric`` is the one that reads the run rather than counting it; see
+    :func:`_numeric_offset`. It degrades into right alignment for a run with
+    neither a separator nor a digit, which is Tk's own third rule and not a
+    convenience - ``_numeric_offset`` returns the run's length there, and
+    ``stop - len(run)`` is exactly what ``right`` computes.
     """
     stop = stops.nth(number)
     alignment = stops.align(number)
+    length = len(run)
     if alignment == "right":
-        return stop - run
+        return stop - length
     if alignment == "center":
-        return stop - (run + 1) // 2
+        return stop - (length + 1) // 2
+    if alignment == "numeric":
+        return stop - _numeric_offset(run)
     del column
     return stop
 

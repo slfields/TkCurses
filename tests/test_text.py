@@ -1249,14 +1249,21 @@ def test_a_tab_stop_must_be_positive(tabbed):
         tabbed.configure(tabs=0)
 
 
-def test_numeric_alignment_says_it_is_not_implemented(tabbed):
-    """Loudly, and naming the issue - the pattern wm_manage already uses.
+def test_numeric_alignment_is_accepted(tabbed):
+    """It used to raise, naming TkCurses-eq2. The rules it now follows are
+    pinned in tests/test_core_textlayout.py against measurements of real Tk."""
+    tabbed.configure(tabs=(10, "numeric"))
+    assert tabbed.cget("tabs") == (10, "numeric")
 
-    Accepting it and quietly left-aligning would put numbers in the wrong
-    column and look like a bug in the caller's own code.
-    """
-    with pytest.raises(TclError, match="eq2"):
-        tabbed.configure(tabs=(10, "numeric"))
+
+def test_numeric_alignment_puts_the_decimal_point_on_the_stop(tabbed):
+    """The whole point of the alignment, through a real widget rather than the
+    layout function - so the option, the parse and the drawing are all in it."""
+    tabbed.configure(tabs=(10, "numeric"))
+    tabbed.insert("1.0", "a\t1.5")
+    # The '.' is the second character of the run, so it lands on the stop.
+    left = tabbed.bbox("1.0")[0]
+    assert tabbed.bbox("1.3")[0] - left == 10
 
 
 def test_tabstyle_wordprocessor_takes_the_next_stop_to_the_right(tabbed):

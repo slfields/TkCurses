@@ -32,6 +32,7 @@ from tkcurses._core.textlayout import (
     char_at,
     column_of,
     columns_of,
+    parse_tabs,
 )
 
 # --------------------------------------------------------------------- stops
@@ -210,3 +211,98 @@ def test_every_column_of_a_line_maps_back_into_it(style):
         assert laid[index] <= column
         if index + 1 < len(laid):
             assert column < laid[index + 1]
+
+
+# ------------------------------------------------------- numeric alignment
+#
+# Every expectation below is a measurement of real Tk, not a reading of the
+# manual - taken by putting each run after a numeric tab stop in a Text widget
+# with a monospace font and reading each character's column off bbox(). The
+# manual's three rules are all more specific than it says, which is why the
+# table is here in full rather than three examples. TkCurses-eq2.
+#
+#   "Numeric means that the decimal point in the text is positioned at the tab
+#    position; if there is no decimal point then the least significant digit of
+#    the number is positioned just to the left of the tab position; if there is
+#    no number in the text then the text is right-justified at the tab
+#    position."   - man n text, Tk 9.0
+#
+# Measured instead: the LAST '.' or ',' rather than "the decimal point"; the
+# last digit of the FIRST run of digits rather than "the number"; and a comma
+# counts as a separator even with no digit anywhere near it. Only the third rule
+# is as described.
+
+NUMERIC_STOP = 20
+
+#: ``run`` to the column its first character begins in, with one stop at 20.
+NUMERIC_CASES = {
+    # the decimal point on the stop
+    "1.5": 19,
+    "12.34xy": 18,
+    "xy1.5": 17,
+    "-1.5": 18,
+    "+1.5": 18,
+    ".5": 20,
+    "5.": 19,
+    "x.y": 19,
+    "12.5%": 18,
+    "1.5e3": 19,
+    "1.": 19,
+    ".1": 20,
+    # the LAST separator, not the first
+    "1.5.2": 17,
+    "a.b.c": 17,
+    "12..34": 17,
+    "..": 19,
+    "1.2,3": 17,
+    "1,2.3": 17,
+    "12,,34": 17,
+    # a comma is a separator in its own right - no digits in these two
+    "a,b": 19,
+    "x,y": 19,
+    ",5": 20,
+    "x,5": 19,
+    # no separator: the first run of digits ends just left of the stop
+    "15": 18,
+    "x15": 17,
+    "15x": 18,
+    "0": 19,
+    "9": 19,
+    "1 2": 19,
+    "1,5": 19,
+    "ab12cd34": 16,
+    # no number at all: right-justified, which is Tk's own third rule
+    "abc": 17,
+    "x": 19,
+}
+
+
+@pytest.mark.parametrize(("run", "expected"), sorted(NUMERIC_CASES.items()))
+def test_a_numeric_stop_puts_the_run_where_tk_puts_it(run, expected):
+    stops = TabStops((NUMERIC_STOP,), ("numeric",))
+    columns = columns_of(f"a\t{run}", stops=stops)
+    assert columns[2] == expected
+
+
+def test_numeric_degrades_into_right_alignment_with_nothing_to_align_on():
+    """Tk's third rule is exactly right alignment, so the two must agree.
+
+    Asserted against the other alignment rather than against a number, so the
+    claim in _aligned's docstring - that the fallback IS right alignment - is
+    checked rather than restated.
+    """
+    numeric = TabStops((NUMERIC_STOP,), ("numeric",))
+    right = TabStops((NUMERIC_STOP,), ("right",))
+    for run in ("abc", "x", "word", "!!"):
+        assert (
+            columns_of(f"a\t{run}", stops=numeric)[2]
+            == columns_of(f"a\t{run}", stops=right)[2]
+        ), run
+
+
+def test_numeric_is_an_alignment_parse_tabs_accepts():
+    """It used to raise, naming the issue, so that it could not be mistaken for
+    working. The parse is where that refusal lived."""
+    stops = parse_tabs("10 numeric 20 right", float)
+    assert stops.align(0) == "numeric"
+    assert stops.align(1) == "right"
