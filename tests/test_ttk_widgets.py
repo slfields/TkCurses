@@ -1699,3 +1699,297 @@ def test_the_stripe_takes_its_colour_from_the_style_when_one_is_set(filled):
     # No colours in this harness, so it falls back - the point is that it did
     # not raise and still marks the row.
     assert filled._row_attribute(filled._visible()[1], 1, 0) & curses.A_DIM
+
+
+# ------------------------- Treeview's horizontal layout (p9h, step one)
+#
+# These pin behaviour that ALREADY EXISTED and was never tested. Measured
+# before touching anything: adding 2 cells to every column width left all 245
+# ttk tests passing, and so did dropping the space that joins one column to
+# the next. The column layout was unverified, so "the refactor is
+# behaviour-neutral because the tests still pass" would have been worth
+# nothing. They pass now because of these.
+
+
+@pytest.fixture
+def laid_out(root):
+    """A tree with explicit column widths, so the arithmetic is visible."""
+    view = Treeview(root, name="lo", columns=("size", "kind"))
+    view.place(x=0, y=0, width=60, height=10)
+    view.column("#0", width=8)
+    view.column("size", width=5)
+    view.column("kind", width=4)
+    view.heading("#0", text="Name")
+    view.heading("size", text="Size")
+    view.heading("kind", text="Kind")
+    root.update_layout()
+    view.row = view.insert("", "end", text="Alpha", values=("10", "dir"))
+    return view
+
+
+def test_the_column_spans_are_widths_plus_one_joining_space(laid_out):
+    """8, then a space, then 5, then a space, then 4.
+
+    The joining space is the thing that was written down nowhere: a column
+    starts at the sum of the widths before it PLUS one cell per gap, which is
+    what " ".join puts there.
+    """
+    assert laid_out._column_spans() == [
+        ("#0", 0, 8),
+        ("size", 9, 14),
+        ("kind", 15, 19),
+    ]
+
+
+def test_the_tree_column_leads_the_spans_only_when_it_is_shown(laid_out):
+    assert laid_out._column_spans()[0][0] == "#0"
+    laid_out.configure(show="headings")
+    assert [name for name, _s, _e in laid_out._column_spans()] == ["size", "kind"]
+    assert laid_out._column_spans()[0][1] == 0, "the first column must start at 0"
+
+
+def test_a_row_pads_each_cell_to_its_own_span(laid_out):
+    """What keeps the values under their headings: a row that padded nothing
+    would start each value wherever the previous one ended."""
+    assert laid_out._row_text(laid_out.row, 60) == " Alpha   10    dir "
+
+
+def test_the_heading_row_uses_the_same_spans(laid_out):
+    """The headings and the rows must agree, which is why one function answers
+    for both - they were separate arithmetic before."""
+    assert laid_out._heading_text(60) == "Name     Size  Kind"
+    row = laid_out._row_text(laid_out.row, 60)
+    for _name, start, _end in laid_out._column_spans():
+        assert len(row) > start and len(laid_out._heading_text(60)) > start
+
+
+def test_a_row_is_truncated_to_the_width_it_is_given(laid_out):
+    assert laid_out._row_text(laid_out.row, 12) == " Alpha   10 "
+
+
+def test_a_cell_with_no_value_is_blank_rather_than_missing(laid_out):
+    """A short values tuple must still pad, or every later column shifts left."""
+    sparse = laid_out.insert("", "end", text="Beta", values=("1",))
+    assert laid_out._row_text(sparse, 60) == " Beta    1         "
+
+
+# --------------------------------- Treeview identify and bbox (p9h, step two)
+
+
+def test_identify_column_answers_display_identifiers(laid_out):
+    """Tk's ids, not our internal names: '#0' then '#1', never 'size'."""
+    area = laid_out._rows_area()
+    assert laid_out.identify_column(area.x + 0) == "#0"
+    assert laid_out.identify_column(area.x + 7) == "#0"
+    assert laid_out.identify_column(area.x + 9) == "#1"
+    assert laid_out.identify_column(area.x + 15) == "#2"
+
+
+def test_the_cell_joining_two_columns_belongs_to_the_one_on_its_left(laid_out):
+    """Tk's columns abut and have no such cell; ours are joined by a space, and
+    leaving it unassigned would make one cell per gap unclickable."""
+    area = laid_out._rows_area()
+    assert laid_out.identify_column(area.x + 8) == "#0", "the first gap"
+    assert laid_out.identify_column(area.x + 14) == "#1", "the second gap"
+
+
+def test_identify_column_is_empty_outside_the_columns(laid_out):
+    """Left of the content and past the last column.
+
+    Past the last column Tk answers the last column's id, because it stretches
+    columns to fill the widget and we do not yet - TkCurses-a01. When that
+    lands the spans grow and this answer changes with them.
+    """
+    area = laid_out._rows_area()
+    assert laid_out.identify_column(area.x - 1) == ""
+    assert laid_out.identify_column(area.x + 19) == ""
+    assert laid_out.identify_column(area.x + 30) == ""
+
+
+def test_identify_row_is_empty_over_the_heading(laid_out):
+    """Measured on real Tk: identify_row over the heading answers empty while
+    identify_region answers 'heading', so the two are independent."""
+    area = laid_out._rows_area()
+    assert laid_out.identify_row(area.y) == ""
+    assert laid_out.identify_region(area.x + 2, area.y) == "heading"
+
+
+def test_identify_row_finds_the_rows_and_stops(laid_out):
+    area = laid_out._rows_area()
+    assert laid_out.identify_row(area.y + 1) == laid_out.row
+    assert laid_out.identify_row(area.y + 5) == ""
+
+
+@pytest.mark.parametrize(
+    ("dx", "expected"),
+    [(-1, "nothing"), (2, "tree"), (10, "cell"), (16, "cell"), (30, "nothing")],
+)
+def test_identify_region_names_the_part_of_the_tree(laid_out, dx, expected):
+    area = laid_out._rows_area()
+    assert laid_out.identify_region(area.x + dx, area.y + 1) == expected
+
+
+def test_identify_region_never_answers_separator(laid_out):
+    """Decided, not overlooked: Tk's separator is the draggable gap between
+    column HEADINGS, and this widget draws none and offers no such drag."""
+    area = laid_out._rows_area()
+    answers = {
+        laid_out.identify_region(area.x + dx, area.y + dy)
+        for dx in range(-2, 24)
+        for dy in range(-2, 8)
+    }
+    assert "separator" not in answers
+    assert answers <= {"heading", "tree", "cell", "nothing"}, answers
+
+
+def test_identify_dispatches_every_component_tk_defines(laid_out):
+    area = laid_out._rows_area()
+    x, y = area.x + 2, area.y + 1
+    assert laid_out.identify("item", x, y) == laid_out.row
+    assert laid_out.identify("row", x, y) == laid_out.row, "Tk's obsolescent synonym"
+    assert laid_out.identify("column", x, y) == "#0"
+    assert laid_out.identify("region", x, y) == "tree"
+    assert laid_out.identify("cell", x, y) == (laid_out.row, "#0")
+    assert laid_out.identify("element", x, y) == ""
+
+
+def test_identify_cell_is_offered_although_tkinter_lacks_it(laid_out):
+    """Tk documents 'identify cell' and tkinter has no wrapper for it, so a
+    tkinter program composes identify_row with identify_column by hand. This
+    answers the pair, deliberately beyond tkinter's surface."""
+    area = laid_out._rows_area()
+    assert laid_out.identify("cell", area.x + 10, area.y + 1) == (laid_out.row, "#1")
+    assert laid_out.identify("cell", area.x + 10, area.y + 5) == "", "no row there"
+
+
+def test_identify_refuses_a_component_tk_does_not_define(laid_out):
+    with pytest.raises(TclError, match='bad command "nonsense"'):
+        laid_out.identify("nonsense", 0, 0)
+
+
+def test_bbox_answers_the_row_then_the_cell(laid_out):
+    area = laid_out._rows_area()
+    assert laid_out.bbox(laid_out.row) == (area.x, area.y + 1, area.width, 1)
+    assert laid_out.bbox(laid_out.row, "size") == (area.x + 9, area.y + 1, 5, 1)
+
+
+def test_bbox_takes_a_display_identifier_as_well_as_a_name(laid_out):
+    """Measured: Tk accepts bbox(item, '#0') as well as bbox(item, 'size')."""
+    assert laid_out.bbox(laid_out.row, "#0") == laid_out.bbox(laid_out.row, "#0")
+    assert laid_out.bbox(laid_out.row, "#1") == laid_out.bbox(laid_out.row, "size")
+
+
+def test_bbox_is_empty_for_an_item_that_is_not_visible(laid_out):
+    """A descendant of a closed item. Measured on real Tk: empty while the
+    parent is closed, a rectangle once it is opened."""
+    child = laid_out.insert(laid_out.row, "end", text="Child")
+    assert laid_out.bbox(child) == ""
+    laid_out.item(laid_out.row, open=True)
+    assert laid_out.bbox(child) != ""
+
+
+def test_bbox_raises_for_an_item_that_does_not_exist(laid_out):
+    """The opposite of how it treats an invisible one, and measured: Tk raises
+    'Item nosuch not found' rather than answering empty."""
+    with pytest.raises(TclError, match="Item nosuch not found"):
+        laid_out.bbox("nosuch")
+
+
+def test_identify_element_is_empty_rather_than_absent(laid_out):
+    """Tk answers a themed element name from an element tree this library does
+    not have, and documents no fixed set of values. Present and empty so the
+    dispatcher has something to call."""
+    assert laid_out.identify_element(0, 0) == ""
+    assert laid_out.identify_element(99, 99) == ""
+
+
+# ---------------------- the identify scans, against measured real Tk answers
+#
+# Cells are not pixels, so coordinates cannot be compared across the two
+# libraries. What CAN be compared is the sequence of distinct answers a scan
+# meets - which is what a caller relies on: "left of the content, nothing;
+# then the tree column; then cells; then nothing again".
+#
+# The real-Tk sequences below are MEASURED, with three unstretched columns of
+# 120/80/80 pixels in a 420x200 window, scanning every 4 pixels. They are
+# transcribed rather than computed live because a live comparison needs a
+# MAPPED window: the real_root fixture withdraws its root, so every
+# identify answers "nothing" there, and in CI - which has no display at all -
+# such a test would skip and give false comfort. That is also why
+# tests/test_pad_options.py carries its Tk answers as a table.
+#
+# Re-measure with:
+#   python3 <scratch>/diff_identify.py real
+# which prints exactly these three lines. TkCurses-p9h.
+
+TK_ACROSS_A_ROW = ["nothing", "tree", "cell", "nothing"]
+TK_DOWN_A_COLUMN = ["nothing", "heading", "tree", "nothing"]
+TK_COLUMN_IDS = ["", "#0", "#1", "#2", ""]
+
+
+def _squash(values):
+    out = []
+    for value in values:
+        if not out or out[-1] != value:
+            out.append(value)
+    return out
+
+
+def test_scanning_across_a_row_meets_the_regions_tk_meets(laid_out):
+    assert (
+        _squash(
+            [
+                laid_out.identify_region(x, laid_out._rows_area().y + 1)
+                for x in range(34)
+            ]
+        )
+        == TK_ACROSS_A_ROW
+    )
+
+
+def test_scanning_down_meets_the_regions_tk_meets(laid_out):
+    assert (
+        _squash(
+            [laid_out.identify_region(laid_out._rows_area().x + 2, y) for y in range(9)]
+        )
+        == TK_DOWN_A_COLUMN
+    )
+
+
+def test_scanning_across_meets_the_column_ids_tk_meets(laid_out):
+    assert _squash([laid_out.identify_column(x) for x in range(34)]) == TK_COLUMN_IDS
+
+
+def test_identify_column_numbers_data_columns_from_one_without_a_tree_column(root):
+    """The first data column is '#1' whether or not the tree column is shown.
+
+    Added because mutation found it missing: with the tree column shown, the
+    index of the first data column IS one, so numbering from the index and
+    numbering from one agree and a wrong formula passes. Only a headings-only
+    tree tells them apart.
+    """
+    view = Treeview(root, name="ho", columns=("size", "kind"), show="headings")
+    view.place(x=0, y=0, width=40, height=6)
+    view.column("size", width=5)
+    view.column("kind", width=4)
+    root.update_layout()
+    area = view._rows_area()
+    assert view.identify_column(area.x + 0) == "#1"
+    assert view.identify_column(area.x + 6) == "#2"
+
+
+def test_identify_region_is_nothing_outside_the_area_even_on_the_heading_row(
+    laid_out,
+):
+    """The heading check must not outrank the area check.
+
+    Mutation found this: with the area test removed everything still passed,
+    because a point outside horizontally gets no column and a point outside
+    vertically gets no row - EXCEPT on the heading row, where the heading
+    answer was returned without ever asking whether the point was in the
+    widget at all.
+    """
+    area = laid_out._rows_area()
+    assert laid_out.identify_region(area.x - 1, area.y) == "nothing"
+    assert laid_out.identify_region(area.x + area.width + 1, area.y) == "nothing"
+    assert laid_out.identify_region(area.x + 2, area.y) == "heading", "the control"

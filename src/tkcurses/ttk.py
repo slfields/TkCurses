@@ -69,7 +69,7 @@ import tkcurses
 from tkcurses._core.attributes import BorderStyle
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.errors import TclError
-from tkcurses._core.geometry import BORDER_WIDTH, Insets, Rect
+from tkcurses._core.geometry import BORDER_WIDTH, Insets, Point, Rect
 from tkcurses._core.pack import parse_anchor
 from tkcurses._core.text import align_offset, measure, wrap
 
@@ -2698,44 +2698,247 @@ class Treeview(Widget, tkcurses.Frame):
         """Whether the tree column is drawn."""
         return "tree" in self._shown()
 
-    def _row_text(self, iid: str, width: int) -> str:
-        """One row as it is drawn: the marker, the text, then the columns."""
+    def _column_spans(self) -> list[tuple[str, int, int]]:
+        """Where each column sits, in cells from the left of the rows area.
+
+        ``[(name, start, end)]`` left to right, ``end`` exclusive, the tree
+        column ``#0`` first when ``show`` includes it.
+
+        **The one source of truth for the horizontal layout.** It was implicit
+        before this: :meth:`_row_text` and :meth:`_heading_text` each padded
+        every column to its width and joined with a space, so a column's
+        position was ``sum(widths before it) + one space each`` - computed
+        twice, written down nowhere, and impossible for
+        :meth:`identify_column` to ask about. Both now compose from this, so a
+        click and a repaint cannot disagree about where a column is.
+
+        Absolute, with no scroll offset, **because a tree here never scrolls
+        sideways** - see :meth:`xview`, whose columns are sized in cells to fit
+        the width they are given. That is an invariant the whole identify
+        family rests on: adding horizontal scrolling means every answer here
+        needs the view subtracting from it. TkCurses-p9h.
+        """
+        spans: list[tuple[str, int, int]] = []
+        position = 0
+        names = ([TREE_COLUMN] if self._shows_tree else []) + self._column_names()
+        for name in names:
+            width = max(0, int(self.column(name, "width")))
+            spans.append((name, position, position + width))
+            # Plus the single space that joins one column to the next, which is
+            # what " ".join puts there.
+            position += width + 1
+        return spans
+
+    def _cell_text(self, iid: str, name: str) -> str:
+        """What one cell of one row holds, before it is padded."""
         item = self._items[iid]
-        pieces = []
-        if self._shows_tree:
+        if name == TREE_COLUMN:
             marker = " "
             if item.children:
                 marker = OPEN_MARKER if item.options["open"] else CLOSED_MARKER
-            # Padded to the tree column's width, or the data columns do not
-            # line up under their own headings - each row would start its
-            # values wherever its text happened to end.
-            pieces.append(
-                (
-                    " " * (INDENT * self._depth(iid))
-                    + marker
-                    + str(item.options["text"])
-                ).ljust(int(self.column(TREE_COLUMN, "width")))
+            return (
+                " " * (INDENT * self._depth(iid)) + marker + str(item.options["text"])
             )
-        for index, name in enumerate(self._column_names()):
-            values = tuple(item.options["values"])
-            text = str(values[index]) if index < len(values) else ""
-            pieces.append(text.ljust(int(self.column(name, "width"))))
+        values = tuple(item.options["values"])
+        index = self._column_names().index(name)
+        return str(values[index]) if index < len(values) else ""
+
+    def _row_text(self, iid: str, width: int) -> str:
+        """One row as it is drawn: the marker, the text, then the columns.
+
+        Each cell is padded to its own span, which is what keeps the data
+        columns under their own headings - otherwise a row would start its
+        values wherever its text happened to end.
+        """
+        pieces = [
+            self._cell_text(iid, name).ljust(end - start)
+            for name, start, end in self._column_spans()
+        ]
         return " ".join(pieces)[:width]
 
     def _heading_text(self, width: int) -> str:
         """The heading row, drawn above the rows when ``show`` asks for it."""
-        pieces = []
-        if self._shows_tree:
-            pieces.append(
-                str(self.heading(TREE_COLUMN, "text")).ljust(
-                    int(self.column(TREE_COLUMN, "width"))
-                )
-            )
-        for name in self._column_names():
-            pieces.append(
-                str(self.heading(name, "text")).ljust(int(self.column(name, "width")))
-            )
+        pieces = [
+            str(self.heading(name, "text")).ljust(end - start)
+            for name, start, end in self._column_spans()
+        ]
         return " ".join(pieces)[:width]
+
+    def identify_column(self, x: int) -> str:
+        """The display column identifier at ``x``, or ``""`` outside them all.
+
+        ``"#0"`` for the tree column, then ``"#1"`` for the first data column
+        and so on - Tk's display identifiers, not our internal names, measured:
+        ``identify_column`` on a tree with columns ``("a","b")`` answers
+        ``"#1"`` and ``"#2"``, never ``"a"``.
+
+        Two edges differ from Tk and both are measured and recorded:
+
+        * The single cell that JOINS one column to the next belongs to the
+          column on its left. Tk's columns abut, so it has no such cell; the
+          gap is an artefact of drawing a character grid, and leaving it
+          answering ``""`` would make one cell in every gap unclickable.
+        * Past the last column this answers ``""``, where Tk answers the last
+          column's id - because Tk STRETCHES columns to fill the widget and we
+          do not yet. That is TkCurses-a01, and when it lands the spans grow
+          and this follows with no change here.
+        """
+        area = self._rows_area()
+        offset = x - area.x
+        spans = self._column_spans()
+        # No "past the last column" test here: the walk below falls through to
+        # "" for any offset beyond the final span, so adding one could not be
+        # mutated into failing - it was in the first version and came out
+        # again for exactly that reason. The negative and empty cases DO need
+        # saying: a negative offset would match the first span's upper bound.
+        if offset < 0 or not spans:
+            return ""
+        for index, (name, _start, end) in enumerate(spans):
+            if offset < end + (1 if index + 1 < len(spans) else 0):
+                return (
+                    TREE_COLUMN
+                    if name == TREE_COLUMN
+                    else f"#{index + (0 if self._shows_tree else 1)}"
+                )
+        return ""
+
+    def identify_row(self, y: int) -> str:
+        """The item at ``y``, or ``""`` where there is none.
+
+        ``""`` for the heading row as well as past the last item - measured:
+        ``identify_row`` over the heading answers empty while
+        ``identify_region`` answers ``"heading"``, so the two are independent.
+        """
+        return self._row_at(y) or ""
+
+    def identify_region(self, x: int, y: int) -> str:
+        """Which part of the tree is at ``(x, y)``.
+
+        One of ``"heading"``, ``"tree"``, ``"cell"`` or ``"nothing"``.
+
+        **Never ``"separator"``**, and that is decided rather than overlooked.
+        Tk documents separator as the space between two column headings, for
+        dragging a column's width; this widget draws no separators and offers
+        no such drag, so returning it would name something that is not there.
+        A caller testing for it will simply never match. TkCurses-p9h.
+        """
+        area = self._rows_area()
+        if not area.contains_point(Point(x, y)):
+            return "nothing"
+        if self._shows_headings and y == area.y:
+            return "heading"
+        if self._row_at(y) is None:
+            return "nothing"
+        column = self.identify_column(x)
+        if not column:
+            return "nothing"
+        return "tree" if column == TREE_COLUMN else "cell"
+
+    def identify_element(self, x: int, y: int) -> str:
+        """The style element at ``(x, y)`` - always ``""`` here.
+
+        Tk answers the name of a themed element: ``padding``, ``text``,
+        ``image``. Those names come from Tk's element tree, which this library
+        does not have - its themes are glyph sets, not layouts of named
+        elements - and Tk documents no fixed set of return values either, so
+        nothing portable can be written against them.
+
+        Present and empty rather than absent, because ``identify`` dispatches
+        to it and a caller asking politely deserves an answer rather than an
+        AttributeError. TkCurses-p9h.
+        """
+        del x, y
+        return ""
+
+    def identify(self, component: str, x: int, y: int) -> Any:
+        """Tk's dispatcher: ``identify(component, x, y)``.
+
+        ``region``, ``item``, ``column``, ``cell`` and ``element``, plus
+        ``row`` as Tk's own obsolescent synonym for ``item``.
+
+        ``cell`` is here deliberately even though **tkinter has no wrapper for
+        it**: Tk documents it, it answers the ``(item, column)`` pair that cell
+        work actually wants, and composing ``identify_row`` with
+        ``identify_column`` by hand - which is all a tkinter program can do -
+        is the sort of thing a compatibility layer should spare its callers.
+
+        Raises:
+            TclError: For a component Tk does not define, with Tk's wording.
+        """
+        if component in ("item", "row"):
+            return self.identify_row(y)
+        if component == "column":
+            return self.identify_column(x)
+        if component == "region":
+            return self.identify_region(x, y)
+        if component == "element":
+            return self.identify_element(x, y)
+        if component == "cell":
+            item = self.identify_row(y)
+            column = self.identify_column(x)
+            return (item, column) if item and column else ""
+        raise TclError(
+            f'bad command "{component}": must be '
+            "region, item, column, row, cell or element"
+        )
+
+    def bbox(
+        self, item: str, column: str | None = None
+    ) -> tuple[int, int, int, int] | str:
+        """Where an item is drawn, as ``(x, y, width, height)`` in this widget.
+
+        ``""`` when the item is not visible - scrolled out of view, or a
+        descendant of a closed item - which is Tk's documented answer and was
+        measured: ``bbox`` of a child under a closed parent is empty, and the
+        same child answers a rectangle once the parent is opened.
+
+        With ``column``, the rectangle of that cell within the row. The column
+        may be named or given as a display identifier: Tk accepts
+        ``bbox(item, "#0")`` as well as ``bbox(item, "size")``, measured.
+
+        Raises:
+            TclError: If the item does not exist. Measured - Tk raises
+                ``Item nosuch not found`` rather than answering empty, which
+                is the opposite of how it treats an invisible one.
+        """
+        if item not in self._items:
+            raise TclError(f"Item {item} not found")
+        rows = self._visible()
+        if item not in rows:
+            return ""
+        position = rows.index(item) - self._top
+        area = self._rows_area()
+        height = self._content_height()
+        if position < 0 or position >= height:
+            return ""
+        row = area.y + position + (1 if self._shows_headings else 0)
+        if column is None:
+            return (area.x, row, area.width, 1)
+        name = self._column_for(column)
+        for candidate, start, end in self._column_spans():
+            if candidate == name:
+                return (area.x + start, row, end - start, 1)
+        return ""
+
+    def _column_for(self, column: str) -> str:
+        """The internal column name for a name or a display identifier.
+
+        ``"#0"`` is the tree column; ``"#1"`` onwards are the data columns in
+        display order. Tk accepts either spelling wherever a column is named,
+        and ``bbox(item, "#0")`` was measured answering the tree column's
+        rectangle.
+        """
+        text = str(column)
+        if not text.startswith("#"):
+            return text
+        if text == TREE_COLUMN:
+            return TREE_COLUMN
+        try:
+            index = int(text[1:]) - 1
+        except ValueError:
+            return text
+        names = self._column_names()
+        return names[index] if 0 <= index < len(names) else text
 
     def _row_at(self, y: int) -> str | None:
         """Which row a click landed on, if any."""

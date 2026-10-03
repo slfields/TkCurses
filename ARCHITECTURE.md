@@ -4265,7 +4265,7 @@ Indeterminate:  [░░░░███░░░░░░░░░░░░░] (
 | tkinter Method | TkCurses | Notes |
 |----------------|----------|-------|
 | `__init__(master=None, **kw)` | ○ | Tree/table view |
-| `bbox(item, column)` | ○ | Cell bounding box |
+| `bbox(item, column)` | ○ | Cell bounding box, in cells. **Not** `Misc.bbox`, which is `grid_bbox` |
 | `get_children(item=None)` | ✓ | Get children |
 | `set_children(item, *children)` | ✓ | Set children |
 | `column(column, option, **kw)` | ○ | Column config |
@@ -4274,11 +4274,11 @@ Indeterminate:  [░░░░███░░░░░░░░░░░░░] (
 | `exists(item)` | ✓ | Item exists |
 | `focus(item=None)` | ✓ | Focus item |
 | `heading(column, option, **kw)` | ○ | Heading config |
-| `identify(component, x, y)` | ○ | Identify at cell |
-| `identify_row(y)` | ○ | Row at cell |
-| `identify_column(x)` | ○ | Column at cell |
-| `identify_region(x, y)` | ○ | Region at cell |
-| `identify_element(x, y)` | ○ | Element at cell |
+| `identify(component, x, y)` | ○ | Dispatcher; also takes `cell`, which tkinter lacks |
+| `identify_row(y)` | ○ | Item at a row; `""` over the heading |
+| `identify_column(x)` | ○ | `#0`, `#1`… at a column |
+| `identify_region(x, y)` | ◐ | `heading`/`tree`/`cell`/`nothing`; never `separator` |
+| `identify_element(x, y)` | ✗ | No element model here — always `""` |
 | `index(item)` | ✓ | Item index |
 | `insert(parent, index, iid, **kw)` | ✓ | Insert item |
 | `item(item, option, **kw)` | ✓ | Item options |
@@ -4296,6 +4296,42 @@ Indeterminate:  [░░░░███░░░░░░░░░░░░░] (
 | `tag_bind(tagname, sequence, callback)` | ✓ | Bind tag event |
 | `tag_configure(tagname, option, **kw)` | ○ | Tag attributes |
 | `tag_has(tagname, item)` | ✓ | Check tag |
+
+**Hit-testing rests on one column model, and on the tree not scrolling
+sideways.** `_column_spans()` answers where every column sits, in cells, and
+both the row painter and the heading painter compose from it — they each
+recomputed the same arithmetic before, so a click and a repaint could disagree
+about where a column was. `identify_column`, `identify_region` and `bbox` all
+read it, which is why they will follow automatically when `-stretch` is
+honoured (`TkCurses-a01`): today our columns do not fill the widget and Tk's
+do, so `identify_column` past the last column answers `""` where Tk answers the
+last column's id.
+
+The spans carry no scroll offset **because a tree here never scrolls
+sideways** — see `xview`. That is an invariant the whole family rests on:
+adding horizontal scrolling means every answer needs the view subtracted from
+it.
+
+Three answers differ from Tk deliberately:
+
+- **`identify_region` never returns `separator`.** Tk's separator is the
+  draggable gap between column headings; this widget draws none and offers no
+  such drag, so returning it would name something that is not there.
+- **`identify_element` always returns `""`.** Tk answers a themed element name
+  from an element tree this library does not have, and documents no fixed set
+  of values — `'padding'` on one machine's default theme — so nothing portable
+  can be written against it. Present and empty so the dispatcher has something
+  to call.
+- **`identify("cell", x, y)` is offered although tkinter has no wrapper for
+  it.** Tk documents it and it answers the `(item, column)` pair that cell work
+  wants; a tkinter program has to compose `identify_row` with
+  `identify_column` by hand. A compatibility layer may as well spare its
+  callers that.
+
+The single cell that joins one column to the next belongs to the column on its
+left. Tk's columns abut and have no such cell; the gap is an artefact of
+drawing on a character grid, and leaving it unassigned would make one cell in
+every gap unclickable.
 
 **Rendering:**
 ```
