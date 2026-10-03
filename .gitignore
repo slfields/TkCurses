@@ -91,3 +91,6 @@ graphify-out/
 # to, so it conflicts on every merge; .beads/issues.jsonl is the export that
 # is meant to travel.
 .beads/interactions.jsonl
+
+# Beads workspace lock (bd 1.3.1+; bd init writes the same entry)
+*.gate.lock*

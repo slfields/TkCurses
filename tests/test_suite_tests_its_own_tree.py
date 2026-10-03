@@ -80,7 +80,19 @@ def sabotaged_worktree(tmp_path: Path):
     if _git("rev-parse", "--git-dir").returncode != 0:
         pytest.skip("not a git checkout")
     worktree = tmp_path / "second-checkout"
-    made = _git("worktree", "add", "-q", "--detach", str(worktree), "HEAD")
+    # Without the developer's hooks: bd's post-checkout hook would import
+    # HEAD's tracker export into the live issue database, and under bd 1.0.4
+    # that rolled back a claim mid-run. TkCurses-enu.
+    made = _git(
+        "-c",
+        "core.hooksPath=/dev/null",
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        str(worktree),
+        "HEAD",
+    )
     if made.returncode != 0:
         pytest.skip(f"could not add a worktree: {made.stderr.strip()}")
     try:
