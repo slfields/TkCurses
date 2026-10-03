@@ -6545,6 +6545,11 @@ class Entry(_Drawable):
     _widget_options: ClassVar[dict[str, Any]] = {
         # tkinter reports 1, not True: the value is what cget answers.
         "exportselection": 1,
+        # Tk 9.0's ghost text - TkCurses-xe9.3. On the CLASSIC entry as well as
+        # the themed ones: measured, all four of tk.Entry, ttk.Entry,
+        # ttk.Combobox and ttk.Spinbox carry both, as standard options.
+        "placeholder": "",
+        "placeholderforeground": "",
         "font": "",
         "justify": "left",
         "relief": "sunken",
@@ -7142,11 +7147,54 @@ class Entry(_Drawable):
             max(0, self._rect.height - 2 * (edge + pady)),
         )
 
+    def _showing_placeholder(self) -> bool:
+        """Whether the ghost text is what the field is displaying.
+
+        Empty contents and a placeholder to show, and nothing else: measured on
+        screen, Tk draws it **whatever the focus and whatever the state**. A
+        focused field keeps it, with the insertion cursor before its first
+        character; a ``disabled`` or ``readonly`` field keeps it too, which is
+        the opposite of how the insertion cursor behaves. TkCurses-xe9.3.
+        """
+        return not self._field.text and bool(str(self._options["placeholder"]))
+
     def _displayed(self) -> str:
-        """What is on screen, masked if ``show`` says so."""
+        """What is on screen: the contents masked by ``show``, or the placeholder.
+
+        **The placeholder is not masked.** Measured, and the one thing here that
+        would have been got wrong: a field with ``show="*"`` and a placeholder
+        shows the placeholder as plain text, not as asterisks. ``show`` hides
+        *contents* - there are none to hide - so the placeholder short-circuits
+        it rather than passing through it.
+        """
+        if self._showing_placeholder():
+            return str(self._options["placeholder"])
         mask = str(self._options["show"])
         text = self._field.text
         return mask[0] * len(text) if mask else text
+
+    def _placeholder_attribute(self, attribute: int) -> int:
+        """How the ghost text is drawn, as distinct from real contents.
+
+        ``placeholderforeground`` is honoured when it is set. When it is not -
+        which is the default - the text is drawn **dim**, and that is a
+        deliberate divergence rather than an oversight. Tk's default leaves the
+        placeholder in the ordinary foreground colour, which a GUI gets away
+        with because the ghost text is a different shade of grey anyway; in a
+        terminal it would be indistinguishable from real content, so a field
+        that reads as full while ``get()`` answers ``""`` would actively
+        mislead. Dim is the terminal's own idiom for "this is not your text".
+        """
+        colour = str(self._options["placeholderforeground"])
+        colors = self.tk.colors
+        if colour and colors is not None:
+            return (
+                colors.attribute_for(
+                    colour, str(self._options["background"] or "black")
+                )
+                | _curses.A_DIM
+            )
+        return attribute | _curses.A_DIM
 
     def _redraw(self) -> None:
         """Paint the field, its selection, and the cursor."""
@@ -7173,7 +7221,16 @@ class Entry(_Drawable):
                 return
             view = self._field.view
             text = self._displayed()[view : view + area.width]
-            self._write_line(dispatcher, window, area.y, area.x, text, attribute)
+            self._write_line(
+                dispatcher,
+                window,
+                area.y,
+                area.x,
+                text,
+                self._placeholder_attribute(attribute)
+                if self._showing_placeholder()
+                else attribute,
+            )
             self._draw_selection(dispatcher, window, area, attribute)
             self._draw_cursor(dispatcher, window, area, attribute)
 

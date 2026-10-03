@@ -275,3 +275,61 @@ def test_an_entry_and_a_button_work_together(terminal, tmp_path):
     term.send(b"\r")
     term.wait_for_idle()
     assert "got value" in "\n".join(term.display) or "value" in "\n".join(term.display)
+
+
+PLACEHOLDER = """
+import tkcurses
+
+root = tkcurses.Tk()
+e = tkcurses.Entry(root, width=16, name='e', placeholder='type here'{extra})
+e.place(x=1, y=1)
+{after}
+root.update_layout()
+root.tk.screen.refresh()
+root.after(4000, root.quit)
+root.mainloop()
+"""
+
+
+def test_the_placeholder_is_drawn_and_dim(terminal, tmp_path):
+    """On a real screen: the ghost text appears, and it is dim.
+
+    Dim is a deliberate divergence - Tk leaves an unset placeholderforeground
+    in the ordinary foreground - because in a terminal undimmed ghost text is
+    indistinguishable from content, and the field would read as full while
+    get() answers "". ARCHITECTURE.md records it. TkCurses-xe9.3.
+    """
+    term = terminal(cols=40, rows=10)
+    term.run_source(PLACEHOLDER.format(extra="", after=""), workdir=tmp_path)
+    term.wait_for_text("type here")
+    term.wait_for_cell(2, 2, lambda cell: cell.data == "t")
+    assert term.attrs_at(2, 2)["dim"], (
+        f"the placeholder is not dim, so it reads as real content\n{term.describe()}"
+    )
+
+
+def test_typed_text_replaces_the_placeholder_and_is_not_dim(terminal, tmp_path):
+    """The other half: content must look like content."""
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        PLACEHOLDER.format(extra="", after="e.insert(0, 'abc')"), workdir=tmp_path
+    )
+    term.wait_for_text("abc")
+    term.wait_for_cell(2, 2, lambda cell: cell.data == "a")
+    assert not term.attrs_at(2, 2)["dim"], (
+        f"typed text was drawn dim\n{term.describe()}"
+    )
+    assert "type here" not in "\n".join(term.display), (
+        f"the placeholder survived alongside the text\n{term.describe()}"
+    )
+
+
+def test_the_placeholder_is_not_masked_on_screen(terminal, tmp_path):
+    """Measured on real Tk by a person: show='*' with a placeholder draws the
+    placeholder as plain text. The asterisks are for contents, and there are
+    none."""
+    term = terminal(cols=40, rows=10)
+    term.run_source(PLACEHOLDER.format(extra=", show='*'", after=""), workdir=tmp_path)
+    term.wait_for_text("type here")
+    term.wait_for_cell(2, 2, lambda cell: cell.data == "t")
+    assert "*" not in term.row(2), f"the placeholder was masked\n{term.describe()}"

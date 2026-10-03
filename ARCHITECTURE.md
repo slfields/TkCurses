@@ -3283,10 +3283,49 @@ Selection: [John ███________]
 | `justify` | LEFT/CENTER/RIGHT | Text alignment |
 | `insertwidth` | pixels | 1 cell (cursor) |
 | `exportselection` | puts the selection on PRIMARY | Same, against the in-process PRIMARY |
+| `placeholder` | ghost text in an empty field | Same |
+| `placeholderforeground` | its colour | Honoured; **dim** when unset (see below) |
 | `highlightthickness` | focus ring, pixels | No ring; a focused entry draws its **border** bold |
 | `validate` | validation condition | Same: `none`, `key`, `focus`, `focusin`, `focusout`, `all` |
 | `validatecommand` | registered command | Callable given the proposed text |
 | `invalidcommand` | registered command | Callable given the refused text, or nothing |
+
+**Where Tk's documentation is silent, this file carries the measurement.**
+`-placeholder` and `-placeholderforeground` arrived in Tk 9.0 and are documented
+*nowhere*: they appear in the standard-options list of `entry(n)`,
+`ttk_entry(n)` and `ttk_combobox(n)`, and no `.OP` entry describes them in any
+of those, nor in `options(n)` or `ttk_widget(n)`. So there is no upstream page
+to point a reader at, and a measurement that lives only in a commit message is
+a measurement nobody will find. The rule below was taken off a real screen —
+the behaviour cannot be read through the API at all, because `bbox()` reports
+the index rather than the drawn text and the style layout has no placeholder
+element to inspect.
+
+**The placeholder is drawn if and only if the contents are empty.** Nothing
+else gates it:
+
+- **Focus does not hide it.** A focused empty field keeps the ghost text, with
+  the insertion cursor before its first character.
+- **`disabled` and `readonly` keep it too** — the opposite of the insertion
+  cursor, which those states suppress.
+- **It is not masked by `-show`.** A field with `show="*"` and a placeholder
+  shows the placeholder as plain text, not as asterisks. `-show` hides
+  *contents*, and there are none; so the placeholder short-circuits the mask
+  rather than passing through it. This is the one that would have been got
+  wrong — both live in `Entry._displayed()`.
+- **It is never content.** `get()`, the `textvariable`, `index("end")` and the
+  selection all behave as empty, and it cannot be selected by triple-click or
+  `Control-a`.
+
+It is a *standard* option, so the whole entry family has it — `tk.Entry`,
+`ttk.Entry`, `ttk.Combobox` and `ttk.Spinbox` — not just the themed ones.
+
+One deliberate divergence: with `placeholderforeground` unset, this draws the
+ghost text **dim**. Tk leaves it in the ordinary foreground, which a GUI gets
+away with because its placeholder is a different shade anyway. In a terminal
+that would make ghost text indistinguishable from real content, so a field
+would read as full while `get()` answers `""`. Dim is the terminal's own idiom
+for "this is not your text". `TkCurses-xe9.3`.
 
 **The selection is exported by being answered, not by being copied.** With
 `-exportselection` true, a widget that makes a selection claims PRIMARY and

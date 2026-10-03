@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import curses
 from types import SimpleNamespace
 
 import pytest
@@ -53,6 +54,11 @@ def entry(root):
     entry._allocate(Rect(0, 0, 22, 3))
     entry._map()
     return entry
+
+
+def root_of(widget):
+    """The widget's master, for building a Variable against the same tree."""
+    return widget.master
 
 
 def typed(widget, char, keysym=None, state=0):
@@ -1043,3 +1049,95 @@ def test_the_widget_that_selected_last_owns_primary(root):
 
     second.selection_range(0, 6)
     assert primary(second) == "second"
+
+
+# --------------------------------------------------------- the placeholder
+#
+# Tk 9.0's ghost text. Every rule below was measured ON SCREEN by a person
+# running a tkinter probe, because none of it can be read through the API:
+# bbox() reports the index rather than the drawn text, the style layout has no
+# placeholder element, and Tk documents -placeholder NOWHERE - it is in the
+# standard-options list of entry(n), ttk_entry(n) and ttk_combobox(n) and
+# described in none of them. ARCHITECTURE.md carries the rules for that reason.
+# TkCurses-xe9.3.
+
+
+def test_the_placeholder_options_default_to_nothing(entry):
+    assert entry.cget("placeholder") == ""
+    assert entry.cget("placeholderforeground") == ""
+
+
+def test_the_placeholder_is_shown_only_while_the_field_is_empty(entry):
+    entry.configure(placeholder="type here")
+    assert entry._displayed() == "type here"
+    entry.insert(0, "x")
+    assert entry._displayed() == "x"
+    entry.delete(0, "end")
+    assert entry._displayed() == "type here", (
+        "deleting the text must bring the placeholder back"
+    )
+
+
+def test_the_placeholder_survives_the_focus(entry):
+    """Measured: a focused empty field keeps the ghost text, with the cursor
+    before its first character. This was the open question."""
+    entry.configure(placeholder="type here")
+    entry.focus_set()
+    assert entry.focus_get() is entry
+    assert entry._displayed() == "type here"
+
+
+@pytest.mark.parametrize("state", ["disabled", "readonly"])
+def test_a_locked_field_still_shows_its_placeholder(entry, state):
+    """The opposite of the insertion cursor, which those states suppress.
+
+    So the drawing is gated on emptiness alone - not on state, and not on
+    focus. Measured on screen for both states.
+    """
+    entry.configure(placeholder="type here", state=state)
+    assert entry._displayed() == "type here"
+
+
+def test_the_placeholder_is_not_masked_by_show(entry):
+    """The one that would have been got wrong.
+
+    Measured: a field with show='*' and a placeholder draws the placeholder as
+    plain text, not as asterisks. ``show`` hides CONTENTS and there are none, so
+    the placeholder short-circuits the mask rather than passing through it.
+    """
+    entry.configure(placeholder="type here", show="*")
+    assert entry._displayed() == "type here"
+    entry.insert(0, "secret")
+    assert entry._displayed() == "******", "typed text must still be masked"
+
+
+def test_the_placeholder_is_never_the_value(entry):
+    """get(), the variable and the selection all behave as empty - which was
+    measured programmatically and then confirmed on screen: the ghost text
+    cannot be selected by triple-click or Control-a."""
+    var = StringVar(root_of(entry), value="")
+    entry.configure(placeholder="type here", textvariable=var)
+    assert entry.get() == ""
+    assert var.get() == ""
+    assert not entry.selection_present()
+    assert entry.index("end") == 0
+
+
+def test_an_empty_placeholder_shows_nothing(entry):
+    """The default. An empty placeholder must not make the field claim to be
+    showing one, or every field would draw a blank line in dim."""
+    assert not entry._showing_placeholder()
+    entry.configure(placeholder="")
+    assert not entry._showing_placeholder()
+
+
+def test_the_placeholder_is_drawn_dim(entry):
+    """A deliberate divergence, documented in ARCHITECTURE.md.
+
+    Tk leaves an unset placeholderforeground in the ordinary foreground, which
+    a GUI gets away with. In a terminal that would be indistinguishable from
+    real content, so a field would read as full while get() answers "".
+    """
+    entry.configure(placeholder="type here")
+    plain = 0
+    assert entry._placeholder_attribute(plain) & curses.A_DIM

@@ -76,6 +76,12 @@ THEMED = (
 
 #: Options real ttk has that we do not, each with the issue that owns it.
 #:
+#: It shrank by six on 2026-10-03 (TkCurses-xe9.3): placeholder and
+#: placeholderforeground on Entry, Spinbox and Combobox. Tk documents neither
+#: anywhere, so ARCHITECTURE.md carries the measured rules - see the Entry
+#: section and the convention in CLAUDE.md about where an uncitable
+#: measurement has to live.
+#:
 #: It shrank by five on 2026-10-03 (TkCurses-xe9.1): Progressbar's label over
 #: the bar - text, anchor, font, justify and wraplength. -phase stays, now
 #: carrying the id of the issue that owns it rather than just a description; a
@@ -107,26 +113,16 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
     "Progressbar": {
         "phase": "TkCurses-xe9.2: the indeterminate animation counter",
     },
-    "Combobox": {
-        "placeholder": "Tk 9.0 ghost text",
-        "placeholderforeground": "Tk 9.0 ghost text",
-    },
-    # Entry and Spinbox share these: ttk's Spinbox IS an Entry - measured, its
-    # MRO begins Spinbox, Entry, Widget, Entry - so a gap in one is a gap in
-    # both, and Combobox above already carries the same four.
-    "Entry": {
-        "placeholder": "Tk 9.0 ghost text",
-        "placeholderforeground": "Tk 9.0 ghost text",
-    },
-    "Spinbox": {
-        "placeholder": "Tk 9.0 ghost text",
-        "placeholderforeground": "Tk 9.0 ghost text",
-    },
+    # Entry, Spinbox and Combobox are gone from this list entirely, which is
+    # worth more than it looks: ttk's Spinbox IS an Entry - measured, its MRO
+    # begins Spinbox, Entry, Widget, Entry - so those three shared every gap
+    # they had, and the three fixes that closed them (TkCurses-ale, 163 and
+    # xe9.3) each closed all three at once.
     "Treeview": {
-        "striped": "Tk 9.0 additions",
-        "selecttype": "Tk 9.0 additions",
-        "titlecolumns": "Tk 9.0 additions",
-        "titleitems": "Tk 9.0 additions",
+        "striped": "TkCurses-xe9.4: alternating row tint",
+        "selecttype": "TkCurses-xe9.5: selecting cells rather than rows",
+        "titlecolumns": "TkCurses-xe9.6: frozen columns",
+        "titleitems": "TkCurses-xe9.6: frozen rows",
     },
 }
 
