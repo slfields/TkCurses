@@ -6943,6 +6943,37 @@ class Entry(_Drawable):
         """
         self._options["validate"] = "none"
 
+    def _border_style(self) -> BorderStyle:
+        """The box this entry draws, brightened while it has the focus.
+
+        Tk shows the focus on an entry two ways, and only one of them is the
+        insertion cursor. The other is the focus highlight ring, which is drawn
+        whatever the state - and the ring is what tells you a *readonly* entry
+        has the keyboard, because Tk's manual is explicit that readonly draws
+        "no insertion cursor ... even if the input focus is in the widget".
+
+        This library drops ``highlightthickness`` as an X11 option with no cell
+        equivalent, and until now put nothing in its place. So a focused
+        readonly entry was indistinguishable from an unfocused one: Tk's cursor
+        rule was copied faithfully and Tk's other half of the signal was not.
+        Reported from UAT 41 - "though readonly is not modifiable, it should
+        still reflect its focus status".
+
+        The border is the cell equivalent: a focused entry draws its box bold
+        and an unfocused one does not. ``BorderStyle.attr`` exists for exactly
+        this, "used where line style alone is not enough to tell two reliefs
+        apart", and ``relief="flat"`` still draws nothing - which matches Tk,
+        where ``highlightthickness=0`` shows no ring either.
+
+        A_DIM is dropped rather than combined: the default relief for an entry
+        is ``sunken``, whose border is dim, and dim-and-bold on one cell is
+        whatever the terminal decides.
+        """
+        style = super()._border_style()
+        if self.focus_get() is not self:
+            return style
+        return replace(style, attr=(style.attr & ~_curses.A_DIM) | _curses.A_BOLD)
+
     def _refused(self, proposed: str = "") -> None:
         """Run the ``invalidcommand``, which is what Tk does on a refusal.
 

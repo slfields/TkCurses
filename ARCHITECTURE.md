@@ -3237,9 +3237,22 @@ Selection: [John ███________]
 | `state` | NORMAL/DISABLED/READONLY | Same |
 | `justify` | LEFT/CENTER/RIGHT | Text alignment |
 | `insertwidth` | pixels | 1 cell (cursor) |
+| `highlightthickness` | focus ring, pixels | No ring; a focused entry draws its **border** bold |
 | `validate` | validation condition | Same: `none`, `key`, `focus`, `focusin`, `focusout`, `all` |
 | `validatecommand` | registered command | Callable given the proposed text |
 | `invalidcommand` | registered command | Callable given the refused text, or nothing |
+
+**A focused entry shows it in its border, in every state.** Tk signals the
+focus on an entry two ways: the insertion cursor, and the
+`-highlightthickness` ring. Only the first depends on the state — Tk's manual
+says `readonly` draws "no insertion cursor ... even if the input focus is in the
+widget" — so in Tk a locked field is still visibly focused, by its ring. This
+library drops `highlightthickness` as an X11 option with no cell equivalent, and
+for a while had nothing in its place: copying Tk's cursor rule faithfully left a
+focused readonly entry indistinguishable from an unfocused one. `BorderStyle.attr`
+carries it now, and `relief="flat"` still draws nothing, which matches a Tk ring
+of zero thickness. Reported from UAT 41; the cursor half is pinned by its own
+test so the two cannot be confused again.
 
 **Validation gates `insert` and `delete`, not only keystrokes.** `-validate`
 is a condition, and the two that name an edit - `key` and `all` - apply to a

@@ -25,6 +25,7 @@ sat down to accept a release.
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import io
 import os
@@ -740,3 +741,228 @@ def test_scenario_40_a_restyle_reaches_the_themed_column_only(uat_terminal):
     term.send(ESCAPE)
     assert term.wait_for_exit(timeout=10) == 0
     assert "Traceback" not in term.stderr
+
+
+# --------------------------------------------------------------- scenario 41
+#
+# A smoke test checks that the title appears. It did so throughout, while this
+# scenario had two visible faults: five bordered entries placed two rows apart
+# so each one's bottom border was painted over, and a mode readout drawn from
+# inside the validation callback - therefore showing the mode as it was a
+# moment BEFORE the machinery changed it, which hid the one case the readout
+# exists to show. Both were found by driving the scenario in a pty by hand.
+# These tests are that hand-driving, kept. TkCurses-wkd.
+
+
+def _scenario_41(uat_terminal):
+    """The scenario, up and settled, with its mode readout on screen."""
+    term = uat_terminal(cols=90, rows=28)
+    term.run([sys.executable, "-m", "uat.scenario_41_entry_validation"])
+    term.wait_for_text("forced (variable)")
+    term.wait_for_text("modes")
+    term.wait_for_idle()
+    return term
+
+
+def _modes(term):
+    """The mode readout, both lines, as one string."""
+    return " ".join(
+        row.strip() for row in term.display if "digits=" in row or "broken=" in row
+    )
+
+
+def _last(term):
+    return next((row.strip() for row in term.display if row.startswith(" last:")), "")
+
+
+def test_scenario_41_a_refused_keystroke_does_not_reach_the_field(uat_terminal):
+    """The edit condition, seen rather than asserted."""
+    term = _scenario_41(uat_terminal)
+    term.click(22, 5)
+    term.send_keys("x")
+    term.wait_for_text("REFUSED 'x'")
+    # The field and the report are different cells, so wait for both.
+    term.wait_for_cell(5, 22, lambda cell: cell.data.strip() == "")
+    assert "REFUSED 'x'" in _last(term), term.describe()
+    assert term.row(5)[22:38].strip() == "", (
+        f"the refused keystroke reached the field\n{term.describe()}"
+    )
+
+
+def test_scenario_41_a_refused_insert_does_not_reach_the_field(uat_terminal):
+    """The same gate, reached from code rather than the keyboard - TkCurses-tvj.
+
+    This is the one a person could not previously have watched happen, because
+    insert() did not validate at all.
+    """
+    term = _scenario_41(uat_terminal)
+    term.click(49, 5)  # the "insert 'x'" button
+    term.wait_for_text("insert('end', 'x')")
+    term.wait_for_cell(5, 22, lambda cell: cell.data.strip() == "")
+    assert "contents now ''" in _last(term), term.describe()
+
+
+def test_scenario_41_a_readonly_entry_ignores_an_insert_from_code(uat_terminal):
+    term = _scenario_41(uat_terminal)
+    term.click(49, 8)  # the "insert '9'" button
+    term.wait_for_text("insert('end', '9')")
+    term.wait_for_cell(8, 22, lambda cell: cell.data.strip() == "")
+    assert "contents now ''" in _last(term), term.describe()
+
+
+def test_scenario_41_a_focus_refusal_complains_and_keeps_the_text(uat_terminal):
+    """The focus condition is advisory: reverting the text would be the bug."""
+    term = _scenario_41(uat_terminal)
+    term.click(22, 11)
+    term.send_keys("a", "b")
+    term.wait_for_cell(11, 23, lambda cell: cell.data == "b")
+    term.send_keys("<Tab>")
+    term.wait_for_text("REFUSED 'ab'")
+    term.wait_for_cell(11, 22, lambda cell: cell.data == "a")
+    assert term.row(11)[22:24] == "ab", (
+        f"a focus refusal must not change the text\n{term.describe()}"
+    )
+    assert "onfocus=focusout" in _modes(term), (
+        f"a focus refusal must not switch validation off\n{term.describe()}"
+    )
+
+
+def test_scenario_41_the_mode_readout_shows_validation_switching_itself_off(
+    uat_terminal,
+):
+    """The reason this scenario exists.
+
+    A validator that raises leaves validate at "none" for good, and nothing on
+    screen says so except this column. The readout used to be drawn from inside
+    the callback, before the machinery had changed anything, so it showed
+    broken=key forever - the failure made invisible by the very thing built to
+    show it.
+    """
+    term = _scenario_41(uat_terminal)
+    assert "broken=key" in _modes(term), term.describe()
+    term.click(22, 14)
+    term.send_keys("a")
+    term.wait_for_text("broken=NONE!")
+    assert "broken=NONE!" in _modes(term), (
+        f"validation switched itself off and the readout did not say so"
+        f"\n{term.describe()}"
+    )
+
+
+def test_scenario_41_a_forced_write_lands_and_switches_validation_off(uat_terminal):
+    """TkCurses-3xb: the condition that cannot refuse anything."""
+    term = _scenario_41(uat_terminal)
+    term.click(49, 17)  # "set variable"
+    term.wait_for_text("forced=NONE!")
+    term.wait_for_cell(17, 22, lambda cell: cell.data == "x")
+    assert term.row(17)[22:25] == "xyz", (
+        f"a forced write must land whatever the validator said\n{term.describe()}"
+    )
+    assert "forced=NONE!" in _modes(term), term.describe()
+
+
+def test_scenario_41_reset_puts_every_entry_back(uat_terminal):
+    """Most of what this scenario shows is one-way, so it needs a way back."""
+    term = _scenario_41(uat_terminal)
+    term.click(22, 14)
+    term.send_keys("a")
+    term.wait_for_text("broken=NONE!")
+    term.send(b"\x12")  # Ctrl-R
+    term.wait_for_text("validating again")
+    term.wait_for(
+        lambda t: "broken=key" in _modes(t),
+        message="the broken entry to be validating again",
+    )
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+    assert "Traceback" not in term.stderr
+
+
+def test_scenario_41_the_mode_readout_survives_a_resize(uat_terminal):
+    """The third fault found by driving this scenario, and the subtlest.
+
+    The readout was written at ``screen.height - 4``. The support screen replays
+    each line at the row it was written at, so after a shrink those rows no
+    longer existed and the whole column vanished for good - measured by resizing
+    a pty from 28 rows to 24. It now lives at fixed rows under the title, where
+    a resize cannot strand it.
+    """
+    term = _scenario_41(uat_terminal)
+    assert "digits=key" in _modes(term), term.describe()
+    term.resize(90, 24)
+    term.wait_for(
+        lambda t: "digits=key" in _modes(t),
+        message="the mode readout to still be on screen after a resize",
+    )
+    term.resize(90, 30)
+    term.wait_for(
+        lambda t: "digits=key" in _modes(t),
+        message="the mode readout to survive growing again",
+    )
+    # And exactly one copy of it, not a stale one left at the old rows.
+    assert sum("digits=" in row for row in term.display) == 1, (
+        f"the readout was left duplicated by the resize\n{term.describe()}"
+    )
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+
+
+def test_scenario_41_no_box_has_its_bottom_border_painted_over(uat_terminal):
+    """The overlap fault, caught as a class rather than one widget at a time.
+
+    Every bordered widget here is three rows tall. Place two of them less than
+    three rows apart and the upper one's bottom border is painted over by the
+    lower one's top - which is invisible to a smoke test, was already a recorded
+    finding from UAT 40, recurred in this scenario, and then recurred AGAIN in
+    one button after a multi-edit aborted half way and the repair was not
+    re-checked. Reported from UAT 41: "you have insert '9' box overlapping on
+    the bottom of insert 'x' box".
+
+    So this does not name coordinates. In any column, a box corner that opens
+    must close: count the top-left corners and the bottom-left corners and they
+    must agree, and likewise on the right. An overlap eats a bottom corner and
+    the counts diverge.
+    """
+    term = _scenario_41(uat_terminal)
+
+    def corners(glyph):
+        return collections.Counter(
+            x for row in term.display for x, cell in enumerate(row) if cell == glyph
+        )
+
+    tops_left, bottoms_left = corners("┌"), corners("└")
+    tops_right, bottoms_right = corners("┐"), corners("┘")
+    assert tops_left and tops_right, f"no boxes on screen at all\n{term.describe()}"
+    assert tops_left == bottoms_left, (
+        "a box opened and never closed on the left, so something is painted over"
+        f": tops {dict(tops_left)} bottoms {dict(bottoms_left)}\n{term.describe()}"
+    )
+    assert tops_right == bottoms_right, (
+        "a box opened and never closed on the right"
+        f": tops {dict(tops_right)} bottoms {dict(bottoms_right)}\n{term.describe()}"
+    )
+
+
+def test_scenario_41_a_readonly_entry_shows_that_it_has_the_focus(uat_terminal):
+    """Reported from UAT 41, and the library's gap rather than the scenario's.
+
+    Tk draws no insertion cursor in a readonly entry - its manual says so - and
+    shows the focus with the highlight ring instead. This library has no ring,
+    so a focused readonly field looked identical to an unfocused one. The border
+    carries it now.
+    """
+    term = _scenario_41(uat_terminal)
+    readonly_top, digits_top = 7, 4
+    term.wait_for_cell(readonly_top, 25, lambda cell: cell.data == "─")
+    assert not term.attrs_at(readonly_top, 25)["bold"], (
+        f"nothing is focused yet\n{term.describe()}"
+    )
+
+    term.click(25, 8)  # into the readonly field
+    term.wait_for(
+        lambda t: t.attrs_at(readonly_top, 25)["bold"],
+        message="the readonly entry's border to show the focus",
+    )
+    assert not term.attrs_at(digits_top, 25)["bold"], (
+        f"two entries claim the focus at once\n{term.describe()}"
+    )

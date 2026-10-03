@@ -110,6 +110,78 @@ def test_the_cursor_is_only_shown_when_focused(terminal, tmp_path):
     assert not any(unfocused_row), "the unfocused field should not"
 
 
+def _focus_program(state: str) -> str:
+    """Two entries, one of them in ``state``, with the focus on the second."""
+    return (
+        "a = tkcurses.Entry(root, width=10, name='a')\n"
+        "a.place(x=1, y=1)\n"
+        "b = tkcurses.Entry(root, width=10, name='b')\n"
+        "b.place(x=1, y=5)\n"
+        f"for w in (a, b): w.configure(state={state!r})\n"
+        "b.focus_set()"
+    )
+
+
+@pytest.mark.parametrize("state", ["normal", "readonly", "disabled"])
+def test_an_entry_shows_the_focus_in_its_border_whatever_its_state(
+    terminal, tmp_path, state
+):
+    """Tk shows the focus twice over, and only one of them is the cursor.
+
+    The other is the focus highlight ring, drawn whatever the state - and for a
+    readonly entry it is the ONLY signal, because Tk's manual says readonly
+    draws "no insertion cursor ... even if the input focus is in the widget".
+    This library drops highlightthickness as an X11 option with no cell
+    equivalent and had nothing in its place, so a focused readonly entry looked
+    exactly like an unfocused one. Reported from UAT 41.
+
+    The border carries it now. Checked for all three states, because the
+    original fault was that the signal was tied to being editable.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(program(_focus_program(state)), workdir=tmp_path)
+    term.wait_for_idle()
+    # The top border of each field, at a column inside the box: the first
+    # entry is placed at y=1 and the second at y=5, and the focus is on the
+    # second.
+    term.wait_for_cell(5, 5, lambda cell: cell.data == "\u2500")
+    term.wait_for_cell(1, 5, lambda cell: cell.data == "\u2500")
+    focused = term.attrs_at(5, 5)["bold"]
+    unfocused = term.attrs_at(1, 5)["bold"]
+    assert focused != unfocused, (
+        f"a focused {state} entry must look different from an unfocused one"
+        f"\n{term.describe()}"
+    )
+    assert focused, f"the focused border should be the bold one\n{term.describe()}"
+
+
+@pytest.mark.parametrize("state", ["readonly", "disabled"])
+def test_a_locked_entry_still_shows_no_insertion_cursor(terminal, tmp_path, state):
+    """The other half of the rule, pinned so the fix above cannot undo it.
+
+    Tk's manual is explicit for both states: no insertion cursor, even with the
+    focus. Showing one would say the keyboard will reach the text, and it will
+    not.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "e = tkcurses.Entry(root, width=10, name='e')\n"
+            "e.place(x=1, y=1)\n"
+            "e.insert(0, 'abc')\n"
+            f"e.configure(state={state!r})\n"
+            "e.focus_set()"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("abc")
+    term.wait_for_idle()
+    reversed_cells = [term.attrs_at(2, col)["reverse"] for col in range(2, 12)]
+    assert not any(reversed_cells), (
+        f"a {state} entry drew an insertion cursor\n{term.describe()}"
+    )
+
+
 def test_show_masks_what_is_displayed(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(
