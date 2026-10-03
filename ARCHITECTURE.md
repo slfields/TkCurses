@@ -3526,6 +3526,26 @@ Scrollable selection list.
 | `itemcget(index, option)` | ☐ | Get item option - not implemented; TkCurses-5kg |
 | `itemconfigure(index, **kw)` | ☐ | Configure item - not implemented; TkCurses-5kg |
 
+**It scrolls sideways, as of `TkCurses-019`** — `xview` and `-xscrollcommand`
+were missing outright, so a horizontal scrollbar could not be attached at all.
+The view is counted in characters and shared by every row. Measured on Tk 9.0.2
+with a 10-wide listbox and a 30-character item, and matched here:
+
+- `xview()` is the offset, and the offset plus the width, each over the
+  **widest** item: `(0.0, 0.333…)`.
+- a unit is one character; a **page is the width less two**, never under one
+  (8 at width 10, 18 at 20, 1 at 3).
+- `moveto` **rounds** to the nearest character, and every form clamps so the
+  widest item's end is as far as it goes.
+- the offset is **not** re-clamped when items go: scroll one right, delete the
+  wide item, and Tk answers `(0.2, 1.0)` over a 5-character remainder.
+
+The named forms — `xview_moveto`, `xview_scroll`, `yview_moveto`,
+`yview_scroll` — come from public `XView` and `YView` mixins, as in tkinter,
+shared by Entry (and so Spinbox and the ttk entries), Text, Canvas, Listbox
+and ttk.Treeview. They were per-widget copies on Text and Canvas and missing
+everywhere else.
+
 **Rendering:**
 ```
 ┌─────────────────┐

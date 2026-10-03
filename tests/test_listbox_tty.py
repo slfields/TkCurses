@@ -236,3 +236,17 @@ def test_an_unbordered_listbox_still_marks_its_selection(terminal, tmp_path):
     term.wait_for_idle()
     row = next(i for i, line in enumerate(term.display) if "first" in line)
     assert "▶" in term.display[row] and "◀" in term.display[row], term.describe()
+
+
+def test_a_listbox_scrolled_sideways_shows_the_rest_of_its_items(terminal, tmp_path):
+    """TkCurses-019: xview moves every row, and the start is gone."""
+    body = (
+        "lb = tkcurses.Listbox(root, width=16, height=3)\n"
+        "lb.place(x=1, y=1)\n"
+        "lb.insert('end', 'abcdefghij-KLMNOPQRST-uvwxyz', 'short')\n"
+        "lb.xview_scroll(11, 'units')\n"
+    )
+    term = terminal(cols=40, rows=8)
+    term.run_source(program(body), workdir=tmp_path)
+    term.wait_for_text("KLMNOP")
+    assert not any("abcdef" in line for line in term.display)

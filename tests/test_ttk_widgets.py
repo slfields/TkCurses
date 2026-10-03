@@ -2568,3 +2568,25 @@ def test_identify_region_is_nothing_outside_the_area_even_on_the_heading_row(
     assert laid_out.identify_region(area.x - 1, area.y) == "nothing"
     assert laid_out.identify_region(area.x + area.width + 1, area.y) == "nothing"
     assert laid_out.identify_region(area.x + 2, area.y) == "heading", "the control"
+
+
+# -------------------------------------------------- the named scroll methods
+
+
+def test_a_treeview_scrolls_by_the_named_methods(root):
+    """``tree.yview_moveto(0.0)`` is 'back to the top' - TkCurses-019."""
+    tree = Treeview(root, height=3)
+    for n in range(20):
+        tree.insert("", "end", text=str(n))
+    assert tree.yview_scroll(2, "units") is None
+    assert tree.yview()[0] == 2 / 20
+    tree.yview_moveto(0.0)
+    assert tree.yview()[0] == 0.0
+
+
+def test_a_treeview_answers_the_horizontal_methods_and_stays_whole(root):
+    """It never scrolls sideways; the named forms must not raise either."""
+    tree = Treeview(root)
+    assert tree.xview_moveto(0.5) is None
+    assert tree.xview_scroll(1, "units") is None
+    assert tree.xview() == (0.0, 1.0)

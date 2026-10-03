@@ -177,6 +177,7 @@ NOT_INSTANTIATED = frozenset(
 #: entries came out. That is the whole arrangement working as intended.
 #:
 #: And by one more the same day (TkCurses-elb): ttk.Spinbox.set.
+#: PARTIAL_GAPS lost every scroll-protocol entry to TkCurses-019.
 #:
 #: A gap not listed here is a test failure, which is the point: this list may
 #: shrink and must never silently grow.
@@ -365,33 +366,20 @@ GAPS: dict[str, dict[str, str]] = {
 #: Keyed differently from :data:`GAPS` for a measured reason. Both of these are
 #: defined once in tkinter, on a mixin, and inherited widely:
 #:
-#:   tk.XView.xview         our Canvas, Entry, Text and Treeview have it;
-#:                          our Listbox does not
+#:   tk.XView.xview         our Canvas, Entry, Text and Treeview had it;
+#:                          our Listbox did not (until TkCurses-019)
 #:   ttk.Widget.identify    our Scale, Scrollbar and PanedWindow answer the
 #:                          DOMAIN form correctly; the rest answer nothing
 #:
 #: So a single entry under the defining class would be false as stated - it
 #: would say the method is missing from everything that inherits it, and the
-#: staleness check would rightly reject it. Six names are in this position,
+#: staleness check would rightly reject it. Six names were in this position,
 #: all of them the scroll protocol (TkCurses-019) and identify (TkCurses-d5u),
 #: which is not a coincidence: those are exactly the two issues whose subject
-#: is a method implemented on some widgets and not others.
+#: is a method implemented on some widgets and not others. The scroll
+#: protocol's five came out with TkCurses-019, which put them on public
+#: XView / YView mixins as tkinter does; only identify is left.
 PARTIAL_GAPS: dict[str, dict[str, str]] = {
-    "tk.Entry": {
-        "xview_moveto": "TkCurses-019",
-        "xview_scroll": "TkCurses-019",
-    },
-    "tk.Listbox": {
-        "xview": "TkCurses-019",
-        "xview_moveto": "TkCurses-019",
-        "xview_scroll": "TkCurses-019",
-        "yview_moveto": "TkCurses-019",
-        "yview_scroll": "TkCurses-019",
-    },
-    "tk.Spinbox": {
-        "xview_moveto": "TkCurses-019",
-        "xview_scroll": "TkCurses-019",
-    },
     "ttk.Button": {
         "identify": "TkCurses-d5u",
     },
@@ -400,13 +388,9 @@ PARTIAL_GAPS: dict[str, dict[str, str]] = {
     },
     "ttk.Combobox": {
         "identify": "TkCurses-d5u",
-        "xview_moveto": "TkCurses-019",
-        "xview_scroll": "TkCurses-019",
     },
     "ttk.Entry": {
         "identify": "TkCurses-d5u",
-        "xview_moveto": "TkCurses-019",
-        "xview_scroll": "TkCurses-019",
     },
     "ttk.Frame": {
         "identify": "TkCurses-d5u",
@@ -440,16 +424,6 @@ PARTIAL_GAPS: dict[str, dict[str, str]] = {
     },
     "ttk.Sizegrip": {
         "identify": "TkCurses-d5u",
-    },
-    "ttk.Spinbox": {
-        "xview_moveto": "TkCurses-019",
-        "xview_scroll": "TkCurses-019",
-    },
-    "ttk.Treeview": {
-        "xview_moveto": "TkCurses-019",
-        "xview_scroll": "TkCurses-019",
-        "yview_moveto": "TkCurses-019",
-        "yview_scroll": "TkCurses-019",
     },
 }
 

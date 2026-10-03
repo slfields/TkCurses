@@ -394,3 +394,116 @@ def test_a_scrollbar_and_a_listbox_drive_each_other(root):
 
     bar._options["command"]("moveto", 0.0)
     assert listbox._top == 0
+
+
+# ------------------------------------------------------ the horizontal view
+#
+# Missing outright until TkCurses-019. Every expectation below was measured
+# on Tk 9.0.2 with a 10-character-wide listbox holding a 30-character item.
+
+
+@pytest.fixture
+def wide(root):
+    """Ten cells of text between the markers, as Tk's width=10 has."""
+    box = Listbox(root, name="wide", height=4)
+    box._allocate(Rect(0, 0, 14, 6))
+    box._map()
+    box.insert("end", "x" * 30, "short")
+    assert box._body_width() == 10
+    return box
+
+
+def test_xview_reports_the_columns_as_fractions_of_the_widest_item(wide):
+    assert wide.xview() == (0.0, 10 / 30)
+
+
+def test_xview_scroll_a_unit_is_one_character(wide):
+    wide.xview_scroll(1, "units")
+    assert wide.xview() == (1 / 30, 11 / 30)
+
+
+def test_xview_scroll_a_page_is_the_width_less_two(wide):
+    wide.xview_scroll(1, "pages")
+    assert wide._left == 8
+
+
+def test_a_page_is_never_less_than_one_character(root):
+    box = Listbox(root, name="narrow")
+    box._allocate(Rect(0, 0, 7, 6))  # three cells of text
+    box._map()
+    box.insert("end", "x" * 100)
+    box.xview_scroll(1, "pages")
+    assert box._left == 1
+
+
+@pytest.mark.parametrize("fraction", [0.49, 0.51])
+def test_xview_moveto_rounds_to_the_nearest_character(wide, fraction):
+    wide.xview_moveto(fraction)
+    assert wide._left == 15
+
+
+def test_xview_moveto_stops_at_the_end_of_the_widest_item(wide):
+    wide.xview_moveto(1.0)
+    assert wide.xview() == (20 / 30, 1.0)
+
+
+def test_xview_moveto_stops_at_the_start(wide):
+    wide.xview_moveto(-1)
+    assert wide._left == 0
+
+
+def test_xview_with_an_index_is_a_character_offset_clamped_to_the_end(wide):
+    wide.xview(3)
+    assert wide._left == 3
+    wide.xview(99)
+    assert wide._left == 20
+
+
+def test_the_offset_holds_when_the_wide_item_goes(wide):
+    """Tk's own: measured (0.2, 1.0) over the five-character remainder."""
+    wide.xview_scroll(1, "units")
+    wide.delete(0)
+    assert wide.xview() == (0.2, 1.0)
+
+
+def test_an_empty_listbox_is_all_showing_both_ways(root):
+    box = Listbox(root, name="empty")
+    assert box.xview() == (0.0, 1.0)
+    assert box.yview() == (0.0, 1.0)
+
+
+def test_xview_refuses_a_bad_unit(wide):
+    with pytest.raises(TclError, match='bad argument "bogus": must be pages or units'):
+        wide.xview("scroll", 1, "bogus")
+
+
+def test_xview_refuses_a_bad_subcommand(wide):
+    with pytest.raises(TclError, match='expected integer but got "bogus"'):
+        wide.xview("bogus")
+
+
+def test_the_horizontal_scroll_command_is_told_where_the_view_is(wide):
+    reports = []
+    wide.configure(xscrollcommand=lambda first, last: reports.append((first, last)))
+    wide.xview_scroll(2, "units")
+    assert reports[-1] == (2 / 30, 12 / 30)
+
+
+@pytest.mark.parametrize(
+    ("call", "args"),
+    [
+        ("xview_moveto", (0.5,)),
+        ("xview_scroll", (1, "units")),
+        ("yview_moveto", (0.0,)),
+        ("yview_scroll", (1, "units")),
+    ],
+)
+def test_the_named_scroll_methods_return_none(wide, call, args):
+    assert getattr(wide, call)(*args) is None
+
+
+def test_yview_scroll_and_moveto_are_the_named_forms(listbox):
+    listbox.yview_scroll(2, "units")
+    assert listbox._top == 2
+    listbox.yview_moveto(0.0)
+    assert listbox._top == 0

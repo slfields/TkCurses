@@ -384,7 +384,9 @@ __all__ = [
     "Widget",
     "Wm",
     "X",
+    "XView",
     "Y",
+    "YView",
     "__author__",
     "__copyright__",
     "__license__",
@@ -5018,6 +5020,50 @@ class BooleanVar(Variable):
 # ======================================================================
 
 
+class XView:
+    """The horizontal half of Tk's scroll protocol. ``tkinter.XView``.
+
+    A widget supplies ``xview(*args)`` - the query and the ``moveto`` /
+    ``scroll`` forms a Scrollbar sends - and this adds the two named
+    spellings a program writes itself, which tkinter implements the same way:
+    thin wrappers over ``xview``. One definition here instead of one per
+    widget; TkCurses-019 found seven widgets with ``xview`` and without these.
+    """
+
+    def xview(self, *args: Any) -> Any:  # pragma: no cover - always overridden
+        """Query or move the horizontal view. Every user overrides this."""
+        raise NotImplementedError
+
+    def xview_moveto(self, fraction: float) -> None:
+        """Put ``fraction`` of the total width off-screen to the left."""
+        self.xview("moveto", fraction)
+
+    def xview_scroll(self, number: int, what: str) -> None:
+        """Shift the view by ``number`` ``"units"`` or ``"pages"``."""
+        self.xview("scroll", number, what)
+
+
+class YView:
+    """The vertical half of Tk's scroll protocol. ``tkinter.YView``.
+
+    ``tree.yview_moveto(0.0)`` - back to the top - and
+    ``listbox.yview_scroll(1, "units")`` are what a program's own key handlers
+    write. See :class:`XView`.
+    """
+
+    def yview(self, *args: Any) -> Any:  # pragma: no cover - always overridden
+        """Query or move the vertical view. Every user overrides this."""
+        raise NotImplementedError
+
+    def yview_moveto(self, fraction: float) -> None:
+        """Put ``fraction`` of the total height off-screen above."""
+        self.yview("moveto", fraction)
+
+    def yview_scroll(self, number: int, what: str) -> None:
+        """Shift the view by ``number`` ``"units"`` or ``"pages"``."""
+        self.yview("scroll", number, what)
+
+
 class _Drawable(Widget):
     """Painting shared by the widgets that draw a background and a border."""
 
@@ -6518,7 +6564,7 @@ def _same_value(left: Any, right: Any) -> bool:
     return str(left) == str(right)
 
 
-class Entry(_Drawable):
+class Entry(_Drawable, XView):
     """A one-line text field.
 
     The editing itself is :class:`~tkcurses._core.editing.TextField`; what is
@@ -8236,7 +8282,7 @@ def _spinbox_click(event: Event) -> None:
 _MARGIN_OPTIONS = frozenset({"lmargin1", "lmargin2", "rmargin"})
 
 
-class Text(_Drawable):
+class Text(_Drawable, XView, YView):
     """An editable block of text, with marks and tags.
 
     The contents, the index arithmetic, the marks and the tag ranges are
@@ -9297,22 +9343,6 @@ class Text(_Drawable):
         self._scroll(args, vertical=False)
         return None
 
-    def yview_moveto(self, fraction: float) -> None:
-        """Put the top of the view at a fraction of the whole."""
-        self.yview("moveto", fraction)
-
-    def yview_scroll(self, number: int, what: str) -> None:
-        """Scroll by lines or by screenfuls."""
-        self.yview("scroll", number, what)
-
-    def xview_moveto(self, fraction: float) -> None:
-        """Put the left of the view at a fraction of the longest line."""
-        self.xview("moveto", fraction)
-
-    def xview_scroll(self, number: int, what: str) -> None:
-        """Scroll sideways by characters or by screenfuls."""
-        self.xview("scroll", number, what)
-
     def _scroll(self, args: tuple[Any, ...], *, vertical: bool) -> None:
         """Apply one Tk scrolling command to one axis."""
         view = self._view_size()
@@ -9730,7 +9760,7 @@ class _CanvasItem:
         return list(zip(self.coords[::2], self.coords[1::2], strict=False))
 
 
-class Canvas(_Drawable):
+class Canvas(_Drawable, XView, YView):
     """A drawing surface, measured in half-cells.
 
     A character cell is about twice as tall as it is wide, so a canvas that
@@ -10317,22 +10347,6 @@ class Canvas(_Drawable):
             return self._fractions(vertical=False)
         self._scroll(args, vertical=False)
         return None
-
-    def yview_moveto(self, fraction: float) -> None:
-        """Put the top of the view at a fraction of the scroll region."""
-        self.yview("moveto", fraction)
-
-    def yview_scroll(self, number: int, what: str) -> None:
-        """Scroll by cells or by screenfuls."""
-        self.yview("scroll", number, what)
-
-    def xview_moveto(self, fraction: float) -> None:
-        """Put the left of the view at a fraction of the scroll region."""
-        self.xview("moveto", fraction)
-
-    def xview_scroll(self, number: int, what: str) -> None:
-        """Scroll sideways by pixels or by screenfuls."""
-        self.xview("scroll", number, what)
 
     def _scroll(self, args: tuple[Any, ...], *, vertical: bool) -> None:
         """Apply one Tk scrolling command to one axis."""
@@ -11416,7 +11430,7 @@ def _menu_motion(event: Event) -> None:
         menu._open(at)
 
 
-class Listbox(_Drawable):
+class Listbox(_Drawable, XView, YView):
     """A scrollable list of strings, one of which is selected.
 
     Four selection modes, as in Tk. ``browse`` - the default - keeps one item
@@ -11439,6 +11453,7 @@ class Listbox(_Drawable):
         "state": "normal",
         "takefocus": True,
         "width": 20,
+        "xscrollcommand": None,
         "yscrollcommand": None,
     }
 
@@ -11466,6 +11481,8 @@ class Listbox(_Drawable):
         self._active = 0
         self._anchor = 0
         self._top = 0
+        # Characters scrolled off to the left, shared by every row as in Tk.
+        self._left = 0
         super().__init__(master, cnf, name=name, **kw)
         self._apply_requested_size()
         self._install_class_bindings()
@@ -11712,6 +11729,71 @@ class Listbox(_Drawable):
         self._redraw()
         return None
 
+    def xview(self, *args: Any) -> Any:
+        """Report or move the horizontal view, in characters.
+
+        Missing outright until TkCurses-019, so a horizontal scrollbar could
+        not be attached to a listbox at all. Measured against Tk 9.0.2, a
+        10-wide listbox holding a 30-character item:
+
+        * ``xview()`` answers ``(0.0, 0.333...)`` - the offset and the
+          offset-plus-width, each over the WIDEST item.
+        * a unit is one character; a page is the width less two, never less
+          than one (8 at width 10, 18 at 20, 1 at 3).
+        * ``moveto`` rounds to the nearest character - 0.49 and 0.51 of 30
+          both land on 15 - and a bare index is a character offset. All three
+          are clamped so the widest item's end is the furthest you can go.
+
+        The width here is the text's, between the two selection markers.
+        """
+        if not args:
+            return self._horizontal_fractions()
+        width = self._body_width()
+        if len(args) == 1:
+            try:
+                left = int(args[0])
+            except (TypeError, ValueError):
+                raise TclError(f'expected integer but got "{args[0]}"') from None
+        elif args[0] == "moveto":
+            left = round(float(args[1]) * self._widest())
+        elif args[0] == "scroll":
+            what = str(args[2])
+            if what not in ("units", "pages"):
+                raise TclError(f'bad argument "{what}": must be pages or units')
+            step = max(1, width - 2) if what == "pages" else 1
+            left = self._left + int(args[1]) * step
+        else:
+            raise TclError(f'expected integer but got "{args[0]}"')
+        self._left = max(0, min(left, self._widest() - width))
+        self._publish_view()
+        self._redraw()
+        return None
+
+    def _widest(self) -> int:
+        """The longest item, in cells: what the horizontal view is a fraction of."""
+        return max((len(item) for item in self._items), default=0)
+
+    def _body_width(self) -> int:
+        """How many cells of each item show, between the selection markers."""
+        return max(1, self._text_area().width - 2)
+
+    def _horizontal_fractions(self) -> tuple[float, float]:
+        """Where the visible columns are, as two fractions of the widest item.
+
+        The offset is NOT clamped here, and that is Tk's too: measured, scroll
+        one character right and then delete the wide item, and ``xview()``
+        answers ``(0.2, 1.0)`` over a five-character remainder. It holds until
+        the view next moves.
+        """
+        widest = self._widest()
+        if widest <= 0:
+            return (0.0, 1.0)
+        width = self._body_width()
+        return (
+            min(1.0, self._left / widest),
+            min(1.0, (self._left + width) / widest),
+        )
+
     def _view_fractions(self) -> tuple[float, float]:
         """Where the window is, as two fractions of the whole list."""
         total = len(self._items)
@@ -11725,10 +11807,14 @@ class Listbox(_Drawable):
         self._publish_view()
 
     def _publish_view(self) -> None:
-        """Tell the scrollbar where the view is, if one is listening."""
+        """Tell the scrollbars where the view is, if any are listening."""
         command = self._options["yscrollcommand"]
         if command is not None:
             first, last = self._view_fractions()
+            command(first, last)
+        command = self._options["xscrollcommand"]
+        if command is not None:
+            first, last = self._horizontal_fractions()
             command(first, last)
 
     def _clamp_view(self) -> None:
@@ -11805,7 +11891,7 @@ class Listbox(_Drawable):
         if position == self._active and self.focus_get() is self and not selected:
             style |= _curses.A_UNDERLINE
         left, right = self._SELECTED_MARKERS if selected else (" ", " ")
-        body = clip_text(self._items[position], max(0, area.width - 2))
+        body = clip_text(self._items[position][self._left :], max(0, area.width - 2))
         line = f"{left}{body}".ljust(area.width - 1)[: area.width - 1] + right
         # One write, through the shared writer. The marker used to go on
         # separately with insstr, which INSERTS: it shifted the row one cell

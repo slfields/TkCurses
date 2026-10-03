@@ -2189,7 +2189,7 @@ class _Item:
     detached: bool = False
 
 
-class Treeview(Widget, tkcurses.Frame):
+class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
     """A hierarchy of rows, with columns. ``ttk.Treeview``.
 
     **It reports ``Treeview``, not ``TTreeview``.** Measured: it is the one
