@@ -339,7 +339,7 @@ class GridLayout:
 
     # ------------------------------------------------------------- placing
 
-    def apply(self, container: Managed, area: Rect) -> None:  # noqa: ARG002
+    def apply(self, container: object, area: Rect) -> None:  # noqa: ARG002
         """Size the lines to ``area`` and put each child in its cell."""
         columns, rows = self._natural()
         self._share(columns, area.width)

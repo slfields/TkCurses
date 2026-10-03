@@ -44,9 +44,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Sequence
 
-    from tkcurses._core.geometry import Rect, Size
+    from tkcurses._core.geometry import Container, Managed, Rect, Size
 
 __all__ = ["Layout", "LayoutEngine", "LayoutLoop"]
 
@@ -70,9 +70,53 @@ class LayoutLoop(RuntimeError):
 class Layout(Protocol):
     """What a geometry manager has to do to take part in negotiation.
 
-    Pack, Grid and Place each implement this. The engine knows nothing else
-    about them, which is what lets a container use one manager while its
+    Pack, Grid, Place and Paned each implement this. The engine knows nothing
+    else about them, which is what lets a container use one manager while its
     parent uses another.
+
+    Three of the four methods say what they mean. ``remove`` still takes
+    ``Any``, for a measured reason given below.
+
+    **Why the first attempt at this failed, and what it was really about.**
+    Narrowing the three ``container`` parameters to :class:`Container` cost
+    **17 mypy errors**, ten of them "Statement is unreachable", and the count
+    oscillated rather than converging (TkCurses-sup, reverted). The diagnosis in
+    the issue was that something about protocol matching was subtly wrong. It
+    was simpler and more embarrassing than that: ``pack``, ``grid`` and
+    ``paned`` declared types for a parameter **they never read**. Seven of the
+    eight implementation signatures carry ``# noqa: ARG002``. Those annotations
+    were decorative, and because a parameter is contravariant, a decorative
+    annotation on one is a hard constraint on the protocol.
+
+    Widen the unused parameters to ``object`` - losing nothing, since no body
+    touches them - and the same narrowing costs **nothing**:
+
+    =========================================  ======
+    narrowing                                  errors
+    =========================================  ======
+    ``apply``/``requested`` to ``Container``    17
+    ... with the unused parameters widened     **0**
+    ``slaves -> Sequence[Managed]``            **0**
+    ``slaves -> list[Managed]``                 1
+    ``remove(widget: Managed)``                 2
+    ``requested(container: object)``            8
+    =========================================  ======
+
+    Two of those rows are worth keeping. ``list[Managed]`` fails where
+    ``Sequence[Managed]`` succeeds because ``list`` is invariant and
+    ``Sequence`` is covariant: :class:`~tkcurses._core.paned.PanedLayout`
+    returns ``list[Pane]``, which is a ``Sequence[Managed]`` and is not a
+    ``list[Managed]``. And **widening does not help**: ``object`` is the widest
+    type there is and costs eight errors, because an implementation declaring
+    ``Pane | None`` does not accept an arbitrary object. Contravariance bites in
+    the direction nobody expects.
+
+    ``remove`` keeps ``Any`` because narrowing it is a real change rather than a
+    cosmetic one: ``PanedLayout`` keeps ``list[Pane]`` as its order, so
+    ``remove(widget: Managed)`` makes ``self._order.remove(widget)`` an error.
+    Fixing that means deciding whether a paned window's order should be typed
+    in ``Pane`` at all, which is a design question and not an annotation.
+    TkCurses-sup.
     """
 
     #: Whether this manager's children decide their container's size. True
@@ -82,16 +126,19 @@ class Layout(Protocol):
     #: frame full of placed children keeps the size it was configured with.
     propagates: bool
 
-    def requested(self, container: Any) -> Size:
+    def requested(self, container: Container) -> Size:
         """The size this manager needs to lay out the container's children."""
         ...
 
-    def apply(self, container: Any, area: Rect) -> None:
+    def apply(self, container: Container, area: Rect) -> None:
         """Place the children within ``area``, in screen cells."""
         ...
 
-    def slaves(self, container: Any) -> list[Any]:
-        """The widgets this manager is laying out in ``container``."""
+    def slaves(self, container: Container) -> Sequence[Managed]:
+        """The widgets this manager is laying out in ``container``.
+
+        ``Sequence`` and not ``list``: see the note on invariance above.
+        """
         ...
 
     def remove(self, widget: Any) -> None:

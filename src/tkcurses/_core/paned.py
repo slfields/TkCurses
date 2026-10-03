@@ -305,13 +305,13 @@ class PanedLayout:
         """One pane's options, or None if it is not in this window."""
         return self._options.get(id(widget))
 
-    def slaves(self, container: Pane | None = None) -> list[Pane]:  # noqa: ARG002
+    def slaves(self, container: object = None) -> list[Pane]:  # noqa: ARG002
         """The panes, in order."""
         return list(self._order)
 
     # -------------------------------------------------------------- geometry
 
-    def requested(self, container: Pane | None = None) -> Size:  # noqa: ARG002
+    def requested(self, container: object = None) -> Size:  # noqa: ARG002
         """What the panes together need, sashes included."""
         if not self._order:
             return Size(0, 0)
@@ -374,7 +374,7 @@ class PanedLayout:
             return 0
         return sum(self._sizes[: sash + 1]) + sash * SASH_WIDTH
 
-    def apply(self, container: Managed, area: Rect) -> None:
+    def apply(self, container: object, area: Rect) -> None:
         """Give each pane its strip of the window, then redraw the sashes.
 
         The container is repainted here rather than left to the engine

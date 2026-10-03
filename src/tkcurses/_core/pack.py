@@ -214,7 +214,7 @@ class PackLayout:
                 height = max(height, demand.height)
         return Size(width, height)
 
-    def apply(self, container: Managed, area: Rect) -> None:  # noqa: ARG002
+    def apply(self, container: object, area: Rect) -> None:  # noqa: ARG002
         """Cut parcels out of ``area`` and put each child in its own."""
         cavity = area
         extra = self._expansion(area)
