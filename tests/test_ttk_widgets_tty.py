@@ -900,7 +900,6 @@ import tkcurses
 from tkcurses import ttk
 
 root = tkcurses.Tk()
-buffer = root.tk.screen.buffer
 frame = tkcurses.Frame(root)
 frame.pack(fill='both', expand=True)
 bar = ttk.Scrollbar(frame, orient='vertical')
@@ -911,8 +910,6 @@ bar.configure(command=tree.yview)
 for number in range(30):
     tree.insert('', 'end', text='row %02d' % number)
 root.update_layout()
-root.tk.screen.refresh()
-buffer.write(13, 0, 'ready')
 root.tk.screen.refresh()
 root.after(4000, root.quit)
 root.mainloop()
@@ -934,10 +931,21 @@ def test_a_scrollbar_drives_a_treeview(terminal, tmp_path):
     right alone. A thumb that reports a position while the tree does not move,
     or a tree that scrolls while the thumb sits still, both pass a test of either
     side on its own.
+
+    WAITS FOR THE TREE'S OWN FIRST ROW, not for a sentinel. It used to write
+    'ready' at row 13 of 15 and wait for that - inside the area the tree fills,
+    so the application's first redraw painted over it. The sentinel was visible
+    only between the manual refresh and the first pass of ``mainloop()``: on a
+    development machine the harness sampled in between and the test passed six
+    times out of six, and on a contended CI runner it did not, and then the wait
+    could only fail. It failed Python 3.14 on #118 as "the program exited with
+    code 0 while waiting for text 'ready'", which named the quit timer and not
+    the cause. A checkpoint has to be something the application itself draws and
+    keeps. TkCurses-cvi.
     """
     term = terminal(cols=30, rows=15)
     term.run_source(TREE_AND_BAR, workdir=tmp_path)
-    term.wait_for_text("ready")
+    term.wait_for_text("row 00")
     term.wait_for_idle()
 
     def rows_on_screen():

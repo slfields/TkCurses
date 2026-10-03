@@ -347,6 +347,50 @@ class TerminalHarness:
         script.write_text(textwrap.dedent(source), encoding="utf-8")
         self._workdir = workdir
         self.run([sys.executable, str(script)])
+        if os.environ.get("TKCURSES_LATE_SAMPLE"):
+            self._settle_before_anything_looks()
+
+    def _settle_before_anything_looks(self) -> None:
+        """Let the application repaint before the first sample. Opt-in.
+
+        ``TKCURSES_LATE_SAMPLE=1 pytest -m tty`` turns this on, and it exists
+        to make one specific latent fault certain instead of occasional:
+
+            A CHECKPOINT WRITTEN INTO A CELL THE APPLICATION OWNS IS
+            TRANSIENT.
+
+        A program that writes a sentinel with ``buffer.write`` and then enters
+        ``mainloop()`` has that cell repainted by the application's first
+        redraw. On a development machine the harness samples in between and
+        sees it; on a contended runner it does not, and the wait can then only
+        fail - reporting whatever the program did next, which is usually
+        "exited while waiting for text", because the exit check is what notices
+        first. That is how ``test_a_scrollbar_drives_a_treeview`` failed Python
+        3.14 on #118 while passing six times locally, and the sentinel it waited
+        for sat at row 13 of 15, inside the tree. TkCurses-cvi.
+
+        A FIXED DELAY FROM THE FORK DOES NOT WORK and was tried: at 50ms the
+        child has not finished importing tkcurses, so nothing has been painted
+        yet and every test passes. The condition is "the screen has settled",
+        not "some time has passed".
+
+        FOUR TESTS FAIL UNDER THIS AND ARE CORRECT AS WRITTEN. Each waits for a
+        "before" state and then schedules the change it is testing with
+        ``after(100)`` or ``after(200)``; settling first runs past the before:
+
+            test_checkbutton_tty.py::test_focus_is_visible
+            test_label_tty.py::test_a_label_follows_its_textvariable
+            test_message_tty.py::test_a_caption_that_changes_repaints
+            test_widget_images_tty.py::test_art_stops_being_drawn_when_its_
+                image_is_collected
+
+        So this is a probe to run and read, not a mode to keep green - the same
+        arrangement as ``tests/support/audit_waits.py``, which finds the
+        sibling fault (asserting on a cell that was never waited for) and also
+        needs a person to say which hits are real.
+        """
+        with contextlib.suppress(TerminalTimeout):
+            self.wait_for_idle(quiet=0.1)
 
     def _install_quit_timer_shim(self) -> Path | None:
         """Put ``sitecustomize.py`` where the child will import it.
