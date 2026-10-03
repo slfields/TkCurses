@@ -2630,6 +2630,22 @@ This section provides a comprehensive mapping of all tkinter classes, methods, a
 | ○ | Adapted implementation (text-mode behavior) |
 | ◐ | Partial implementation (subset of functionality) |
 | ✗ | Not applicable (no text-mode equivalent) |
+| ☐ | Not implemented; the Notes column names the issue |
+
+The first three each assert the method exists. **They are checked**, by
+`tests/test_method_surface.py`, which reads every row of every table below and
+fails if a claim is false.
+
+That check exists because 52 of them were. The whole `ttk.Treeview` identify
+family was marked ○, "adapted implementation", while `hasattr` was False for
+all six - and this document was the only place anyone would have looked, which
+is how the gap survived long enough to be found by accident. The same failure
+mode as the code graph that sat 165 commits stale while still being advertised
+as the way to navigate the library (see CLAUDE.md).
+
+`☐` is the row to write when something is not there. The distinction from `✗`
+matters: `✗` is a decision that a method has no text-mode meaning, `☐` is work
+not yet done, and only one of the two should carry an issue id.
 
 ---
 
@@ -3065,7 +3081,7 @@ Main application window.
 |----------------|----------|-------|
 | `__init__(screenName, baseName, className, useTk, sync, use)` | ○ | Initializes curses screen |
 | `destroy()` | ✓ | Destroy application, call curses.endwin() |
-| `loadtk()` | ○ | No-op (curses already initialized) |
+| `loadtk()` | ☐ | No-op (curses already initialized) - not implemented; TkCurses-5rt |
 | `readprofile(baseName, className)` | ✗ | N/A |
 | `report_callback_exception(exc, val, tb)` | ✓ | Exception handler |
 
@@ -3256,8 +3272,8 @@ Single-line text input.
 | `icursor(index)` | ○ | Position cursor |
 | `index(index)` | ✓ | Get index position |
 | `insert(index, string)` | ✓ | Insert text |
-| `scan_mark(x)` | ○ | Scan start |
-| `scan_dragto(x)` | ○ | Scan drag |
+| `scan_mark(x)` | ☐ | Scan start - not implemented; TkCurses-6lh |
+| `scan_dragto(x)` | ☐ | Scan drag - not implemented; TkCurses-6lh |
 | `selection_adjust(index)` | ✓ | Adjust selection |
 | `selection_clear()` | ✓ | Clear selection |
 | `selection_from(index)` | ✓ | Selection start |
@@ -3434,11 +3450,11 @@ Multi-line text editor.
 | `__init__(master=None, cnf={}, **kw)` | ○ | Scrollable text area |
 | `bbox(index)` | ○ | Cell bounding box |
 | `compare(index1, op, index2)` | ✓ | Compare indices |
-| `count(index1, index2, *options)` | ✓ | Count items |
+| `count(index1, index2, *options)` | ☐ | Count items - not implemented; TkCurses-mzj |
 | `debug(boolean=None)` | ✗ | N/A |
 | `delete(index1, index2=None)` | ✓ | Delete text |
 | `dlineinfo(index)` | ○ | Display line info |
-| `dump(index1, index2, command, **kw)` | ✓ | Dump contents |
+| `dump(index1, index2, command, **kw)` | ☐ | Dump contents - not implemented; TkCurses-mzj |
 | `edit_modified(arg=None)` | ✓ | Modified flag |
 | `edit_redo()` | ✓ | Redo edit |
 | `edit_reset()` | ✓ | Clear undo stack |
@@ -3459,15 +3475,14 @@ Multi-line text editor.
 | `mark_previous(index)` | ✓ | Previous mark |
 | `peer_create(newPathName, **kw)` | ✗ | N/A |
 | `peer_names()` | ✗ | N/A |
-| `replace(index1, index2, chars)` | ✓ | Replace text |
-| `scan_mark(x, y)` | ○ | Scan start |
-| `scan_dragto(x, y)` | ○ | Scan drag |
+| `replace(index1, index2, chars)` | ☐ | Replace text - not implemented; TkCurses-mzj |
+| `scan_mark(x, y)` | ☐ | Scan start - not implemented; TkCurses-6lh |
+| `scan_dragto(x, y)` | ☐ | Scan drag - not implemented; TkCurses-6lh |
 | `search(pattern, index, **kw)` | ✓ | Find text |
-| `search_all(pattern, index, **kw)` | ✓ | Find all |
 | `see(index)` | ○ | Scroll to index |
 | `tag_add(tagName, index1, *args)` | ✓ | Add tag |
-| `tag_unbind(tagName, sequence, funcid)` | ✓ | Unbind tag |
-| `tag_bind(tagName, sequence, func)` | ✓ | Bind tag event |
+| `tag_unbind(tagName, sequence, funcid)` | ☐ | Unbind tag - not implemented; TkCurses-mzj |
+| `tag_bind(tagName, sequence, func)` | ☐ | Bind tag event - not implemented; TkCurses-mzj |
 | `tag_cget(tagName, option)` | ✓ | Get tag option |
 | `tag_configure(tagName, **kw)` | ○ | Configure tag (attrs) |
 | `tag_delete(*tagNames)` | ✓ | Delete tags |
@@ -3478,10 +3493,10 @@ Multi-line text editor.
 | `tag_raise(tagName, aboveThis)` | ✓ | Raise tag |
 | `tag_ranges(tagName)` | ✓ | Tag ranges |
 | `tag_remove(tagName, index1, index2)` | ✓ | Remove tag |
-| `window_cget(index, option)` | ◐ | Embedded widget |
-| `window_configure(index, **kw)` | ◐ | Configure widget |
-| `window_create(index, **kw)` | ◐ | Embed widget |
-| `window_names()` | ◐ | List widgets |
+| `window_cget(index, option)` | ☐ | Embedded widget - not implemented; TkCurses-mzj |
+| `window_configure(index, **kw)` | ☐ | Configure widget - not implemented; TkCurses-mzj |
+| `window_create(index, **kw)` | ☐ | Embed widget - not implemented; TkCurses-mzj |
+| `window_names()` | ☐ | List widgets - not implemented; TkCurses-mzj |
 
 ---
 
@@ -3500,16 +3515,16 @@ Scrollable selection list.
 | `index(index)` | ✓ | Parse index |
 | `insert(index, *elements)` | ✓ | Insert items |
 | `nearest(y)` | ○ | Nearest cell row |
-| `scan_mark(x, y)` | ○ | Scan start |
-| `scan_dragto(x, y)` | ○ | Scan drag |
+| `scan_mark(x, y)` | ☐ | Scan start - not implemented; TkCurses-6lh |
+| `scan_dragto(x, y)` | ☐ | Scan drag - not implemented; TkCurses-6lh |
 | `see(index)` | ○ | Scroll to item |
 | `selection_anchor(index)` | ✓ | Set anchor |
 | `selection_clear(first, last=None)` | ✓ | Clear selection |
 | `selection_includes(index)` | ✓ | Check selection |
 | `selection_set(first, last=None)` | ✓ | Set selection |
 | `size()` | ✓ | Item count |
-| `itemcget(index, option)` | ○ | Get item option |
-| `itemconfigure(index, **kw)` | ○ | Configure item |
+| `itemcget(index, option)` | ☐ | Get item option - not implemented; TkCurses-5kg |
+| `itemconfigure(index, **kw)` | ☐ | Configure item - not implemented; TkCurses-5kg |
 
 **Rendering:**
 ```
@@ -3530,7 +3545,7 @@ Scroll control widget.
 | tkinter Method | TkCurses | Notes |
 |----------------|----------|-------|
 | `__init__(master=None, cnf={}, **kw)` | ○ | `▲█░░▼` display |
-| `activate(element=None)` | ○ | Highlight element |
+| `activate(element=None)` | ☐ | Highlight element - not implemented; TkCurses-5rt |
 | `delta(deltax, deltay)` | ○ | Calculate delta |
 | `fraction(x, y)` | ○ | Position fraction |
 | `identify(x, y)` | ○ | Element at cell |
@@ -3592,7 +3607,7 @@ Entry with increment/decrement.
 | tkinter Method | TkCurses | Notes |
 |----------------|----------|-------|
 | `__init__(master=None, cnf={}, **kw)` | ○ | `[value ▲▼]` |
-| `bbox(index)` | ○ | Cell bounding box |
+| `bbox(index)` | ☐ | Cell bounding box - not implemented; TkCurses-5kg |
 | `delete(first, last=None)` | ✓ | Delete text |
 | `get()` | ✓ | Get value |
 | `icursor(index)` | ○ | Position cursor |
@@ -3639,7 +3654,7 @@ Menu bar and popup menus.
 | `post(x, y)` | ○ | Show at cell pos |
 | `type(index)` | ✓ | Get item type |
 | `unpost()` | ✓ | Hide menu |
-| `xposition(index)` | ○ | Cell X position |
+| `xposition(index)` | ☐ | Cell X position - not implemented; TkCurses-5rt |
 | `yposition(index)` | ○ | Cell Y position |
 
 **Rendering:**
@@ -3770,13 +3785,13 @@ coordinates are in pixels, `width` and `height` are in cells.
 | tkinter Method | TkCurses | Notes |
 |----------------|----------|-------|
 | `__init__(master=None, cnf={}, **kw)` | ○ | Pixel plane; `width`/`height` in cells |
-| `addtag(tag, method, *args)` | ✓ | Add tag |
-| `addtag_above(newtag, tagOrId)` | ✓ | Tag above |
-| `addtag_all(newtag)` | ✓ | Tag all |
-| `addtag_below(newtag, tagOrId)` | ✓ | Tag below |
-| `addtag_closest(newtag, x, y)` | ○ | Tag closest, in pixels |
-| `addtag_enclosed(newtag, x1, y1, x2, y2)` | ○ | Tag enclosed |
-| `addtag_overlapping(newtag, x1, y1, x2, y2)` | ○ | Tag overlapping |
+| `addtag(tag, method, *args)` | ☐ | Add tag - not implemented; TkCurses-7jv |
+| `addtag_above(newtag, tagOrId)` | ☐ | Tag above - not implemented; TkCurses-7jv |
+| `addtag_all(newtag)` | ☐ | Tag all - not implemented; TkCurses-7jv |
+| `addtag_below(newtag, tagOrId)` | ☐ | Tag below - not implemented; TkCurses-7jv |
+| `addtag_closest(newtag, x, y)` | ☐ | Tag closest, in pixels - not implemented; TkCurses-7jv |
+| `addtag_enclosed(newtag, x1, y1, x2, y2)` | ☐ | Tag enclosed - not implemented; TkCurses-7jv |
+| `addtag_overlapping(newtag, x1, y1, x2, y2)` | ☐ | Tag overlapping - not implemented; TkCurses-7jv |
 | `addtag_withtag(newtag, tagOrId)` | ✓ | Tag with tag |
 | `bbox(tagOrId=None)` | ○ | Bounding box, in pixels |
 | `canvasx(screenx)` | ○ | Screen column to canvas pixel |
@@ -3791,26 +3806,26 @@ coordinates are in pixels, `width` and `height` are in cells.
 | `create_rectangle(...)` | ○ | Rasterised to pixels |
 | `create_text(...)` | ○ | Snaps to a cell row; a glyph is a whole cell |
 | `create_window(...)` | ✗ | N/A (TkCurses-aj1.16.1) |
-| `dchars(tagOrId, first, last=None)` | ✓ | Delete chars |
+| `dchars(tagOrId, first, last=None)` | ☐ | Delete chars - not implemented; TkCurses-7jv |
 | `delete(tagOrId)` | ✓ | Delete item |
 | `dtag(tagOrId, tagToDelete=None)` | ✓ | Remove tag |
-| `find(method, *args)` | ○ | Find items |
-| `find_above(tagOrId)` | ✓ | Find above |
+| `find(method, *args)` | ☐ | Find items - not implemented; TkCurses-7jv |
+| `find_above(tagOrId)` | ☐ | Find above - not implemented; TkCurses-7jv |
 | `find_all()` | ✓ | Find all |
-| `find_below(tagOrId)` | ✓ | Find below |
+| `find_below(tagOrId)` | ☐ | Find below - not implemented; TkCurses-7jv |
 | `find_closest(x, y)` | ○ | Find at cell |
-| `find_enclosed(x1, y1, x2, y2)` | ○ | Find enclosed |
+| `find_enclosed(x1, y1, x2, y2)` | ☐ | Find enclosed - not implemented; TkCurses-7jv |
 | `find_overlapping(x1, y1, x2, y2)` | ○ | Find overlapping |
 | `find_withtag(tagOrId)` | ✓ | Find with tag |
 | `focus(tagOrId=None)` | ✓ | Set/get focus |
 | `gettags(tagOrId)` | ✓ | Get tags |
-| `icursor(tagOrId, index)` | ○ | Cursor position |
-| `index(tagOrId, index)` | ✓ | Parse index |
-| `insert(tagOrId, index, string)` | ✓ | Insert text |
+| `icursor(tagOrId, index)` | ☐ | Cursor position - not implemented; TkCurses-7jv |
+| `index(tagOrId, index)` | ☐ | Parse index - not implemented; TkCurses-7jv |
+| `insert(tagOrId, index, string)` | ☐ | Insert text - not implemented; TkCurses-7jv |
 | `itemcget(tagOrId, option)` | ✓ | Get option |
 | `itemconfigure(tagOrId, **kw)` | ○ | Configure (limited) |
 | `move(tagOrId, dx, dy)` | ○ | Move by cells |
-| `moveto(tagOrId, x, y)` | ○ | Move to cell |
+| `moveto(tagOrId, x, y)` | ☐ | Move to cell - not implemented; TkCurses-7jv |
 | `postscript(**kw)` | ✗ | N/A |
 | `scale(tagOrId, xo, yo, xs, ys)` | ✗ | N/A (fixed cells) |
 | `select_*()` | ✓ | Selection methods |
@@ -3833,11 +3848,11 @@ Resizable paned container.
 | `remove(child)` | ✓ | Remove pane |
 | `forget(child)` | ✓ | Alias for remove |
 | `identify(x, y)` | ○ | Identify at cell |
-| `proxy_coord()` | ○ | Proxy cell coords |
-| `proxy_forget()` | ✓ | Hide proxy |
-| `proxy_place(x, y)` | ○ | Place proxy |
+| `proxy_coord()` | ☐ | Proxy cell coords - not implemented; TkCurses-xy2 |
+| `proxy_forget()` | ☐ | Hide proxy - not implemented; TkCurses-xy2 |
+| `proxy_place(x, y)` | ☐ | Place proxy - not implemented; TkCurses-xy2 |
 | `sash_coord(index)` | ○ | Sash cell coords |
-| `sash_mark(index)` | ○ | Mark sash |
+| `sash_mark(index)` | ☐ | Mark sash - not implemented; TkCurses-xy2 |
 | `sash_place(index, x, y)` | ○ | Place sash |
 | `panecget(child, option)` | ✓ | Get pane option |
 | `paneconfigure(child, **kw)` | ✓ | Configure pane |
@@ -4226,7 +4241,7 @@ Open:   [Option 1       ▼]
 | `add(child, **kw)` | ✓ | Add tab |
 | `forget(tab_id)` | ✓ | Remove tab |
 | `hide(tab_id)` | ✓ | Hide tab |
-| `identify(x, y)` | ○ | Identify at cell |
+| `identify(x, y)` | ☐ | Identify at cell - not implemented; TkCurses-d5u |
 | `index(tab_id)` | ✓ | Tab index |
 | `insert(pos, child, **kw)` | ✓ | Insert tab |
 | `select(tab_id=None)` | ✓ | Select/get tab |
@@ -4267,7 +4282,7 @@ Indeterminate:  [░░░░███░░░░░░░░░░░░░] (
 | `__init__(master=None, **kw)` | ○ | Tree/table view |
 | `bbox(item, column)` | ○ | Cell bounding box, in cells. **Not** `Misc.bbox`, which is `grid_bbox` |
 | `get_children(item=None)` | ✓ | Get children |
-| `set_children(item, *children)` | ✓ | Set children |
+| `set_children(item, *children)` | ☐ | Set children - not implemented; TkCurses-67u |
 | `column(column, option, **kw)` | ○ | Column config |
 | `delete(*items)` | ✓ | Delete items |
 | `detach(*items)` | ✓ | Detach items |
@@ -4293,9 +4308,9 @@ Indeterminate:  [░░░░███░░░░░░░░░░░░░] (
 | `selection_remove(*items)` | ✓ | Remove from sel |
 | `selection_toggle(*items)` | ✓ | Toggle selection |
 | `set(item, column, value)` | ✓ | Set cell value |
-| `tag_bind(tagname, sequence, callback)` | ✓ | Bind tag event |
-| `tag_configure(tagname, option, **kw)` | ○ | Tag attributes |
-| `tag_has(tagname, item)` | ✓ | Check tag |
+| `tag_bind(tagname, sequence, callback)` | ☐ | Bind tag event - not implemented; TkCurses-67u |
+| `tag_configure(tagname, option, **kw)` | ☐ | Tag attributes - not implemented; TkCurses-67u |
+| `tag_has(tagname, item)` | ☐ | Check tag - not implemented; TkCurses-67u |
 
 **Hit-testing rests on one column model, and on the tree not scrolling
 sideways.** `_column_spans()` answers where every column sits, in cells, and
@@ -4588,7 +4603,7 @@ shows through the parent, as in curses.
 | `isendwin()` | ✓ | Check if ended |
 | `wrapper(func, *args, **kwargs)` | ✓ | Safe wrapper |
 | `newwin(nlines, ncols, begin_y, begin_x)` | ✓ | Create window |
-| `newpad(nlines, ncols)` | ✓ | Create pad |
+| `newpad(nlines, ncols)` | ☐ | Create pad - not implemented; TkCurses-8iv |
 | `start_color()` | ✓ | Initialize colors |
 | `init_pair(pair, fg, bg)` | ✓ | Define color pair |
 | `init_color(color, r, g, b)` | ✓ | Define color |
@@ -4686,15 +4701,15 @@ shows through the parent, as in curses.
 | `mvwin(y, x)` | ✓ | Move window |
 | `mvderwin(y, x)` | ✓ | Move derived |
 | `resize(nlines, ncols)` | ✓ | Resize window |
-| `overlay(destwin, ...)` | ✓ | Non-destructive copy |
-| `overwrite(destwin, ...)` | ✓ | Destructive copy |
+| `overlay(destwin, ...)` | ☐ | Non-destructive copy - not implemented; TkCurses-8iv |
+| `overwrite(destwin, ...)` | ☐ | Destructive copy - not implemented; TkCurses-8iv |
 | `syncup()` | ✓ | Sync to parent |
 | `syncdown()` | ✓ | Sync from parent |
 | `syncok(flag)` | ✓ | Auto sync |
 | `cursyncup()` | ✓ | Sync cursor |
-| `putwin(file)` | ✓ | Save window |
+| `putwin(file)` | ☐ | Save window - not implemented; TkCurses-8iv |
 | `enclose(y, x)` | ✓ | Check enclosed |
-| `encoding` | ✓ | Character encoding |
+| `encoding` | ☐ | Character encoding - not implemented; TkCurses-8iv |
 
 ### Constants
 
