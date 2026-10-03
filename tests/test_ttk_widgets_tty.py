@@ -991,3 +991,217 @@ def test_a_scrollbar_drives_a_treeview(terminal, tmp_path):
         "the tree scrolled and the thumb stayed where it was, so the tree is not "
         f"reporting its view back\n{term.describe()}"
     )
+
+
+BAR_LABEL = """
+import tkcurses
+from tkcurses import ttk
+
+root = tkcurses.Tk()
+bar = ttk.Progressbar(root, name='bar', length=20, value=50, text={text!r},
+                      anchor={anchor!r}, wraplength={wraplength})
+bar.place(x=2, y=2, width=20, height={height})
+root.update_layout()
+root.tk.screen.refresh()
+root.after(4000, root.quit)
+root.mainloop()
+"""
+
+
+@pytest.mark.parametrize(
+    ("anchor", "expected_column"),
+    [("w", 2), ("center", 10), ("e", 19)],
+)
+def test_a_progressbar_draws_its_label_where_the_anchor_says(
+    terminal, tmp_path, anchor, expected_column
+):
+    """On screen, not in the geometry. TkCurses-xe9.1.
+
+    The bar is placed at x=2 and is 20 cells wide, so a three-cell '40%' sits
+    at column 2 for 'w', 10 for 'center' and 19 for 'e'.
+    """
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        BAR_LABEL.format(text="40%", anchor=anchor, wraplength=0, height=1),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("40%")
+    term.wait_for_cell(2, expected_column, lambda cell: cell.data == "4")
+    assert term.row(2)[expected_column : expected_column + 3] == "40%", (
+        f"the label is not at column {expected_column}\n{term.describe()}"
+    )
+
+
+def test_a_progressbar_label_is_drawn_over_the_bar_not_beside_it(terminal, tmp_path):
+    """The one place this departs from Tk, and it has to be visible.
+
+    Tk grows the widget to the font's height and draws the bar inside that band
+    with the label on top. A cell cannot hold a block glyph and a letter at
+    once, so the label replaces the glyphs it covers - and the glyphs either
+    side of it must still be there, which is what makes it a bar with a label
+    rather than a label on its own.
+    """
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        BAR_LABEL.format(text="40%", anchor="center", wraplength=0, height=1),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("40%")
+    term.wait_for_cell(2, 2, lambda cell: cell.data.strip() != "")
+    row = term.row(2)
+    assert row[10:13] == "40%", f"the label is missing\n{term.describe()}"
+    assert row[2:10].strip(), f"the bar vanished to the left of the label\n{row!r}"
+    assert row[13:22].strip(), f"the bar vanished to the right of the label\n{row!r}"
+
+
+def test_a_progressbar_wraps_its_label_when_wraplength_asks(terminal, tmp_path):
+    """wraplength is in cells here, as every screen distance in this library is.
+
+    Measured on Tk 9.0.2: a wraplength shorter than the text really does wrap
+    and really does grow the widget - 100x21 pixels became 100x249 at
+    wraplength 30. So it is honoured rather than accepted and ignored, and a
+    bar given the rows shows the wrapped lines.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        BAR_LABEL.format(text="one two three", anchor="nw", wraplength=7, height=3),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("one two")
+    term.wait_for_cell(3, 2, lambda cell: cell.data == "t")
+    assert term.row(2)[2:9] == "one two", term.describe()
+    assert term.row(3)[2:7] == "three", term.describe()
+
+
+def test_a_vertical_progressbar_draws_no_label(terminal, tmp_path):
+    """Measured: giving a vertical bar text leaves its requested size identical,
+    so Tk draws nothing. Inventing a sideways label would be worse than
+    matching that."""
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        """
+import tkcurses
+from tkcurses import ttk
+
+root = tkcurses.Tk()
+bar = ttk.Progressbar(root, name='bar', length=6, value=50, text='40%',
+                      orient='vertical')
+bar.place(x=2, y=2, width=1, height=6)
+tkcurses.Label(root, name='mark', text='drawn').place(x=10, y=1)
+root.update_layout()
+root.tk.screen.refresh()
+root.after(4000, root.quit)
+root.mainloop()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("drawn")
+    term.wait_for_idle()
+    # Every cell of the bar's own column, not the whole string: the bar is one
+    # cell wide, so a label drawn into it would show as a single letter and
+    # looking for "40%" would miss it. Mutation found that - removing the
+    # vertical guard left the first version of this test passing.
+    column = [term.char_at(row, 2).data for row in range(2, 8)]
+    assert not any(ch.isalnum() for ch in column), (
+        f"a vertical bar drew part of its label: {column!r}\n{term.describe()}"
+    )
+    assert any(ch.strip() for ch in column), (
+        f"the vertical bar drew nothing at all: {column!r}\n{term.describe()}"
+    )
+
+
+def test_a_label_wider_than_the_bar_does_not_spill_onto_the_next_row(
+    terminal, tmp_path
+):
+    """Measured on Tk 9.0.2: a label far wider than ``length`` left the bar's
+    requested width at ``length``, so it is clipped rather than stretching the
+    widget.
+
+    The clipping itself belongs to _write_line, which documents why it must
+    exist - curses wraps an over-wide write onto the following row instead of
+    dropping it. This checks the behaviour rather than the place, so it holds
+    whichever of the two does the cutting.
+    """
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        BAR_LABEL.format(
+            text="a label far wider than twenty cells",
+            anchor="w",
+            wraplength=0,
+            height=1,
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("a label")
+    term.wait_for_cell(2, 2, lambda cell: cell.data == "a")
+    assert term.row(3).strip() == "", (
+        f"the label spilled onto the row below\n{term.describe()}"
+    )
+    assert term.row(2)[22:].strip() == "", (
+        f"the label ran past the bar's own width\n{term.describe()}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("anchor", "expected_row"),
+    [("nw", 2), ("w", 3), ("sw", 4)],
+)
+def test_the_anchor_places_the_label_vertically_too(
+    terminal, tmp_path, anchor, expected_row
+):
+    """A bar is one row by default, but nothing stops it being placed taller -
+    and then the anchor's vertical half has to mean something.
+
+    Added because mutation found it missing: setting the top row to a constant
+    zero left every other label test passing, since they all use a one-row bar
+    or a top-anchored one. The bar here is three rows tall at y=2, so 'nw' puts
+    the label on row 2, 'w' centres it on row 3 and 'sw' drops it to row 4.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        BAR_LABEL.format(text="40%", anchor=anchor, wraplength=0, height=3),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("40%")
+    term.wait_for_cell(expected_row, 2, lambda cell: cell.data == "4")
+    assert term.row(expected_row)[2:5] == "40%", (
+        f"anchor={anchor!r} did not put the label on row {expected_row}"
+        f"\n{term.describe()}"
+    )
+
+
+def test_a_right_anchored_label_wider_than_the_bar_still_appears(terminal, tmp_path):
+    """It must not vanish, which is what an unclamped column would do.
+
+    With anchor='e' and a label wider than the bar, the anchor's arithmetic puts
+    the start at a negative column - and _write_line refuses a write that starts
+    off the left edge, so the label disappears entirely rather than being
+    clipped. Mutation found it: dropping the max(0, ...) left every other test
+    passing.
+
+    WHICH END survives the clip is not pinned here: this library shows the head
+    of the string and Tk, anchoring the right edge, would show the tail. That is
+    noted on TkCurses-xe9.1 as an unmeasured corner rather than decided quietly.
+    """
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        BAR_LABEL.format(
+            text="a label far wider than twenty cells",
+            anchor="e",
+            wraplength=0,
+            height=1,
+        ),
+        workdir=tmp_path,
+    )
+    # A LETTER, not merely ink: the bar's own glyphs keep the row non-blank
+    # whether the label is drawn or not, so "something is here" cannot tell the
+    # two apart. The first version of this asserted exactly that and the
+    # mutation walked straight through it - the fourth time on this one issue
+    # that an assertion was weaker than it looked.
+    term.wait_for(
+        lambda t: any(ch.isalpha() for ch in t.row(2)[2:22]),
+        message="the clipped label to appear somewhere in the bar",
+    )
+    assert any(ch.isalpha() for ch in term.row(2)[2:22]), (
+        f"the label vanished instead of being clipped\n{term.describe()}"
+    )

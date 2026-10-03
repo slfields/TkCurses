@@ -103,6 +103,44 @@ def bar(root):
     return Progressbar(root, name="p", length=20)
 
 
+# --------------------------------------------- Progressbar's label (xe9.1)
+#
+# Tk 9.0 draws a label over the bar. The defaults are measured against real
+# ttk, and two of them are not what a bar showing "40%" would suggest: the
+# anchor is "w" and the justify "left", not centred.
+
+
+@pytest.mark.parametrize(
+    ("option", "default"),
+    [
+        ("text", ""),
+        ("anchor", "w"),
+        ("font", ""),
+        ("justify", "left"),
+        ("wraplength", 0),
+    ],
+)
+def test_the_label_options_default_as_tks_do(bar, option, default):
+    assert bar.cget(option) == default
+
+
+def test_the_label_is_not_wrapped_without_a_wraplength(bar):
+    """wrap()'s own rule, and Tk's: zero means no wrapping at all."""
+    bar.configure(text="one two three four five")
+    assert bar._label_lines() == ["one two three four five"]
+
+
+def test_a_wraplength_breaks_the_label_into_lines(bar):
+    bar.configure(text="one two three four five", wraplength=8)
+    assert bar._label_lines() == ["one two", "three", "four", "five"]
+
+
+def test_no_text_is_no_lines_rather_than_one_empty_one(bar):
+    """A Label with no text still occupies a row; a bar with no text must not
+    draw a blank line over itself, which would erase the glyphs under it."""
+    assert bar._label_lines() == []
+
+
 def test_a_progressbar_is_themed(bar):
     assert bar.winfo_class() == "TProgressbar"
 

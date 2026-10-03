@@ -70,6 +70,8 @@ from tkcurses._core.attributes import BorderStyle
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.errors import TclError
 from tkcurses._core.geometry import BORDER_WIDTH, Insets, Rect
+from tkcurses._core.pack import parse_anchor
+from tkcurses._core.text import align_offset, measure, wrap
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1064,6 +1066,14 @@ class Progressbar(Widget, tkcurses.Frame):
         "variable": None,
         "foreground": "",
         "background": "",
+        # Tk 9.0's label over the bar - TkCurses-xe9.1. The defaults are
+        # measured: anchor is "w" and justify "left", not "center" as a bar
+        # showing "40%" in the middle might suggest.
+        "text": "",
+        "anchor": "w",
+        "font": "",
+        "justify": "left",
+        "wraplength": 0,
     }
 
     def __init__(
@@ -1224,6 +1234,63 @@ class Progressbar(Widget, tkcurses.Frame):
                     self._write_line(dispatcher, window, row, 0, cell, attribute)
             else:
                 self._write_line(dispatcher, window, 0, 0, "".join(cells), attribute)
+            self._draw_label(dispatcher, window, attribute)
+
+    def _label_lines(self) -> list[str]:
+        """The label's text, wrapped if ``wraplength`` asks for it.
+
+        ``wraplength`` is in cells here, as every screen distance in this
+        library is. Zero means no wrapping, which is :func:`wrap`'s own rule.
+        """
+        label = str(self._options["text"])
+        if not label:
+            return []
+        return wrap(label, max(0, int(self._options["wraplength"])))
+
+    def _draw_label(
+        self, dispatcher: CursesDispatcher, window: Any, attribute: int
+    ) -> None:
+        """Draw ``text`` over the bar, where the anchor puts it.
+
+        **Over the bar, not beside it**, and that is the one place this departs
+        from Tk - because a cell cannot hold a block glyph and a letter at once.
+        Measured on Tk 9.0.2: giving a horizontal bar any text grows it from 6
+        pixels tall to 21, the height of the font, and the bar is drawn inside
+        that band with the label on top. A terminal row is already one line
+        tall, so the band and the overlay are the same thing here; what a
+        person sees - the label on the bar - matches.
+
+        The same measurement answers two questions the option list does not.
+        **A longer label does not widen the bar**: a label far wider than
+        ``length`` left the requested width at ``length``, so it is clipped
+        rather than stretching the widget. And **a vertical bar ignores its
+        text entirely** - the requested size was identical with and without it
+        - so this draws nothing in that case rather than inventing a sideways
+        label.
+        """
+        lines = self._label_lines()
+        if not lines or self._vertical or self._rect.is_empty:
+            return
+        justify = str(self._options["justify"])
+        across, down = parse_anchor(str(self._options["anchor"]))
+        _, height = measure(lines)
+        top = int((self._rect.height - height) * down)
+        for offset, line in enumerate(lines):
+            row = top + offset
+            if not 0 <= row < self._rect.height:
+                continue
+            # The anchor decides where the BLOCK sits, justify where each line
+            # sits within it - the same two-step Label uses, so a one-line
+            # label is positioned by the anchor alone.
+            column = int((self._rect.width - len(line)) * across)
+            column += align_offset(
+                len(line), max(0, self._rect.width - column), justify
+            )
+            # Not clipped here: _write_line clips to the window and documents
+            # why it must - curses wraps an over-wide write onto the next row
+            # rather than dropping it. A second clip looked like it mattered and
+            # could not be mutated into failing, which is how it was spotted.
+            self._write_line(dispatcher, window, row, max(0, column), line, attribute)
 
 
 #: The mark at the right-hand end of a combobox, where ttk draws a downarrow.

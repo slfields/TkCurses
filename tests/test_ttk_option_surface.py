@@ -76,6 +76,11 @@ THEMED = (
 
 #: Options real ttk has that we do not, each with the issue that owns it.
 #:
+#: It shrank by five on 2026-10-03 (TkCurses-xe9.1): Progressbar's label over
+#: the bar - text, anchor, font, justify and wraplength. -phase stays, now
+#: carrying the id of the issue that owns it rather than just a description; a
+#: gap with no owner is how -phase sat here unclaimed until xe9 was split.
+#:
 #: It shrank by two more on 2026-10-03 (TkCurses-163): Entry and Spinbox take
 #: -exportselection and honour it against PRIMARY. Worth knowing how that one
 #: hid: ttk.Combobox already DECLARED the option and nothing acted on it, so the
@@ -100,12 +105,7 @@ THEMED = (
 #: shrink and must never silently grow.
 KNOWN_GAPS: dict[str, dict[str, str]] = {
     "Progressbar": {
-        "anchor": "Tk 9.0 label-over-bar options",
-        "font": "Tk 9.0 label-over-bar options",
-        "justify": "Tk 9.0 label-over-bar options",
-        "text": "Tk 9.0 label-over-bar options",
-        "wraplength": "Tk 9.0 label-over-bar options",
-        "phase": "ttk::progressbar -phase",
+        "phase": "TkCurses-xe9.2: the indeterminate animation counter",
     },
     "Combobox": {
         "placeholder": "Tk 9.0 ghost text",
