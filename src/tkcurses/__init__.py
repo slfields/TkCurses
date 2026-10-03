@@ -6543,6 +6543,8 @@ class Entry(_Drawable):
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        # tkinter reports 1, not True: the value is what cget answers.
+        "exportselection": 1,
         "font": "",
         "justify": "left",
         "relief": "sunken",
@@ -6621,6 +6623,11 @@ class Entry(_Drawable):
             return result
         if "textvariable" in given:
             self._follow_variable()
+        if "exportselection" in given:
+            # Both directions take effect at once, measured: turning it off
+            # drops PRIMARY with the selection still in place, and turning it
+            # on exports what is already selected without reselecting it.
+            self._claim_primary()
         if "width" in given:
             self._apply_requested_size()
             self._invalidate_layout()
@@ -6767,9 +6774,53 @@ class Entry(_Drawable):
             return self._field.cursor
         raise TclError(f'bad entry index "{index}"')
 
+    def _exports_selection(self) -> bool:
+        """Whether this widget puts its selection on PRIMARY."""
+        return bool(self._options["exportselection"])
+
+    def _claim_primary(self) -> None:
+        """Take ownership of PRIMARY, or give it up, as the option says.
+
+        Ownership is claimed when a selection is made rather than held from
+        construction: in Tk, creating a second entry does not take PRIMARY from
+        the first, and the widget that selected most recently owns it.
+
+        The contents are not copied. The widget registers a handler and
+        :meth:`~tkcurses._core.clipboard.Selections.resolve` asks it at the
+        moment PRIMARY is read, which is X11's design and what tkinter exposes
+        as ``selection_handle``. Three of the four behaviours measured on
+        Tcl/Tk 9.0.2 then need no bookkeeping: clearing the selection makes
+        PRIMARY stop existing, selecting again makes it exist, and an edit that
+        moves the selection needs noticing by nobody.
+        """
+        selections = self.tk.selections
+        if self._exports_selection():
+            selections.own(self, PRIMARY)
+            selections.handle(self, self._primary_selection, PRIMARY)
+        elif selections.owner(PRIMARY) is self:
+            # Measured: turning -exportselection off drops PRIMARY at once,
+            # even though the widget's own selection is untouched.
+            selections.disown(self)
+
+    def _primary_selection(self, *_args: Any) -> str:
+        """The selected text, for whoever is reading PRIMARY.
+
+        Raises:
+            TclError: If nothing is selected. A widget owning PRIMARY with an
+                empty selection has to read as "doesn't exist" rather than as
+                the empty string: tkinter raises, and a caller needs to tell
+                "nothing is selected" from "an empty string was selected".
+        """
+        selection = self._field.selection
+        if selection is None:
+            raise TclError(f"{PRIMARY} selection doesn't exist or form unknown")
+        first, last = selection
+        return self._field.text[first:last]
+
     def selection_range(self, start: Any, end: Any) -> None:
         """Select from ``start`` to ``end``."""
         self._field.select_range(self.index(start), self.index(end))
+        self._claim_primary()
         self._redraw()
 
     select_range = selection_range
@@ -6791,6 +6842,7 @@ class Entry(_Drawable):
         """Start a selection at ``index``."""
         self._field.select_range(self.index(index), self.index(index))
         self._field.move_to(self.index(index))
+        self._claim_primary()
         self._redraw()
 
     select_from = selection_from
@@ -6798,6 +6850,7 @@ class Entry(_Drawable):
     def selection_to(self, index: Any) -> None:
         """Extend the selection to ``index``."""
         self._field.move_to(self.index(index), extend=True)
+        self._claim_primary()
         self._refresh_view()
         self._redraw()
 
@@ -7231,6 +7284,8 @@ def _entry_key(event: Event) -> str | None:
             field.move_to(len(field.text), extend=extend)
         else:
             field.move_by(motion, extend=extend)
+        if extend:
+            entry._claim_primary()
         entry._refresh_view()
         entry._redraw()
         return "break"

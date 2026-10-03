@@ -1266,11 +1266,15 @@ class Combobox(Widget, tkcurses.Entry):
 
     _ttk_class = "TCombobox"
 
+    # exportselection is NOT repeated here. It was declared on this class alone
+    # and nothing honoured it - an option accepted and silently ignored, which
+    # the option-surface test cannot see because it compares names rather than
+    # behaviour. It now lives on tkcurses.Entry, which this inherits, so there
+    # is one declaration and one default. TkCurses-163.
     _widget_options: ClassVar[dict[str, Any]] = {
         "values": (),
         "height": DROPDOWN_HEIGHT,
         "postcommand": None,
-        "exportselection": 1,
     }
 
     def __init__(

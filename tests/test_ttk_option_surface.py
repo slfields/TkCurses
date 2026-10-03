@@ -76,6 +76,13 @@ THEMED = (
 
 #: Options real ttk has that we do not, each with the issue that owns it.
 #:
+#: It shrank by two more on 2026-10-03 (TkCurses-163): Entry and Spinbox take
+#: -exportselection and honour it against PRIMARY. Worth knowing how that one
+#: hid: ttk.Combobox already DECLARED the option and nothing acted on it, so the
+#: comparison here passed for Combobox while the option did nothing. This test
+#: compares option surfaces, not behaviour - a name present and inert looks
+#: exactly like a name present and working.
+#:
 #: It shrank by two on 2026-10-02 (TkCurses-y5q): Scale and Spinbox reported
 #: the range's low end as ``from_`` where tkinter reports ``from``, so
 #: ``w.configure()["from"]`` raised KeyError here and worked in tkinter. Those
@@ -110,12 +117,10 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
     "Entry": {
         "placeholder": "Tk 9.0 ghost text",
         "placeholderforeground": "Tk 9.0 ghost text",
-        "exportselection": "TkCurses-163: no widget offers it",
     },
     "Spinbox": {
         "placeholder": "Tk 9.0 ghost text",
         "placeholderforeground": "Tk 9.0 ghost text",
-        "exportselection": "TkCurses-163: no widget offers it",
     },
     "Treeview": {
         "striped": "Tk 9.0 additions",

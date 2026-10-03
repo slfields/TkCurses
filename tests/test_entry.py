@@ -933,3 +933,113 @@ def test_a_scrollbar_is_told_where_the_entry_view_is(entry):
     assert reported, "nothing was reported to the xscrollcommand"
     first, last = reported[-1]
     assert 0.0 <= first < last <= 1.0
+
+
+# -------------------------------------------------------- exportselection
+#
+# Four behaviours, measured on Tcl/Tk 9.0.2 by selecting in a real Entry and
+# reading PRIMARY: selecting exports, turning the option off drops PRIMARY with
+# the selection still in place, turning it back on exports what is already
+# selected, and clearing the selection makes PRIMARY stop existing.
+#
+# Before this the option did not exist on Entry at all - and ttk.Combobox
+# declared it while nothing acted on it, which the option-surface test could not
+# see because it compares names rather than behaviour. TkCurses-163.
+
+
+def primary(widget):
+    """What PRIMARY holds, or None when it does not exist."""
+    try:
+        return widget.selection_get()
+    except TclError:
+        return None
+
+
+def test_the_default_is_to_export(entry):
+    """tkinter answers 1, not True: cget reports the value as given."""
+    assert entry.cget("exportselection") == 1
+
+
+def test_a_selection_goes_onto_primary(entry):
+    entry.insert(0, "hello world")
+    entry.selection_range(0, 5)
+    assert primary(entry) == "hello"
+
+
+def test_clearing_the_selection_makes_primary_stop_existing(entry):
+    """Not the empty string. A caller needs to tell those apart, which is why
+    tkinter raises rather than returning ''."""
+    entry.insert(0, "hello world")
+    entry.selection_range(0, 5)
+    entry.selection_clear()
+    assert primary(entry) is None
+
+
+def test_turning_the_option_off_drops_primary_at_once(entry):
+    """The selection itself is untouched - only the export stops."""
+    entry.insert(0, "hello world")
+    entry.selection_range(0, 5)
+    entry.configure(exportselection=0)
+    assert primary(entry) is None
+    assert entry.selection_present(), "the widget's own selection must remain"
+
+
+def test_nothing_is_exported_while_the_option_is_off(entry):
+    entry.insert(0, "hello world")
+    entry.configure(exportselection=0)
+    entry.selection_range(6, 11)
+    assert primary(entry) is None
+
+
+def test_turning_the_option_on_exports_what_is_already_selected(entry):
+    """Measured: no reselection is needed, the export happens on configure."""
+    entry.insert(0, "hello world")
+    entry.configure(exportselection=0)
+    entry.selection_range(6, 11)
+    entry.configure(exportselection=1)
+    assert primary(entry) == "world"
+
+
+def test_a_selection_made_with_the_keyboard_is_exported_too(entry):
+    """The path a person actually uses, and the one an implementation forgets.
+
+    Shift with a motion key makes a selection without going through
+    selection_range, so hooking only the public methods would leave this silent.
+    """
+    entry.insert(0, "hello")
+    entry.icursor(0)
+    entry.focus_set()
+    for _ in range(3):
+        typed(entry, "", keysym="Right", state=MOD_SHIFT)
+    assert entry.selection_present(), "shift-Right did not select anything"
+    assert primary(entry) == "hel"
+
+
+def test_an_edit_that_shortens_the_selection_is_followed(entry):
+    """PRIMARY is answered by a handler at read time rather than copied, so an
+    edit needs noticing by nobody."""
+    entry.insert(0, "hello world")
+    entry.selection_range(0, 11)
+    assert primary(entry) == "hello world"
+    entry.delete(5, 11)
+    assert primary(entry) in (None, "hello"), (
+        "PRIMARY still reported the text that was deleted"
+    )
+
+
+def test_the_widget_that_selected_last_owns_primary(root):
+    """Creating a second entry must not take PRIMARY from the first."""
+    first = Entry(root, name="first")
+    second = Entry(root, name="second")
+    for widget in (first, second):
+        widget._allocate(Rect(0, 0, 22, 3))
+        widget._map()
+    first.insert(0, "first text")
+    first.selection_range(0, 5)
+    assert primary(first) == "first"
+
+    second.insert(0, "second text")
+    assert primary(first) == "first", "merely creating and filling B took PRIMARY"
+
+    second.selection_range(0, 6)
+    assert primary(second) == "second"

@@ -3282,10 +3282,34 @@ Selection: [John ███________]
 | `state` | NORMAL/DISABLED/READONLY | Same |
 | `justify` | LEFT/CENTER/RIGHT | Text alignment |
 | `insertwidth` | pixels | 1 cell (cursor) |
+| `exportselection` | puts the selection on PRIMARY | Same, against the in-process PRIMARY |
 | `highlightthickness` | focus ring, pixels | No ring; a focused entry draws its **border** bold |
 | `validate` | validation condition | Same: `none`, `key`, `focus`, `focusin`, `focusout`, `all` |
 | `validatecommand` | registered command | Callable given the proposed text |
 | `invalidcommand` | registered command | Callable given the refused text, or nothing |
+
+**The selection is exported by being answered, not by being copied.** With
+`-exportselection` true, a widget that makes a selection claims PRIMARY and
+registers a handler; `Selections.resolve` asks that handler at the moment
+PRIMARY is read. This is X11's own design, which tkinter exposes as
+`selection_handle`, and taking it rather than copying the text is what makes
+three of the four behaviours measured on Tcl/Tk 9.0.2 need no bookkeeping at
+all: clearing the selection makes PRIMARY stop existing, selecting again makes
+it exist, and an edit that moves the selection has to be noticed by nobody. The
+fourth — that turning the option off drops PRIMARY immediately, with the
+widget's own selection untouched — is the one explicit branch.
+
+Ownership is claimed when a selection is *made*, never at construction: in Tk,
+creating a second entry does not take PRIMARY from the first, and the widget
+that selected most recently owns it.
+
+An empty selection must read as "doesn't exist" rather than as the empty
+string, so the handler raises. A caller needs to tell "nothing is selected"
+from "an empty string was selected", which is why tkinter raises too.
+
+The data still does not leave the process — that is `TkCurses-hpr`, OSC 52 — but
+the per-widget option is meaningful without it, and `TkCurses-9e8` carries
+`Listbox` and `Text`, whose selection models differ. `TkCurses-163`.
 
 **A focused entry shows it in its border, in every state.** Tk signals the
 focus on an entry two ways: the insertion cursor, and the
