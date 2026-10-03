@@ -23,6 +23,8 @@ and the three that surprise say so where they are pinned.
 
 from __future__ import annotations
 
+import curses
+
 import pytest
 
 import tkcurses
@@ -1608,3 +1610,92 @@ def test_padding_adds_to_padx_and_pady_rather_than_replacing_them(padded_root):
     both._map()
     content = both._content_rect()
     assert (content.x, content.y) == (2 + 1, 3 + 1)
+
+
+# ------------------------------------------------- Treeview -striped (xe9.4)
+#
+# Tk 9.0's alternating row tint. Measured: a boolean, default 0, rejecting
+# anything else with 'expected boolean value but got "..."' - and the COLOUR
+# comes from the style, not the widget: style.lookup("Treeview",
+# "stripedbackground") answers '#e8e8e8' against a white background.
+
+
+def test_striped_defaults_to_off(tree):
+    assert tree.cget("striped") == 0
+    assert not tree._striped()
+
+
+@pytest.mark.parametrize("value", [1, True, "yes", "1", "true"])
+def test_striped_takes_every_spelling_of_true(tree, value):
+    tree.configure(striped=value)
+    assert tree._striped()
+
+
+@pytest.mark.parametrize("value", [0, False, "no", "0", "false"])
+def test_striped_takes_every_spelling_of_false(tree, value):
+    tree.configure(striped=value)
+    assert not tree._striped()
+
+
+@pytest.mark.parametrize("how", ["constructor", "configure"])
+def test_striped_refuses_what_is_not_a_boolean(root, how):
+    """Both paths, because Tk rejects it on both and the constructor does not
+    go through configure - with the check in configure alone,
+    Treeview(striped='rubbish') was accepted while configure(striped='rubbish')
+    raised, which no caller could have predicted."""
+    with pytest.raises(TclError, match='expected boolean value but got "rubbish"'):
+        if how == "constructor":
+            Treeview(root, name="bad", striped="rubbish")
+        else:
+            Treeview(root, name="bad2").configure(striped="rubbish")
+
+
+def test_the_stripe_falls_on_alternate_rows(filled):
+    """Odd rows of what is on screen, so the banding does not crawl as the
+    tree scrolls. Which parity Tk picks is recorded as open on the issue: its
+    row element takes a -rownumber and the theme decides, which needs eyes on
+    a GUI to read."""
+    filled.configure(striped=1)
+    rows = filled._visible()
+    dim = [
+        bool(filled._row_attribute(iid, offset, 0) & curses.A_DIM)
+        for offset, iid in enumerate(rows)
+    ]
+    assert dim[::2] == [False] * len(dim[::2]), f"even rows are tinted: {dim}"
+    assert dim[1::2] == [True] * len(dim[1::2]), f"odd rows are not tinted: {dim}"
+
+
+def test_nothing_is_tinted_while_striped_is_off(filled):
+    filled.configure(striped=0)
+    for offset, iid in enumerate(filled._visible()):
+        assert not filled._row_attribute(iid, offset, 0) & curses.A_DIM
+
+
+def test_a_selected_row_is_reversed_and_never_tinted(filled):
+    """Selection wins: reverse-and-dim together is whatever the terminal
+    decides, and the selection is the more important signal. The same reasoning
+    as a focused entry border dropping A_DIM before adding A_BOLD."""
+    filled.configure(striped=1)
+    rows = filled._visible()
+    odd = rows[1]
+    assert filled._row_attribute(odd, 1, 0) & curses.A_DIM, "row 1 should be tinted"
+    filled.selection_set(odd)
+    attribute = filled._row_attribute(odd, 1, 0)
+    assert attribute & curses.A_REVERSE
+    assert not attribute & curses.A_DIM, "a selected row must not also be dim"
+
+
+def test_the_stripe_takes_its_colour_from_the_style_when_one_is_set(filled):
+    """stripedbackground is a STYLE option in Tk, not a widget one - measured.
+
+    With no colour manager running there is nothing to resolve, so the dim
+    fallback stands; what this pins is that the style is consulted at all, so
+    an application that sets the colour is not ignored.
+    """
+    style = Style(filled)
+    style.configure("Treeview", stripedbackground="blue")
+    assert style.lookup("Treeview", "stripedbackground") == "blue"
+    filled.configure(striped=1)
+    # No colours in this harness, so it falls back - the point is that it did
+    # not raise and still marks the row.
+    assert filled._row_attribute(filled._visible()[1], 1, 0) & curses.A_DIM

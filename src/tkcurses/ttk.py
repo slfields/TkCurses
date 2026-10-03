@@ -2197,6 +2197,10 @@ class Treeview(Widget, tkcurses.Frame):
     _ttk_class = "Treeview"
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        # Tk 9.0's alternating row tint - TkCurses-xe9.4. A boolean,
+        # default 0; Tk rejects anything else with
+        # 'expected boolean value but got "..."'.
+        "striped": 0,
         # Real ttk.Treeview has -padding and ours did not. Measured widget by
         # widget rather than assumed: ttk carries it on Label, Notebook,
         # Treeview and LabeledScale, and NOT on Separator, Sizegrip,
@@ -2259,6 +2263,7 @@ class Treeview(Widget, tkcurses.Frame):
         self._counter = 0
         self._top = 0
         kw.setdefault("relief", "sunken")
+        self._check_striped({**(cnf or {}), **kw})
         super().__init__(master, cnf, name=name, **kw)
         self._install_class_bindings()
 
@@ -2748,6 +2753,7 @@ class Treeview(Widget, tkcurses.Frame):
         return area.x + INDENT * self._depth(iid)
 
     def _redraw(self) -> None:
+        """Paint the headings and whichever rows are in view."""
         # Every change that repaints also clamps the view and tells the
         # scrollbar where it is. Done here rather than in insert, delete, move,
         # open and close separately, because driving the widget showed both
@@ -2758,7 +2764,6 @@ class Treeview(Widget, tkcurses.Frame):
         # either, so the clamp belongs here with it.
         self._clamp_view()
         self._publish_view()
-        """Paint the headings and whichever rows are in view."""
         window = self._window
         if window is None or self.tk.screen is None:
             return
@@ -2788,21 +2793,98 @@ class Treeview(Widget, tkcurses.Frame):
                 )
                 row += 1
             rows = self._visible()[self._top : self._top + self._content_height()]
-            for iid in rows:
-                marked = attribute | (curses.A_REVERSE if iid in self._selection else 0)
+            for offset, iid in enumerate(rows):
                 self._write_line(
                     dispatcher,
                     window,
                     row,
                     left,
                     self._row_text(iid, area.width).ljust(area.width),
-                    marked,
+                    self._row_attribute(iid, offset, attribute),
                 )
                 row += 1
 
+    def _check_striped(self, given: dict[str, Any]) -> None:
+        """Refuse a ``striped`` that is not a boolean, as Tk does.
+
+        Called from ``__init__`` AND from :meth:`configure`, because Tk rejects
+        it on both paths and the construction path does not go through
+        ``configure``. Running it is what showed that: with the check in
+        ``configure`` alone, ``Treeview(striped="rubbish")`` was accepted while
+        ``configure(striped="rubbish")`` raised - a difference no caller could
+        have predicted.
+        """
+        if "striped" in given:
+            self.getboolean(given["striped"])
+
+    def _striped(self) -> bool:
+        """Whether alternate rows are tinted.
+
+        The value is parsed the way Tcl reads a boolean, and
+        :meth:`configure` rejects anything else when it is set - Tk raises
+        ``expected boolean value but got "nonsense"`` at configure time, and so
+        does this. Most boolean options in this library are not validated at
+        all (``exportselection="nonsense"`` is accepted and stored); that wider
+        gap is TkCurses-861 rather than something to fix one option at a time,
+        but there is no reason for a new option to join it.
+        """
+        return self.getboolean(self._options["striped"])
+
+    def _row_attribute(self, iid: str, offset: int, attribute: int) -> int:
+        """How one row is drawn: selected, striped, or plain.
+
+        **Selection wins.** A selected row is drawn reversed and never tinted,
+        because reverse-and-dim together is whatever the terminal decides and
+        the selection is the more important of the two signals. The same
+        reasoning as the focused entry border dropping A_DIM before adding
+        A_BOLD.
+
+        The stripe falls on odd rows of what is ON SCREEN, so the banding stays
+        put as the tree scrolls rather than crawling. Tk hands its row element
+        a ``-rownumber`` and lets the theme decide; which parity it picks, and
+        whether it counts displayed or absolute rows, could not be measured
+        without eyes on a GUI and is recorded as open on TkCurses-xe9.4.
+        """
+        if iid in self._selection:
+            return attribute | curses.A_REVERSE
+        if self._striped() and offset % 2:
+            return self._stripe_attribute(attribute)
+        return attribute
+
+    def _stripe_attribute(self, attribute: int) -> int:
+        """The tint for a striped row.
+
+        ``Treeview``'s ``stripedbackground`` when the style sets one - that is
+        where Tk keeps it, measured: ``style.lookup("Treeview",
+        "stripedbackground")`` answers ``#e8e8e8`` against a white background.
+
+        Otherwise **dim**, and that fallback is the point rather than a
+        shortcut. This library's themes are glyph sets, not colour palettes, so
+        nothing sets ``stripedbackground`` by default - and honouring only the
+        style would make ``striped=1`` do nothing at all on a default theme,
+        which is an option that appears to work. Dim is the terminal's own
+        banding, legible at any colour depth.
+        """
+        colour = Style(self).lookup(self._style_name(), "stripedbackground")
+        colors = self.tk.colors
+        if colour and colors is not None:
+            return colors.attribute_for(
+                str(self._options["foreground"] or "white"), str(colour)
+            )
+        return attribute | curses.A_DIM
+
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
-        """Set options, repainting as the change requires."""
+        """Set options, repainting as the change requires.
+
+        ``striped`` is checked HERE rather than when the row is drawn, because
+        Tk raises at configure time and because the alternative hides the
+        error: this method's first version left the parse to the drawing code,
+        so ``striped="nonsense"`` was stored happily and would have raised at
+        the next repaint - or never, on a widget nothing had mapped yet. The
+        docstring claimed it raised; running it showed it did not.
+        """
         given = {**(cnf or {}), **kw}
+        self._check_striped(given)
         result = super().configure(cnf, **kw)
         if given:
             self._redraw()

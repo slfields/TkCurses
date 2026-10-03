@@ -76,6 +76,8 @@ THEMED = (
 
 #: Options real ttk has that we do not, each with the issue that owns it.
 #:
+#: It shrank by one more on 2026-10-03 (TkCurses-xe9.4): Treeview's -striped.
+#:
 #: It shrank by six on 2026-10-03 (TkCurses-xe9.3): placeholder and
 #: placeholderforeground on Entry, Spinbox and Combobox. Tk documents neither
 #: anywhere, so ARCHITECTURE.md carries the measured rules - see the Entry
@@ -119,7 +121,6 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
     # they had, and the three fixes that closed them (TkCurses-ale, 163 and
     # xe9.3) each closed all three at once.
     "Treeview": {
-        "striped": "TkCurses-xe9.4: alternating row tint",
         "selecttype": "TkCurses-xe9.5: selecting cells rather than rows",
         "titlecolumns": "TkCurses-xe9.6: frozen columns",
         "titleitems": "TkCurses-xe9.6: frozen rows",

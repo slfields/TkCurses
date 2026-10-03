@@ -1205,3 +1205,73 @@ def test_a_right_anchored_label_wider_than_the_bar_still_appears(terminal, tmp_p
     assert any(ch.isalpha() for ch in term.row(2)[2:22]), (
         f"the label vanished instead of being clipped\n{term.describe()}"
     )
+
+
+STRIPED = """
+import tkcurses
+from tkcurses import ttk
+
+root = tkcurses.Tk()
+tree = ttk.Treeview(root, name='tv', columns=('a',), show='headings',
+                    striped={striped})
+tree.place(x=1, y=1, width=24, height=7)
+for n in range(5):
+    tree.insert('', 'end', values=('row %d' % n,))
+root.update_layout()
+root.tk.screen.refresh()
+root.after(4000, root.quit)
+root.mainloop()
+"""
+
+
+def _row_banding(term):
+    """Which of the tree's drawn rows are dim, found rather than hardcoded.
+
+    The rows are located by the text in them: the first version of these tests
+    assumed they began at screen row 2 and they begin at 3 - a border, then the
+    heading - and only four of the five fit. The striped test failed honestly;
+    the UNSTRIPED one passed, because "no row is dim" is satisfied by reading
+    blank cells. Finding the rows is what makes both of them mean something.
+    """
+    banding = []
+    for row, line in enumerate(term.display):
+        column = line.find("row ")
+        if column >= 0:
+            banding.append(
+                (line[column:].split()[1], term.attrs_at(row, column)["dim"])
+            )
+    return banding
+
+
+def test_a_striped_treeview_tints_alternate_rows_on_screen(terminal, tmp_path):
+    """TkCurses-xe9.4, checked where it matters.
+
+    Odd rows of what is on screen are dim, so the banding does not crawl as the
+    tree scrolls.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(STRIPED.format(striped=1), workdir=tmp_path)
+    term.wait_for_text("row 0")
+    term.wait_for_text("row 3")
+    term.wait_for_idle()
+    banding = _row_banding(term)
+    assert len(banding) >= 4, f"only found {banding}\n{term.describe()}"
+    assert [dim for _label, dim in banding] == [
+        offset % 2 == 1 for offset in range(len(banding))
+    ], f"the stripe does not alternate: {banding}\n{term.describe()}"
+
+
+def test_an_unstriped_treeview_tints_nothing(terminal, tmp_path):
+    """The control. Without it the test above would pass on a tree that drew
+    every row dim - and this one has to find the rows too, or it passes by
+    reading blank cells."""
+    term = terminal(cols=40, rows=12)
+    term.run_source(STRIPED.format(striped=0), workdir=tmp_path)
+    term.wait_for_text("row 0")
+    term.wait_for_text("row 3")
+    term.wait_for_idle()
+    banding = _row_banding(term)
+    assert len(banding) >= 4, f"only found {banding}\n{term.describe()}"
+    assert not any(dim for _label, dim in banding), (
+        f"rows were tinted with striped off: {banding}\n{term.describe()}"
+    )
