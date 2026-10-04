@@ -4337,8 +4337,24 @@ measured on Tk 9.0.2:
   `validate()` answers False with no `invalidcommand` and sets `invalid`.
   Validation **stays on**, where the classic Entry would turn it off.
 
-The ttk entries' *other* validation paths still follow the classic rules. They
-differ from ttk's in four measured places, listed in `TkCurses-4ag`.
+**The ttk entries validate by ttk's rules**, as of `TkCurses-4ag`; they had
+inherited the classic Entry's. Every condition was measured against a validator
+that approves, refuses, raises and edits the entry, on `tk.Entry` and
+`ttk.Entry` side by side. `tests/test_validation_matrix.py` carries the whole
+table for both. Where ttk differs:
+
+| | classic `tk.Entry` | ttk entries |
+|---|---|---|
+| a `textvariable` write | validated, condition `forced` | **not validated at all** |
+| a key edit's validator raises | refused, validation off | **`TclError` from `insert`/`delete`**, validation off |
+| a validator edits the entry | validation off (key modes) | **validation stays on** |
+| a focus check approves | — | **clears `invalid`**, even set by hand |
+| a focus check refuses, or its validator edits | — | **sets `invalid`** |
+
+Key validation never touches `invalid`, on either. A focus check whose validator
+raises stays silent on both, with validation turned off. An edit made inside any
+validator, under any mode, makes that validation fail. That is why a focus
+validator that edits sets `invalid`, though no key validation ran.
 
 `bbox(index)` answers `(x, y, 1, 1)` for the character at `index`, relative to
 the widget and to the **view**: a character scrolled off to the left has a

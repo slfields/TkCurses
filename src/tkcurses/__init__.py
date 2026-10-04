@@ -6638,6 +6638,7 @@ class Entry(_Drawable, XView):
         # True while a validation callback is running, so an edit made from
         # inside one can be told apart from an ordinary edit. TkCurses-tvj.
         self._validating = False
+        self._edited_while_validating = False
         super().__init__(master, cnf, name=name, **kw)
         self._follow_variable()
         self._apply_requested_size()
@@ -7038,16 +7039,20 @@ class Entry(_Drawable, XView):
         - see :meth:`_turn_validation_off` for why that is Tk's answer rather
         than a shortcut taken here.
 
-        Two of Tk's three validation conditions are still missing: validation
-        when the focus moves (TkCurses-jd1) and the forced revalidation Tk runs
-        when a ``textvariable`` is written (TkCurses-3xb). Both are measured in
-        their issues.
+        The other two conditions are :meth:`_validate_focus` and
+        :meth:`_validate_forced`.
         """
+        if self._validating:
+            # Noticed under every mode, as Tk notices it: a focus validator
+            # that edits the entry fails even though no key validation runs.
+            self._edited_while_validating = True
         if str(self._options["validate"]) not in _EDIT_VALIDATED:
             return True
-        return self._ask_validator(proposed)
+        return self._ask_validator(proposed, can_raise=True)
 
-    def _ask_validator(self, proposed: str, *, notify: bool = True) -> bool:
+    def _ask_validator(
+        self, proposed: str, *, notify: bool = True, can_raise: bool = False
+    ) -> bool:
         """Run the ``validatecommand``, and the ``invalidcommand`` after it.
 
         The half every validation condition shares. What the answer *means* is
@@ -7062,6 +7067,9 @@ class Entry(_Drawable, XView):
             notify: Whether a refusal runs the ``invalidcommand``. The forced
                 condition passes False, because - measured - Tk stays silent
                 when a variable write fails validation.
+            can_raise: Whether there is a caller to hand an error to - an edit
+                or ``validate()``, not a focus change. The classic Entry never
+                raises; ttk's does, see :meth:`_validator_raised`.
 
         Returns:
             Whether the validator approved. A validator that raises, or that
@@ -7072,11 +7080,15 @@ class Entry(_Drawable, XView):
         if command is None:
             return True
         if self._validating:
-            # An edit from inside a validation callback. Tk does not recurse:
-            # it turns validation off and lets this edit through, which also
-            # discards the edit that was being validated - the check below.
-            self._turn_validation_off()
+            # An edit from inside a validation callback - _validated has
+            # already flagged it. Tk does not recurse: it lets this edit
+            # through, which also discards the edit that was being validated -
+            # the check below - and the classic Entry turns validation off as
+            # well (see _nested_edit).
+            self._nested_edit()
             return True
+        mode = str(self._options["validate"])
+        self._edited_while_validating = False
         self._validating = True
         try:
             try:
@@ -7085,12 +7097,15 @@ class Entry(_Drawable, XView):
                 # tkinter hands Tcl nothing when a Python callback raises, Tcl
                 # cannot read that as a boolean, and Tk turns validation off.
                 # Measured: the edit is refused and invalidcommand does NOT
-                # run, which is why this returns before reaching _refused.
+                # run, which is why this never reaches _refused.
                 self._turn_validation_off()
+                self._validator_raised(can_raise=can_raise)
                 return False
-            if str(self._options["validate"]) == "none":
-                # The callback turned validation off, which only editing the
-                # entry does. Whatever it returned, the edit is discarded.
+            if self._edited_while_validating or (
+                mode != "none" and str(self._options["validate"]) == "none"
+            ):
+                # The callback edited the entry, or turned validation off.
+                # Whatever it returned, the edit is discarded.
                 return False
             if not allowed and notify:
                 self._refused(proposed)
@@ -7098,7 +7113,24 @@ class Entry(_Drawable, XView):
         finally:
             self._validating = False
 
-    def _validate_focus(self, condition: str) -> None:
+    def _nested_edit(self) -> None:
+        """What an edit made from inside a validation callback does to the mode.
+
+        The classic Entry turns validation off - measured, see
+        :meth:`_turn_validation_off`. ttk's does not, and overrides this.
+        TkCurses-4ag.
+        """
+        self._turn_validation_off()
+
+    def _validator_raised(self, *, can_raise: bool) -> None:
+        """After a validator raised and validation was turned off.
+
+        The classic Entry says nothing: the edit is refused and that is all.
+        ttk's raises ``TclError`` to whoever made the edit, and overrides
+        this. TkCurses-4ag.
+        """
+
+    def _validate_focus(self, condition: str) -> bool | None:
         """Validate because the focus arrived or left, if the mode asks for it.
 
         Tk's second validation condition, and nothing here acted on it: the
@@ -7122,8 +7154,8 @@ class Entry(_Drawable, XView):
         """
         wanted = _FOCUS_IN_VALIDATED if condition == "focusin" else _FOCUS_OUT_VALIDATED
         if str(self._options["validate"]) not in wanted:
-            return
-        self._ask_validator(self._field.text)
+            return None
+        return self._ask_validator(self._field.text)
 
     def _validate_forced(self) -> None:
         """Revalidate after the ``textvariable`` was written behind our back.

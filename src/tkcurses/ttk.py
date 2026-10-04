@@ -1309,8 +1309,8 @@ NOT_IN_LIST = -1
 
 
 class _EntryCommands(tkcurses.Entry):
-    """``validate`` and ``bbox``: what all three ttk entries have and the
-    classic Entry does not.
+    """What all three ttk entries share and the classic Entry does not:
+    ``validate`` and ``bbox``, and ttk's own validation rules.
 
     In tkinter both are defined once on ``ttk.Entry``, and ``ttk.Combobox``
     and ``ttk.Spinbox`` inherit them. Here those three subclass different
@@ -1336,8 +1336,8 @@ class _EntryCommands(tkcurses.Entry):
         * **The ``invalid`` state follows the answer**: set on a refusal,
           cleared on an approval, even one that was set by hand. Ordinary key
           validation, by contrast, never touches the state.
-        * **A refusal runs the ``invalidcommand``**, as a refused edit does and
-          a refused ``textvariable`` write does not.
+        * **A refusal runs the ``invalidcommand``**, as a refused edit or focus
+          change does.
         * **A validator that raises makes this raise** ``TclError`` - tkinter
           hands Tcl nothing, and Tk cannot read that as a boolean - and turns
           validation off; the state is left alone.
@@ -1345,32 +1345,50 @@ class _EntryCommands(tkcurses.Entry):
           False with no ``invalidcommand``, ``invalid`` is set - and
           validation stays ON. The classic Entry turns it off; ttk does not.
         """
-        command = self._options["validatecommand"]
-        if command is None:
-            self.state(["!invalid"])
-            return True
-        mode = self._options["validate"]
-        before = self._field.text
-        self._validating = True
-        try:
-            allowed = bool(command(before))
-        except Exception:
-            self._options["validate"] = "none"
-            raise TclError('expected boolean value but got "None"') from None
-        finally:
-            self._validating = False
-        if self._field.text != before or self._options["validate"] != mode:
-            # An edit from inside the callback; the classic recursion guard it
-            # went through turned validation off, which ttk does not do.
-            self._options["validate"] = mode
-            self.state(["invalid"])
-            return False
-        if allowed:
-            self.state(["!invalid"])
-            return True
-        self.state(["invalid"])
-        self._refused(before)
-        return False
+        verdict = self._ask_validator(self._field.text, can_raise=True)
+        self.state(["!invalid" if verdict else "invalid"])
+        return verdict
+
+    # The ttk side of the classic Entry's validation hooks. Measured on Tk
+    # 9.0.2, every condition against a validator that approves, refuses,
+    # raises and edits the entry; ttk departs from the classic Entry in four
+    # of those cells and in the invalid state. TkCurses-4ag.
+
+    def _nested_edit(self) -> None:
+        """An edit from inside a callback lands, and validation stays on.
+
+        The edit being validated is still dropped - a key insert of ``X``
+        whose validator appends ``!`` leaves ``hello!`` - but where the
+        classic Entry then reads ``validate`` as ``none``, ttk keeps the mode.
+        """
+
+    def _validator_raised(self, *, can_raise: bool) -> None:
+        """ttk hands the error to whoever asked: ``insert`` and ``delete``
+        raise ``TclError``, and so does :meth:`validate`. A focus change has
+        no caller and stays silent; validation is turned off either way."""
+        if can_raise:
+            raise TclError('expected boolean value but got "None"')
+
+    def _validate_forced(self) -> None:
+        """Nothing: ttk does not validate a ``textvariable`` write at all.
+
+        Measured on all three ttk entries: with ``validate="all"`` the
+        validator is not called when the variable is set, where the classic
+        Entry calls it with ``%V`` = ``forced``.
+        """
+
+    def _validate_focus(self, condition: str) -> bool | None:
+        """As the classic Entry, and the ``invalid`` state follows the answer.
+
+        An approval clears it, even one set by hand; a refusal - or a
+        validator that edits the entry - sets it. A validator that raised has
+        turned validation off and leaves the state alone. Key validation
+        never touches the state; only this and :meth:`validate` do.
+        """
+        verdict = super()._validate_focus(condition)
+        if verdict is not None and str(self._options["validate"]) != "none":
+            self.state(["!invalid" if verdict else "invalid"])
+        return verdict
 
     def bbox(self, index: Any) -> tuple[int, int, int, int]:
         """The box of the character at ``index`` - see
@@ -4187,10 +4205,10 @@ class Entry(Widget, _EntryCommands):
     """A one-line text field drawn from the style. ``ttk.Entry``.
 
     ``validate``, ``validatecommand`` and ``invalidcommand`` come from the
-    classic widget, whose rules were measured on the classic Entry; ttk's
-    differ when a validator misbehaves and over the ``invalid`` state
-    (TkCurses-4ag). ``validate()`` and ``bbox()`` are ttk's own and follow
-    ttk's measurements - see :class:`_EntryCommands`.
+    classic widget, with ttk's own rules where they differ - no validation of
+    a ``textvariable`` write, errors handed to the caller, validation left on
+    after a callback edits the entry, and the ``invalid`` state. Those, and
+    ``validate()`` and ``bbox()``, are in :class:`_EntryCommands`.
 
     ttk drops the long list of classic colour and insertion-cursor options -
     ``bd``, ``bg``, ``disabledbackground``, ``insertwidth`` and the rest. They
