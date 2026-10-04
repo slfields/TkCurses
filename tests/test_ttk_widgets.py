@@ -47,6 +47,7 @@ from tkcurses.ttk import (
     Progressbar,
     Radiobutton,
     Scale,
+    Scrollbar,
     Separator,
     Sizegrip,
     Spinbox,
@@ -2850,3 +2851,210 @@ def test_bbox_of_an_empty_entry_has_no_width(root):
     x, y, width, height = widget.bbox(0)
     assert width == 0
     assert widget.bbox("end") == (x, y, 0, height)
+
+
+# --------------------------------------------- identify, the themed-element form
+#
+# ttk.Widget.identify answers the name of the style ELEMENT at a point. These
+# are the default theme's names as MEASURED on Tk 9.0.2, every 2 pixels over
+# each widget - the complete set each one can answer. Ours draw no focus ring
+# and may draw no padding, so they answer a SUBSET, and never anything else.
+# TkCurses-d5u.
+
+TK_ELEMENTS = {
+    "Button": {"border", "padding", "label", "focus"},
+    "Checkbutton": {"padding", "Checkbutton.indicator", "label", "focus"},
+    "Radiobutton": {"padding", "Radiobutton.indicator", "label", "focus"},
+    "Label": {"border", "padding", "label"},
+    "Entry": {"field", "padding", "textarea"},
+    "Combobox": {"field", "textarea", "padding", "Combobox.downarrow"},
+    "Spinbox": {"field", "padding", "textarea", "Spinbox.uparrow", "Spinbox.downarrow"},
+    "Progressbar": {"trough", "pbar"},
+    "Scale": {"focus", "slider", "trough"},
+    "Scrollbar": {"trough", "leftarrow", "thumb", "rightarrow"},
+    "Separator": {"separator"},
+    "Sizegrip": {"sizegrip"},
+    "Frame": {"border"},
+    "Labelframe": {"", "border"},
+    "Menubutton": {"border", "padding", "focus", "label", "Menubutton.indicator"},
+    "LabeledScale": {"border"},
+}
+
+
+def _identify_scan(root, widget, width, height):
+    widget.place(x=0, y=0, width=width, height=height)
+    root.update_layout()
+    return {widget.identify(x, y) for y in range(height) for x in range(width)}
+
+
+ELEMENT_WIDGETS = [
+    ("Button", lambda r: Button(r, name="w", text="Press", padding=1), (13, 5)),
+    ("Checkbutton", lambda r: Checkbutton(r, name="w", text="Check"), (12, 1)),
+    ("Radiobutton", lambda r: Radiobutton(r, name="w", text="Radio"), (12, 1)),
+    ("Label", lambda r: Label(r, name="w", text="Hi", relief="solid"), (8, 3)),
+    ("Entry", lambda r: Entry(r, name="w"), (12, 3)),
+    ("Combobox", lambda r: Combobox(r, name="w", values=("a",)), (12, 3)),
+    ("Spinbox", lambda r: Spinbox(r, name="w", from_=0, to=9), (12, 3)),
+    ("Progressbar", lambda r: Progressbar(r, name="w", value=40), (20, 1)),
+    ("Scale", lambda r: Scale(r, name="w", length=20), (20, 1)),
+    ("Scrollbar", lambda r: Scrollbar(r, name="w", orient="horizontal"), (20, 1)),
+    ("Separator", lambda r: Separator(r, name="w"), (10, 1)),
+    ("Sizegrip", lambda r: Sizegrip(r, name="w"), (2, 2)),
+    ("Frame", lambda r: Frame(r, name="w"), (10, 4)),
+    ("Labelframe", lambda r: Labelframe(r, name="w", text="Cap"), (12, 4)),
+    ("Menubutton", lambda r: OptionMenu(r, tkcurses.StringVar(r), "a", "a"), (10, 3)),
+    ("LabeledScale", lambda r: LabeledScale(r, name="w"), (20, 3)),
+]
+
+
+@pytest.mark.parametrize(
+    ("kind", "make", "size"), ELEMENT_WIDGETS, ids=[c[0] for c in ELEMENT_WIDGETS]
+)
+def test_identify_answers_only_names_tk_answers(root, kind, make, size):
+    answered = _identify_scan(root, make(root), *size)
+    assert answered <= TK_ELEMENTS[kind], answered - TK_ELEMENTS[kind]
+    # And something besides the empty answer, except where Tk's is mostly that.
+    assert answered - {""}
+
+
+def test_identify_outside_the_widget_is_empty(root):
+    widget = Button(root, name="w", text="Press")
+    widget.place(x=0, y=0, width=9, height=3)
+    root.update_layout()
+    assert (
+        widget.identify(9, 0) == widget.identify(0, 3) == widget.identify(-1, 0) == ""
+    )
+
+
+def test_identify_follows_the_drawn_rings(root):
+    """A bordered button: the edge is the border, the text area the label,
+    and with padding the band between them is padding."""
+    widget = Button(root, name="w", text="Hi", padx=1, relief="raised")
+    widget.place(x=0, y=0, width=8, height=3)
+    root.update_layout()
+    area = widget._text_area()
+    assert widget.identify(0, 0) == "border"
+    assert widget.identify(area.x, area.y) == "label"
+    assert widget.identify(area.x - 1, area.y) == "padding"
+
+
+def test_identify_answers_no_border_where_none_is_drawn(root):
+    """A flat label draws no border, so its edge is padding, not border."""
+    widget = Label(root, name="w", text="Hi", padx=1)
+    widget.place(x=0, y=0, width=6, height=1)
+    root.update_layout()
+    assert widget.identify(0, 0) == "padding"
+    assert widget.identify(1, 0) == "label"
+
+
+def test_identify_names_the_entry_parts(root):
+    combobox = Combobox(root, name="c", values=("a",))
+    combobox.place(x=0, y=0, width=12, height=3)
+    spinbox = Spinbox(root, name="s", from_=0, to=9)
+    spinbox.place(x=0, y=4, width=12, height=3)
+    root.update_layout()
+    assert combobox.identify(0, 0) == "field"
+    assert combobox.identify(1, 1) == "textarea"
+    assert combobox.identify(10, 1) == "Combobox.downarrow"
+    up, down = spinbox._arrow_columns()
+    assert spinbox.identify(up, 1) == "Spinbox.uparrow"
+    assert spinbox.identify(down, 1) == "Spinbox.downarrow"
+    assert spinbox.identify(1, 1) == "textarea"
+
+
+def test_identify_names_the_indicators(root):
+    check = Checkbutton(root, name="c", text="Check")
+    check.place(x=0, y=0, width=12, height=1)
+    menu = OptionMenu(root, tkcurses.StringVar(root), "a", "a")
+    menu.place(x=0, y=2, width=10, height=3)
+    root.update_layout()
+    column, row = check._indicator_place()
+    assert check.identify(column, row) == "Checkbutton.indicator"
+    assert check.identify(check._text_area().x, row) == "label"
+    assert menu.identify(*menu._indicator_cell()) == "Menubutton.indicator"
+
+
+def test_identify_names_the_progressbar_fill(root):
+    bar = Progressbar(root, name="p", value=50, maximum=100)
+    bar.place(x=0, y=0, width=10, height=1)
+    tall = Progressbar(root, name="q", value=50, maximum=100, orient="vertical")
+    tall.place(x=12, y=0, width=1, height=10)
+    root.update_layout()
+    assert [bar.identify(x, 0) for x in range(10)] == ["pbar"] * 5 + ["trough"] * 5
+    # A vertical bar fills from the bottom.
+    assert [tall.identify(0, y) for y in range(10)] == ["trough"] * 5 + ["pbar"] * 5
+
+
+@pytest.mark.parametrize("orient", ["horizontal", "vertical"])
+def test_identify_gives_scale_and_scrollbar_their_ttk_names(root, orient):
+    """The classic widgets answer trough1/trough2/arrow1/slider; ttk's do not."""
+    scale = Scale(root, name="s", orient=orient, length=20)
+    bar = Scrollbar(root, name="b", orient=orient)
+    size = (20, 1) if orient == "horizontal" else (1, 20)
+    found_scale = _identify_scan(root, scale, *size)
+    found_bar = _identify_scan(root, bar, *size)
+    assert found_scale <= {"slider", "trough"} and "slider" in found_scale
+    arrows = (
+        {"leftarrow", "rightarrow"}
+        if orient == "horizontal"
+        else {"uparrow", "downarrow"}
+    )
+    assert found_bar == arrows | {"thumb"} or found_bar == arrows | {"thumb", "trough"}
+
+
+def test_identify_over_notebook_tabs(root):
+    """Measured: tab holding padding holding label; past the tabs and on the
+    page, nothing. Not a tab index - that is index('@x,y')."""
+    book = Notebook(root, name="n")
+    book.place(x=0, y=0, width=30, height=8)
+    for title in ("One", "Two"):
+        book.add(Frame(book), text=title)
+    root.update_layout()
+    _index, first, _last = book._tab_spans()[0]
+    assert book.identify(first, 1) == book.identify(first + 1, 0) == "tab"
+    assert book.identify(first + 1, 1) == "padding"
+    assert book.identify(first + 2, 1) == "label"
+    assert book.identify(29, 1) == ""
+    # The page's frame line under a tab, and the page itself.
+    assert book.identify(first + 2, 2) == ""
+    assert book.identify(5, 4) == ""
+
+
+def test_identify_over_a_panedwindow_sash_is_its_index(root):
+    """Measured: ttk answers the bare index, 0, where the classic answers
+    (0, 'sash')."""
+    panes = PanedWindow(root, name="p", orient="horizontal")
+    panes.place(x=0, y=0, width=21, height=4)
+    panes.add(Frame(panes, name="a"), weight=1)
+    panes.add(Frame(panes, name="b"), weight=1)
+    root.update_layout()
+    row = [panes.identify(x, 1) for x in range(21)]
+    assert 0 in row
+    assert set(row) == {0, ""}
+
+
+def test_identify_over_a_labelframe_caption_is_empty(root):
+    frame = Labelframe(root, name="f", text="Cap")
+    frame.place(x=0, y=0, width=12, height=4)
+    root.update_layout()
+    row, column, text = frame._caption_place()
+    assert frame.identify(column, row) == ""
+    assert frame.identify(column + len(text), row) == "border"
+    assert frame.identify(5, 2) == "border"
+
+
+@pytest.mark.parametrize("cls", [Spinbox, tkcurses.Spinbox])
+def test_clicking_a_spinbox_arrow_still_steps_it(root, cls):
+    """The click binding asks which part was hit. A ttk Spinbox's own
+    identify now answers ttk's element names, so the binding must ask the
+    classic question by name - or a click on ttk's arrows did nothing."""
+    from types import SimpleNamespace
+
+    from tkcurses import _spinbox_click
+
+    spin = cls(root, name="s", from_=0, to=9)
+    spin.place(x=0, y=0, width=12, height=3)
+    root.update_layout()
+    up, _down = spin._arrow_columns()
+    _spinbox_click(SimpleNamespace(widget=spin, x=up, y=1))
+    assert spin.get() == "1"

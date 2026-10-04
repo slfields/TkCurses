@@ -6384,25 +6384,38 @@ class _ChoiceWidget(_TextWidget):
     def _draw_indicator(self) -> None:
         """Draw the indicator, on the row the text's first line sits on."""
         window = self._window
-        if window is None or self.tk.screen is None or not self._indicator_on:
+        if window is None or self.tk.screen is None:
             return
-        # The whole area, not the text's - _text_area() has already handed
-        # the indicator's cells away and would put it on top of the text.
-        area = super()._text_area()
-        if area.is_empty or area.width < self._INDICATOR_WIDTH:
+        place = self._indicator_place()
+        if place is None:
             return
+        column, row = place
         focused = self.focus_get() is self
         mark = self._INDICATORS[self._indicator_state][1 if focused else 0]
         attribute = self._background_attribute() | self._text_attribute()
         if self._pressed:
             attribute |= _curses.A_REVERSE
-        _, block_height = measure(self._lines())
-        _, down = parse_anchor(str(self._options["anchor"]))
-        row = area.y + int((area.height - block_height) * down)
         with contextlib.suppress(_curses.error):
             self._write_line(
-                CursesDispatcher.get(), window, row, area.x, mark, attribute
+                CursesDispatcher.get(), window, row, column, mark, attribute
             )
+
+    def _indicator_place(self) -> tuple[int, int] | None:
+        """Where the indicator's first cell is, as ``(column, row)``, if drawn.
+
+        On the row the text's first line sits on. Shared by the painting and
+        by ttk's ``identify``, which must name the cells that were drawn.
+        """
+        if not self._indicator_on:
+            return None
+        # The whole area, not the text's - _text_area() has already handed
+        # the indicator's cells away and would put it on top of the text.
+        area = super()._text_area()
+        if area.is_empty or area.width < self._INDICATOR_WIDTH:
+            return None
+        _, block_height = measure(self._lines())
+        _, down = parse_anchor(str(self._options["anchor"]))
+        return (area.x, area.y + int((area.height - block_height) * down))
 
 
 class Checkbutton(_ChoiceWidget):
@@ -7722,16 +7735,23 @@ class Menubutton(_TextWidget):
         if self.focus_get() is self:
             attribute |= _curses.A_UNDERLINE
         dispatcher = CursesDispatcher.get()
-        if self._indicator_on and area.width >= 2:
+        cell = self._indicator_cell()
+        if cell is not None:
             with contextlib.suppress(_curses.error):
                 self._write_line(
-                    dispatcher,
-                    window,
-                    area.y + (area.height - 1) // 2,
-                    area.x + area.width - 1,
-                    self._INDICATOR,
-                    attribute,
+                    dispatcher, window, cell[1], cell[0], self._INDICATOR, attribute
                 )
+
+    def _indicator_cell(self) -> tuple[int, int] | None:
+        """The arrow's cell, as ``(column, row)``, if one is drawn.
+
+        Shared by the painting and by ttk's ``identify``, which names it
+        ``Menubutton.indicator``.
+        """
+        area = super()._text_area()
+        if area.is_empty or not self._indicator_on or area.width < 2:
+            return None
+        return (area.x + area.width - 1, area.y + (area.height - 1) // 2)
 
 
 def _menubutton_post(event: Event) -> None:
@@ -8050,12 +8070,32 @@ class LabelFrame(Frame):
     def _draw_caption(self) -> None:
         """Write the caption into the border line the anchor names."""
         window = self._window
-        if window is None or self.tk.screen is None or not self._border_drawn:
+        if window is None or self.tk.screen is None:
             return
+        place = self._caption_place()
+        if place is None:
+            return
+        row, column, text = place
+        attribute = self._background_attribute() | self._font_attribute()
+        dispatcher = CursesDispatcher.get()
+        with contextlib.suppress(_curses.error):
+            # The last-cell case this used to handle here - curses scrolls a
+            # window whose cursor has nowhere left to go - is one of the two
+            # things _write_line exists for, along with the clipping.
+            self._write_line(dispatcher, window, row, column, text, attribute)
+
+    def _caption_place(self) -> tuple[int, int, str] | None:
+        """Where the caption is written, as ``(row, column, text)``, if it is.
+
+        Shared by the painting and by ttk's ``identify``, which answers
+        nothing over the caption, as Tk's does.
+        """
+        if not self._border_drawn:
+            return None
         caption = self._caption()
         width, height = self._rect.width, self._rect.height
         if not caption or width < 3 or height < 2:
-            return
+            return None
         edge, alignment = self._CAPTION_PLACES.get(
             str(self._options["labelanchor"]).lower(), ("top", "left")
         )
@@ -8068,13 +8108,7 @@ class LabelFrame(Frame):
         else:
             column = BORDER_WIDTH
         row = 0 if edge == "top" else height - 1
-        attribute = self._background_attribute() | self._font_attribute()
-        dispatcher = CursesDispatcher.get()
-        with contextlib.suppress(_curses.error):
-            # The last-cell case this used to handle here - curses scrolls a
-            # window whose cursor has nowhere left to go - is one of the two
-            # things _write_line exists for, along with the clipping.
-            self._write_line(dispatcher, window, row, column, text, attribute)
+        return (row, column, text)
 
 
 class Spinbox(Entry):
@@ -8386,7 +8420,9 @@ def _spinbox_key(event: Event) -> str | None:
 def _spinbox_click(event: Event) -> None:
     """Step when an arrow is clicked, and place the cursor otherwise."""
     spinbox = event.widget
-    part = spinbox.identify(event.x, event.y)
+    # The classic method, by name: a ttk subclass's own identify answers
+    # ttk's element names, which this binding cannot act on. TkCurses-d5u.
+    part = Spinbox.identify(spinbox, event.x, event.y)
     if part == "buttonup":
         spinbox.focus_set()
         spinbox._step(1)
@@ -12445,7 +12481,9 @@ def _paned_press(event: Event) -> None:
     """
     paned = event.widget
     paned.focus_set()
-    found = paned.identify(event.x, event.y)
+    # The classic method, by name: a ttk subclass's own identify answers
+    # ttk's element names, which this binding cannot act on. TkCurses-d5u.
+    found = PanedWindow.identify(paned, event.x, event.y)
     paned._active_sash = found[0] if found else None
     paned._redraw()
 
@@ -12744,7 +12782,9 @@ def _scrollbar_press(event: Event) -> None:
     command = bar._options["command"]
     if command is None:
         return
-    part = bar.identify(event.x, event.y)
+    # The classic method, by name: a ttk subclass's own identify answers
+    # ttk's element names, which this binding cannot act on. TkCurses-d5u.
+    part = Scrollbar.identify(bar, event.x, event.y)
     if part == "slider":
         bar._drag_from = (event.x, event.y)
         bar._drag_origin = bar._first

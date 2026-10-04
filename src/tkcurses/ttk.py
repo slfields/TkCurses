@@ -65,7 +65,7 @@ import curses
 import functools
 import math
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import tkcurses
 from tkcurses._core.attributes import BorderStyle
@@ -799,6 +799,81 @@ class Widget:
             self._style_name(), option, sorted(self._state_flags), default
         )
 
+    # ------------------------------------------------------------- identify
+    #
+    # ttk.Widget.identify answers the name of the style ELEMENT at a point -
+    # "label", "Combobox.downarrow", "trough" - which is not the domain answer
+    # the classic Scale, Scrollbar and Spinbox give ("trough1", "arrow1",
+    # "buttonup"). Measured on Tk 9.0.2 for every themed widget, and read
+    # against its default-theme layout: elements are nested rectangles, an
+    # outer one (border, field) holding padding holding the content. The
+    # names here are the DEFAULT theme's, transcribed rather than derived:
+    # what comes back is the registered element, which is why it is "label"
+    # for Button.label but "Checkbutton.indicator" for the indicator, and
+    # the one place the built-in themes disagree (clam's Combobox answers
+    # "Combobox.field" and a bare "downarrow"). TkCurses-d5u.
+    #
+    # Answered from the geometry as DRAWN, so a part drawn no cells wide is
+    # never answered: there is no separate focus ring here, so "focus" never
+    # comes back, and a flat border takes no cells.
+
+    #: The outermost element of the ring model, and the innermost.
+    _outer_element: ClassVar[str] = "border"
+    _inner_element: ClassVar[str] = "label"
+
+    #: For a widget whose layout is one element: the answer everywhere on it.
+    _only_element: ClassVar[str | None] = None
+
+    def identify(self, x: int, y: int) -> Any:
+        """The name of the style element at ``(x, y)``, ``""`` outside them all.
+
+        ``x`` and ``y`` are cells within this widget, as an event reports them.
+        """
+        rect = self._rect  # type: ignore[attr-defined]
+        if not (0 <= x < rect.width and 0 <= y < rect.height):
+            return ""
+        if self._only_element is not None:
+            return self._only_element
+        return self._element_at(x, y)
+
+    def _element_at(self, x: int, y: int) -> Any:
+        """The ring model: the outer element's border, padding, the content."""
+        host: Any = self
+        if _within(self._element_area(), x, y):
+            return self._inner_element
+        rect = host._rect
+        on_edge = x in (0, rect.width - 1) or y in (0, rect.height - 1)
+        if host._border_drawn and on_edge:
+            return self._outer_element
+        return "padding"
+
+    def _element_area(self) -> Rect:
+        """Where the content element is: what the text is drawn into."""
+        host: Any = self
+        return cast("Rect", host._text_area())
+
+
+def _within(area: Rect, x: int, y: int) -> bool:
+    """Whether a cell falls inside a rectangle."""
+    return area.x <= x < area.x + area.width and area.y <= y < area.y + area.height
+
+
+def _indicator_element(widget: Any, name: str, x: int, y: int) -> Any:
+    """A check or radio button's indicator, or the ring model around it."""
+    place = widget._indicator_place()
+    if place is not None:
+        column, row = place
+        if y == row and column <= x < column + widget._INDICATOR_WIDTH:
+            return f"{name}.indicator"
+    return Widget._element_at(widget, x, y)
+
+
+def _menubutton_element(widget: Any, x: int, y: int) -> Any:
+    """A menubutton's arrow, or the ring model around it."""
+    if widget._indicator_cell() == (x, y):
+        return "Menubutton.indicator"
+    return Widget._element_at(widget, x, y)
+
 
 #: How far :meth:`Progressbar.step` moves when nobody says. Tk's default.
 STEP = 1.0
@@ -826,6 +901,9 @@ class Separator(Widget, tkcurses.Frame):
     """
 
     _ttk_class = "TSeparator"
+
+    #: Measured: the one element its layout has.
+    _only_element = "separator"
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "orient": "horizontal",
@@ -923,6 +1001,9 @@ class Sizegrip(Widget, tkcurses.Frame):
     """
 
     _ttk_class = "TSizegrip"
+
+    #: Measured over the whole of Tk's.
+    _only_element = "sizegrip"
 
     def __init__(
         self,
@@ -1059,6 +1140,17 @@ class Progressbar(Widget, tkcurses.Frame):
     """
 
     _ttk_class = "TProgressbar"
+
+    def _element_at(self, x: int, y: int) -> Any:
+        """``pbar`` over the filled cells, ``trough`` everywhere else."""
+        span = self._rect.height if self._vertical else self._rect.width
+        along, across = (y, x) if self._vertical else (x, y)
+        if self._vertical:
+            along = span - 1 - along  # it fills up from the bottom
+        start, count = self._filled_cells(span)
+        if across == 0 and start <= along < start + count:
+            return "pbar"
+        return "trough"
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "orient": "horizontal",
@@ -1423,6 +1515,17 @@ class Combobox(Widget, _EntryCommands):
     """
 
     _ttk_class = "TCombobox"
+
+    _outer_element = "field"
+    _inner_element = "textarea"
+
+    def _element_at(self, x: int, y: int) -> Any:
+        """The arrow's column is ``Combobox.downarrow``, the rest an entry's."""
+        area = tkcurses.Entry._text_area(self)
+        arrow = area.x + area.width - 1
+        if area.width and x == arrow and area.y <= y < area.y + area.height:
+            return "Combobox.downarrow"
+        return super()._element_at(x, y)
 
     # exportselection is NOT repeated here. It was declared on this class alone
     # and nothing honoured it - an option accepted and silently ignored, which
@@ -1807,6 +1910,27 @@ class Notebook(Widget, tkcurses.Frame):
     """
 
     _ttk_class = "TNotebook"
+
+    def _element_at(self, x: int, y: int) -> Any:
+        """Over a tab ``tab``, ``padding`` or ``label``; ``""`` anywhere else.
+
+        Measured on Tk: a tab is ``tab`` holding ``padding`` holding
+        ``label``, and the tab row past the last tab and the page under it
+        both answer ``""``. Here the tab's box is ``tab``, its label text
+        ``label`` and the spaces either side ``padding``. Not a tab index -
+        that is :meth:`index` with ``"@x,y"``.
+        """
+        if y > 1:
+            return ""
+        for index, first, last in self._tab_spans():
+            if not first <= x <= last:
+                continue
+            if y == 0 or x in (first, last):
+                return "tab"
+            label = str(self._tabs[index].options["text"])
+            start = first + 1 + TAB_PADDING
+            return "label" if start <= x < start + len(label) else "padding"
+        return ""
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "height": 0,
@@ -3251,7 +3375,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         del x, y
         return ""
 
-    def identify(self, component: str, x: int, y: int) -> Any:
+    def identify(self, component: str, x: int, y: int) -> Any:  # type: ignore[override]
         """Tk's dispatcher: ``identify(component, x, y)``.
 
         ``region``, ``item``, ``column``, ``cell`` and ``element``, plus
@@ -3688,6 +3812,9 @@ class LabeledScale(Widget, tkcurses.Frame):
 
     _ttk_class = "TFrame"
 
+    #: It is a Frame, whose layout is that one element.
+    _only_element = "border"
+
     #: ttk.LabeledScale carries -padding; ours did not. See Treeview for why
     #: this list is per widget rather than given to everything themed.
     _widget_options: ClassVar[dict[str, Any]] = {"padding": ""}
@@ -3794,6 +3921,10 @@ class OptionMenu(Widget, tkcurses.OptionMenu):
 
     _ttk_class = "TMenubutton"
 
+    def _element_at(self, x: int, y: int) -> Any:
+        """As a Menubutton: the arrow is ``Menubutton.indicator``."""
+        return _menubutton_element(self, x, y)
+
     def __init__(
         self,
         master: Misc | None,
@@ -3898,6 +4029,21 @@ class Scale(Widget, tkcurses.Scale):
 
     _ttk_class = "TScale"
 
+    def _element_at(self, x: int, y: int) -> Any:
+        """``slider`` and ``trough``, where the classic scale says trough1/2.
+
+        Tk's ttk.Scale answers ``trough`` on both sides of the slider, and
+        nowhere on the widget answers ``""``; the cells the classic one calls
+        ``""`` on the trough's own line are its caps, part of the trough.
+        """
+        part = tkcurses.Scale.identify(self, x, y)
+        if part == "slider":
+            return "slider"
+        if part:
+            return "trough"
+        origin_x, origin_y = self._trough_origin()
+        return "trough" if (x == origin_x if self._vertical else y == origin_y) else ""
+
     _widget_options: ClassVar[dict[str, Any]] = {
         "orient": "horizontal",
         "value": None,
@@ -3938,6 +4084,9 @@ class Frame(Widget, tkcurses.Frame):
 
     _ttk_class = "TFrame"
 
+    #: A Frame's layout is that one element.
+    _only_element = "border"
+
     _widget_options: ClassVar[dict[str, Any]] = {
         "padding": "",
     }
@@ -3963,6 +4112,15 @@ class Labelframe(Widget, tkcurses.LabelFrame):
     """
 
     _ttk_class = "TLabelframe"
+
+    def _element_at(self, x: int, y: int) -> Any:
+        """``border``, except over the caption, which answers ``""`` in Tk."""
+        place = self._caption_place()
+        if place is not None:
+            row, column, text = place
+            if y == row and column <= x < column + len(text):
+                return ""
+        return "border"
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "padding": "",
@@ -4006,6 +4164,15 @@ class Panedwindow(Widget, tkcurses.PanedWindow):
     """
 
     _ttk_class = "TPanedwindow"
+
+    def _element_at(self, x: int, y: int) -> Any:
+        """A sash's index over a sash, ``""`` anywhere else.
+
+        Measured: Tk's ttk.Panedwindow answers the bare index, ``0``, where
+        the classic one answers ``(0, "sash")``.
+        """
+        found = tkcurses.PanedWindow.identify(self, x, y)
+        return found[0] if found else ""
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "height": 0,
@@ -4165,6 +4332,12 @@ class Checkbutton(Widget, tkcurses.Checkbutton):
 
     _ttk_class = "TCheckbutton"
 
+    _outer_element = "padding"
+
+    def _element_at(self, x: int, y: int) -> Any:
+        """``Checkbutton.indicator`` over the box, else the ring model."""
+        return _indicator_element(self, "Checkbutton", x, y)
+
     _widget_options: ClassVar[dict[str, Any]] = {
         "padding": "",
     }
@@ -4183,6 +4356,12 @@ class Radiobutton(Widget, tkcurses.Radiobutton):
 
     _ttk_class = "TRadiobutton"
 
+    _outer_element = "padding"
+
+    def _element_at(self, x: int, y: int) -> Any:
+        """``Radiobutton.indicator`` over the button, else the ring model."""
+        return _indicator_element(self, "Radiobutton", x, y)
+
     _widget_options: ClassVar[dict[str, Any]] = {
         "padding": "",
     }
@@ -4195,6 +4374,10 @@ class Menubutton(Widget, tkcurses.Menubutton):
     """
 
     _ttk_class = "TMenubutton"
+
+    def _element_at(self, x: int, y: int) -> Any:
+        """The arrow is ``Menubutton.indicator``, the rest the ring model."""
+        return _menubutton_element(self, x, y)
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "padding": "",
@@ -4218,6 +4401,9 @@ class Entry(Widget, _EntryCommands):
 
     _ttk_class = "TEntry"
 
+    _outer_element = "field"
+    _inner_element = "textarea"
+
     _widget_options: ClassVar[dict[str, Any]] = {}
 
 
@@ -4237,6 +4423,21 @@ class Spinbox(Widget, _EntryCommands, tkcurses.Spinbox):
     """
 
     _ttk_class = "TSpinbox"
+
+    _outer_element = "field"
+    _inner_element = "textarea"
+
+    def _element_at(self, x: int, y: int) -> Any:
+        """The arrows are ``Spinbox.uparrow`` and ``Spinbox.downarrow``.
+
+        The classic Spinbox calls them ``buttonup`` and ``buttondown``.
+        """
+        part = tkcurses.Spinbox.identify(self, x, y)
+        if part == "buttonup":
+            return "Spinbox.uparrow"
+        if part == "buttondown":
+            return "Spinbox.downarrow"
+        return super()._element_at(x, y)
 
     _widget_options: ClassVar[dict[str, Any]] = {}
 
@@ -4261,5 +4462,20 @@ class Scrollbar(Widget, tkcurses.Scrollbar):
     """
 
     _ttk_class = "TScrollbar"
+
+    def _element_at(self, x: int, y: int) -> Any:
+        """ttk's names for the classic scrollbar's parts.
+
+        ``arrow1``/``arrow2`` are ``leftarrow``/``rightarrow`` or
+        ``uparrow``/``downarrow`` by orientation, ``slider`` is ``thumb``,
+        and both troughs are ``trough`` - measured on Tk's horizontal and
+        vertical ttk.Scrollbar.
+        """
+        part = tkcurses.Scrollbar.identify(self, x, y)
+        if part == "arrow1":
+            return "uparrow" if self._vertical else "leftarrow"
+        if part == "arrow2":
+            return "downarrow" if self._vertical else "rightarrow"
+        return "thumb" if part == "slider" else "trough"
 
     _widget_options: ClassVar[dict[str, Any]] = {}

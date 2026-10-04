@@ -4293,6 +4293,53 @@ is placed on cell boundaries while the image half is placed on pixel ones.
 
 All TTK widgets inherit from this base with additional styling.
 
+| tkinter Method | TkCurses | Notes |
+|----------------|----------|-------|
+| `identify(x, y)` | ○ | The style element at a cell, as drawn |
+
+**`identify(x, y)` answers a style ELEMENT name** (`TkCurses-d5u`). This is
+not the domain answer the classic Scale, Scrollbar, Spinbox and PanedWindow
+give. The manual says only "returns the name of the element at position x, y";
+everything below was measured on Tk 9.0.2 by scanning every widget, and read
+against its default-theme `style.layout()`:
+
+- **Elements are nested rectangles.** Button is border ⊃ focus ⊃ padding ⊃
+  label. Entry is field ⊃ padding ⊃ textarea. Checkbutton is padding ⊃ an
+  indicator on the left and the label. Combobox's field holds a downarrow on
+  the right. A Frame is one `border`, Separator one `separator`, Sizegrip one
+  `sizegrip`. A Labelframe answers `border`, except `""` over its caption.
+- **What comes back is the registered element, not the layout path.** So it is
+  `label` for `Button.label`, but `Checkbutton.indicator`,
+  `Combobox.downarrow` and `Spinbox.uparrow` keep their prefixes. That is
+  also where the built-in themes disagree: `default` and `alt` give
+  identical sets, and `clam` answers `Combobox.field` and a bare
+  `downarrow`. The names here are the **default** theme's, transcribed rather
+  than derived.
+- **The themed Scale, Scrollbar, Spinbox and Panedwindow answer differently
+  from the classic ones.** ttk.Scale gives `slider` and `trough` (classic
+  `trough1`/`trough2`). ttk.Scrollbar gives `leftarrow`/`rightarrow` or
+  `uparrow`/`downarrow`, `thumb` and `trough` (classic `arrow1`,
+  `slider`). ttk.Spinbox gives `Spinbox.uparrow` and `Spinbox.downarrow`
+  (classic `buttonup`). ttk.Panedwindow gives the sash's **index**, `0`
+  (classic `(0, "sash")`). Ours answered the classic forms until this, and
+  the method-surface check could not see it, because a method that exists
+  passes it.
+- **Notebook answers element names too, not a tab index:** `tab`, `padding`
+  or `label` over a tab, and `""` past the tabs and over the page. The tab
+  index is `index("@x,y")`.
+
+**Answered from the geometry as drawn**, so a part drawn no cells wide is never
+answered. There is no separate focus ring here, so `focus` never comes back.
+A flat border takes no cells, so a flat widget's edge is `padding` or its
+content. Every answer is one Tk gives for that widget, never one it does not.
+`tests/test_ttk_widgets.py` carries Tk's measured set for each.
+
+The bindings that hit-test (spinbox arrows, scrollbar clicks, sash drags) call
+the **classic** method by name, because they act on the domain answer.
+
+`ttk.Treeview` keeps its own `identify(component, x, y)`, as tkinter's does.
+Its `identify_element` still answers `""` (`TkCurses-at9`).
+
 ### ttk.Style Class
 
 | tkinter Method | TkCurses | Notes |
@@ -4425,7 +4472,7 @@ select all, cursor to the end — explicitly rather than as a side effect.
 | `add(child, **kw)` | ✓ | Add tab |
 | `forget(tab_id)` | ✓ | Remove tab |
 | `hide(tab_id)` | ✓ | Hide tab |
-| `identify(x, y)` | ☐ | Identify at cell - not implemented; TkCurses-d5u |
+| `identify(x, y)` | ○ | Element at a cell: `tab`, `padding`, `label` or `""` — see ttk.Widget |
 | `index(tab_id)` | ✓ | Tab index |
 | `insert(pos, child, **kw)` | ✓ | Insert tab |
 | `select(tab_id=None)` | ✓ | Select/get tab |
@@ -4477,7 +4524,7 @@ Indeterminate:  [░░░░███░░░░░░░░░░░░░] (
 | `identify_row(y)` | ○ | Item at a row; `""` over the heading |
 | `identify_column(x)` | ○ | `#0`, `#1`… at a column |
 | `identify_region(x, y)` | ◐ | `heading`/`tree`/`cell`/`nothing`; never `separator` |
-| `identify_element(x, y)` | ✗ | No element model here — always `""` |
+| `identify_element(x, y)` | ✗ | Always `""`; the item and heading elements are not measured yet (TkCurses-at9) |
 | `index(item)` | ✓ | Item index |
 | `insert(parent, index, iid, **kw)` | ✓ | Insert item |
 | `item(item, option, **kw)` | ✓ | Item options |
@@ -4577,10 +4624,11 @@ Three answers differ from Tk deliberately:
   draggable gap between column headings; this widget draws none and offers no
   such drag, so returning it would name something that is not there.
 - **`identify_element` always returns `""`.** Tk answers a themed element name
-  from an element tree this library does not have, and documents no fixed set
-  of values — `'padding'` on one machine's default theme — so nothing portable
-  can be written against it. Present and empty so the dispatcher has something
-  to call.
+  from the item and heading layouts, and documents no fixed set of values —
+  `'padding'` on one machine's default theme. The other ttk widgets now answer
+  the default theme's element names (see ttk.Widget), but a tree's item and
+  heading elements have not been measured yet (`TkCurses-at9`). Present and
+  empty so the dispatcher has something to call.
 - **`identify("cell", x, y)` is offered although tkinter has no wrapper for
   it.** Tk documents it and it answers the `(item, column)` pair that cell work
   wants; a tkinter program has to compose `identify_row` with

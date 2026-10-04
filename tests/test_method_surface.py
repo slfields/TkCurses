@@ -46,10 +46,12 @@ the widget that inherits it - the entry appears once, where tkinter puts it.
 box of one character, and are listed separately under those classes.
 
 *identify means two things.* ``ttk.Widget.identify(x, y)`` answers a style
-ELEMENT name and presumes an element tree this library does not have; the domain
-form - 'slider', 'sash', 'cell' - exists and is correct on Scale, Scrollbar,
-Spinbox, PanedWindow and Treeview. A sweep that conflates them reports 17 false
-gaps. TkCurses-d5u owns the distinction.
+ELEMENT name; the domain form - 'slider', 'sash', 'buttonup' - is the CLASSIC
+Scale, Scrollbar, Spinbox and PanedWindow's. A sweep that conflates them reports
+17 false gaps, and it hid something worse: the ttk versions of those four
+answered the classic form, wrongly, and passed this check because the method
+existed. A method being present says nothing about its answers. Both were
+settled in TkCurses-d5u.
 
 *tk.Entry and ttk.Entry are both named "Entry".* Grouping by
 ``__qualname__.split('.')[0]`` merges them, and it did: the first run of this
@@ -351,9 +353,6 @@ GAPS: dict[str, dict[str, str]] = {
         "wm_positionfrom": "TkCurses-k1i",
         "wm_sizefrom": "TkCurses-k1i",
     },
-    "ttk.Notebook": {
-        "identify": "TkCurses-d5u",
-    },
 }
 
 #: The six methods some of our classes have and others do not, by OUR class.
@@ -363,8 +362,9 @@ GAPS: dict[str, dict[str, str]] = {
 #:
 #:   tk.XView.xview         our Canvas, Entry, Text and Treeview had it;
 #:                          our Listbox did not (until TkCurses-019)
-#:   ttk.Widget.identify    our Scale, Scrollbar and PanedWindow answer the
-#:                          DOMAIN form correctly; the rest answer nothing
+#:   ttk.Widget.identify    our Scale, Scrollbar and PanedWindow answered
+#:                          (the classic domain form); the rest had nothing
+#:                          (until TkCurses-d5u)
 #:
 #: So a single entry under the defining class would be false as stated - it
 #: would say the method is missing from everything that inherits it, and the
@@ -373,54 +373,10 @@ GAPS: dict[str, dict[str, str]] = {
 #: which is not a coincidence: those are exactly the two issues whose subject
 #: is a method implemented on some widgets and not others. The scroll
 #: protocol's five came out with TkCurses-019, which put them on public
-#: XView / YView mixins as tkinter does; only identify is left.
-PARTIAL_GAPS: dict[str, dict[str, str]] = {
-    "ttk.Button": {
-        "identify": "TkCurses-d5u",
-    },
-    "ttk.Checkbutton": {
-        "identify": "TkCurses-d5u",
-    },
-    "ttk.Combobox": {
-        "identify": "TkCurses-d5u",
-    },
-    "ttk.Entry": {
-        "identify": "TkCurses-d5u",
-    },
-    "ttk.Frame": {
-        "identify": "TkCurses-d5u",
-    },
-    "ttk.Label": {
-        "identify": "TkCurses-d5u",
-    },
-    "ttk.LabelFrame": {
-        "identify": "TkCurses-d5u",
-    },
-    "ttk.LabeledScale": {
-        "identify": "TkCurses-d5u",
-    },
-    "ttk.Labelframe": {
-        "identify": "TkCurses-d5u",
-    },
-    "ttk.Menubutton": {
-        "identify": "TkCurses-d5u",
-    },
-    "ttk.OptionMenu": {
-        "identify": "TkCurses-d5u",
-    },
-    "ttk.Progressbar": {
-        "identify": "TkCurses-d5u",
-    },
-    "ttk.Radiobutton": {
-        "identify": "TkCurses-d5u",
-    },
-    "ttk.Separator": {
-        "identify": "TkCurses-d5u",
-    },
-    "ttk.Sizegrip": {
-        "identify": "TkCurses-d5u",
-    },
-}
+#: XView / YView mixins as tkinter does, and identify with TkCurses-d5u, which
+#: put it on ttk.Widget. Empty now, and kept for the next method in that
+#: position.
+PARTIAL_GAPS: dict[str, dict[str, str]] = {}
 
 
 def _qualified(cls: type) -> str:
