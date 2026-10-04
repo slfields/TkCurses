@@ -1308,7 +1308,77 @@ DROPDOWN_HEIGHT = 10
 NOT_IN_LIST = -1
 
 
-class Combobox(Widget, tkcurses.Entry):
+class _EntryCommands(tkcurses.Entry):
+    """``validate`` and ``bbox``: what all three ttk entries have and the
+    classic Entry does not.
+
+    In tkinter both are defined once on ``ttk.Entry``, and ``ttk.Combobox``
+    and ``ttk.Spinbox`` inherit them. Here those three subclass different
+    classic widgets, so the two methods live in this one class, between
+    ``Widget`` and the classic base. TkCurses-52q.
+    """
+
+    if TYPE_CHECKING:
+        # Supplied by Widget, which comes before this in every subclass.
+        def state(
+            self, statespec: list[str] | tuple[str, ...] | None = None
+        ) -> tuple[str, ...]: ...
+
+    def validate(self) -> bool:
+        """Revalidate now, whatever ``validate`` says, and set ``invalid``.
+
+        Measured on Tk 9.0.2, which disagrees with the classic paths more
+        than the manual's one sentence suggests:
+
+        * **It runs under every mode, ``none`` included**, with the current
+          text, and returns the verdict. Without a ``validatecommand`` it is
+          True.
+        * **The ``invalid`` state follows the answer**: set on a refusal,
+          cleared on an approval, even one that was set by hand. Ordinary key
+          validation, by contrast, never touches the state.
+        * **A refusal runs the ``invalidcommand``**, as a refused edit does and
+          a refused ``textvariable`` write does not.
+        * **A validator that raises makes this raise** ``TclError`` - tkinter
+          hands Tcl nothing, and Tk cannot read that as a boolean - and turns
+          validation off; the state is left alone.
+        * **A validator that edits the entry**: its edit stays, this answers
+          False with no ``invalidcommand``, ``invalid`` is set - and
+          validation stays ON. The classic Entry turns it off; ttk does not.
+        """
+        command = self._options["validatecommand"]
+        if command is None:
+            self.state(["!invalid"])
+            return True
+        mode = self._options["validate"]
+        before = self._field.text
+        self._validating = True
+        try:
+            allowed = bool(command(before))
+        except Exception:
+            self._options["validate"] = "none"
+            raise TclError('expected boolean value but got "None"') from None
+        finally:
+            self._validating = False
+        if self._field.text != before or self._options["validate"] != mode:
+            # An edit from inside the callback; the classic recursion guard it
+            # went through turned validation off, which ttk does not do.
+            self._options["validate"] = mode
+            self.state(["invalid"])
+            return False
+        if allowed:
+            self.state(["!invalid"])
+            return True
+        self.state(["invalid"])
+        self._refused(before)
+        return False
+
+    def bbox(self, index: Any) -> tuple[int, int, int, int]:
+        """The box of the character at ``index`` - see
+        :meth:`tkcurses.Entry._char_bbox`."""
+        return self._char_bbox(index)
+
+
+class Combobox(Widget, _EntryCommands):
     """An entry with a list of values to choose from. ``ttk.Combobox``.
 
     Three behaviours were measured against Tk 9.0.2 rather than assumed, and
@@ -4113,12 +4183,14 @@ class Menubutton(Widget, tkcurses.Menubutton):
     }
 
 
-class Entry(Widget, tkcurses.Entry):
+class Entry(Widget, _EntryCommands):
     """A one-line text field drawn from the style. ``ttk.Entry``.
 
-    ``validate`` and ``validatecommand`` come from the classic widget and
-    behave the same way; ``invalidcommand`` is the one piece of the validation
-    trio missing here, listed as a known gap rather than quietly absent.
+    ``validate``, ``validatecommand`` and ``invalidcommand`` come from the
+    classic widget, whose rules were measured on the classic Entry; ttk's
+    differ when a validator misbehaves and over the ``invalid`` state
+    (TkCurses-4ag). ``validate()`` and ``bbox()`` are ttk's own and follow
+    ttk's measurements - see :class:`_EntryCommands`.
 
     ttk drops the long list of classic colour and insertion-cursor options -
     ``bd``, ``bg``, ``disabledbackground``, ``insertwidth`` and the rest. They
@@ -4131,7 +4203,7 @@ class Entry(Widget, tkcurses.Entry):
     _widget_options: ClassVar[dict[str, Any]] = {}
 
 
-class Spinbox(Widget, tkcurses.Spinbox):
+class Spinbox(Widget, _EntryCommands, tkcurses.Spinbox):
     """An entry with a value you can step. ``ttk.Spinbox``.
 
     **ttk's Spinbox is an Entry, not the classic Spinbox**, which is what the

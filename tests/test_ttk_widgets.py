@@ -2724,3 +2724,129 @@ def test_a_treeview_answers_the_horizontal_methods_and_stays_whole(root):
     assert tree.xview_moveto(0.5) is None
     assert tree.xview_scroll(1, "units") is None
     assert tree.xview() == (0.0, 1.0)
+
+
+# ------------------------------------------- validate() and bbox (TkCurses-52q)
+#
+# Both are ttk-only in tkinter - defined on ttk.Entry, inherited by Combobox
+# and Spinbox - and were missing on all three. validate() was measured on Tk
+# 9.0.2 and disagrees with the classic validation paths in several places; see
+# the method's docstring.
+
+THEMED_ENTRIES = (Entry, Combobox, Spinbox)
+
+
+def themed(root, cls=Entry, mode="none", verdict=True):
+    asked: list[str] = []
+    refused: list[str] = []
+    widget = cls(root, name="v")
+    widget.delete(0, "end")  # a Spinbox starts out holding its first value
+    widget.insert(0, "hello")
+    widget.configure(
+        validate=mode,
+        validatecommand=lambda proposed: asked.append(proposed) or verdict,
+        invalidcommand=lambda proposed: refused.append(proposed),
+    )
+    return widget, asked, refused
+
+
+@pytest.mark.parametrize("mode", ["none", "key", "focus", "focusout", "all"])
+@pytest.mark.parametrize("verdict", [True, False])
+def test_validate_runs_under_every_mode(root, mode, verdict):
+    """Tk: under every mode, 'none' included, once, with the current text."""
+    widget, asked, _refused = themed(root, mode=mode, verdict=verdict)
+    assert widget.validate() is verdict
+    assert asked == ["hello"]
+
+
+@pytest.mark.parametrize("cls", THEMED_ENTRIES)
+def test_a_refusal_sets_invalid_and_runs_the_invalidcommand(root, cls):
+    widget, _asked, refused = themed(root, cls, verdict=False)
+    assert widget.validate() is False
+    assert "invalid" in widget.state()
+    assert refused == ["hello"]
+
+
+def test_an_approval_clears_invalid_even_set_by_hand(root):
+    widget, _asked, refused = themed(root, verdict=True)
+    widget.state(["invalid"])
+    assert widget.validate() is True
+    assert "invalid" not in widget.state()
+    assert refused == []
+
+
+def test_validate_without_a_validatecommand_is_true(root):
+    widget = Entry(root, name="v")
+    widget.state(["invalid"])
+    assert widget.validate() is True
+    assert "invalid" not in widget.state()
+
+
+def test_validate_keeps_the_mode(root):
+    """Unlike a refused textvariable write on the classic Entry, nothing here
+    turns validation off."""
+    widget, _asked, _refused = themed(root, mode="key", verdict=False)
+    widget.validate()
+    assert widget.cget("validate") == "key"
+
+
+def test_a_validator_that_raises_makes_validate_raise(root):
+    """Tk: TclError 'expected boolean value but got "None"', validation off,
+    the state untouched."""
+    widget = Entry(root, name="v")
+    widget.configure(validate="all", validatecommand=lambda proposed: 1 / 0)
+    with pytest.raises(TclError, match="expected boolean value"):
+        widget.validate()
+    assert widget.cget("validate") == "none"
+    assert "invalid" not in widget.state()
+
+
+def test_a_validator_that_edits_the_entry_fails_validate_but_stays_on(root):
+    """Tk: the edit lands, validate() is False with no invalidcommand,
+    invalid is set, and validation stays on - which the classic Entry's
+    recursion guard would have turned off."""
+    refused: list[str] = []
+    widget = Entry(root, name="v")
+    widget.insert(0, "hello")
+
+    def editing(proposed):
+        widget.insert("end", "!")
+        return True
+
+    widget.configure(
+        validate="all",
+        validatecommand=editing,
+        invalidcommand=lambda proposed: refused.append(proposed),
+    )
+    assert widget.validate() is False
+    assert widget.get() == "hello!"
+    assert widget.cget("validate") == "all"
+    assert "invalid" in widget.state()
+    assert refused == []
+
+
+@pytest.mark.parametrize("cls", [Entry, Combobox, Spinbox, tkcurses.Spinbox])
+def test_bbox_is_the_cell_of_one_character(root, cls):
+    """Measured on Tk 9.0.2, ttk.Entry and tk.Spinbox alike."""
+    widget = cls(root, name="b")
+    widget.place(x=0, y=0, width=12, height=3)
+    root.update_layout()
+    widget.delete(0, "end")  # a Spinbox starts out holding its first value
+    widget.insert(0, "abcdefghijklmnopqrstuvwxyz")
+    x, y, width, height = widget.bbox(0)
+    assert (width, height) == (1, 1)
+    assert widget.bbox(4) == (x + 4, y, 1, 1)
+    # Past the end is the last character's box, as Tk's is.
+    assert widget.bbox("end") == widget.bbox(25) == widget.bbox(99) == (x + 25, y, 1, 1)
+    # Where the character IS: scrolled off the left, x is negative of it.
+    widget.xview(10)
+    assert widget.bbox(0) == (x - 10, y, 1, 1)
+
+
+def test_bbox_of_an_empty_entry_has_no_width(root):
+    widget = Entry(root, name="b")
+    widget.place(x=0, y=0, width=12, height=3)
+    root.update_layout()
+    x, y, width, height = widget.bbox(0)
+    assert width == 0
+    assert widget.bbox("end") == (x, y, 0, height)

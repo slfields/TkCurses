@@ -288,7 +288,6 @@ GAPS: dict[str, dict[str, str]] = {
         "activate": "TkCurses-5rt",
     },
     "tk.Spinbox": {
-        "bbox": "TkCurses-5kg",
         "scan": "TkCurses-6lh",
         "scan_dragto": "TkCurses-6lh",
         "scan_mark": "TkCurses-6lh",
@@ -351,10 +350,6 @@ GAPS: dict[str, dict[str, str]] = {
         "wm_iconwindow": "TkCurses-k1i",
         "wm_positionfrom": "TkCurses-k1i",
         "wm_sizefrom": "TkCurses-k1i",
-    },
-    "ttk.Entry": {
-        "bbox": "TkCurses-52q",
-        "validate": "TkCurses-52q",
     },
     "ttk.Notebook": {
         "identify": "TkCurses-d5u",

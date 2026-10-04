@@ -4314,6 +4314,39 @@ All TTK widgets inherit from this base with additional styling.
 | `double` | Double-line boxes (`╔═╗`) |
 | `minimal` | No borders, spaces only |
 
+### ttk.Entry
+
+| tkinter Method | TkCurses | Notes |
+|----------------|----------|-------|
+| `validate()` | ✓ | Revalidate now, under every mode; sets or clears `invalid` |
+| `bbox(index)` | ✓ | The cell box of one character |
+
+Inherits from Entry; `ttk.Combobox` and `ttk.Spinbox` inherit both methods, as
+in tkinter. **`validate()` follows ttk, which is not the classic Entry**
+(`TkCurses-52q`). The manual gives it one sentence; this is what it does,
+measured on Tk 9.0.2:
+
+- **It runs under every mode, `none` included,** once, with the current text,
+  and returns the verdict. Without a `validatecommand` it is True.
+- **`invalid` follows the answer:** set on a refusal, cleared on an approval,
+  even when it was set by hand. Ordinary key validation never touches it.
+- **A refusal runs the `invalidcommand`.** A refused `textvariable` write does
+  not.
+- **A validator that raises** makes `validate()` raise `TclError` and turns
+  validation off. **One that edits the entry** keeps its edit, and
+  `validate()` answers False with no `invalidcommand` and sets `invalid`.
+  Validation **stays on**, where the classic Entry would turn it off.
+
+The ttk entries' *other* validation paths still follow the classic rules. They
+differ from ttk's in four measured places, listed in `TkCurses-4ag`.
+
+`bbox(index)` answers `(x, y, 1, 1)` for the character at `index`, relative to
+the widget and to the **view**: a character scrolled off to the left has a
+negative x. An index past the last character answers the last character's box
+(`end`, `len` and `99` all match `len − 1`), and an empty entry answers width 0.
+The classic `tk.Spinbox` has the same method. The classic `tk.Entry` does not:
+in tkinter its `bbox` is `Misc.bbox`, the **grid** alias (`TkCurses-zmf`).
+
 ### ttk.Combobox
 
 | tkinter Method | TkCurses | Notes |

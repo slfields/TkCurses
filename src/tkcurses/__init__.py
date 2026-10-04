@@ -6976,6 +6976,30 @@ class Entry(_Drawable, XView):
         self._redraw()
         return None
 
+    def _char_bbox(self, index: Any) -> tuple[int, int, int, int]:
+        """The cell box of one character, for the subclasses whose Tk has one.
+
+        ``tk.Spinbox`` and the three ttk entries offer ``bbox(index)``; the
+        classic ``tk.Entry`` does not - in tkinter its ``bbox`` IS
+        ``Misc.bbox``, the grid alias - so this is private here and public
+        on each of those. Measured on Tk 9.0.2 (``(x, y, width, height)``,
+        relative to the widget):
+
+        * an index past the last character answers the last character's box -
+          ``end``, ``len`` and ``99`` all give the same as ``len - 1``;
+        * the box is where the character IS, view and all: scrolled off to
+          the left its x is negative, off to the right it is past the edge;
+        * an empty entry answers a box of width 0 at the start.
+
+        One cell wide and one high, as everything is here. TkCurses-52q.
+        """
+        area = self._text_area()
+        length = len(self._field.text)
+        if length == 0:
+            return (area.x, area.y, 0, 1)
+        position = min(self.index(index), length - 1)
+        return (area.x + position - self._field.view, area.y, 1, 1)
+
     def _view_fractions(self) -> tuple[float, float]:
         """Where the visible run sits in the text, as two fractions."""
         total = len(self.get())
@@ -8156,6 +8180,14 @@ class Spinbox(Entry):
         self._field.text = text
         self._field.select_clear()
         self._changed()
+
+    def bbox(self, index: Any) -> tuple[int, int, int, int]:
+        """The box of the character at ``index`` - see :meth:`Entry._char_bbox`.
+
+        ``tk.Spinbox`` has this and ``tk.Entry`` does not: tkinter gives the
+        classic Entry only ``Misc.bbox``, the grid alias. TkCurses-52q.
+        """
+        return self._char_bbox(index)
 
     # ------------------------------------------------------------- stepping
 
