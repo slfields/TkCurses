@@ -3288,6 +3288,12 @@ Cursor:    [John Doe█_______]
 Selection: [John ███________]
 ```
 
+**A negative index is 0**, as in Tk, for every method that takes one —
+measured on 9.0.2, `index(-1)` and `index(-99)` answer 0 and `delete(-2)`
+removes the first character. This counted negatives from the end until
+`TkCurses-11m`, and because cursor motion goes through the same clamp, Left at
+the start of a field jumped to its far end.
+
 **The view and the cursor are independent**, as of `TkCurses-i8s`. The manual
 says only that `xview` "adjusts the view"; what follows was measured on Tk 9.0.2
 with a 5-wide `tk.Entry` holding `a`–`z`, cursor at 3, and is matched here:

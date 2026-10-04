@@ -456,8 +456,20 @@ def test_moving_is_clamped_to_the_text(field):
     assert field.cursor == 0
 
 
-def test_a_negative_index_counts_from_the_end(field):
-    assert field.clamp(-1) == 4
+@pytest.mark.parametrize("index", [-1, -3, -99])
+def test_a_negative_index_is_the_start(field, index):
+    """Tk 9.0.2: index(-1), index(-3) and index(-99) all answer 0. This counted
+    from the end, Python-style, until TkCurses-11m."""
+    assert field.clamp(index) == 0
+
+
+def test_left_at_the_start_stays_there(field):
+    """It jumped to the far end: move_by(-1) from 0 asked for index -1."""
+    field.place_cursor(0)
+    field.move_by(-1)
+    assert field.cursor == 0
+    field.move_by(-1, extend=True)
+    assert (field.cursor, field.selection) == (0, None)
 
 
 # --------------------------------------------------------------------- view

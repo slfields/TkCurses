@@ -96,9 +96,14 @@ class TextField:
         return self._view
 
     def clamp(self, index: int) -> int:
-        """Hold an index within the text, counting from the end if negative."""
-        if index < 0:
-            index = len(self._text) + index
+        """Hold an index within the text: below 0 is 0, past the end is the end.
+
+        **A negative index is 0, as in Tk** - measured on 9.0.2, ``index(-1)``
+        and ``index(-99)`` both answer 0 and ``delete(-2)`` removes the first
+        character. This counted negatives from the end, a Python-slice habit,
+        until TkCurses-11m, and every cursor motion goes through it: Left at
+        the start of a field computed index -1 and jumped to the far end.
+        """
         return max(0, min(len(self._text), index))
 
     # ------------------------------------------------------------- editing

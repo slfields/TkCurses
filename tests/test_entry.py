@@ -1038,6 +1038,44 @@ def test_a_scrollbar_is_told_where_the_entry_view_is(entry):
     assert 0.0 <= first < last <= 1.0
 
 
+# ---------------------------------------------------- negative indices
+#
+# Tk clamps a negative index to 0 wherever it takes one; this counted from the
+# end until TkCurses-11m. Measured on Tk 9.0.2 with "abcdef".
+
+
+@pytest.mark.parametrize("index", [-1, -3, -99])
+def test_a_negative_index_is_zero(entry, index):
+    entry.insert(0, "abcdef")
+    assert entry.index(index) == 0
+
+
+def test_deleting_at_a_negative_index_deletes_the_first_character(entry):
+    entry.insert(0, "abcdef")
+    entry.delete(-2)
+    assert entry.get() == "bcdef"
+
+
+def test_inserting_at_a_negative_index_inserts_at_the_start(entry):
+    entry.insert(0, "abcdef")
+    entry.insert(-1, "XY")
+    assert entry.get() == "XYabcdef"
+
+
+def test_a_negative_range_start_is_the_start(entry):
+    entry.insert(0, "abcdef")
+    entry.selection_range(-3, 2)
+    assert (entry.index("sel.first"), entry.index("sel.last")) == (0, 2)
+
+
+def test_left_at_the_start_of_the_field_stays_there(entry):
+    """It went to the second-to-last position."""
+    entry.insert(0, "abcdef")
+    entry.icursor(0)
+    typed(entry, "", keysym="Left")
+    assert entry.index("insert") == 0
+
+
 # ------------------------------------------------------- selection commands
 #
 # Measured on Tk 9.0.2: none of selection_from, selection_to or
