@@ -3288,6 +3288,54 @@ Cursor:    [John Doe█_______]
 Selection: [John ███________]
 ```
 
+**The view and the cursor are independent**, as of `TkCurses-i8s`. The manual
+says only that `xview` "adjusts the view"; what follows was measured on Tk 9.0.2
+with a 5-wide `tk.Entry` holding `a`–`z`, cursor at 3, and is matched here:
+
+- `xview moveto f` shows character `f × length` first, **halves rounded up**
+  (2.5 → 3, 4.5 → 5 — not Python's `round`). `scroll n units` moves n
+  characters; `scroll n pages` moves `n × max(1, width − 2)`: 1 at widths 1–3,
+  3 at 5, 6 at 8. A bare index is shown first.
+- Every form stops at `length − width`, so the last character sits at the right
+  edge, and text shorter than the field never scrolls.
+- **None of them moves the cursor or the selection.** They used to move the
+  cursor, which also dropped the selection.
+- Only the **bindings** bring the cursor into view (Tk's `see insert`), after a
+  keystroke or a click. A program's `insert`, `delete`, `icursor`,
+  `selection_to`, `set` or textvariable write leaves the view alone: a long
+  value inserted into an empty entry shows its *start*. Every redraw used to
+  scroll to the cursor, which undid every `xview`.
+- Text inserted strictly before the view moves it along, so the same characters
+  stay on screen (view 10, insert 2 at 0 → 12); inserted exactly at it, it
+  stays. A delete moves it back by the run's length, or to the start of the run
+  if it was inside it. When the text no longer reaches the right edge, the draw
+  pulls the view back (view 10, delete 12 to the end → 7).
+
+**One deliberate difference:** Tk's cursor is a line *between* characters,
+ours occupies a cell. So while the cursor is at the very end, the view may sit
+one past `length − width`, leaving that cell for it. Otherwise a cursor typed to
+the end of a full field would be drawn off its edge.
+
+**Insert and delete carry the selection**, as of `TkCurses-61v`: they used to
+drop it. Measured on Tk 9.0.2 with 2–5 selected in `abcdefgh`:
+
+| Edit | Selection after |
+|------|-----------------|
+| insert 2 chars at 0, 1 or 2 (at or before its start) | 4–7 |
+| insert at 3 or 4 (inside it) | 2–7 |
+| insert at 5 or later (at or after its end) | 2–5 |
+| delete 1–3 (across its start) | 1–3 |
+| delete 3–4 (inside it) | 2–4 |
+| delete 4–6 (across its end) | 2–4 |
+| delete 2–5, 1–6 or 0–8 (all of it) | none |
+
+So text inserted exactly at either end lands *outside* the selection. The
+selection **anchor** moves with the text too, and outlives the selection: after
+`selection_from(2)`, `selection_to(5)` and `delete(2, 5)`, a `selection_to(4)`
+reads 2–4. An anchor sitting exactly on an insertion point moves only if the
+selection starts there. With nothing selected, a Shift-arrow starts afresh at
+the cursor, whatever anchor an edit left.
+
 **Configuration Options:**
 
 | Option | tkinter | TkCurses |
@@ -3535,7 +3583,8 @@ with a 10-wide listbox and a 30-character item, and matched here:
   **widest** item: `(0.0, 0.333…)`.
 - a unit is one character; a **page is the width less two**, never under one
   (8 at width 10, 18 at 20, 1 at 3).
-- `moveto` **rounds** to the nearest character, and every form clamps so the
+- `moveto` **rounds** to the nearest character, **halves up** (2.5 → 3, not
+  Python's 2; `TkCurses-5e0`), and every form clamps so the
   widest item's end is as far as it goes.
 - the offset is **not** re-clamped when items go: scroll one right, delete the
   wide item, and Tk answers `(0.2, 1.0)` over a 5-character remainder.

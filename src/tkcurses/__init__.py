@@ -42,6 +42,7 @@ import contextlib
 import curses as _curses
 import inspect
 import itertools
+import math
 import os
 import re
 import sys
@@ -6728,7 +6729,7 @@ class Entry(_Drawable, XView):
         # configure(), which is why it lives here rather than in the trace
         # handler alone. TkCurses-3xb.
         self._validate_forced()
-        self._refresh_view()
+        self._publish_view()
         self._redraw()
 
     def _publish(self) -> None:
@@ -6793,7 +6794,6 @@ class Entry(_Drawable, XView):
         selects everything and then moves the cursor to the end.
         """
         self._field.place_cursor(self.index(index))
-        self._refresh_view()
         self._redraw()
 
     def index(self, index: Any) -> int:
@@ -6907,7 +6907,6 @@ class Entry(_Drawable, XView):
         """Extend the selection to ``index``."""
         self._field.move_to(self.index(index), extend=True)
         self._claim_primary()
-        self._refresh_view()
         self._redraw()
 
     select_to = selection_to
@@ -6928,18 +6927,36 @@ class Entry(_Drawable, XView):
         accept the scrollbar arguments, and so does real tkinter's Entry -
         measured, ``xview()`` on a 10-wide entry holding 43 characters answers
         ``(0.0, 0.023255813953488372)``. TkCurses-ale.
+
+        **Only the view moves.** It used to move the insertion cursor and so
+        drop the selection, which Tk's does not do - measured on Tk 9.0.2, an
+        entry 5 wide holding ``a``-``z`` with the cursor at 3:
+
+        * ``moveto f`` shows character ``f * length`` first, halves rounded up;
+        * ``scroll n units`` moves n characters, ``scroll n pages`` moves
+          ``n * max(1, width - 2)`` - 1 at widths 1 to 3, 3 at 5, 6 at 8;
+        * an index is shown first;
+        * every form stops at ``length - width``, so the last character sits
+          at the right edge, and a text shorter than the field never scrolls;
+        * the cursor stays at 3 and a selection survives.
+
+        TkCurses-i8s.
         """
         if not args:
             return self._view_fractions()
+        width = self._text_area().width
         if args[0] == "moveto":
-            self._field.move_to(int(float(args[1]) * max(1, len(self.get()))))
+            # Halves round UP, as Tk's do (2.5 of 26 shows character 3);
+            # Python's round() would send them to the even neighbour.
+            first = math.floor(float(args[1]) * len(self.get()) + 0.5)
         elif args[0] == "scroll":
             count = int(args[1])
-            step = max(1, self._text_area().width) if args[2] == "pages" else 1
-            self._field.move_to(self._field.view + count * step)
+            step = max(1, width - 2) if args[2] == "pages" else 1
+            first = self._field.view + count * step
         else:
-            self._field.move_to(self.index(args[0]))
-        self._refresh_view()
+            first = self.index(args[0])
+        self._field.set_view(first, width)
+        self._publish_view()
         self._redraw()
         return None
 
@@ -6949,6 +6966,7 @@ class Entry(_Drawable, XView):
         if total <= 0:
             return (0.0, 1.0)
         width = max(1, self._text_area().width)
+        self._field.fit_view(width)
         first = self._field.view
         return (first / total, min(1.0, (first + width) / total))
 
@@ -7194,13 +7212,21 @@ class Entry(_Drawable, XView):
         self._changed()
 
     def _changed(self) -> None:
-        """Publish, rescroll and repaint after the contents changed."""
+        """Publish and repaint after the contents changed.
+
+        Not rescroll: an edit made by the program leaves the view where it
+        was, as Tk's does. The bindings scroll, through :meth:`_see_cursor`.
+        """
         self._publish()
-        self._refresh_view()
+        self._publish_view()
         self._redraw()
 
-    def _refresh_view(self) -> None:
-        """Scroll so the cursor is on screen, and say where the view ended up."""
+    def _see_cursor(self) -> None:
+        """Scroll so the cursor is on screen, and say where the view ended up.
+
+        Tk's ``see insert``: for keystrokes and clicks, not for the program's
+        own calls. TkCurses-i8s.
+        """
         self._field.scroll_into_view(self._text_area().width)
         self._publish_view()
 
@@ -7272,10 +7298,11 @@ class Entry(_Drawable, XView):
         if window is None or self.tk.screen is None:
             return
         area = self._text_area()
-        # The window is a function of the cursor and the current width, and
-        # the width is not known until the widget has been laid out - text
-        # inserted before then scrolled against a field of no width at all.
-        self._field.scroll_into_view(area.width)
+        # Only pulled back if the text has shrunk away from the right edge; it
+        # does not follow the cursor here, or every redraw would undo an
+        # xview (TkCurses-i8s). Before layout the width is 0 and this is a
+        # no-op, so text inserted early is not scrolled against no width.
+        self._field.fit_view(area.width)
         dispatcher = CursesDispatcher.get()
         attribute = self._background_attribute() | self._font_attribute()
         with contextlib.suppress(ValueError):
@@ -7393,11 +7420,22 @@ _ENTRY_MOTION: dict[str, Any] = {
 
 
 def _entry_key(event: Event) -> str | None:
-    """Handle one key in an Entry.
+    """Handle one key in an Entry, then bring the cursor into view.
 
     Returns ``"break"`` for keys the field consumed, so a Left arrow moving
-    the cursor does not also reach whatever else is bound to it.
+    the cursor does not also reach whatever else is bound to it. Scrolling to
+    the cursor belongs here and not in the edits themselves: Tk's bindings
+    do it, its ``insert`` and ``icursor`` do not. TkCurses-i8s.
     """
+    result = _entry_keystroke(event)
+    if result == "break":
+        event.widget._see_cursor()
+        event.widget._redraw()
+    return result
+
+
+def _entry_keystroke(event: Event) -> str | None:
+    """Apply one key to an Entry's field."""
     entry = event.widget
     field = entry._field
     keysym = event.keysym
@@ -7413,8 +7451,6 @@ def _entry_key(event: Event) -> str | None:
             field.move_by(motion, extend=extend)
         if extend:
             entry._claim_primary()
-        entry._refresh_view()
-        entry._redraw()
         return "break"
 
     if keysym == "BackSpace":
@@ -7463,7 +7499,7 @@ def _entry_click(event: Event) -> None:
         return
     entry.focus_set()
     entry._field.move_to(entry._field.index_at(event.x - entry._text_area().x))
-    entry._refresh_view()
+    entry._see_cursor()
     entry._redraw()
 
 
@@ -11755,7 +11791,9 @@ class Listbox(_Drawable, XView, YView):
             except (TypeError, ValueError):
                 raise TclError(f'expected integer but got "{args[0]}"') from None
         elif args[0] == "moveto":
-            left = round(float(args[1]) * self._widest())
+            # Halves round UP, as Tk's do; round() would send 2.5 to 2.
+            # TkCurses-5e0.
+            left = math.floor(float(args[1]) * self._widest() + 0.5)
         elif args[0] == "scroll":
             what = str(args[2])
             if what not in ("units", "pages"):

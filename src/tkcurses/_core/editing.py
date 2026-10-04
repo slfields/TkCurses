@@ -102,13 +102,34 @@ class TextField:
 
         The cursor follows text inserted before it, so typing at the start of
         a field does not leave the cursor behind what was just typed.
+
+        **The selection, its anchor and the view move with the text**, as in
+        Tk - measured on 9.0.2, a selection of 2-5 reads 4-7 after two
+        characters go in at 0, and 2-7 after they go in at 3. Text inserted
+        exactly at either end of the selection lands *outside* it. The view
+        moves only for text inserted strictly before it, so the characters on
+        screen stay on screen. Until TkCurses-61v any insert dropped the
+        selection.
         """
         index = self.clamp(index)
+        added = len(string)
         self._text = self._text[:index] + string + self._text[index:]
         if self._cursor >= index:
-            self._cursor += len(string)
-        self._selection = None
-        self._anchor = None
+            self._cursor += added
+        if self._selection is not None:
+            first, last = self._selection
+            # The anchor is tested against the OLD first: an anchor sitting on
+            # the insertion point moves only when the selection starts there.
+            if self._anchor is not None and (self._anchor > index or first >= index):
+                self._anchor += added
+            self._selection = (
+                first + added if first >= index else first,
+                last + added if last > index else last,
+            )
+        elif self._anchor is not None and self._anchor > index:
+            self._anchor += added
+        if self._view > index:
+            self._view += added
 
     def delete(self, first: int, last: int | None = None) -> None:
         """Delete from ``first`` up to but not including ``last``.
@@ -116,6 +137,11 @@ class TextField:
         With no ``last`` this removes one character, matching Tk. A range
         given backwards is taken the right way round rather than ignored,
         because a selection dragged leftwards produces exactly that.
+
+        Every position past the deleted run - the cursor, both ends of the
+        selection, its anchor and the view - moves back by its length, and
+        one inside the run moves to its start. A selection left empty is
+        dropped. Measured against Tk 9.0.2; TkCurses-61v.
         """
         first = self.clamp(first)
         last = first + 1 if last is None else self.clamp(last)
@@ -124,13 +150,19 @@ class TextField:
         if first == last:
             return
         self._text = self._text[:first] + self._text[last:]
-        if self._cursor > last:
-            self._cursor -= last - first
-        elif self._cursor > first:
-            self._cursor = first
-        self._selection = None
-        self._anchor = None
-        self._clamp_view()
+
+        def moved(position: int) -> int:
+            if position >= last:
+                return position - (last - first)
+            return min(position, first)
+
+        self._cursor = moved(self._cursor)
+        if self._selection is not None:
+            start, stop = moved(self._selection[0]), moved(self._selection[1])
+            self._selection = (start, stop) if start < stop else None
+        if self._anchor is not None:
+            self._anchor = moved(self._anchor)
+        self._view = moved(self._view)
 
     def delete_selection(self) -> bool:
         """Delete the selected text. True if there was any."""
@@ -151,7 +183,10 @@ class TextField:
         """
         index = self.clamp(index)
         if extend:
-            if self._anchor is None:
+            # With nothing selected the drag starts here, whatever anchor an
+            # edit left behind - what Tk's Shift-arrow bindings do (measured:
+            # type over a selection, then Shift-Right selects one character).
+            if self._anchor is None or self._selection is None:
                 self._anchor = self._cursor
             self._cursor = index
             self._set_selection(self._anchor, index)
@@ -220,9 +255,12 @@ class TextField:
     def scroll_into_view(self, width: int) -> None:
         """Move the window so the cursor is on screen.
 
-        Called after anything that moves the cursor or changes the text. The
-        window only moves as far as it must, so a cursor in the middle of a
-        long line does not recentre the text every keystroke.
+        Tk's ``see insert``, which its entry *bindings* do after a keystroke
+        or a click - and only they. A program calling ``insert``, ``icursor``
+        or ``xview`` leaves the view where it is, so this is not called after
+        every change (TkCurses-i8s). The window only moves as far as it must,
+        so a cursor in the middle of a long line does not recentre the text
+        every keystroke.
         """
         if width <= 0:
             self._view = 0
@@ -232,6 +270,32 @@ class TextField:
         elif self._cursor > self._view + width - 1:
             self._view = self._cursor - width + 1
         self._clamp_view()
+
+    def set_view(self, index: int, width: int) -> None:
+        """Scroll so ``index`` is the first character shown - Tk's ``xview``.
+
+        The cursor is not touched: in Tk the view and the insertion cursor are
+        independent, and scrolling an entry moves neither the cursor nor the
+        selection (measured on 9.0.2; this moved the cursor until
+        TkCurses-i8s). Held to ``len - width`` at most, as Tk holds it, so a
+        scroll to the end shows the last ``width`` characters and no blank.
+        """
+        self._view = max(0, min(index, len(self._text) - max(0, width)))
+
+    def fit_view(self, width: int) -> None:
+        """Pull the window back if the text no longer reaches its right edge.
+
+        Tk does this when it draws: delete the tail of a long entry and the
+        view slides left until the text fills the field again. One cell more
+        is allowed while the cursor is at the very end, which Tk does not
+        need - its cursor is a line between characters, ours occupies a cell,
+        and without it a cursor typed to the end of a full field would be
+        drawn off the edge.
+        """
+        limit = len(self._text) - max(0, width)
+        if self._cursor == len(self._text):
+            limit += 1
+        self._view = max(0, min(self._view, limit))
 
     def _clamp_view(self) -> None:
         """Keep the window inside the text."""

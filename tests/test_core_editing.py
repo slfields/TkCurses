@@ -203,10 +203,93 @@ def test_deleting_no_selection_reports_nothing_done(field):
     assert field.text == "hello"
 
 
-def test_inserting_drops_the_selection(field):
-    field.select_range(0, 2)
-    field.insert(0, "X")
-    assert field.selection is None
+# Insert and delete carry the selection with the text. Measured on Tk 9.0.2,
+# tk.Entry holding "abcdefgh" with 2-5 ("cde") selected. Until TkCurses-61v any
+# insert or delete dropped the selection outright.
+
+
+@pytest.mark.parametrize(
+    ("index", "expected"),
+    [
+        (0, (4, 7)),  # before it: both ends move
+        (1, (4, 7)),
+        (2, (4, 7)),  # exactly at its start: lands outside it
+        (3, (2, 7)),  # inside it: it grows
+        (4, (2, 7)),
+        (5, (2, 5)),  # exactly at its end: lands outside it
+        (6, (2, 5)),  # after it: untouched
+        (8, (2, 5)),
+    ],
+)
+def test_inserting_carries_the_selection_with_the_text(index, expected):
+    field = TextField("abcdefgh")
+    field.select_range(2, 5)
+    field.insert(index, "XY")
+    assert field.selection == expected
+
+
+@pytest.mark.parametrize(
+    ("first", "last", "expected"),
+    [
+        (0, 1, (1, 4)),
+        (0, 2, (0, 3)),
+        (1, 3, (1, 3)),  # overlapping its start: its start goes to the cut
+        (2, 3, (2, 4)),
+        (3, 4, (2, 4)),  # inside it: it shrinks
+        (2, 4, (2, 3)),
+        (4, 5, (2, 4)),
+        (4, 6, (2, 4)),  # overlapping its end
+        (5, 7, (2, 5)),  # after it: untouched
+        (6, 8, (2, 5)),
+        (2, 5, None),  # all of it: gone
+        (1, 6, None),
+        (0, 8, None),
+    ],
+)
+def test_deleting_carries_the_selection_with_the_text(first, last, expected):
+    field = TextField("abcdefgh")
+    field.select_range(2, 5)
+    field.delete(first, last)
+    assert field.selection == expected
+
+
+@pytest.mark.parametrize(
+    ("anchor", "other", "edit", "moved_to"),
+    [
+        # Tk: selection_from(anchor), selection_to(other), the edit, then a
+        # selection_to(n) whose result - in the comment - shows the anchor.
+        (2, 5, ("insert", 0), 4),  # to(7) -> 4-7
+        (2, 5, ("insert", 2), 4),  # on the point, selection starts there: moves
+        (5, 2, ("insert", 5), 5),  # on the point, selection does not: stays
+        (2, 5, ("insert", 5), 2),  # to(0) -> 0-2
+        (2, 5, ("insert", 3), 2),  # to(7) -> 2-7
+        (5, 2, ("insert", 0), 7),  # to(1) -> 1-7
+        (2, 5, ("delete", 0, 1), 1),  # to(7) -> 1-7
+        (2, 5, ("delete", 1, 3), 1),  # to(7) -> 1-6
+        (2, 5, ("delete", 2, 5), 2),  # selection gone, anchor kept; to(4) -> 2-4
+        (5, 2, ("delete", 3, 7), 3),  # to(0) -> 0-3
+    ],
+)
+def test_the_anchor_moves_with_the_text(anchor, other, edit, moved_to):
+    field = TextField("abcdefgh")
+    field.move_to(anchor)
+    field.move_to(other, extend=True)
+    if edit[0] == "insert":
+        field.insert(edit[1], "XY")
+    else:
+        field.delete(edit[1], edit[2])
+    assert field._anchor == moved_to
+
+
+def test_shift_arrow_after_typing_over_a_selection_starts_afresh():
+    """Tk: select 2-5 of abcdefgh, type X, Shift-Right selects only the f."""
+    field = TextField("abcdefgh")
+    field.select_range(2, 5)
+    field.place_cursor(5)
+    field.delete_selection()
+    field.insert(field.cursor, "X")
+    field.move_by(1, extend=True)
+    assert field.selection == (3, 4)
 
 
 # ------------------------------------------------------------- moving about
@@ -300,6 +383,86 @@ def test_deleting_pulls_the_view_back_into_the_text():
     field.scroll_into_view(4)
     field.delete(0, 10)
     assert field.view == 0
+
+
+# How edits and xview move the view, measured on Tk 9.0.2: an entry 5 wide
+# holding a-z with its view at 10. TkCurses-i8s.
+
+
+def scrolled(view=10):
+    field = TextField("abcdefghijklmnopqrstuvwxyz")
+    field.set_view(view, 5)
+    return field
+
+
+@pytest.mark.parametrize(
+    ("edit", "view"),
+    [
+        (("insert", 9), 12),  # before the view: it moves, the same text stays shown
+        (("insert", 10), 10),  # exactly at it: it stays
+        (("insert", 26), 10),
+        (("delete", 5, 10), 5),
+        (("delete", 8, 12), 8),  # across it: it goes to the cut
+        (("delete", 10, 12), 10),
+        (("delete", 20, 26), 10),
+    ],
+)
+def test_edits_move_the_view_with_the_text(edit, view):
+    field = scrolled()
+    if edit[0] == "insert":
+        field.insert(edit[1], "XY")
+    else:
+        field.delete(edit[1], edit[2])
+    assert field.view == view
+
+
+def test_editing_does_not_bring_the_cursor_into_view():
+    """Tk's insert and icursor leave the view alone; only its bindings scroll."""
+    field = scrolled()
+    field.place_cursor(0)
+    field.insert(26, "XYZ")
+    assert field.view == 10
+
+
+@pytest.mark.parametrize(
+    ("index", "view"), [(0, 0), (10, 10), (21, 21), (22, 21), (99, 21), (-3, 0)]
+)
+def test_setting_the_view_stops_at_the_last_full_field(index, view):
+    field = scrolled()
+    field.set_view(index, 5)
+    assert field.view == view
+
+
+def test_setting_the_view_leaves_the_cursor_and_the_selection():
+    field = scrolled(0)
+    field.place_cursor(3)
+    field.select_range(1, 4)
+    field.set_view(10, 5)
+    assert (field.cursor, field.selection) == (3, (1, 4))
+
+
+def test_a_text_shorter_than_the_field_never_scrolls():
+    field = TextField("abc")
+    field.set_view(2, 5)
+    assert field.view == 0
+
+
+def test_a_shrunken_text_pulls_the_view_back_to_fill_the_field():
+    """Tk: view 10, delete(12, end) leaves 12 characters, shown from 7."""
+    field = scrolled()
+    field.place_cursor(0)
+    field.delete(12, 26)
+    field.fit_view(5)
+    assert field.view == 7
+
+
+def test_a_cursor_at_the_end_keeps_its_cell():
+    """Our cursor occupies a cell, so it may hold the view one past Tk's limit."""
+    field = TextField("abcdefghij")
+    field.move_to(10)
+    field.scroll_into_view(4)
+    field.fit_view(4)
+    assert field.visible(4) == "hij"
 
 
 def test_a_column_maps_to_an_index():

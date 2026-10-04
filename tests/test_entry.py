@@ -811,21 +811,118 @@ def test_an_entry_asks_for_its_width_plus_its_border(entry):
     assert entry.winfo_reqheight() == 1 + 2
 
 
-def test_the_view_follows_the_cursor(entry):
-    """Typing past the right edge scrolls the view along with the cursor.
+# The view and the cursor are separate, as in Tk: a keystroke or a click
+# brings the cursor into view, the program's own calls do not, and xview moves
+# the view alone. Measured on Tk 9.0.2; until TkCurses-i8s every xview form
+# moved the cursor, and every redraw dragged the view back to it.
 
-    Asserted on the FIRST FRACTION rather than on a character index: xview now
-    answers the pair a scrollbar wants, as Tk's does and as Text and Canvas here
-    already did. TkCurses-ale.
-    """
-    entry.insert(0, "x" * 50)
+DIGITS = "0123456789" * 10
+
+
+def first_shown(entry):
+    """The index of the leftmost character on screen."""
+    return entry._field.view
+
+
+def test_typing_past_the_right_edge_scrolls_the_view(entry):
+    for char in "x" * 50:
+        typed(entry, char)
     assert entry.xview()[0] > 0
 
 
-def test_the_view_comes_back_when_the_cursor_does(entry):
-    entry.insert(0, "x" * 50)
-    entry.icursor(0)
+def test_a_key_brings_the_cursor_back_into_view(entry):
+    for char in "x" * 50:
+        typed(entry, char)
+    typed(entry, "", keysym="Home")
     assert entry.xview()[0] == 0.0
+
+
+def test_the_program_inserting_does_not_scroll(entry):
+    """Tk: inserting at the end of a long entry leaves its view at 0."""
+    entry.insert(0, "x" * 50)
+    assert entry.xview()[0] == 0.0
+
+
+def test_icursor_does_not_scroll(entry):
+    """Tk: view at 10, icursor(0), and the view is still at 10."""
+    entry.insert(0, DIGITS)
+    entry.xview(10)
+    entry.icursor(0)
+    assert first_shown(entry) == 10
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (("moveto", 0.5), 50),
+        (("moveto", 0.025), 3),  # 2.5 rounds up, as Tk's does
+        (("moveto", 0.015), 2),
+        (("moveto", 1.0), "last"),
+        (("moveto", -0.2), 0),
+        (("scroll", 2, "units"), 2),
+        (("scroll", 1, "pages"), "page"),
+        (("scroll", 2, "pages"), "2 pages"),
+        (("scroll", -1, "pages"), 0),
+        (("scroll", 999, "units"), "last"),
+        ((30,), 30),
+        (("end",), "last"),
+    ],
+)
+def test_xview_moves_the_view(entry, args, expected):
+    width = entry._text_area().width
+    resolved = {
+        "last": len(DIGITS) - width,
+        "page": width - 2,
+        "2 pages": 2 * (width - 2),
+    }.get(expected, expected)
+    entry.insert(0, DIGITS)
+    entry.icursor(3)
+    entry.xview(*args)
+    assert first_shown(entry) == resolved
+
+
+def test_xview_leaves_the_cursor_and_the_selection(entry):
+    """The bug as filed: Tk keeps the cursor at 3 through all three forms."""
+    entry.insert(0, DIGITS)
+    entry.icursor(3)
+    entry.selection_range(1, 4)
+    entry.xview_moveto(0.5)
+    entry.xview_scroll(2, "units")
+    entry.xview(10)
+    assert entry.index("insert") == 3
+    assert (entry.index("sel.first"), entry.index("sel.last")) == (1, 4)
+
+
+def test_xview_survives_a_redraw(entry):
+    """The redraw used to scroll back to the cursor, undoing every xview."""
+    entry.insert(0, DIGITS)
+    entry.icursor(0)
+    entry.xview(40)
+    entry._redraw()
+    assert first_shown(entry) == 40
+
+
+def test_a_short_entry_does_not_scroll(entry):
+    entry.insert(0, "abc")
+    entry.xview_moveto(0.5)
+    assert entry.xview() == (0.0, 1.0)
+
+
+def test_inserting_before_the_view_keeps_the_same_text_on_screen(entry):
+    entry.insert(0, DIGITS)
+    entry.xview(10)
+    entry.insert(0, "XY")
+    assert first_shown(entry) == 12
+
+
+def test_a_scrollbar_hears_about_xview(entry):
+    reported: list[tuple[float, float]] = []
+    entry.insert(0, DIGITS)
+    entry.configure(
+        xscrollcommand=lambda first, last: reported.append((float(first), float(last)))
+    )
+    entry.xview(50)
+    assert reported[-1][0] == 0.5
 
 
 def test_an_entry_too_short_for_its_border_still_shows_its_text(root):

@@ -197,24 +197,47 @@ def test_show_masks_what_is_displayed(terminal, tmp_path):
     assert "secret" not in "\n".join(term.display)
 
 
-def test_text_longer_than_the_field_scrolls_within_it(terminal, tmp_path):
+def test_text_inserted_by_the_program_shows_from_its_start(terminal, tmp_path):
+    """Tk's insert does not scroll: a long value shows its beginning.
+
+    Measured on Tk 9.0.2. This used to show the END, because every redraw
+    scrolled to the cursor, which inserting had moved there. TkCurses-i8s.
+    """
     term = terminal(cols=40, rows=12)
     term.run_source(
         program(
             "e = tkcurses.Entry(root, width=10)\n"
             "e.place(x=1, y=1)\n"
-            "e.insert(0, 'abcdefghijklmnop')\n"
+            "e.insert(0, 'abcdefghijklmnop')"
+        ),
+        workdir=tmp_path,
+    )
+    # One wait naming everything asserted: the row is drawn whole or not yet.
+    term.wait_for(
+        lambda t: "abcdefghij" in t.display[2] and "k" not in t.display[2],
+        message="the start of the text, and nothing past the field",
+    )
+
+
+def test_typing_past_the_edge_scrolls_within_the_field(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "e = tkcurses.Entry(root, width=10)\n"
+            "e.place(x=1, y=1)\n"
+            "e.focus_set()\n"
             "buffer.write(10, 0, 'ready')"
         ),
         workdir=tmp_path,
     )
     term.wait_for_text("ready")
-    term.wait_for_idle()
-    line = term.display[2]
+    term.send(b"abcdefghijklmnop")
     # The end is visible, the beginning has scrolled off, and nothing has
     # spilled past the field's border.
-    assert "nop" in line
-    assert "abc" not in line
+    term.wait_for(
+        lambda t: "nop" in t.display[2] and "abc" not in t.display[2],
+        message="the end of the typed text, scrolled into view",
+    )
 
 
 def test_a_selection_is_visible(terminal, tmp_path):

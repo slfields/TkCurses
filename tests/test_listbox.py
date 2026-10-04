@@ -442,6 +442,17 @@ def test_xview_moveto_rounds_to_the_nearest_character(wide, fraction):
     assert wide._left == 15
 
 
+@pytest.mark.parametrize(("half", "expected"), [(0.5, 1), (2.5, 3), (4.5, 5)])
+def test_xview_moveto_rounds_halves_up(wide, half, expected):
+    """Measured on Tk 9.0.2 over a 30-character item: 2.5 -> 3, 4.5 -> 5.
+
+    Python's round() sends halves to the even neighbour - 2.5 -> 2 - which is
+    what this did until TkCurses-5e0.
+    """
+    wide.xview_moveto(half / 30)
+    assert wide._left == expected
+
+
 def test_xview_moveto_stops_at_the_end_of_the_widest_item(wide):
     wide.xview_moveto(1.0)
     assert wide.xview() == (20 / 30, 1.0)

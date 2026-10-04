@@ -19,6 +19,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 pytestmark = pytest.mark.tty
@@ -85,10 +87,31 @@ def click_text(term, text, offset=0):
     missing. The dialog's listing arrives before its buttons do, so a test
     that waited for a filename and then clicked Cancel was racing the
     button's first paint. Seen on CI, on one Python version out of five.
+
+    **It matches the text standing alone**, not inside a longer word or a
+    path. The dialog's own entries hold paths, and pytest names the temporary
+    directory after the test: on CI ``test_a_subdirectory_can_be_opened``
+    runs in ``.../test_a_subdirectory_can_be_ope0/``, so a plain search for
+    ``subdir`` clicked the filter entry instead of the listing. It used to
+    be hidden because the entry showed the END of its path; since
+    TkCurses-i8s it shows the start, as Tk's does.
     """
-    term.wait_for(lambda t: any(text in line for line in t.display), message=repr(text))
-    row = next(i for i, line in enumerate(term.display) if text in line)
-    term.click(term.display[row].index(text) + offset, row)
+    pattern = re.compile(rf"(?<![\w./-]){re.escape(text)}(?![\w./-])")
+
+    def found(t):
+        return next(
+            (
+                (match.start(), row)
+                for row, line in enumerate(t.display)
+                for match in [pattern.search(line)]
+                if match
+            ),
+            None,
+        )
+
+    term.wait_for(lambda t: found(t) is not None, message=repr(text))
+    column, row = found(term)
+    term.click(column + offset, row)
 
 
 PLAIN = 'filedialog.FileDialog(root).go(WORK, "*.txt")'
