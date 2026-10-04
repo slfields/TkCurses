@@ -103,11 +103,13 @@ def test_the_cursor_is_only_shown_when_focused(terminal, tmp_path):
         workdir=tmp_path,
     )
     term.wait_for_text("aaa")
-    term.wait_for_idle()
-    focused_row = [term.attrs_at(2, col)["reverse"] for col in range(2, 12)]
-    unfocused_row = [term.attrs_at(6, col)["reverse"] for col in range(2, 12)]
-    assert any(focused_row), "the focused field should show a cursor"
-    assert not any(unfocused_row), "the unfocused field should not"
+    # The terminal's own cursor, at the end of 'aaa' in the focused field -
+    # not a painted reversed cell, which could not be told from a selection
+    # (TkCurses-lw2). There is one cursor, so the other field cannot have it.
+    term.wait_for(lambda t: t.cursor_cell() == (2, 5), message="the cursor in a")
+    assert not any(
+        term.attrs_at(row, col)["reverse"] for row in (2, 6) for col in range(2, 12)
+    ), "no cell is painted as a cursor any more"
 
 
 def _focus_program(state: str) -> str:
@@ -356,3 +358,130 @@ def test_the_placeholder_is_not_masked_on_screen(terminal, tmp_path):
     term.wait_for_text("type here")
     term.wait_for_cell(2, 2, lambda cell: cell.data == "t")
     assert "*" not in term.row(2), f"the placeholder was masked\n{term.describe()}"
+
+
+# ---------------------------------------------- Ctrl-C copies, or closes
+#
+# The author's decision, TkCurses-lw2: Ctrl-C copies when the focused widget
+# has a selection, and is the close gesture otherwise. Driven with the real
+# byte, so the whole path is exercised - the tty turning it into SIGINT, the
+# loop catching it, and the choice between copying and closing.
+
+
+def _clipboard_watcher() -> str:
+    return (
+        "e = tkcurses.Entry(root, width=20)\n"
+        "e.place(x=1, y=1)\n"
+        "e.insert(0, 'hello world')\n"
+        "e.selection_range(0, 5)\n"
+        "e.focus_set()\n"
+        "def show():\n"
+        "    try:\n"
+        "        held = root.clipboard_get()\n"
+        "    except tkcurses.TclError:\n"
+        "        held = '-'\n"
+        "    buffer.write(8, 0, ('clip=' + held).ljust(20))\n"
+        "    root.tk.screen.refresh()\n"
+        "    root.after(50, show)\n"
+        "show()\n"
+        "buffer.write(10, 0, 'ready')"
+    )
+
+
+def test_ctrl_c_with_a_selection_copies_and_keeps_running(terminal, tmp_path):
+    """Copies, and the app carries on: it answers the next key, and once that
+    key has dropped the selection, the same Ctrl-C closes it."""
+    term = terminal(cols=40, rows=12)
+    term.run_source(program(_clipboard_watcher()), workdir=tmp_path)
+    term.wait_for_text("clip=-")
+    term.send(b"\x03")
+    term.wait_for_text("clip=hello")
+    # Still running, and still taking keys: End moves the cursor and, being
+    # a plain arrow, drops the selection - so the next Ctrl-C has nothing to
+    # copy and closes.
+    # The selection's first cell, highlighted - so that waiting for it to stop
+    # being highlighted below means something.
+    term.wait_for_cell(2, 2, lambda cell: cell.reverse and cell.data == "h")
+    term.send_keys("<End>")
+    # Waited for on screen, not with wait_for_idle: Ctrl-C becomes a signal
+    # the moment the tty reads it, while End waits in the input queue, so a
+    # Ctrl-C sent before End is HANDLED would find the selection still there
+    # and copy again. The highlight going is End having been handled.
+    term.wait_for_cell(2, 2, lambda cell: not cell.reverse and cell.data == "h")
+    term.send(b"\x03")
+    assert term.wait_for_exit(timeout=10) == 0
+
+
+def test_ctrl_c_with_nothing_selected_still_closes(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    body = _clipboard_watcher().replace("e.selection_range(0, 5)\n", "")
+    term.run_source(program(body), workdir=tmp_path)
+    term.wait_for_text("clip=-")
+    term.send(b"\x03")
+    assert term.wait_for_exit(timeout=10) == 0
+
+
+# ------------------------------------------- the terminal's own cursor
+#
+# The insertion point is the terminal's real cursor, not a painted reversed
+# cell - which was also how a selection is drawn, so a person running UAT 43
+# could not tell the cursor from the selected text beside it. TkCurses-lw2.
+
+
+def test_the_cursor_and_a_selection_are_both_visible_and_distinct(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "e = tkcurses.Entry(root, width=20)\n"
+            "e.place(x=1, y=1)\n"
+            "e.insert(0, 'hello world')\n"
+            "e.selection_range(0, 5)\n"
+            "e.icursor(5)\n"
+            "e.focus_set()"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(
+        lambda t: (
+            t.cursor_cell() == (2, 7)
+            and all(t.attrs_at(2, c)["reverse"] for c in range(2, 7))
+            and not t.attrs_at(2, 7)["reverse"]
+        ),
+        message="'hello' selected and the cursor just after it, at column 7",
+    )
+
+
+def test_the_cursor_follows_the_arrows(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "e = tkcurses.Entry(root, width=20)\n"
+            "e.place(x=1, y=1)\n"
+            "e.insert(0, 'hello')\n"
+            "e.focus_set()"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda t: t.cursor_cell() == (2, 7), message="cursor at the end")
+    term.send_keys("<Left>", "<Left>")
+    term.wait_for(lambda t: t.cursor_cell() == (2, 5), message="two to the left")
+    term.send_keys("<Home>")
+    term.wait_for(lambda t: t.cursor_cell() == (2, 2), message="at the start")
+
+
+def test_the_cursor_hides_when_the_focus_leaves_for_a_button(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "e = tkcurses.Entry(root, width=20)\n"
+            "e.place(x=1, y=1)\n"
+            "e.insert(0, 'hello')\n"
+            "b = tkcurses.Button(root, text='OK')\n"
+            "b.place(x=1, y=5)\n"
+            "e.focus_set()\n"
+            "root.after(300, b.focus_set)"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda t: t.cursor_cell() == (2, 7), message="cursor in the entry")
+    term.wait_for(lambda t: t.cursor_cell() is None, message="cursor hidden")

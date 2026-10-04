@@ -164,6 +164,8 @@ Run it four times, ending it differently each time: `q`, `c`, `x`, and Ctrl-C.
 - [ ] Ctrl-C — the application ends, terminal usable, and **no traceback**:
       nothing bound `<Control-c>`, so the loop treats it as a request to
       close, the same as a window manager's close button
+      (with nothing selected. Since `TkCurses-lw2`, Ctrl-C in an Entry or
+      Text that has a selection copies it instead; see scenario 43)
 - [ ] After all four: prompt back, cursor visible, typing echoed, no `reset`
       needed
 

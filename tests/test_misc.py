@@ -280,16 +280,41 @@ def test_both_the_physical_and_the_virtual_binding_fire(root):
 
 
 def test_event_info_reports_a_virtual_events_sequences(root):
-    root.event_add("<<Paste>>", "<Control-v>", "<Shift-Insert>")
-    assert set(root.event_info("<<Paste>>")) == {
+    root.event_add("<<Mine>>", "<Control-v>", "<Shift-Insert>")
+    assert set(root.event_info("<<Mine>>")) == {
         "<Control-Key-v>",
         "<Shift-Key-Insert>",
     }
 
 
 def test_event_info_with_no_name_lists_the_virtual_events(root):
-    root.event_add("<<Paste>>", "<Control-v>")
-    assert root.event_info() == ("<<Paste>>",)
+    root.event_add("<<Mine>>", "<Control-v>")
+    assert "<<Mine>>" in root.event_info()
+
+
+def test_the_clipboard_virtual_events_are_defined_from_the_start(root):
+    """Tk defines these at startup; so does this, less the keys measured not
+    to reach a program in a terminal - Control-c above all, which is the
+    close gesture and copies only when there is a selection. TkCurses-lw2."""
+    assert set(root.event_info()) >= {
+        "<<Copy>>",
+        "<<Cut>>",
+        "<<Paste>>",
+        "<<PasteSelection>>",
+        "<<SelectAll>>",
+        "<<Clear>>",
+    }
+    assert set(root.event_info("<<Cut>>")) == {
+        "<Control-Key-x>",
+        "<Control-Key-w>",
+        "<Shift-Key-Delete>",
+    }
+    assert set(root.event_info("<<Paste>>")) == {
+        "<Control-Key-v>",
+        "<Control-Key-y>",
+        "<Shift-Key-Insert>",
+    }
+    assert "<Control-Key-c>" not in root.event_info("<<Copy>>")
 
 
 def test_event_delete_stops_the_virtual_event(root):

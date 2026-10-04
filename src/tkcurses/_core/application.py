@@ -36,7 +36,7 @@ import weakref
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from tkcurses._core.bindings import BindingTable, VirtualEvents
+from tkcurses._core.bindings import BindingTable, VirtualEvents, parse_sequence
 from tkcurses._core.clipboard import Selections
 from tkcurses._core.events import MOD_CTRL
 from tkcurses._core.input import SIGNAL_KEYS
@@ -205,6 +205,34 @@ class WidgetRegistry:
         return iter(self._widgets)
 
 
+#: The clipboard virtual events every application starts with, as Tk's do
+#: (``tk.tcl`` defines them at startup). Tk's own sequences, MEASURED on Tk
+#: 9.0.2 with ``event_info``, less the ones measured not to reach a program in
+#: a terminal (TkCurses-lw2, a key probe run in the author's terminal):
+#:
+#: * ``Control-c`` is NOT here. It is the close gesture, and copies only when
+#:   the focused widget has a selection - decided in the interrupt handler,
+#:   not by a binding, because binding ``<Control-c>`` takes the key from the
+#:   tty and there would be no close gesture left. See ``Misc.mainloop``.
+#: * ``F16``/``F18``/``F20`` and ``Meta-w`` are not here: function keys past
+#:   F12 arrive undecoded, and Alt arrives as Escape then the letter.
+#: * ``Shift-Insert`` stays, though many terminals keep it for their own
+#:   paste - in the author's it typed the system clipboard in as keystrokes,
+#:   which is a paste anyway. ``Control-Insert`` likewise, for the terminals
+#:   that pass it.
+DEFAULT_VIRTUAL_EVENTS: dict[str, tuple[str, ...]] = {
+    "<<Copy>>": ("<Control-Key-Insert>",),
+    "<<Cut>>": ("<Control-Key-x>", "<Control-Key-w>", "<Shift-Key-Delete>"),
+    "<<Paste>>": ("<Control-Key-v>", "<Control-Key-y>", "<Shift-Key-Insert>"),
+    "<<PasteSelection>>": ("<ButtonRelease-2>",),
+    # Both: Tk's own is Control-slash, but a terminal sends one byte, 0x1f,
+    # for Ctrl-/ and Ctrl-_ alike, and it is decoded as underscore - measured
+    # in a pty. Without the second, Ctrl-/ would select nothing.
+    "<<SelectAll>>": ("<Control-Key-slash>", "<Control-Key-underscore>"),
+    "<<Clear>>": (),
+}
+
+
 class Application:
     """One widget tree's shared state.
 
@@ -215,6 +243,10 @@ class Application:
     def __init__(self) -> None:
         self.bindings = BindingTable(on_change=self.refresh_signal_keys)
         self.virtual_events = VirtualEvents()
+        for virtual, sequences in DEFAULT_VIRTUAL_EVENTS.items():
+            self.virtual_events.add(
+                virtual, *(parse_sequence(sequence) for sequence in sequences)
+            )
         self.timers = AfterQueue()
         self.selections = Selections()
         self.options = OptionDatabase()

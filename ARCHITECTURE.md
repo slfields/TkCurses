@@ -1936,6 +1936,7 @@ Three behaviours fall out of that, and all three are what a person expects:
 | the application | Ctrl-C does |
 |---|---|
 | binds `<Control-c>` | delivers an ordinary key event; no signal at all |
+| has a **selection in the focused Entry or Text** | **copies it**, and nothing closes (`TkCurses-lw2`, below) |
 | sets `WM_DELETE_WINDOW` | runs the handler — save, prompt, or decline and carry on |
 | does neither | closes the window and exits 0, no traceback |
 
@@ -2033,6 +2034,115 @@ away unread.
 ---
 
 ## Data Flow
+
+### Copy, cut and paste
+
+**Ctrl-C copies when the focused widget has a selection, and closes the
+application otherwise** (`TkCurses-lw2`). That revises the section above, and
+it is the author's decision, made on a measurement rather than a guess. A key
+probe run in the author's terminal (xterm-256color, truecolor) showed that
+**no copy key of Tk's except Ctrl-C reaches a program**:
+
+| key | arrived as | Tk means |
+|---|---|---|
+| Ctrl-C | the close request | copy |
+| Ctrl-X, Ctrl-W, Shift-Delete | keys | cut |
+| Ctrl-V, Ctrl-Y | keys | paste |
+| Shift-Insert | the system clipboard, **typed in** — the terminal's own paste | paste |
+| Ctrl-Insert | **nothing** — the terminal keeps it | copy |
+| Ctrl-Shift-C | **plain Ctrl-C** — so it would have closed the app | (terminal copy) |
+| Ctrl-Shift-V | nothing | (terminal paste) |
+| Alt-W | Escape, then w — Alt is not decoded | copy |
+| F16 / F18 / F20 | undecoded escape sequences | copy / paste / cut |
+| middle button | button 2, to the program | paste PRIMARY |
+
+So the copy decision is made in the interrupt handler, `_copy_on_interrupt`,
+and not by a binding: binding `<Control-c>` takes the key from the tty, and
+there would be no close gesture left. With nothing selected, Ctrl-C closes
+exactly as before; an application that binds `<Control-c>` still takes it
+entirely.
+
+**The virtual events exist from the start**, as Tk defines them in `tk.tcl`,
+with Tk's sequences less the ones that cannot arrive: `<<Cut>>` is Ctrl-X,
+Ctrl-W and Shift-Delete; `<<Paste>>` Ctrl-V, Ctrl-Y and Shift-Insert;
+`<<Copy>>` Ctrl-Insert; `<<SelectAll>>` Ctrl-/ **and Ctrl-_**, because a
+terminal sends one byte, 0x1f, for both and it is decoded as underscore;
+`<<PasteSelection>>` the middle button's release; `<<Clear>>` nothing.
+`event_info("<<Copy>>")` therefore differs from Tk's, which also lists
+Control-c, F16 and Meta-w.
+
+**Entry, its subclasses and Text bind them as Tk's do**, measured on Tk 9.0.2:
+
+- **copy** puts the selection on the clipboard — what is *shown*, so a
+  `show="*"` entry copies `*****` — and with nothing selected does nothing;
+- **cut** is copy then delete, so a readonly or disabled widget still copies
+  and refuses the delete;
+- **paste replaces the selection** — a **deliberate departure from classic
+  Tk on Linux**, decided by the author after a person running UAT 43
+  expected it. Read from Tk 9.0.2's own `text.tcl` (`tk_textPaste`) and
+  Entry's `<<Paste>>` binding, and measured with `hello` selected in
+  `hello world` and `XX` pasted:
+
+  | | Linux (X11) | Windows, macOS |
+  |---|---|---|
+  | classic Entry, Text | `helloXX world` — inserts at the cursor, keeps the selection | `XX world` |
+  | ttk Entry, Combobox | `XX world` | `XX world` |
+
+  Classic Tk deletes the selection only `if {[tk windowingsystem] ne
+  "x11"}`; ttk's `PendingDelete` always does. A terminal is not an X11
+  desktop, and replacing is what ttk and two of Tk's three platforms do, so
+  every widget here replaces: the cursor goes to the start of the selection,
+  the selection is deleted, the clipboard is inserted. Each is a separate,
+  validated edit, so a rejected insert leaves the deletion done — as ttk's,
+  measured (`123`, `1` selected, `ab` pasted under a digits-only
+  `validatecommand`: `23`). A read-only or disabled widget refuses both and
+  keeps its selection. With nothing selected, paste inserts at the cursor.
+  An empty clipboard pastes nothing. **The middle button never replaces**,
+  on any platform — it inserts PRIMARY where it was released;
+- **select all** leaves the cursor where it was; **clear** deletes the
+  selection; the **middle button** inserts PRIMARY where it was released;
+- **dragging** with the left button selects from the press to the pointer,
+  either way round, and the cursor follows the pointer — Tk's character-mode
+  `tk::EntryMouseSelect`, read from the running interpreter. Entry had no drag
+  until a person running UAT 43 tried one; double-click, Shift-click and
+  autoscroll are `TkCurses-svtr`;
+- every edit goes through `insert` and `delete`, so validation and the state
+  have their say. Shift-Delete is a cut, not a delete — Tk lets the virtual
+  event have it — so the key handlers pass it on.
+
+**One selection at a time**, as Tk keeps it. Measured on Tk 9.0.2: with
+`exportselection` on, selecting in one widget clears the selection in whichever
+widget held PRIMARY before — Entry and Text alike, either way round. A widget
+with `exportselection=0` keeps its own and clears nobody's, and copying to the
+clipboard clears nothing. `Selections.own` now calls the previous owner's
+`lost` callback, which is Tk's `selection own -command` and tkinter's
+`selection_own(command=...)`; Entry and Text use it to drop their highlight.
+Text's `exportselection`, stored and never read, now takes PRIMARY whenever
+its `sel` range is not empty (the Text half of `TkCurses-9e8`). Before this,
+several fields stayed highlighted at once, which a person running UAT 43
+reported.
+
+The clipboard is still the process's own: what is copied here does not reach
+other applications. That is `TkCurses-hpr`, the OSC 52 transport.
+
+**The insertion cursor is the terminal's own** (`TkCurses-lw2`). Entry and
+Text painted it as a reversed cell — the same attribute as a selection, and
+never blinking — so a person running UAT 43 could not tell the cursor from
+the selected text beside it. Tk draws a distinct, blinking insertion bar; the
+terminal has one already. `TerminalCursor` (`_core/screen.py`) shows it at the
+focused widget's insert point and hides it everywhere else, so it blinks and
+takes whatever shape the person's terminal is set to — the author's choice,
+over painting a better imitation:
+
+- it is placed **just before every `doupdate`**, on both flush paths (the
+  panel stack and the screen buffer), because curses puts the cursor wherever
+  its virtual cursor is at that moment; shown and hidden only on a change;
+- the focused widget answers where, through `_insert_cell()`: Entry and Text
+  note the cell while drawing, and answer None when unfocused, read-only, or
+  scrolled so the insert point is out of view;
+- the image overlay (`_core/direct.py`) is written after `doupdate`, so it is
+  wrapped in a cursor save and restore (DECSC / DECRC); otherwise the cursor
+  would be left wherever the last image cell went.
 
 ### Cell Structure
 

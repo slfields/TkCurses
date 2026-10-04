@@ -128,6 +128,8 @@ class PanelStack:
         self._panel_factory = panel_factory
         #: Bottom to top. The last element is the frontmost panel.
         self._order: list[Panel] = []
+        #: Placed before every flush when set; see screen.TerminalCursor.
+        self.cursor: Any = None
 
     # ------------------------------------------------------------ creation
 
@@ -341,6 +343,10 @@ class PanelStack:
     def _refresh(self) -> None:
         """Run the curses side of :meth:`update` on the dispatcher's thread."""
         curses.panel.update_panels()
+        if self.cursor is not None:
+            # After update_panels, which leaves the virtual cursor wherever
+            # the last panel's window had it, and before the flush.
+            self.cursor.place()
         curses.doupdate()
 
     # ----------------------------------------------------------- internals

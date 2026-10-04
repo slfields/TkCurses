@@ -46,7 +46,7 @@ from tkcurses._core.geometry import Rect, Size
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-__all__ = ["Cell", "CursesScreen", "ScreenBuffer"]
+__all__ = ["Cell", "CursesScreen", "ScreenBuffer", "TerminalCursor"]
 
 #: What an empty cell holds.
 BLANK = " "
@@ -308,6 +308,52 @@ class ScreenBuffer:
         return f"<ScreenBuffer {self._width}x{self._height} dirty={self.is_dirty}>"
 
 
+class TerminalCursor:
+    """The terminal's own cursor, put where typing goes, or hidden.
+
+    Entry and Text used to paint their insertion point as a reversed cell -
+    the same attribute as a selection, and never blinking - so a person could
+    not tell the cursor from the selected text beside it (found running UAT
+    43, TkCurses-lw2). Tk draws a distinct, blinking insertion bar. The
+    terminal already has one: this shows it at the focused widget's insert
+    point and hides it everywhere else, so it blinks and takes whatever
+    shape the person's terminal is set to. The author's choice, over painting
+    a better imitation.
+
+    ``place`` runs right before every ``doupdate``: curses puts the cursor
+    wherever its virtual cursor is at that moment, so it is set last. The
+    cursor is shown and hidden only on a change, not every frame.
+
+    Args:
+        source: Answers the screen cell, ``(row, column)``, the cursor belongs
+            in, or None when nothing focused takes typing.
+    """
+
+    def __init__(self, source: Callable[[], tuple[int, int] | None]) -> None:
+        self._source = source
+        self._shown: bool | None = None
+
+    def place(self) -> None:
+        """Move the cursor to where it belongs, or hide it. Curses thread only."""
+        try:
+            cell = self._source()
+        except Exception:
+            # A widget half torn down mid-frame is not worth the frame.
+            cell = None
+        if cell is None:
+            if self._shown is not False:
+                with contextlib.suppress(curses.error):
+                    curses.curs_set(0)
+                self._shown = False
+            return
+        with contextlib.suppress(curses.error):
+            curses.setsyx(*cell)
+        if self._shown is not True:
+            with contextlib.suppress(curses.error):
+                curses.curs_set(1)
+            self._shown = True
+
+
 class CursesScreen:
     """Owns the curses screen and paints a :class:`ScreenBuffer` onto it.
 
@@ -318,6 +364,8 @@ class CursesScreen:
 
     def __init__(self, *, dispatcher: CursesDispatcher | None = None) -> None:
         self._dispatcher = dispatcher or CursesDispatcher.get()
+        #: Placed before every flush when set; see :class:`TerminalCursor`.
+        self.cursor: TerminalCursor | None = None
         self._stdscr: Any = None
         self._buffer: ScreenBuffer | None = None
         #: Maps a cell's colours and attributes onto a curses attribute.
@@ -495,5 +543,7 @@ class CursesScreen:
                             stdscr.addch(row, col, cell.char, attr)
                     painted += 1
         stdscr.noutrefresh()
+        if self.cursor is not None:
+            self.cursor.place()
         curses.doupdate()
         return painted

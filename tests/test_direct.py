@@ -113,7 +113,9 @@ def test_a_short_write_is_finished_rather_than_dropped(monkeypatch):
     made.enable()
     for column in range(40):
         made.add(None, 0, column, "█", (column * 6, 0, 0), (0, 0, 0))
-    expected = made.render()
+    # The picture, between a cursor save and restore (DECSC / DECRC), which
+    # keeps the terminal's cursor at the insert point - TkCurses-lw2.
+    expected = b"\x1b7" + made.render() + b"\x1b8"
     monkeypatch.setattr(real_os, "write", dribble)
     sent = made.paint()
     assert sent == len(expected), (

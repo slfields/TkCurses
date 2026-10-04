@@ -1002,6 +1002,16 @@ class TerminalHarness:
         """The full cell at ``(row, col)``, including colour and attributes."""
         return self._screen.buffer[row][col]
 
+    def cursor_cell(self) -> tuple[int, int] | None:
+        """Where the terminal's own cursor is, ``(row, col)``, or None if hidden.
+
+        Entry and Text show their insertion point with the real cursor since
+        TkCurses-lw2, rather than a painted reversed cell - so a test of where
+        typing goes asks this, not the cell attributes.
+        """
+        cursor = self._screen.cursor
+        return None if cursor.hidden else (cursor.y, cursor.x)
+
     def attrs_at(self, row: int, col: int) -> dict[str, object]:
         """Rendering attributes of one cell, for style assertions."""
         cell = self.char_at(row, col)

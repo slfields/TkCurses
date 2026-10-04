@@ -1095,3 +1095,213 @@ def test_scenario_42_left_at_the_start_of_the_entry_stays(uat_terminal):
     term.send_keys("<Home>", "<Left>")
     term.wait_for(lambda t: "cursor 0 " in _readout(t), message="cursor at 0")
     term.send(ESCAPE)
+
+
+# --------------------------------------------------------------- scenario 43
+#
+# Copy, cut and paste, driven with the real keys - including the real Ctrl-C
+# byte, which copies with a selection and closes without one. TkCurses-lw2.
+
+
+def _scenario_43(uat_terminal):
+    term = uat_terminal(cols=90, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_43_copy_cut_paste"])
+    term.wait_for_text("last: reset")
+    term.wait_for_text("clipboard: (empty)")
+    return term
+
+
+def _clip(term):
+    return term.display[1]
+
+
+def _select_first_five(term):
+    """Home, then Shift-Right five times: 'hello' selected in the source."""
+    term.send_keys("<Home>")
+    for _ in range(5):
+        term.send(b"\x1b[1;2C")  # Shift-Right
+    # The whole selection highlighted, waited for: the source's text starts
+    # at column 21, and a key handled late would be judged half-done.
+    term.wait_for(
+        lambda t: all(t.attrs_at(5, c)["reverse"] for c in range(21, 26)),
+        message="'hello' highlighted",
+    )
+
+
+def test_scenario_43_cut_here_and_paste_there(uat_terminal):
+    term = _scenario_43(uat_terminal)
+    term.wait_for_text("read-only")
+    _select_first_five(term)
+    term.send(b"\x18")  # Ctrl-X
+    term.wait_for(
+        lambda t: "clipboard: 'hello'" in t.display[1] and t.row(5)[21:27] == " world",
+        message="cut",
+    )
+    term.click(25, 8)  # the target field
+    term.wait_for_text("focus: target")
+    term.send(b"\x16")  # Ctrl-V
+    term.wait_for(lambda t: t.row(8)[21:26] == "hello", message="pasted")
+    term.send(ESCAPE)
+
+
+def test_scenario_43_ctrl_c_copies_a_selection_then_closes_without_one(uat_terminal):
+    """The author's rule, with the real byte: copies, keeps running; then,
+    the selection gone, closes."""
+    term = _scenario_43(uat_terminal)
+    term.wait_for_text("read-only")
+    _select_first_five(term)
+    term.send(b"\x03")
+    term.wait_for_text("clipboard: 'hello'")
+    assert term.row(5)[21:32] == "hello world", "a copy must not change the field"
+    term.send_keys("<End>")
+    term.wait_for_cell(5, 21, lambda cell: not cell.reverse)
+    term.send(b"\x03")
+    assert term.wait_for_exit(timeout=10) == 0
+
+
+def test_scenario_43_a_masked_field_copies_its_stars(uat_terminal):
+    term = _scenario_43(uat_terminal)
+    term.wait_for_text("read-only")
+    term.click(25, 11)
+    term.wait_for_text("focus: masked")
+    term.send(b"\x1f")  # Ctrl-/ : select all (it arrives as Ctrl-_)
+    term.wait_for_cell(11, 21, lambda cell: cell.reverse)
+    term.send(b"\x03")
+    term.wait_for_text("clipboard: '******'")
+    term.send(ESCAPE)
+
+
+def test_scenario_43_a_read_only_field_cuts_as_a_copy(uat_terminal):
+    term = _scenario_43(uat_terminal)
+    term.wait_for_text("read-only")
+    term.click(25, 14)
+    term.wait_for_text("focus: locked")
+    term.send(b"\x1f")
+    term.wait_for_cell(14, 21, lambda cell: cell.reverse)
+    term.send(b"\x18")
+    term.wait_for(
+        lambda t: (
+            "clipboard: 'copy me, not cut'" in t.display[1]
+            and t.row(14)[21:37] == "copy me, not cut"
+        ),
+        message="copied, not cut",
+    )
+    term.send(ESCAPE)
+
+
+def test_scenario_43_the_text_copies_too(uat_terminal):
+    term = _scenario_43(uat_terminal)
+    term.wait_for_text("read-only")
+    term.click(25, 17)
+    term.wait_for_text("focus: text")
+    term.send(b"\x1f")
+    term.wait_for_cell(17, 21, lambda cell: cell.reverse)
+    term.send(b"\x03")
+    term.wait_for_text("clipboard: 'line one\\nline two")
+    term.send(ESCAPE)
+
+
+def test_scenario_43_the_middle_button_pastes_primary(uat_terminal):
+    term = _scenario_43(uat_terminal)
+    term.wait_for_text("read-only")
+    _select_first_five(term)
+    term.wait_for_text("PRIMARY: 'hello'")
+    term.click(23, 8, button=2)  # the target, two cells in
+    term.wait_for(lambda t: t.row(8)[21:26] == "hello", message="pasted PRIMARY")
+    term.send(ESCAPE)
+
+
+def test_scenario_43_dragging_selects_and_ctrl_c_copies_it(uat_terminal):
+    """What a person tried first, and found did nothing: drag across a field
+    to select, then copy. With real mouse reports, press, moves and release.
+    TkCurses-lw2."""
+    term = _scenario_43(uat_terminal)
+    term.wait_for_text("read-only")
+    # Paced by what is on screen, one report at a time: ncurses DROPS mouse
+    # reports that arrive faster than the program reads them (TkCurses-txk),
+    # and fired back to back the moves were lost on every CI runner while
+    # passing here. A hand is never that fast; the test should not be either.
+    term.send_mouse(21, 5, action="press")
+    # Nothing on screen changes on the press - the cursor is already at the
+    # start - so it gets the settle every drag test here uses, scaled for a
+    # slow runner. A lost press is a lost drag: that was CI's whole failure.
+    term._drain(term._budget(0.08))
+    for column in range(22, 27):
+        term.send_mouse(column, 5, action="move")
+        term.wait_for(
+            lambda t, column=column: all(
+                t.attrs_at(5, c)["reverse"] for c in range(21, column)
+            ),
+            message=f"the highlight reaching column {column}",
+        )
+    term._drain(term._budget(0.08))
+    term.send_mouse(26, 5, action="release")
+    term.wait_for(
+        lambda t: (
+            all(t.attrs_at(5, c)["reverse"] for c in range(21, 26))
+            and "PRIMARY: 'hello'" in t.display[1]
+        ),
+        message="'hello' dragged over, highlighted and on PRIMARY",
+    )
+    term.send(b"\x03")
+    term.wait_for_text("clipboard: 'hello'")
+    term.send(ESCAPE)
+
+
+def test_scenario_43_selecting_elsewhere_clears_the_first_selection(uat_terminal):
+    """What a person reported: select in source, copy, select in read-only,
+    and source stayed highlighted. Tk clears the first - measured - and so
+    does this now, Entry and Text alike. TkCurses-lw2."""
+    term = _scenario_43(uat_terminal)
+    term.wait_for_text("read-only")
+    _select_first_five(term)
+    term.send(b"\x03")
+    term.wait_for_text("clipboard: 'hello'")
+    term.click(25, 14)  # the read-only field
+    term.wait_for_text("focus: locked")
+    term.send(b"\x1f")  # select all there
+    term.wait_for(
+        lambda t: (
+            t.attrs_at(14, 21)["reverse"]
+            and not any(t.attrs_at(5, c)["reverse"] for c in range(21, 32))
+        ),
+        message="read-only selected, source no longer",
+    )
+    term.click(25, 17)  # the text
+    term.wait_for_text("focus: text")
+    term.send(b"\x1f")
+    term.wait_for(
+        lambda t: (
+            t.attrs_at(17, 21)["reverse"]
+            and not any(t.attrs_at(14, c)["reverse"] for c in range(21, 37))
+        ),
+        message="text selected, read-only no longer",
+    )
+    term.send(ESCAPE)
+
+
+def test_scenario_43_pasting_over_a_selection_replaces_it(uat_terminal):
+    """What a person expected and did not get: paste with text selected, and
+    the selection is replaced. A deliberate departure from classic Tk on
+    Linux, which keeps it; ttk replaces everywhere. TkCurses-lw2."""
+    term = _scenario_43(uat_terminal)
+    term.wait_for_text("read-only")
+    _select_first_five(term)
+    term.send(b"\x03")  # copy 'hello'
+    term.wait_for_text("clipboard: 'hello'")
+    term.send_keys("<End>")
+    for _ in range(5):
+        term.send(b"\x1b[1;2D")  # Shift-Left, five times: 'world'
+    term.wait_for(
+        lambda t: all(t.attrs_at(5, c)["reverse"] for c in range(27, 32)),
+        message="'world' highlighted",
+    )
+    term.send(b"\x16")  # Ctrl-V
+    term.wait_for(
+        lambda t: (
+            t.row(5)[21:32] == "hello hello"
+            and not any(t.attrs_at(5, c)["reverse"] for c in range(21, 32))
+        ),
+        message="'world' replaced by 'hello', nothing left selected",
+    )
+    term.send(ESCAPE)

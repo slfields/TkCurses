@@ -140,7 +140,7 @@ from tkcurses._core.pack import FILLS, SIDES, PackLayout, PackOptions, parse_anc
 from tkcurses._core.paned import SASH_WIDTH, PanedLayout, PaneOptions
 from tkcurses._core.panels import PanelStack
 from tkcurses._core.place import BORDERMODES, PlaceLayout, PlaceOptions
-from tkcurses._core.screen import CursesScreen
+from tkcurses._core.screen import CursesScreen, TerminalCursor
 from tkcurses._core.text import align_offset, measure, wrap, wrap_spans
 from tkcurses._core.textbuffer import Index, TextBuffer
 from tkcurses._core.textlayout import (
@@ -1076,6 +1076,50 @@ class Misc:
     # Clipboard and selection
     # ==================================================================
 
+    def _copy_on_interrupt(self) -> bool:
+        """Copy instead of closing, if the focused widget has a selection.
+
+        Ctrl-C is the close gesture here (TkCurses-7l6), and Tk's copy key.
+        Measured in the author's terminal (TkCurses-lw2), no OTHER copy key
+        of Tk's reaches a program: Ctrl-Insert and Ctrl-Shift-V arrive as
+        nothing, Ctrl-Shift-C arrives as plain Ctrl-C, and Alt-W as Escape
+        then w. So the decision, the author's: **Ctrl-C copies when the focused
+        widget has something selected, and closes otherwise.** Close stays
+        one keystroke away - press it again once the selection is gone - and
+        an application that binds ``<Control-c>`` still takes the key
+        entirely, as before.
+
+        Returns True if it copied, in which case nothing closes.
+        """
+        focused = self.focus_get()
+        if focused is None or not focused._has_copyable_selection():
+            return False
+        focused.event_generate("<<Copy>>")
+        return True
+
+    def _focused_insert_cell(self) -> tuple[int, int] | None:
+        """Where the terminal's cursor belongs: the focused widget's insert point.
+
+        None when nothing has the focus, or what has it takes no typing.
+        """
+        focused = self.tk.focus
+        return None if focused is None else focused._insert_cell()
+
+    def _insert_cell(self) -> tuple[int, int] | None:
+        """The screen cell, ``(row, column)``, where typing would go here.
+
+        None for a widget that takes no typing; Entry and Text say otherwise.
+        """
+        return None
+
+    def _has_copyable_selection(self) -> bool:
+        """Whether this widget has a selection Ctrl-C should copy.
+
+        False here; Entry and Text, which bind ``<<Copy>>``, say otherwise.
+        See :meth:`_copy_on_interrupt`.
+        """
+        return False
+
     def clipboard_get(self, **kw: Any) -> str:
         """Return the clipboard contents.
 
@@ -1107,8 +1151,13 @@ class Misc:
             self.tk.selections.disown(self)
 
     def selection_own(self, **kw: Any) -> None:
-        """Claim the selection for this widget."""
-        self.tk.selections.own(self, kw.get("selection", PRIMARY))
+        """Claim the selection for this widget.
+
+        ``command``, as in tkinter, is called when another widget takes it.
+        """
+        self.tk.selections.own(
+            self, kw.get("selection", PRIMARY), lost=kw.get("command")
+        )
 
     def image_names(self) -> tuple[str, ...]:
         """The names of every image this application still holds.
@@ -3993,6 +4042,11 @@ class Tk(BaseWidget, Wm):
             self.tk.colors = colors
             self.tk.screen = self._screen
             self.tk.panels = PanelStack()
+            # The terminal's own cursor, at the focused widget's insert point;
+            # see TerminalCursor. Both flush paths place it.
+            cursor = TerminalCursor(self._focused_insert_cell)
+            self._screen.cursor = cursor
+            self.tk.panels.cursor = cursor
             self._rect = Rect(0, 0, buffer.width, buffer.height)
             self._mapped = True
             self._started = True
@@ -4114,7 +4168,8 @@ class Tk(BaseWidget, Wm):
                     # that a handler which decides NOT to close can simply
                     # return and the application carries on - which is how
                     # WM_DELETE_WINDOW behaves everywhere else.
-                    self._close_requested()
+                    if not self._copy_on_interrupt():
+                        self._close_requested()
                 passes += 1
                 if n and passes >= n:
                     break
@@ -6652,6 +6707,10 @@ class Entry(_Drawable, XView):
         # inside one can be told apart from an ordinary edit. TkCurses-tvj.
         self._validating = False
         self._edited_while_validating = False
+        # True between a press in the text and its release; see _entry_drag.
+        self._dragging = False
+        # The screen cell the terminal's cursor goes in; see _draw_cursor.
+        self._insert_at: tuple[int, int] | None = None
         super().__init__(master, cnf, name=name, **kw)
         self._follow_variable()
         self._apply_requested_size()
@@ -6671,8 +6730,11 @@ class Entry(_Drawable, XView):
         bind = self.bind_class
         bind(name, "<Any-Key>", _entry_key)
         bind(name, "<Button-1>", _entry_click)
+        bind(name, "<Motion>", _entry_drag)
+        bind(name, "<ButtonRelease-1>", _entry_release)
         bind(name, "<FocusIn>", _entry_focus_in)
         bind(name, "<FocusOut>", _entry_focus_out)
+        _bind_entry_clipboard(bind, name)
 
     # ---------------------------------------------------------------- state
 
@@ -6865,12 +6927,22 @@ class Entry(_Drawable, XView):
         """
         selections = self.tk.selections
         if self._exports_selection():
-            selections.own(self, PRIMARY)
+            selections.own(self, PRIMARY, lost=self._lost_primary)
             selections.handle(self, self._primary_selection, PRIMARY)
         elif selections.owner(PRIMARY) is self:
             # Measured: turning -exportselection off drops PRIMARY at once,
             # even though the widget's own selection is untouched.
             selections.disown(self)
+
+    def _lost_primary(self) -> None:
+        """Another widget took PRIMARY: drop this one's selection, as Tk does.
+
+        Measured on Tk 9.0.2 - select in one entry, then in another, and the
+        first is no longer selected. Without this both stayed highlighted,
+        which a person running UAT 43 reported. TkCurses-lw2.
+        """
+        self._field.select_clear()
+        self._redraw()
 
     def _primary_selection(self, *_args: Any) -> str:
         """The selected text, for whoever is reading PRIMARY.
@@ -6908,6 +6980,9 @@ class Entry(_Drawable, XView):
 
     def selection_present(self) -> bool:
         """True if anything is selected."""
+        return self._field.selection is not None
+
+    def _has_copyable_selection(self) -> bool:
         return self._field.selection is not None
 
     select_present = selection_present
@@ -7442,26 +7517,33 @@ class Entry(_Drawable, XView):
     def _draw_cursor(
         self, dispatcher: CursesDispatcher, window: Any, area: Rect, attribute: int
     ) -> None:
-        """Show where typing will go, but only while the field has the focus.
+        """Note where typing will go, while the field has the focus.
 
-        A cursor drawn in an unfocused field claims the keyboard is there when
-        it is not, which in a form of several fields is actively misleading.
+        **Noted, not painted.** This painted the insertion point as a reversed
+        cell, which is also how a selection is drawn, and a person could not
+        tell the cursor from the selected text beside it (UAT 43,
+        TkCurses-lw2). The terminal's own cursor is put there instead - see
+        :class:`~tkcurses._core.screen.TerminalCursor` - which blinks and has
+        the shape the person's terminal is set to.
+
+        Not in an unfocused field, which would claim the keyboard is there
+        when it is not; not in a readonly one, which Tk's manual says draws
+        no insertion cursor; not when the cursor is scrolled out of view.
         """
+        del dispatcher, window, attribute
+        self._insert_at = None
         if self.focus_get() is not self or not self._editable:
             return
         column = self._field.column_of(self._field.cursor)
         if not (0 <= column < area.width):
             return
-        under = self._displayed()[self._field.cursor : self._field.cursor + 1] or " "
-        with contextlib.suppress(_curses.error):
-            self._write_line(
-                dispatcher,
-                window,
-                area.y,
-                area.x + column,
-                under,
-                attribute | _curses.A_REVERSE,
-            )
+        self._insert_at = (
+            self.winfo_rooty() + area.y,
+            self.winfo_rootx() + area.x + column,
+        )
+
+    def _insert_cell(self) -> tuple[int, int] | None:
+        return self._insert_at
 
 
 #: Keys that move the cursor, as offsets or as absolute positions.
@@ -7548,7 +7630,9 @@ def _entry_keystroke(event: Event) -> str | None:
             entry._changed()
         return "break"
 
-    if keysym == "Delete":
+    if keysym == "Delete" and not event.state & MOD_SHIFT:
+        # Shift-Delete is <<Cut>>, and Tk lets the virtual event have it:
+        # measured, it cuts the selection and deletes nothing else.
         if not field.delete_selection():
             entry._edit(
                 lambda: field.delete(field.cursor, field.cursor + 1),
@@ -7588,8 +7672,158 @@ def _entry_click(event: Event) -> None:
     # Tk's tk::EntryButton1 anchors there too: a click, then selection_to,
     # selects from the click (measured). TkCurses-bfy.
     entry._field.select_from(index)
+    entry._dragging = True
     entry._see_cursor()
     entry._redraw()
+
+
+# ------------------------------------------------- the clipboard, on an Entry
+#
+# Tk's own Entry bindings for the clipboard virtual events, MEASURED on Tk
+# 9.0.2 with "hello world" and 0-5 selected (TkCurses-lw2):
+#
+# * <<Copy>> puts the selection on the clipboard - what is SHOWN, so a
+#   show="*" entry copies "*****" - and with nothing selected does nothing.
+# * <<Cut>> is copy, then delete. A readonly or disabled entry still copies
+#   and refuses the delete.
+# * <<Paste>> inserts the clipboard at the cursor and does NOT replace the
+#   selection - Tk's binding deletes it only when the windowing system is not
+#   x11, and on Linux it is. An empty clipboard pastes nothing.
+# * <<Clear>> deletes the selection; <<SelectAll>> selects everything and
+#   leaves the cursor; <<PasteSelection>> (middle button) inserts PRIMARY
+#   where the click landed.
+#
+# All of them edit through insert() and delete(), so a validator and the
+# state have their say exactly as for any other edit.
+
+
+def _entry_selected(entry: Any) -> str | None:
+    """The selected text as it is shown, or None with nothing selected."""
+    selection = entry._field.selection
+    if selection is None:
+        return None
+    first, last = selection
+    return str(entry._displayed()[first:last])
+
+
+def _entry_copy(event: Event) -> None:
+    """Put the selection on the clipboard."""
+    text = _entry_selected(event.widget)
+    if text is not None:
+        event.widget.clipboard_clear()
+        event.widget.clipboard_append(text)
+
+
+def _entry_cut(event: Event) -> None:
+    """Copy the selection, then delete it if the entry allows."""
+    entry = event.widget
+    text = _entry_selected(entry)
+    if text is None:
+        return
+    entry.clipboard_clear()
+    entry.clipboard_append(text)
+    first, last = entry._field.selection
+    entry.delete(first, last)
+    entry._see_cursor()
+    entry._redraw()
+
+
+def _entry_paste(event: Event) -> None:
+    """Insert the clipboard at the cursor, replacing any selection.
+
+    A deliberate departure from classic Tk on Linux, which inserts and keeps
+    the selection (X11's rule). Replacing is what ttk does on every platform,
+    and classic Tk on Windows and macOS - ttk's PendingDelete: the cursor
+    goes to the start of the selection, which is deleted, then the clipboard
+    is inserted. A read-only entry refuses both. TkCurses-lw2.
+    """
+    entry = event.widget
+    try:
+        text = entry.clipboard_get()
+    except TclError:
+        return
+    selection = entry._field.selection
+    if selection is not None and entry._editable:
+        entry.icursor(selection[0])
+        entry.delete(selection[0], selection[1])
+    entry.insert("insert", text)
+    entry._see_cursor()
+    entry._redraw()
+
+
+def _entry_clear(event: Event) -> None:
+    """Delete the selection."""
+    selection = event.widget._field.selection
+    if selection is not None:
+        event.widget.delete(*selection)
+
+
+def _entry_select_all(event: Event) -> None:
+    """Select everything; the cursor stays where it was."""
+    event.widget.selection_range(0, "end")
+
+
+def _entry_paste_selection(event: Event) -> None:
+    """Insert PRIMARY where the middle button was released."""
+    entry = event.widget
+    if not entry._editable:
+        return
+    entry.icursor(entry._field.index_at(event.x - entry._text_area().x))
+    try:
+        text = entry.selection_get()
+    except TclError:
+        return
+    entry.insert("insert", text)
+    entry.focus_set()
+    entry._see_cursor()
+    entry._redraw()
+
+
+def _bind_entry_clipboard(bind: Callable[..., Any], name: str) -> None:
+    """Install the clipboard bindings under one entry class's name.
+
+    Entry, Spinbox and ttk.Combobox each install Entry's keys under their own
+    class name - binding tags name one class, not a chain - so each calls
+    this.
+    """
+    bind(name, "<<Copy>>", _entry_copy)
+    bind(name, "<<Cut>>", _entry_cut)
+    bind(name, "<<Paste>>", _entry_paste)
+    bind(name, "<<Clear>>", _entry_clear)
+    bind(name, "<<SelectAll>>", _entry_select_all)
+    bind(name, "<<PasteSelection>>", _entry_paste_selection)
+
+
+def _entry_drag(event: Event) -> None:
+    """Select from the press to the pointer while the button is held.
+
+    Tk's own ``<B1-Motion>`` binding, read from the running interpreter
+    (``tk::EntryMouseSelect``, character mode): the selection runs from the
+    anchor the press set to the gap under the pointer, either way round, and
+    is cleared where the two meet; the cursor follows the pointer. Entry had
+    no drag at all until a person running UAT 43 tried one - TkCurses-lw2.
+
+    A drag arrives as ``<Motion>``, as Text's does: curses reports motion
+    with a button held and there is no Button1 modifier to match against,
+    and the implicit grab keeps it with the widget that was pressed.
+    """
+    entry = event.widget
+    if not entry._dragging:
+        return
+    here = entry._field.index_at(event.x - entry._text_area().x)
+    anchor = entry._field._anchor
+    if here == anchor:
+        entry.selection_clear()
+    else:
+        entry.selection_range(min(here, anchor), max(here, anchor))
+    entry.icursor(here)
+    entry._see_cursor()
+    entry._redraw()
+
+
+def _entry_release(event: Event) -> None:
+    """Stop dragging, wherever the pointer ended up."""
+    event.widget._dragging = False
 
 
 def _entry_focus_in(event: Event) -> None:
@@ -8193,8 +8427,11 @@ class Spinbox(Entry):
         bind = self.bind_class
         bind(name, "<Any-Key>", _spinbox_key)
         bind(name, "<Button-1>", _spinbox_click)
+        bind(name, "<Motion>", _entry_drag)
+        bind(name, "<ButtonRelease-1>", _entry_release)
         bind(name, "<FocusIn>", _entry_focus_in)
         bind(name, "<FocusOut>", _entry_focus_out)
+        _bind_entry_clipboard(bind, name)
 
     # --------------------------------------------------------------- values
 
@@ -8528,6 +8765,8 @@ class Text(_Drawable, XView, YView):
         self._left = 0
         self._anchor: Index | None = None
         self._dragging = False
+        # The screen cell the terminal's cursor goes in; see _draw_cursor.
+        self._insert_at: tuple[int, int] | None = None
         self._tag_options: dict[str, dict[str, Any]] = {}
         self._tag_order: list[str] = []
         #: Tk's "has this been changed since it was last saved" flag. It is
@@ -8569,6 +8808,12 @@ class Text(_Drawable, XView, YView):
         self.tk.bound_classes.add(name)
         bind = self.bind_class
         bind(name, "<Any-Key>", _text_key)
+        bind(name, "<<Copy>>", _text_copy)
+        bind(name, "<<Cut>>", _text_cut)
+        bind(name, "<<Paste>>", _text_paste)
+        bind(name, "<<Clear>>", _text_clear)
+        bind(name, "<<SelectAll>>", _text_select_all)
+        bind(name, "<<PasteSelection>>", _text_paste_selection)
         bind(name, "<Button-1>", _text_press)
         # A drag arrives as Motion - curses reports motion-with-a-button and
         # there is no Button1 modifier to match against - and the implicit
@@ -8963,6 +9208,8 @@ class Text(_Drawable, XView, YView):
             self._buffer.tag_add(name, self._resolve(first))
         else:
             self._buffer.tag_add(name, self._resolve(first), self._resolve(last))
+        if name == "sel":
+            self._claim_primary()
         self._redraw()
 
     def tag_remove(self, name: str, first: Any, last: Any = None) -> None:
@@ -8987,6 +9234,9 @@ class Text(_Drawable, XView, YView):
         if index is None:
             return tuple(self._tag_order)
         return self._buffer.tag_names(self._resolve(index))
+
+    def _has_copyable_selection(self) -> bool:
+        return bool(self.tag_ranges("sel"))
 
     def tag_ranges(self, name: str) -> list[str]:
         """Every range of a tag, flat, as ``line.char`` strings."""
@@ -9084,6 +9334,35 @@ class Text(_Drawable, XView, YView):
         start, stop = self._resolve(first), self._resolve(last)
         if start != stop:
             self._buffer.tag_add("sel", start, stop)
+        self._claim_primary()
+
+    def _claim_primary(self) -> None:
+        """Take PRIMARY while something is selected and ``exportselection`` is on.
+
+        The option was stored and never read (TkCurses-9e8): a Text's
+        selection never reached PRIMARY, so selecting in a Text did not clear
+        an Entry's selection, as Tk's does, and the middle button could not
+        paste it. Measured on Tk 9.0.2 between Entry and Text, both ways.
+        """
+        if not self.tag_ranges("sel") or not self.getboolean(
+            self._options["exportselection"]
+        ):
+            return
+        selections = self.tk.selections
+        selections.own(self, PRIMARY, lost=self._lost_primary)
+        selections.handle(self, self._primary_selection, PRIMARY)
+
+    def _lost_primary(self) -> None:
+        """Another widget took PRIMARY: drop this one's selection, as Tk does."""
+        self._buffer.tag_remove("sel", "1.0", "end")
+        self._redraw()
+
+    def _primary_selection(self, *_args: Any) -> str:
+        """The selected text, for whoever reads PRIMARY; raises with none."""
+        found = self._selection_range()
+        if found is None:
+            raise TclError(f"{PRIMARY} selection doesn't exist or form unknown")
+        return str(self._buffer.get(*found))
 
     def _selection_range(self) -> tuple[Index, Index] | None:
         """The selection, or None."""
@@ -9748,11 +10027,14 @@ class Text(_Drawable, XView, YView):
         rows: list[tuple[int, int, int]],
         attribute: int,
     ) -> None:
-        """Show where typing will go, but only while the widget has the focus.
+        """Note where typing will go, while the widget has the focus.
 
-        A cursor in an unfocused widget claims the keyboard is there when it
-        is not, which in a window of several fields is actively misleading.
+        Noted for the terminal's own cursor rather than painted as a reversed
+        cell, which could not be told from a selection - see Entry's
+        ``_draw_cursor`` and TkCurses-lw2.
         """
+        del dispatcher, window, attribute
+        self._insert_at = None
         if self.focus_get() is not self:
             return
         insert = self._buffer.mark_index("insert")
@@ -9765,17 +10047,13 @@ class Text(_Drawable, XView, YView):
         column = within - self._left
         if not 0 <= column < area.width:
             return
-        under = self._buffer.get(insert) or " "
-        if under == "\n":
-            under = " "
-        self._write_line(
-            dispatcher,
-            window,
-            area.y + row,
-            area.x + column,
-            under,
-            attribute | _curses.A_REVERSE,
+        self._insert_at = (
+            self.winfo_rooty() + area.y + row,
+            self.winfo_rootx() + area.x + column,
         )
+
+    def _insert_cell(self) -> tuple[int, int] | None:
+        return self._insert_at
 
 
 #: Keys that move the insert cursor without changing anything, and what they
@@ -9831,7 +10109,7 @@ def _text_key(event: Event) -> str | None:
     if keysym == "BackSpace":
         text._backspace()
         return "break"
-    if keysym == "Delete":
+    if keysym == "Delete" and not event.state & MOD_SHIFT:
         text._delete_forward()
         return "break"
     if keysym == "Return":
@@ -9843,6 +10121,101 @@ def _text_key(event: Event) -> str | None:
         text._type(event.char)
         return "break"
     return None
+
+
+# ---------------------------------------------------- the clipboard, on a Text
+#
+# The same rules as an Entry's (see _entry_copy), measured on Tk 9.0.2's Text:
+# copy the "sel" range; cut is copy then delete, and a disabled Text still
+# copies; paste inserts at "insert" without replacing the selection (x11);
+# select-all tags 1.0 to end and leaves the cursor. TkCurses-lw2.
+#
+# The state is checked HERE, not left to insert() and delete(): a disabled
+# Text here still takes edits from code, where Tk's ignores them - that is
+# TkCurses-aah, and these handlers must not wait on it.
+
+
+def _text_selected(text: Any) -> tuple[str, str, str] | None:
+    """The selection as ``(first, last, text)``, or None with nothing selected."""
+    ranges = text.tag_ranges("sel")
+    if not ranges:
+        return None
+    first, last = str(ranges[0]), str(ranges[1])
+    return (first, last, str(text.get(first, last)))
+
+
+def _text_writable(text: Any) -> bool:
+    return str(text.cget("state")) != "disabled"
+
+
+def _text_copy(event: Event) -> None:
+    """Put the selection on the clipboard."""
+    selected = _text_selected(event.widget)
+    if selected is not None:
+        event.widget.clipboard_clear()
+        event.widget.clipboard_append(selected[2])
+
+
+def _text_cut(event: Event) -> None:
+    """Copy the selection, then delete it unless the Text is disabled."""
+    text = event.widget
+    selected = _text_selected(text)
+    if selected is None:
+        return
+    text.clipboard_clear()
+    text.clipboard_append(selected[2])
+    if _text_writable(text):
+        text.delete(selected[0], selected[1])
+        text.see("insert")
+
+
+def _text_paste(event: Event) -> None:
+    """Insert the clipboard at the insert mark, replacing any selection.
+
+    Classic Tk on Linux keeps the selection; on Windows and macOS it deletes
+    it first, and this does too - a deliberate departure, as for Entry.
+    TkCurses-lw2.
+    """
+    text = event.widget
+    if not _text_writable(text):
+        return
+    try:
+        data = text.clipboard_get()
+    except TclError:
+        return
+    selected = _text_selected(text)
+    if selected is not None:
+        text.mark_set("insert", selected[0])
+        text.delete(selected[0], selected[1])
+    text.insert("insert", data)
+    text.see("insert")
+
+
+def _text_clear(event: Event) -> None:
+    """Delete the selection."""
+    selected = _text_selected(event.widget)
+    if selected is not None and _text_writable(event.widget):
+        event.widget.delete(selected[0], selected[1])
+
+
+def _text_select_all(event: Event) -> None:
+    """Select everything; the insert mark stays where it was."""
+    event.widget.tag_add("sel", "1.0", "end")
+
+
+def _text_paste_selection(event: Event) -> None:
+    """Insert PRIMARY where the middle button was released."""
+    text = event.widget
+    if not _text_writable(text):
+        return
+    text.mark_set("insert", f"@{event.x},{event.y}")
+    try:
+        data = text.selection_get()
+    except TclError:
+        return
+    text.insert("insert", data)
+    text.focus_set()
+    text.see("insert")
 
 
 def _text_press(event: Event) -> None:

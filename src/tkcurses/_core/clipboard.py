@@ -59,6 +59,7 @@ class Selections:
     def __init__(self) -> None:
         self._content: dict[str, str] = {}
         self._owners: dict[str, Any] = {}
+        self._lost: dict[str, Callable[[], Any]] = {}
         self._handlers: dict[tuple[str, Any], Callable[..., str]] = {}
 
     # ------------------------------------------------------------- contents
@@ -102,9 +103,31 @@ class Selections:
 
     # --------------------------------------------------------------- owners
 
-    def own(self, owner: Any, selection: str = PRIMARY) -> None:
-        """Record ``owner`` as holding ``selection``."""
+    def own(
+        self,
+        owner: Any,
+        selection: str = PRIMARY,
+        lost: Callable[[], Any] | None = None,
+    ) -> None:
+        """Record ``owner`` as holding ``selection``, telling the last one.
+
+        ``lost`` is called when another owner takes ``selection`` - Tk's
+        ``selection own -command``, and how a widget learns to drop its
+        highlight. Measured on Tk 9.0.2: select in one entry, then in another,
+        and the first one's selection is gone; the same between Entry and
+        Text either way. A widget re-claiming what it already holds is not a
+        loss. TkCurses-lw2.
+        """
+        previous = self._owners.get(selection)
+        if previous is not None and previous is not owner:
+            callback = self._lost.pop(selection, None)
+            if callback is not None:
+                callback()
         self._owners[selection] = owner
+        if lost is None:
+            self._lost.pop(selection, None)
+        else:
+            self._lost[selection] = lost
 
     def owner(self, selection: str = PRIMARY) -> Any:
         """The widget that claimed ``selection``, or None."""
@@ -115,6 +138,7 @@ class Selections:
         for selection, current in list(self._owners.items()):
             if current is owner:
                 del self._owners[selection]
+                self._lost.pop(selection, None)
         for key in [key for key in self._handlers if key[1] is owner]:
             del self._handlers[key]
 

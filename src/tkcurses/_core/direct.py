@@ -224,6 +224,11 @@ class DirectPainter:
         if not data:
             self._written = None
             return 0
+        # Saved and restored around the picture (DECSC / DECRC): this is
+        # written after doupdate, so without it the terminal's cursor - shown
+        # at the insert point since TkCurses-lw2 - is left wherever the last
+        # image cell went, and curses' idea of where it is goes stale.
+        data = b"\x1b7" + data + b"\x1b8"
         if not repainted and data == self._written:
             return 0
         # **Written in a loop, because os.write is allowed to write less than

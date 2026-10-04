@@ -71,8 +71,10 @@ def test_the_cursor_shows_only_when_focused(terminal, tmp_path):
     term.wait_for_text("abc")
     row = next(i for i, line in enumerate(term.display) if "abc" in line)
     column = term.display[row].index("abc") + 1
+    # The terminal's own cursor at the insert mark, once the focus arrives -
+    # and hidden until then (TkCurses-lw2).
     term.wait_for(
-        lambda t: t.attrs_at(row, column)["reverse"], message="the insert cursor"
+        lambda t: t.cursor_cell() == (row, column), message="the insert cursor"
     )
 
 
