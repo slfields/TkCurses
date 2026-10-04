@@ -252,6 +252,10 @@ to be, which only a hand can answer.
       widget the keyboard
 - [ ] Tab reaches the tree, which is focusable — a Frame is not, and it
       inherited that
+- [ ] The columns fill the tree to its right border, with no blank band past
+      the last one. They used to stop at their configured widths, because
+      `-stretch` was stored and never read (`TkCurses-a01`; scenario 42 looks
+      at it closely)
 
 ### LabeledScale
 

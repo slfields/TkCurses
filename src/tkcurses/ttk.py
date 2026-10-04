@@ -68,7 +68,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import tkcurses
-from tkcurses._core.attributes import BorderStyle
+from tkcurses._core.attributes import BorderStyle, with_colors
 from tkcurses._core.bindings import parse_sequence
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.errors import TclError
@@ -647,6 +647,14 @@ class Widget:
             if negated == was_set:
                 changed.append(name if was_set else f"!{name}")
                 flags.discard(name) if negated else flags.add(name)
+        if changed:
+            # Tk repaints a themed widget whenever its state changes - a
+            # state is how it looks. Without this, validate() set "invalid"
+            # and the field showed it only at the next keystroke, and
+            # state(["disabled"]) showed nothing at all. TkCurses-b9q.
+            redraw = getattr(self, "_redraw", None)
+            if redraw is not None:
+                redraw()
         return tuple(changed)
 
     def instate(
@@ -3605,8 +3613,14 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
             return attribute
         fallback_fg = str(self._options["foreground"] or "white")
         fallback_bg = str(self._options["background"] or "black")
-        return attribute | colors.attribute_for(
-            str(foreground or fallback_fg), str(background or fallback_bg)
+        # REPLACE the colour field, never OR into it: the row's attribute
+        # already carries the widget's own pair, and two pair numbers OR'd
+        # are a third pair - a cyan tag drew red. TkCurses-mur.
+        return with_colors(
+            attribute,
+            colors.attribute_for(
+                str(foreground or fallback_fg), str(background or fallback_bg)
+            ),
         )
 
     def _stripe_attribute(self, attribute: int, iid: str = "") -> int:

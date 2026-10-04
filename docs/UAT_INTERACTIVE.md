@@ -60,6 +60,8 @@ mouse, and a mouse is the thing a terminal user most often does not have.
 
 - [ ] Typing appears at the cursor
 - [ ] Left, Right, Home and End move the cursor
+- [ ] Left at the very start of a field leaves the cursor there. It used to
+      jump to near the end of the text (`TkCurses-11m`)
 - [ ] Backspace and Delete remove the right character
 - [ ] Shift with the arrows selects, and typing replaces the selection
 - [ ] The cursor is visible in the focused field and **only** in that one

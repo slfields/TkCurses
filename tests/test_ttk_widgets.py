@@ -1963,6 +1963,20 @@ def test_a_tag_setting_only_one_colour_keeps_the_widgets_own_other(recorder):
     assert recorder.tk.colors.calls == [("white", "red")]
 
 
+def test_a_tag_colour_replaces_the_rows_own_pair_rather_than_mixing(recorder):
+    """The row's attribute already carries the widget's colour pair; the tag's
+    must REPLACE it. OR-ing them made a third pair - a cyan tag drew red,
+    found by UAT 42. The other tests here start from 0 with a marker outside
+    the pair field, which is why none of them could see it. TkCurses-mur."""
+    widget_pair, tag_pair = 5 << 8, 2 << 8
+    recorder.tk.colors.attribute_for = lambda fg, bg, attr=0: tag_pair
+    recorder.tag_configure("warn", foreground="cyan")
+    alpha, _beta, _gamma = recorder.ids
+    drawn = recorder._row_attribute(alpha, 0, widget_pair | curses.A_BOLD)
+    assert drawn & curses.A_COLOR == tag_pair
+    assert drawn & curses.A_BOLD
+
+
 def test_an_untagged_row_is_not_recoloured(recorder):
     recorder.tag_configure("warn", background="red")
     _alpha, _beta, gamma = recorder.ids
@@ -3058,3 +3072,20 @@ def test_clicking_a_spinbox_arrow_still_steps_it(root, cls):
     up, _down = spin._arrow_columns()
     _spinbox_click(SimpleNamespace(widget=spin, x=up, y=1))
     assert spin.get() == "1"
+
+
+@pytest.mark.parametrize("flag", ["invalid", "disabled", "pressed"])
+def test_a_state_change_repaints_the_widget(root, flag):
+    """Tk repaints a themed widget when its state changes; a state is how it
+    looks. state() changed the flags and repainted nothing, so validate()'s
+    "invalid" showed only at the next keystroke - found by a person running
+    UAT 42. A call that changes nothing need not repaint. TkCurses-b9q."""
+    widget = Entry(root, name="e")
+    painted = []
+    widget._redraw = lambda: painted.append(widget.state())
+    widget.state([flag])
+    assert painted == [(flag,)]
+    widget.state([flag])
+    assert len(painted) == 1, "nothing changed, so nothing to repaint"
+    widget.state([f"!{flag}"])
+    assert painted[-1] == ()

@@ -966,3 +966,132 @@ def test_scenario_41_a_readonly_entry_shows_that_it_has_the_focus(uat_terminal):
     assert not term.attrs_at(digits_top, 25)["bold"], (
         f"two entries claim the focus at once\n{term.describe()}"
     )
+
+
+# --------------------------------------------------------------- scenario 42
+#
+# Views, selections and columns: acceptance for #121-#132, which had none.
+# Driven, not just started, for the reason scenario 41's section gives - a
+# smoke test that waits for the title passed throughout two visible faults
+# there. TkCurses-w1h.
+
+
+def _scenario_42(uat_terminal):
+    """The scenario, up and settled, with its readout on screen."""
+    term = uat_terminal(cols=90, rows=28)
+    term.run([sys.executable, "-m", "uat.scenario_42_views_and_selections"])
+    term.wait_for_text("last: reset")
+    term.wait_for_idle()
+    return term
+
+
+def _readout(term):
+    """The two readout rows, as one string."""
+    return " ".join(row.strip() for row in term.display[1:3])
+
+
+def _press(term, column, row, expect):
+    """Click a button and wait for the readout line it should produce."""
+    term.click(column, row)
+    term.wait_for(lambda t: expect in _readout(t), message=repr(expect))
+
+
+def test_scenario_42_the_entry_view_and_selection_follow_tk(uat_terminal):
+    """Each button's effect, read back from the readout - TkCurses-i8s/61v/bfy.
+
+    Every assertion is on the readout line the step waited for, so a step
+    cannot be judged on a half-drawn screen.
+    """
+    term = _scenario_42(uat_terminal)
+    _press(term, 40, 5, "first shown 0  cursor 36  selection none")
+    assert term.row(5)[3:7] == "0123", (
+        f"a program's insert shows the START\n{term.describe()}"
+    )
+    _press(term, 40, 8, "selection 2-8")
+    _press(term, 40, 11, "cursor 38  selection 4-10")  # insert XY at 0
+    # And on screen, not only in the readout: the highlight is still on
+    # "234567", now two cells to the right, and not on its neighbours. The
+    # entry's text starts at column 3.
+    # Waited for, not read straight after the readout: the readout and the
+    # entry are different cells and need not arrive in one chunk (CLAUDE.md,
+    # "A test must wait for every cell it asserts on").
+    term.wait_for(
+        lambda t: (
+            t.row(5)[7:13] == "234567"
+            and [c for c in range(3, 31) if t.attrs_at(5, c)["reverse"]]
+            == list(range(7, 13))
+        ),
+        message="the highlight on '234567', two cells right",
+    )
+    _press(term, 40, 14, "cursor 36  selection 2-8")  # delete 0-2
+    _press(term, 40, 17, "cursor 36  selection 2-12")  # adjust 12
+    _press(term, 40, 20, "first shown 5  cursor 36  selection 2-12")  # xview 5
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+
+
+def test_scenario_42_the_tree_columns_fill_it_but_one(uat_terminal):
+    """TkCurses-a01: name and kind take the width; size, stretch=False, keeps 5."""
+    term = _scenario_42(uat_terminal)
+    term.wait_for(lambda t: "tree columns 14/5/11 of 34" in _readout(t), message="tree")
+    _press(term, 68, 15, "of 30")  # narrower
+    assert "/5/" in _readout(term), term.describe()
+    term.send(ESCAPE)
+
+
+def test_scenario_42_validate_turns_the_check_field_red_and_back(uat_terminal):
+    """TkCurses-52q, as a person sees it: the FIELD turns red, not just the
+    readout. The first version of this test waited for the readout's
+    "check: invalid" - the state - and passed while the field stayed its old
+    colour until the next keystroke, because state() never repainted. The
+    checklist promises a colour, so the colour is what is asserted.
+    """
+    term = _scenario_42(uat_terminal)
+    term.click(5, 20)
+    term.send_keys("a")
+    term.wait_for_cell(20, 3, lambda cell: cell.data == "a")
+    _press(term, 26, 20, "check: invalid")
+    term.wait_for_cell(20, 3, lambda cell: cell.fg == "red")
+    # Clear it, type a digit, and validate again: the red goes at once.
+    term.click(5, 20)
+    term.send_keys("<BackSpace>", "7")
+    term.wait_for_cell(20, 3, lambda cell: cell.data == "7")
+    _press(term, 26, 20, "check: valid")
+    term.wait_for_cell(20, 3, lambda cell: cell.fg != "red")
+    term.send(ESCAPE)
+
+
+def test_scenario_42_the_list_scrolls_sideways(uat_terminal):
+    """TkCurses-019: its scrollbar's right arrow moves the first column."""
+    term = _scenario_42(uat_terminal)
+    # The list's text starts at column 4: its border, then a cell of margin.
+    assert term.row(11)[4:6] == "01", term.describe()
+    term.click(30, 17)
+    term.wait_for(lambda t: "first column 1" in _readout(t), message="list scrolled")
+    # The rows moved, as well as the readout: every one shifted left by one.
+    term.wait_for_cell(11, 4, lambda cell: cell.data == "1")
+    term.wait_for_cell(12, 4, lambda cell: cell.data == "2")
+    term.send(ESCAPE)
+
+
+def test_scenario_42_tags_colour_the_tree_rows(uat_terminal):
+    """TkCurses-67u: 'build' is tagged cyan, 'big.iso' red - the checklist says so."""
+    term = _scenario_42(uat_terminal)
+    build_row = next(i for i, row in enumerate(term.display) if " build " in row)
+    big_row = next(i for i, row in enumerate(term.display) if "big.iso" in row)
+    column = term.row(build_row).index("build")
+    term.wait_for_cell(build_row, column, lambda cell: cell.fg == "cyan")
+    term.wait_for_cell(
+        big_row, term.row(big_row).index("big.iso"), lambda c: c.fg == "red"
+    )
+    term.send(ESCAPE)
+
+
+def test_scenario_42_left_at_the_start_of_the_entry_stays(uat_terminal):
+    """TkCurses-11m, as the checklist asks a person to try it."""
+    term = _scenario_42(uat_terminal)
+    _press(term, 40, 5, "cursor 36")  # fill
+    term.click(10, 5)
+    term.send_keys("<Home>", "<Left>")
+    term.wait_for(lambda t: "cursor 0 " in _readout(t), message="cursor at 0")
+    term.send(ESCAPE)
