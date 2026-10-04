@@ -2541,7 +2541,35 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         is the only sense they have on a character grid.
         """
         name = str(column)
-        entry = self._columns.setdefault(
+        entry = self._columns_entry(name)
+        if kw:
+            if "width" in kw:
+                # Every column's drawn width becomes its own width first, which
+                # is what Tk's -width already is: setting one column after a
+                # stretch leaves the others where they were drawn and shares
+                # out only what this change frees or takes (measured, 213/193/
+                # 192 then a=60 -> 257/104/237). Without it, reading each
+                # width and writing it back moved the columns. TkCurses-a01.
+                for span_name, start, end in self._column_spans():
+                    self._columns_entry(span_name)["width"] = end - start
+            entry.update(kw)
+            self._redraw()
+            return None
+        # Tk answers with the width the column is DRAWN at, stretched - a
+        # 600-pixel tree's 80-wide column reads back 213. TkCurses-a01.
+        shown = {
+            span_name: end - start for span_name, start, end in self._column_spans()
+        }
+        answer = dict(entry)
+        if name in shown:
+            answer["width"] = shown[name]
+        if option is not None:
+            return answer[option.lstrip("-")]
+        return answer
+
+    def _columns_entry(self, name: str) -> dict[str, Any]:
+        """One column's stored options, made with Tk's defaults on first use."""
+        return self._columns.setdefault(
             name,
             {
                 "width": COLUMN_WIDTH,
@@ -2551,13 +2579,6 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
                 "id": name,
             },
         )
-        if kw:
-            entry.update(kw)
-            self._redraw()
-            return None
-        if option is not None:
-            return entry[option.lstrip("-")]
-        return dict(entry)
 
     def _column_names(self) -> list[str]:
         """The data columns, in order, without the tree column."""
@@ -2976,13 +2997,50 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         spans: list[tuple[str, int, int]] = []
         position = 0
         names = ([TREE_COLUMN] if self._shows_tree else []) + self._column_names()
-        for name in names:
-            width = max(0, int(self.column(name, "width")))
+        widths = self._stretched_widths(names)
+        for name, width in zip(names, widths, strict=True):
             spans.append((name, position, position + width))
             # Plus the single space that joins one column to the next, which is
             # what " ".join puts there.
             position += width + 1
         return spans
+
+    def _stretched_widths(self, names: list[str]) -> list[int]:
+        """Each shown column's width once ``-stretch`` has filled the rows area.
+
+        A column's ``-width`` is where it starts. Measured on Tk 9.0.2, a tree
+        600 pixels wide whose three columns ask for 80, 60 and 60 draws them
+        213, 193 and 192 - **the surplus is shared out evenly**, not in
+        proportion to width (100/50/50 gets the same +133/+133/+132), with the
+        odd units going to the leftmost. A column with ``stretch=0`` takes no
+        share and the others split it; with none stretchable nothing grows; a
+        hidden ``#0`` takes none either. Until TkCurses-a01 ``stretch`` was
+        stored and never read, and the space past the last column was blank.
+
+        **A resize keeps no state, where Tk's does.** Tk carries a running
+        slack total between layouts, so its answer can depend on history: a
+        tree created narrower than its columns does not shrink them at all,
+        while one that has been wider shrinks below its configured widths,
+        down to ``-minwidth``. Here a column never draws narrower than its
+        ``-width``, and what does not fit is clipped. Every first layout and
+        every grow-and-shrink-back Tk was measured doing comes out the same;
+        ARCHITECTURE.md has the cases that do not. Setting a width is the one
+        place state is kept, as in Tk - see :meth:`column`.
+        """
+        widths = [max(0, int(self._columns_entry(name)["width"])) for name in names]
+        # The joining spaces take room too: n columns, n - 1 of them.
+        surplus = self._rows_area().width - (sum(widths) + max(0, len(names) - 1))
+        growing = [
+            i
+            for i, name in enumerate(names)
+            if self.getboolean(self._columns_entry(name)["stretch"])
+        ]
+        if surplus <= 0 or not growing:
+            return widths
+        share, odd = divmod(surplus, len(growing))
+        for rank, i in enumerate(growing):
+            widths[i] += share + (1 if rank < odd else 0)
+        return widths
 
     def _cell_text(self, iid: str, name: str) -> str:
         """What one cell of one row holds, before it is padded."""
@@ -3033,10 +3091,10 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
           column on its left. Tk's columns abut, so it has no such cell; the
           gap is an artefact of drawing a character grid, and leaving it
           answering ``""`` would make one cell in every gap unclickable.
-        * Past the last column this answers ``""``, where Tk answers the last
-          column's id - because Tk STRETCHES columns to fill the widget and we
-          do not yet. That is TkCurses-a01, and when it lands the spans grow
-          and this follows with no change here.
+        * Past the last column this answers ``""``. Tk's columns stretch to
+          the widget's edge, and so do ours since TkCurses-a01 - the spans
+          grew and this followed with no change here - so that only happens
+          now when no column is stretchable, or the columns overflow.
         """
         area = self._rows_area()
         offset = x - area.x

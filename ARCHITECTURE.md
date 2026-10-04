@@ -4470,10 +4470,46 @@ sideways.** `_column_spans()` answers where every column sits, in cells, and
 both the row painter and the heading painter compose from it — they each
 recomputed the same arithmetic before, so a click and a repaint could disagree
 about where a column was. `identify_column`, `identify_region` and `bbox` all
-read it, which is why they will follow automatically when `-stretch` is
-honoured (`TkCurses-a01`): today our columns do not fill the widget and Tk's
-do, so `identify_column` past the last column answers `""` where Tk answers the
-last column's id.
+read it, which is why they followed with no change of their own when
+`-stretch` was honoured (`TkCurses-a01`).
+
+**Columns stretch to fill the tree**, as of `TkCurses-a01`. `-stretch` was
+stored and never read before, so the space past the last column was blank. The
+manual says only that `-stretch` "specifies whether the column's width should
+be adjusted when the widget is resized". These measurements, on Tk 9.0.2, are
+what it does:
+
+- A column's `-width` is a **starting** size. The space left over is shared
+  **evenly** among the shown columns whose `-stretch` is true, not in
+  proportion to their widths. 80/60/60 in 598 pixels draws 213/193/192, and
+  100/50/50 gets the same +133/+133/+132. The odd units go to the leftmost.
+- A `stretch=0` column keeps its width and the others split its share. With
+  none stretchable, nothing grows. A hidden `#0` (`show="headings"`) takes no
+  share.
+- `column(c, "width")` answers the **drawn** width: the 80-wide column reads
+  back 213.
+- Setting a width makes every column's drawn width its new starting size
+  first, since that is what Tk's `-width` already is. From 213/193/192, setting
+  the middle column to 60 reads 257/104/237: the other two start from where
+  they were drawn, and the 133 freed is shared by all three.
+
+**Where this differs from Tk.** Tk keeps a running slack total between layouts,
+and here a resize keeps none:
+
+- **A tree narrower than its columns:** a column here never draws narrower than
+  its `-width`, and what does not fit is clipped. Tk does the same for a tree
+  *created* too narrow (400/300/300 at 600 pixels stays 400/300/300, and only
+  grows past 1002). But a tree that has been wider shrinks below its widths in
+  Tk, down to `-minwidth`, and here it does not.
+- **History:** after shrinking to `-minwidth`, Tk does not return to the same
+  widths. 213/193/192, then 50/50/50 at 150 pixels, comes back as
+  199/199/200. Here every layout is a function of the widths and the size.
+- **Odd units:** they always go to the leftmost columns here. In Tk, which
+  column gets them depends on the path its slack took. Once it was the last:
+  257/104/237, where this gives 258/104/236.
+
+A grow-and-shrink-back that stays at or above the configured total comes out
+identical: 600 → 900 → 600 → 300 → 600 pixels, every step.
 
 The spans carry no scroll offset **because a tree here never scrolls
 sideways** — see `xview`. That is an invariant the whole family rests on:

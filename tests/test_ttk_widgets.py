@@ -2288,12 +2288,18 @@ def test_a_refused_set_children_changes_nothing(filled):
 
 @pytest.fixture
 def laid_out(root):
-    """A tree with explicit column widths, so the arithmetic is visible."""
+    """A tree with explicit column widths, so the arithmetic is visible.
+
+    Unstretched, as the real-Tk scans below were measured: with Tk's default
+    ``stretch=1`` these columns would fill the 60 cells (TkCurses-a01) and the
+    widths written into these tests would be the starting sizes, not the
+    drawn ones.
+    """
     view = Treeview(root, name="lo", columns=("size", "kind"))
     view.place(x=0, y=0, width=60, height=10)
-    view.column("#0", width=8)
-    view.column("size", width=5)
-    view.column("kind", width=4)
+    view.column("#0", width=8, stretch=False)
+    view.column("size", width=5, stretch=False)
+    view.column("kind", width=4, stretch=False)
     view.heading("#0", text="Name")
     view.heading("size", text="Size")
     view.heading("kind", text="Kind")
@@ -2478,6 +2484,123 @@ def test_identify_element_is_empty_rather_than_absent(laid_out):
     assert laid_out.identify_element(99, 99) == ""
 
 
+# ------------------------------------------------- -stretch (TkCurses-a01)
+#
+# Measured on Tk 9.0.2: a column's -width is where it starts, and the space
+# left over is shared EVENLY among the shown columns whose -stretch is true -
+# 80/60/60 in 598 pixels draws 213/193/192, and 100/50/50 gets the same
+# +133/+133/+132 - the odd units to the leftmost. stretch=0 columns take no
+# share; with none stretchable nothing grows; a hidden #0 takes none. The
+# option was stored and never read before this, so the space past the last
+# column was blank.
+
+
+def stretching(root, widths, stretch=(True, True, True), show="tree headings"):
+    view = Treeview(root, name="st", columns=("size", "kind"), show=show)
+    view.place(x=0, y=0, width=42, height=8)
+    for name, width, grows in zip(("#0", "size", "kind"), widths, stretch, strict=True):
+        view.column(name, width=width, stretch=grows)
+    root.update_layout()
+    return view
+
+
+def drawn(view):
+    return [end - start for _name, start, end in view._column_spans()]
+
+
+def test_the_columns_fill_the_rows_area(root):
+    view = stretching(root, (12, 8, 8))
+    area = view._rows_area().width
+    assert view._column_spans()[-1][2] == area
+
+
+def test_the_surplus_is_shared_evenly_not_by_width(root):
+    view = stretching(root, (12, 8, 8))
+    surplus = view._rows_area().width - (12 + 8 + 8 + 2)
+    assert drawn(view) == [
+        12 + surplus // 3 + (1 if surplus % 3 > 0 else 0),
+        8 + surplus // 3 + (1 if surplus % 3 > 1 else 0),
+        8 + surplus // 3,
+    ]
+
+
+def test_the_odd_cells_go_to_the_leftmost_columns(root):
+    view = stretching(root, (12, 8, 8))
+    view.place(x=0, y=0, width=view._rect.width + 2, height=8)
+    root.update_layout()
+    gains = [w - start for w, start in zip(drawn(view), (12, 8, 8), strict=True)]
+    assert gains[0] >= gains[1] >= gains[2] >= gains[0] - 1
+
+
+def test_a_column_that_does_not_stretch_keeps_its_width(root):
+    view = stretching(root, (12, 8, 8), stretch=(True, False, True))
+    widths = drawn(view)
+    assert widths[1] == 8
+    assert abs(widths[0] - 12 - (widths[2] - 8)) <= 1
+
+
+def test_with_nothing_stretchable_nothing_grows(root):
+    view = stretching(root, (12, 8, 8), stretch=(False, False, False))
+    assert drawn(view) == [12, 8, 8]
+
+
+def test_a_hidden_tree_column_takes_no_share(root):
+    view = stretching(root, (12, 8, 8), show="headings")
+    widths = drawn(view)
+    assert sum(widths) + 1 == view._rows_area().width
+    assert abs((widths[0] - 8) - (widths[1] - 8)) <= 1
+
+
+def test_a_tree_narrower_than_its_columns_does_not_shrink_them(root):
+    """Tk, creating a tree narrower than its columns, does not shrink them."""
+    view = stretching(root, (30, 20, 20))
+    assert drawn(view) == [30, 20, 20]
+
+
+def test_column_reports_the_width_it_is_drawn_at(root):
+    """Tk: a 600-pixel tree's 80-wide column reads back 213."""
+    view = stretching(root, (12, 8, 8))
+    assert view.column("#0", "width") == drawn(view)[0]
+    assert view.column("#0")["width"] == drawn(view)[0]
+
+
+def test_writing_a_drawn_width_back_does_not_drift(root):
+    view = stretching(root, (12, 8, 8))
+    before = drawn(view)
+    for name in ("#0", "size", "kind"):
+        view.column(name, width=view.column(name, "width"))
+    root.update_layout()
+    assert drawn(view) == before
+
+
+def test_setting_one_width_leaves_the_others_where_they_were_drawn(root):
+    """Tk: 213/193/192, then the middle set to 60, reads 257/104/237 - the
+    others start from where they were DRAWN and the freed space is shared
+    evenly among all three, the narrowed one included."""
+    view = stretching(root, (12, 8, 8))
+    first, middle, last = drawn(view)
+    view.column("size", width=4)
+    root.update_layout()
+    freed = middle - 4
+    gains = [a - b for a, b in zip(drawn(view), (first, 4, last), strict=True)]
+    assert sum(gains) == freed
+    assert max(gains) - min(gains) <= 1
+
+
+#: Measured on Tk 9.0.2, the same 120/80/80 columns as the unstretched scans
+#: below but with Tk's default stretch: they fill a 420-pixel window and the
+#: scan ends on the last column, where unstretched it ends on "". Scanned from
+#: the left border to the last cell of the rows area.
+TK_STRETCHED_COLUMN_IDS = ["", "#0", "#1", "#2"]
+
+
+def test_a_stretched_scan_meets_the_column_ids_tk_meets(root):
+    view = stretching(root, (12, 8, 8))
+    area = view._rows_area()
+    xs = range(area.x - 1, area.x + area.width)
+    assert _squash([view.identify_column(x) for x in xs]) == TK_STRETCHED_COLUMN_IDS
+
+
 # ---------------------- the identify scans, against measured real Tk answers
 #
 # Cells are not pixels, so coordinates cannot be compared across the two
@@ -2545,8 +2668,8 @@ def test_identify_column_numbers_data_columns_from_one_without_a_tree_column(roo
     """
     view = Treeview(root, name="ho", columns=("size", "kind"), show="headings")
     view.place(x=0, y=0, width=40, height=6)
-    view.column("size", width=5)
-    view.column("kind", width=4)
+    view.column("size", width=5, stretch=False)
+    view.column("kind", width=4, stretch=False)
     root.update_layout()
     area = view._rows_area()
     assert view.identify_column(area.x + 0) == "#1"
