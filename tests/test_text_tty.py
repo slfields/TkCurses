@@ -298,9 +298,10 @@ def test_a_disabled_text_refuses_the_keyboard(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(
         program(
-            "t = tkcurses.Text(root, width=20, height=4, state='disabled')\n"
+            "t = tkcurses.Text(root, width=20, height=4)\n"
             "t.place(x=2, y=2)\n"
             "t.insert('1.0', 'fixed')\n"
+            "t.configure(state='disabled')\n"
             "t.focus_set()"
         ),
         workdir=tmp_path,

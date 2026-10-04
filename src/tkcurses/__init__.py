@@ -8899,7 +8899,15 @@ class Text(_Drawable, XView, YView):
         return self._buffer.get(self._resolve(first), self._resolve(last))
 
     def insert(self, index: Any, chars: str, *tags: str) -> None:
-        """Insert text, optionally tagging everything inserted."""
+        """Insert text, optionally tagging everything inserted.
+
+        A disabled Text ignores it, silently, as Tk's does: "no insertions or
+        deletions are allowed", and measured on Tk 9.0.2 nothing is raised
+        either. The tkinter idiom for a read-only display is to set the state
+        to normal around the insert. TkCurses-aah.
+        """
+        if not self._editable:
+            return
         start = self._resolve(index)
         end = self._buffer.insert(start, chars)
         for tag in tags:
@@ -8907,7 +8915,12 @@ class Text(_Drawable, XView, YView):
         self._after_edit()
 
     def delete(self, first: Any, last: Any = None) -> None:
-        """Delete a range, or one character from ``first``."""
+        """Delete a range, or one character from ``first``.
+
+        Ignored while disabled, as :meth:`insert` is. TkCurses-aah.
+        """
+        if not self._editable:
+            return
         if last is None:
             self._buffer.delete(self._resolve(first))
         else:
@@ -9095,8 +9108,19 @@ class Text(_Drawable, XView, YView):
         which is also measured rather than assumed: Tk treats "undo is off"
         and "undo is on but the stack is empty" as two different situations,
         and only the second is an error.
+
+        A disabled Text changes nothing, but still raises on an empty stack,
+        as Tk's does (measured). **Deliberately unlike Tk**, the stack does
+        not move either: Tk 9.0.2's disabled undo pops the group while
+        refusing its edits, so the history no longer describes the text and a
+        later redo applies the same edit twice - "hello world" became "hello
+        world world". Copying that would copy a defect. TkCurses-aah.
         """
         if not self.getboolean(self._options["undo"]):
+            return
+        if not self._editable:
+            if not self._buffer.can_undo:
+                raise TclError("nothing to undo")
             return
         if not self._buffer.edit_undo():
             raise TclError("nothing to undo")
@@ -9108,8 +9132,15 @@ class Text(_Drawable, XView, YView):
 
         Raises:
             TclError: If there is nothing to redo, as tkinter does.
+
+        Disabled, the same as :meth:`edit_undo`: nothing changes, the stack
+        included, and an empty stack still raises.
         """
         if not self.getboolean(self._options["undo"]):
+            return
+        if not self._editable:
+            if not self._buffer.can_redo:
+                raise TclError("nothing to redo")
             return
         if not self._buffer.edit_redo():
             raise TclError("nothing to redo")
@@ -10127,12 +10158,13 @@ def _text_key(event: Event) -> str | None:
 #
 # The same rules as an Entry's (see _entry_copy), measured on Tk 9.0.2's Text:
 # copy the "sel" range; cut is copy then delete, and a disabled Text still
-# copies; paste inserts at "insert" without replacing the selection (x11);
-# select-all tags 1.0 to end and leaves the cursor. TkCurses-lw2.
+# copies; paste replaces the selection (a deliberate departure from Linux Tk,
+# see _entry_paste); select-all tags 1.0 to end and leaves the cursor.
+# TkCurses-lw2.
 #
-# The state is checked HERE, not left to insert() and delete(): a disabled
-# Text here still takes edits from code, where Tk's ignores them - that is
-# TkCurses-aah, and these handlers must not wait on it.
+# insert() and delete() ignore a disabled Text themselves (TkCurses-aah), but
+# the handlers still ask first: a cut must know whether to delete after
+# copying, and a paste must not move the cursor on its way to being refused.
 
 
 def _text_selected(text: Any) -> tuple[str, str, str] | None:

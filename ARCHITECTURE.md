@@ -3689,6 +3689,22 @@ Multi-line text editor.
 | `window_create(index, **kw)` | ☐ | Embed widget - not implemented; TkCurses-mzj |
 | `window_names()` | ☐ | List widgets - not implemented; TkCurses-mzj |
 
+**A disabled Text refuses edits from code too** (`TkCurses-aah`), as the
+manual says: "no insertions or deletions are allowed". Measured on Tk 9.0.2,
+`insert` and `delete` are ignored **silently**: nothing is raised and the
+modified flag does not move. Tags, marks and the selection still change. (Tk's
+`image_create` and `window_create` still embed while disabled; neither is
+implemented here yet, `TkCurses-mzj`.) Ours used to accept both edits from
+code, and a test asserted it, unmeasured. Fill a read-only display with
+tkinter's idiom: `state="normal"`, insert, `state="disabled"`.
+
+**Undo while disabled departs from Tk, deliberately.** Tk's disabled
+`edit_undo` changes nothing in the text but still pops the undo group, so the
+history stops describing the text: re-enable and redo, and `hello world`
+became `hello world world`. Here a disabled undo or redo moves nothing, the
+stack included. An empty stack still raises `nothing to undo`, as Tk's does
+whatever the state.
+
 ---
 
 ### Listbox Class

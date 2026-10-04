@@ -381,11 +381,70 @@ def test_a_disabled_text_refuses_the_keyboard(text):
     assert text.get("1.0", "1.end") == "fixed"
 
 
-def test_a_disabled_text_can_still_be_changed_from_code(text):
-    """Disabling refuses the user, not the program."""
+def test_a_disabled_text_ignores_insert_and_delete_from_code(text):
+    """Measured on Tk 9.0.2, and the manual: with -state disabled "no
+    insertions or deletions are allowed", and nothing is raised either. This
+    test used to assert the opposite, unmeasured. TkCurses-aah."""
+    text.insert("1.0", "hello")
+    text.edit_modified(False)
     text.configure(state="disabled")
+    text.insert("1.0", "X")
+    text.delete("1.0", "1.2")
+    assert text.get("1.0", "end-1c") == "hello"
+    assert not text.edit_modified(), "a refused edit marked the text modified"
+
+
+def test_the_read_only_idiom_still_works(text):
+    """How tkinter programs fill a read-only display: enable, write, disable."""
+    text.configure(state="disabled")
+    text.configure(state="normal")
     text.insert("1.0", "set by code")
-    assert text.get("1.0", "1.end") == "set by code"
+    text.configure(state="disabled")
+    assert text.get("1.0", "end-1c") == "set by code"
+
+
+def test_a_disabled_text_still_takes_tags_and_marks(text):
+    """Measured: only the contents are frozen."""
+    text.insert("1.0", "hello")
+    text.configure(state="disabled")
+    text.tag_add("sel", "1.0", "1.2")
+    text.mark_set("insert", "1.3")
+    assert [str(i) for i in text.tag_ranges("sel")] == ["1.0", "1.2"]
+    assert text.index("insert") == "1.3"
+
+
+@pytest.fixture
+def history(root):
+    t = Text(root, name="h", undo=True)
+    t.insert("1.0", "hello")
+    t.edit_separator()
+    t.insert("end", " world")
+    return t
+
+
+def test_a_disabled_undo_changes_nothing_and_keeps_the_history(history):
+    """Deliberately unlike Tk 9.0.2, whose disabled undo pops the group while
+    refusing its edits - the history then no longer describes the text, and
+    a later redo applied ' world' twice: 'hello world world'. Here nothing
+    moves, so undo after re-enabling takes back ' world', as it should."""
+    history.configure(state="disabled")
+    history.edit_undo()
+    assert history.get("1.0", "end-1c") == "hello world"
+    with pytest.raises(TclError, match="nothing to redo"):
+        history.edit_redo()  # the undo did not move anything onto it
+    history.configure(state="normal")
+    history.edit_undo()
+    assert history.get("1.0", "end-1c") == "hello"
+    history.edit_redo()
+    assert history.get("1.0", "end-1c") == "hello world"
+
+
+@pytest.mark.parametrize("method", ["edit_undo", "edit_redo"])
+def test_a_disabled_text_still_says_when_there_is_nothing_to_undo(root, method):
+    """Measured: Tk raises on an empty stack whatever the state."""
+    t = Text(root, name="e", undo=True, state="disabled")
+    with pytest.raises(TclError, match="nothing to"):
+        getattr(t, method)()
 
 
 # ----------------------------------------------------------------- selection
@@ -1542,3 +1601,13 @@ def test_a_line_with_a_tab_takes_the_slow_path_even_without_margins(wrapped):
     wrapped.configure(tabs=10)
     wrapped.insert("1.0", "a\tb")
     assert wrapped.bbox("1.2")[0] - wrapped.bbox("1.0")[0] == 10
+
+
+def test_a_disabled_redo_changes_nothing_and_keeps_the_history(history):
+    history.edit_undo()
+    history.configure(state="disabled")
+    history.edit_redo()
+    assert history.get("1.0", "end-1c") == "hello"
+    history.configure(state="normal")
+    history.edit_redo()
+    assert history.get("1.0", "end-1c") == "hello world"
