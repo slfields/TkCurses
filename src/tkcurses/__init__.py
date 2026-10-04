@@ -6874,7 +6874,11 @@ class Entry(_Drawable, XView):
         return self._field.text[first:last]
 
     def selection_range(self, start: Any, end: Any) -> None:
-        """Select from ``start`` to ``end``."""
+        """Select from ``start`` to ``end``, leaving the anchor where it is.
+
+        A range given backwards or empty clears the selection, as Tk's does.
+        See :meth:`TextField.select_range`; TkCurses-bfy.
+        """
         self._field.select_range(self.index(start), self.index(end))
         self._claim_primary()
         self._redraw()
@@ -6882,7 +6886,7 @@ class Entry(_Drawable, XView):
     select_range = selection_range
 
     def selection_clear(self, **kw: Any) -> None:  # noqa: ARG002 - Misc signature
-        """Drop the selection."""
+        """Drop the selection; the anchor stays, as Tk's does."""
         self._field.select_clear()
         self._redraw()
 
@@ -6894,24 +6898,36 @@ class Entry(_Drawable, XView):
 
     select_present = selection_present
 
+    # The three below are Tk's entry selection commands as measured on 9.0.2,
+    # which this followed loosely until TkCurses-bfy: selection_from cleared
+    # the selection and moved the cursor, selection_to moved the cursor, and
+    # selection_adjust was selection_to under another name. None of them
+    # moves the cursor in Tk.
+
     def selection_from(self, index: Any) -> None:
-        """Start a selection at ``index``."""
-        self._field.select_range(self.index(index), self.index(index))
-        self._field.move_to(self.index(index))
-        self._claim_primary()
-        self._redraw()
+        """Set the anchor for the next :meth:`selection_to`, and only that."""
+        self._field.select_from(self.index(index))
 
     select_from = selection_from
 
     def selection_to(self, index: Any) -> None:
-        """Extend the selection to ``index``."""
-        self._field.move_to(self.index(index), extend=True)
+        """Select from the anchor to ``index``."""
+        self._field.select_to(self.index(index))
         self._claim_primary()
         self._redraw()
 
     select_to = selection_to
-    selection_adjust = selection_to
-    select_adjust = selection_to
+
+    def selection_adjust(self, index: Any) -> None:
+        """Move the nearer end of the selection to ``index``.
+
+        See :meth:`TextField.select_adjust` for which end is nearer.
+        """
+        self._field.select_adjust(self.index(index))
+        self._claim_primary()
+        self._redraw()
+
+    select_adjust = selection_adjust
 
     def xview(self, *args: Any) -> Any:
         """Report or move the view, as Tk's entry does.
@@ -7498,7 +7514,11 @@ def _entry_click(event: Event) -> None:
     if str(entry._options["state"]) == "disabled":
         return
     entry.focus_set()
-    entry._field.move_to(entry._field.index_at(event.x - entry._text_area().x))
+    index = entry._field.index_at(event.x - entry._text_area().x)
+    entry._field.move_to(index)
+    # Tk's tk::EntryButton1 anchors there too: a click, then selection_to,
+    # selects from the click (measured). TkCurses-bfy.
+    entry._field.select_from(index)
     entry._see_cursor()
     entry._redraw()
 
@@ -11756,7 +11776,8 @@ class Listbox(_Drawable, XView, YView):
         if len(args) == 1:
             self._top = self.index(args[0])
         elif args[0] == "moveto":
-            self._top = int(float(args[1]) * len(self._items))
+            # Rounded, halves up, as Tk does; this truncated. TkCurses-md5.
+            self._top = math.floor(float(args[1]) * len(self._items) + 0.5)
         elif args[0] == "scroll":
             count = int(args[1])
             step = max(1, self._text_area().height) if args[2] == "pages" else 1

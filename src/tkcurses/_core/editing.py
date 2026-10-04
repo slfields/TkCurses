@@ -44,7 +44,10 @@ class TextField:
     def __init__(self, text: str = "") -> None:
         self._text = text
         self._cursor = len(text)
-        self._anchor: int | None = None
+        # Tk's anchor is always somewhere: 0 until something sets it, and it
+        # outlives the selection - selection_clear, a plain arrow and a delete
+        # of the whole selection all leave it. TkCurses-bfy.
+        self._anchor = 0
         self._selection: tuple[int, int] | None = None
         self._view = 0
 
@@ -63,20 +66,23 @@ class TextField:
         position that does not exist - which is what happens when a
         textvariable is set from elsewhere while the field is being edited.
 
-        **The selection is clamped, not dropped**, and so is its anchor.
-        Measured against Tk 9.0.2, for ``tk.Entry`` and ``ttk.Entry`` through
-        a textvariable and for ``ttk.Spinbox.set``: a selection of 1-4 over
-        ``"hello"`` reads 1-2 once the text is ``"ab"``, and one that started
-        at or past the new end is gone. This dropped it outright until
-        TkCurses-elb.
+        **The selection is clamped, not dropped.** Measured against Tk 9.0.2,
+        for ``tk.Entry`` and ``ttk.Entry`` through a textvariable and for
+        ``ttk.Spinbox.set``: a selection of 1-4 over ``"hello"`` reads 1-2 once
+        the text is ``"ab"``, and one that started at or past the new end is
+        gone. This dropped it outright until TkCurses-elb.
+
+        **The anchor is not clamped**, which this said it was until
+        TkCurses-bfy. Anchor at 6, the text set to ``"abc"``, six characters
+        inserted at 3, then ``selection to 0``: Tk reads 0-9, which only an
+        anchor still at 6 - moved to 12 by the insert - produces. Everything
+        that reads the anchor clamps what it selects, so one past the end is
+        harmless until an edit moves it back into range.
         """
         self._text = value
         self._cursor = min(self._cursor, len(value))
         if self._selection is not None:
             self._set_selection(*self._selection)
-        self._anchor = (
-            None if self._selection is None else self.clamp(self._anchor or 0)
-        )
         self._clamp_view()
 
     @property
@@ -120,13 +126,13 @@ class TextField:
             first, last = self._selection
             # The anchor is tested against the OLD first: an anchor sitting on
             # the insertion point moves only when the selection starts there.
-            if self._anchor is not None and (self._anchor > index or first >= index):
+            if self._anchor > index or first >= index:
                 self._anchor += added
             self._selection = (
                 first + added if first >= index else first,
                 last + added if last > index else last,
             )
-        elif self._anchor is not None and self._anchor > index:
+        elif self._anchor > index:
             self._anchor += added
         if self._view > index:
             self._view += added
@@ -160,8 +166,7 @@ class TextField:
         if self._selection is not None:
             start, stop = moved(self._selection[0]), moved(self._selection[1])
             self._selection = (start, stop) if start < stop else None
-        if self._anchor is not None:
-            self._anchor = moved(self._anchor)
+        self._anchor = moved(self._anchor)
         self._view = moved(self._view)
 
     def delete_selection(self) -> bool:
@@ -175,25 +180,28 @@ class TextField:
     # -------------------------------------------------------------- cursor
 
     def move_to(self, index: int, *, extend: bool = False) -> None:
-        """Put the cursor at ``index``.
+        """Put the cursor at ``index``, as an arrow key does.
 
         ``extend`` drags the selection with it, which is what a shifted arrow
         key does; without it the selection is dropped, which is what a plain
-        one does.
+        one does - and the anchor is kept, as Tk keeps it.
+
+        Extending is Tk's ``tk::EntryKeySelect``: with nothing selected the
+        selection starts at the cursor, whatever anchor an edit left behind
+        (measured: type over a selection, then Shift-Right selects one
+        character); with a selection it is *adjusted* (:meth:`select_adjust`),
+        so Shift-Right on 2-4 with the cursor at 5 reads 2-6.
         """
         index = self.clamp(index)
         if extend:
-            # With nothing selected the drag starts here, whatever anchor an
-            # edit left behind - what Tk's Shift-arrow bindings do (measured:
-            # type over a selection, then Shift-Right selects one character).
-            if self._anchor is None or self._selection is None:
+            if self._selection is None:
                 self._anchor = self._cursor
-            self._cursor = index
-            self._set_selection(self._anchor, index)
+                self.select_to(index)
+            else:
+                self.select_adjust(index)
         else:
-            self._cursor = index
             self._selection = None
-            self._anchor = None
+        self._cursor = index
 
     def place_cursor(self, index: int) -> None:
         """Put the cursor at ``index`` and leave the selection alone.
@@ -216,14 +224,55 @@ class TextField:
         return self._selection
 
     def select_range(self, first: int, last: int) -> None:
-        """Select from ``first`` to ``last``."""
-        self._anchor = self.clamp(first)
-        self._set_selection(first, last)
+        """Select from ``first`` to ``last`` - Tk's ``selection range``.
+
+        Measured on Tk 9.0.2: it does not move the anchor (range 2-6, then
+        ``selection to 8`` reads 0-8), and a range given backwards, or empty,
+        clears the selection rather than being turned round. TkCurses-bfy.
+        """
+        first, last = self.clamp(first), self.clamp(last)
+        self._selection = (first, last) if first < last else None
+
+    def select_from(self, index: int) -> None:
+        """Set the anchor and nothing else - Tk's ``selection from``.
+
+        The selection, if any, stays as it is, and so does the cursor
+        (measured). It is the next :meth:`select_to` that uses it.
+        """
+        self._anchor = self.clamp(index)
+
+    def select_to(self, index: int) -> None:
+        """Select from the anchor to ``index`` - Tk's ``selection to``.
+
+        The cursor does not move (measured: it stays put through every
+        ``selection to``). Selecting onto the anchor itself leaves no
+        selection here, where Tk reports an empty one as present - a
+        ``sel.first`` equal to ``sel.last`` - which is not worth copying.
+        """
+        self._set_selection(self._anchor, index)
+
+    def select_adjust(self, index: int) -> None:
+        """Move the nearer end of the selection to ``index``.
+
+        Tk's ``selection adjust``, which is not ``selection to``: the far end
+        becomes the anchor, the choice made around the midpoint with Tk's own
+        rounding. Measured on 2-6: ``adjust 3`` reads 3-6, ``adjust 5`` 2-5,
+        ``adjust 8`` 2-8, ``adjust 1`` 1-6, and ``adjust 4`` - the exact
+        middle - keeps whatever anchor there was. With nothing selected it is
+        :meth:`select_to`.
+        """
+        index = self.clamp(index)
+        if self._selection is not None:
+            first, last = self._selection
+            if index < (first + last) // 2:
+                self._anchor = last
+            elif index > (first + last + 1) // 2:
+                self._anchor = first
+        self.select_to(index)
 
     def select_clear(self) -> None:
-        """Drop the selection, leaving the cursor where it is."""
+        """Drop the selection, leaving the cursor and the anchor where they are."""
         self._selection = None
-        self._anchor = None
 
     def select_all(self) -> None:
         """Select everything and leave the cursor at the end."""

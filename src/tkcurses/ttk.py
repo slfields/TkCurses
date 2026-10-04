@@ -63,6 +63,7 @@ from __future__ import annotations
 import contextlib
 import curses
 import functools
+import math
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -2825,7 +2826,8 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
             return self._view_fractions()
         rows = len(self._visible())
         if args[0] == "moveto":
-            self._top = int(float(args[1]) * rows)
+            # Rounded, halves up, as Tk does; this truncated. TkCurses-md5.
+            self._top = math.floor(float(args[1]) * rows + 0.5)
         elif args[0] == "scroll":
             count = int(args[1])
             step = max(1, self._content_height()) if args[2] == "pages" else 1

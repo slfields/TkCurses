@@ -2584,6 +2584,17 @@ def test_a_treeview_scrolls_by_the_named_methods(root):
     assert tree.yview()[0] == 0.0
 
 
+@pytest.mark.parametrize(("rows", "top"), [(2.3, 2), (2.5, 3), (2.7, 3)])
+def test_a_treeview_moveto_rounds_to_the_nearest_row(root, rows, top):
+    """Measured on Tk 9.0.2, 30 rows: Tk rounds, halves up, where this
+    truncated. TkCurses-md5."""
+    tree = Treeview(root, height=5)
+    for n in range(30):
+        tree.insert("", "end", text=str(n))
+    tree.yview_moveto(rows / 30)
+    assert tree.yview()[0] * 30 == pytest.approx(top)
+
+
 def test_a_treeview_answers_the_horizontal_methods_and_stays_whole(root):
     """It never scrolls sideways; the named forms must not raise either."""
     tree = Treeview(root)

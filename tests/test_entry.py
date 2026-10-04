@@ -1038,6 +1038,53 @@ def test_a_scrollbar_is_told_where_the_entry_view_is(entry):
     assert 0.0 <= first < last <= 1.0
 
 
+# ------------------------------------------------------- selection commands
+#
+# Measured on Tk 9.0.2: none of selection_from, selection_to or
+# selection_adjust moves the insertion cursor, and selection_from does not
+# touch the selection. Ours moved the cursor in all three, and selection_adjust
+# was selection_to under another name. TkCurses-bfy.
+
+
+@pytest.fixture
+def lettered(entry):
+    entry.insert(0, "abcdefghij")
+    entry.icursor(5)
+    return entry
+
+
+def selected(widget):
+    if not widget.selection_present():
+        return None
+    return (widget.index("sel.first"), widget.index("sel.last"))
+
+
+def test_the_selection_commands_leave_the_cursor(lettered):
+    lettered.selection_range(2, 6)
+    lettered.selection_from(3)
+    assert selected(lettered) == (2, 6)
+    lettered.selection_to(8)
+    assert selected(lettered) == (3, 8)
+    lettered.selection_adjust(1)
+    assert selected(lettered) == (1, 8)
+    assert lettered.index("insert") == 5
+
+
+def test_selection_adjust_is_not_selection_to(lettered):
+    """On 2-6, adjust(3) moves the start; selection_to(3) would give 0-3."""
+    lettered.selection_range(2, 6)
+    lettered.selection_adjust(3)
+    assert selected(lettered) == (3, 6)
+
+
+def test_a_click_sets_the_anchor(lettered):
+    """Tk's Button-1 binding does selection from where it lands."""
+    x = lettered._text_area().x + 3
+    lettered._handle(MouseEvent(button=1, state="pressed", x=x, y=1))
+    lettered.selection_to(8)
+    assert selected(lettered) == (3, 8)
+
+
 # -------------------------------------------------------- exportselection
 #
 # Four behaviours, measured on Tcl/Tk 9.0.2 by selecting in a real Entry and

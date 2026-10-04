@@ -3336,6 +3336,33 @@ reads 2–4. An anchor sitting exactly on an insertion point moves only if the
 selection starts there. With nothing selected, a Shift-arrow starts afresh at
 the cursor, whatever anchor an edit left.
 
+**The selection commands, as Tk's behave** (`TkCurses-bfy`). The manual
+describes each in a sentence; these are the measurements behind them, on Tk
+9.0.2 with `abcdefghij` and the cursor at 5. **None of them moves the cursor**,
+and until `TkCurses-bfy` all three of ours did.
+
+- `selection_from(i)` sets the anchor and nothing else; a selection already
+  there stays. Ours used to clear it.
+- `selection_to(i)` selects from the anchor to `i`.
+- `selection_range(a, b)` **leaves the anchor**: range 2–6, then
+  `selection_to(8)`, reads 0–8. A backwards or empty range clears the
+  selection rather than being turned round.
+- The anchor starts at 0. A click sets it to where it lands, as `selection
+  from` does. `selection_clear`, a plain arrow and a delete of the whole
+  selection all keep it. Replacing the text does **not** clamp it: anchor at 6,
+  the text set to `abc`, six characters inserted at 3, then `selection_to(0)`,
+  reads 0–9.
+- `selection_adjust(i)` is **not** `selection_to`, which ours aliased it to.
+  It moves the nearer end of the selection, making the far end the anchor,
+  split at Tk's midpoint. On 2–6: `adjust(3)` → 3–6, `adjust(5)` → 2–5,
+  `adjust(8)` → 2–8, `adjust(1)` → 1–6. The exact middle, `adjust(4)`, keeps
+  whatever anchor there was, so it reads 0–4. With nothing selected it is
+  `selection_to`. Shift-arrow with a selection present is an adjust: range 2–4,
+  cursor 5, Shift-Right reads 2–6.
+- One difference, deliberate: `selection_to` onto the anchor leaves Tk
+  reporting an *empty* selection as present (`sel.first` equal to `sel.last`).
+  Here nothing is selected.
+
 **Configuration Options:**
 
 | Option | tkinter | TkCurses |
@@ -3594,6 +3621,12 @@ The named forms — `xview_moveto`, `xview_scroll`, `yview_moveto`,
 shared by Entry (and so Spinbox and the ttk entries), Text, Canvas, Listbox
 and ttk.Treeview. They were per-widget copies on Text and Canvas and missing
 everywhere else.
+
+Vertical `moveto` on Listbox and ttk.Treeview **rounds** to the nearest row,
+halves up: on 30 rows, 2.3, 2.5 and 2.7 rows put row 2, 3 and 3 at the top,
+measured on Tk 9.0.2. Both used to truncate (`TkCurses-md5`). Text does not
+round: Tk's Text scrolls by pixels and puts the part-shown line first, which
+truncating already matches.
 
 **Rendering:**
 ```

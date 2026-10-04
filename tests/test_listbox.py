@@ -359,6 +359,18 @@ def test_yview_moveto_scrolls(listbox):
     assert listbox._top == 4
 
 
+@pytest.mark.parametrize(("rows", "top"), [(2.3, 2), (2.5, 3), (2.7, 3)])
+def test_yview_moveto_rounds_to_the_nearest_row(root, rows, top):
+    """Measured on Tk 9.0.2, 30 rows: Tk rounds, halves up. This truncated -
+    2.7 rows put row 2 at the top. TkCurses-md5."""
+    box = Listbox(root, name="tall", height=5)
+    box._allocate(Rect(0, 0, 18, 7))
+    box._map()
+    box.insert("end", *[str(n) for n in range(30)])
+    box.yview_moveto(rows / 30)
+    assert box._top == top
+
+
 def test_yview_scroll_by_units(listbox):
     listbox.yview("scroll", 2, "units")
     assert listbox._top == 2

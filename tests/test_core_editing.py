@@ -168,9 +168,138 @@ def test_selecting_a_range(field):
     assert field.selected_text() == "el"
 
 
-def test_a_backwards_selection_is_normalised(field):
+def test_a_backwards_range_clears_the_selection(field):
+    """Tk 9.0.2: selection range 6 2 leaves nothing selected. TkCurses-bfy."""
+    field.select_range(1, 3)
     field.select_range(3, 1)
-    assert field.selection == (1, 3)
+    assert field.selection is None
+
+
+# ------------------------------------------------------------------ the anchor
+#
+# Tk's entry selection commands, measured on 9.0.2 with "abcdefghij" and the
+# cursor at 5 - which none of them moves. TkCurses-bfy.
+
+
+def ten():
+    field = TextField("abcdefghij")
+    field.place_cursor(5)
+    return field
+
+
+def test_the_anchor_starts_at_zero():
+    field = ten()
+    field.select_to(3)
+    assert (field.selection, field.cursor) == ((0, 3), 5)
+
+
+def test_select_from_sets_only_the_anchor():
+    field = ten()
+    field.select_range(2, 6)
+    field.select_from(3)
+    assert (field.selection, field.cursor) == ((2, 6), 5)
+    field.select_to(8)
+    assert field.selection == (3, 8)
+
+
+def test_select_range_leaves_the_anchor():
+    field = ten()
+    field.select_range(2, 6)
+    field.select_to(8)
+    assert field.selection == (0, 8)
+
+
+def test_clearing_keeps_the_anchor():
+    field = ten()
+    field.select_from(4)
+    field.select_to(7)
+    field.select_clear()
+    field.select_to(1)
+    assert field.selection == (1, 4)
+
+
+def test_selecting_onto_the_anchor_selects_nothing():
+    """Tk reports an empty selection as present here; deliberately not copied."""
+    field = ten()
+    field.select_from(4)
+    field.select_to(7)
+    field.select_to(4)
+    assert field.selection is None
+
+
+@pytest.mark.parametrize(
+    ("index", "selected", "then_to", "after"),
+    [
+        (8, (2, 8), 1, (1, 2)),  # past the end: the start becomes the anchor
+        (1, (1, 6), 8, (6, 8)),  # before the start: the end does
+        (3, (3, 6), 8, (6, 8)),  # nearer the start
+        (5, (2, 5), 1, (1, 2)),  # nearer the end
+        (4, (0, 4), 8, (0, 8)),  # the exact middle keeps the old anchor, 0
+    ],
+)
+def test_adjust_moves_the_nearer_end(index, selected, then_to, after):
+    field = ten()
+    field.select_range(2, 6)
+    field.select_adjust(index)
+    assert (field.selection, field.cursor) == (selected, 5)
+    field.select_to(then_to)
+    assert field.selection == after
+
+
+def test_adjust_with_nothing_selected_is_select_to():
+    field = ten()
+    field.select_from(3)
+    field.select_adjust(7)
+    assert field.selection == (3, 7)
+
+
+def test_a_plain_arrow_keeps_the_anchor():
+    """Tk: from 2, to 6, Left - then selection to 8 reads 2-8."""
+    field = ten()
+    field.select_from(2)
+    field.select_to(6)
+    field.move_by(-1)
+    assert field.selection is None
+    field.select_to(8)
+    assert field.selection == (2, 8)
+
+
+def test_shift_arrow_adjusts_a_selection_it_did_not_make():
+    """Tk: range 2-4, cursor at 5, Shift-Right reads 2-6 with the cursor at 6."""
+    field = ten()
+    field.select_range(2, 4)
+    field.move_by(1, extend=True)
+    assert (field.selection, field.cursor) == ((2, 6), 6)
+
+
+@pytest.mark.parametrize(
+    ("moves", "expected"),
+    [
+        ([1, 1], (5, 7)),
+        ([1, 1, -1], (5, 6)),
+        ([1, 1, -1, -1], None),
+        ([1, 1, -1, -1, -1], (4, 5)),  # through the anchor: starts afresh
+        ([-1, -1, 1], (4, 5)),
+    ],
+)
+def test_shift_arrows_grow_and_shrink_from_the_cursor(moves, expected):
+    """Measured in Tk with Shift-Left/Right from the cursor at 5. Tk reports the
+    third row as an empty selection 5-5 that is present; that is not copied."""
+    field = ten()
+    for move in moves:
+        field.move_by(move, extend=True)
+    assert field.selection == expected
+
+
+def test_new_text_leaves_the_anchor_where_it_was():
+    """Tk: from 6, the variable set to 'abc', six characters inserted at 3,
+    then selection to 0 reads 0-9 - the anchor stayed at 6 and moved to 12."""
+    field = ten()
+    field.select_from(6)
+    field.text = "abc"
+    field.insert(3, "XYZWVU")
+    field.select_to(0)
+    assert field.selection == (0, 9)
 
 
 def test_an_empty_selection_is_no_selection(field):
