@@ -30,7 +30,63 @@ gaps is what makes off-by-one errors in editing code.
 
 from __future__ import annotations
 
-__all__ = ["TextField"]
+import unicodedata
+
+__all__ = ["TextField", "is_word_char", "run_end", "run_start"]
+
+
+# --------------------------------------------------------------- words
+#
+# What a double-click selects, in Entry and Text alike: the run of characters
+# of one kind around the pointer, where the kinds are word characters and
+# everything else - so a run of spaces or punctuation is a "word" too, and
+# double-clicking the ", " in "hello, world" selects both. Tk gets this from
+# Tcl's tcl_wordBreakBefore and tcl_wordBreakAfter, whose regular expressions
+# are built on Tcl's \w; read from the running interpreter, Tk 9.0.2, and the
+# selections measured character by character (TkCurses-svtr).
+
+
+def is_word_char(char: str) -> bool:
+    """True for a character Tcl's ``\\w`` matches.
+
+    A letter, a decimal digit or connector punctuation (the underscore, and
+    ``‿`` with it). Not Python's ``str.isalnum``, which also takes ``²`` and
+    ``½`` - numbers, but not decimal digits - while missing ``‿``. Checked
+    against Tcl 9.0.2's regexp for every code point there is, with no
+    difference, under Python 3.14's Unicode 16 tables.
+    """
+    category = unicodedata.category(char)
+    return category[0] == "L" or category in ("Nd", "Pc")
+
+
+def run_start(text: str, index: int) -> int:
+    """Where the run holding the character at ``index`` begins.
+
+    Tk's ``tk::wordBreakBefore``, floored at 0 as its callers floor it. Past
+    the end it answers for the last character, as Tcl's string range clamps.
+    """
+    if not text or index < 0:
+        return 0
+    index = min(index, len(text) - 1)
+    kind = is_word_char(text[index])
+    while index > 0 and is_word_char(text[index - 1]) == kind:
+        index -= 1
+    return index
+
+
+def run_end(text: str, index: int) -> int:
+    """Where the run holding the character at ``index`` ends, exclusive.
+
+    Tk's ``tk::wordBreakAfter``, with "no break after it" read as the end of
+    the text, as its callers read it.
+    """
+    index = max(index, 0)
+    if index >= len(text):
+        return len(text)
+    kind = is_word_char(text[index])
+    while index < len(text) and is_word_char(text[index]) == kind:
+        index += 1
+    return index
 
 
 class TextField:

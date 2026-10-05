@@ -89,7 +89,7 @@ from tkcurses._core.colors import (
 from tkcurses._core.config import TkCursesConfig
 from tkcurses._core.direct import DirectPainter
 from tkcurses._core.dispatcher import CursesDispatcher
-from tkcurses._core.editing import TextField
+from tkcurses._core.editing import TextField, run_end, run_start
 from tkcurses._core.errors import TclError, TkCursesError
 from tkcurses._core.events import (
     MOD_CTRL,
@@ -4310,7 +4310,11 @@ class Tk(BaseWidget, Wm):
         held down, so the *next* click appears to be the one that works -
         intermittently, depending on whether the hand moved.
         """
-        if event.state in ("pressed", "clicked"):
+        # A double or triple click is a press too, and takes the grab like
+        # one: without it, the drag after a double-click - which extends the
+        # selection a word at a time - went to whatever was under the pointer
+        # instead of to the widget pressed. TkCurses-svtr.
+        if event.state in ("pressed", "clicked", "double", "triple"):
             self._mouse_owner = self._widget_at(event.x, event.y)
             return self._mouse_owner
         owner = self._mouse_owner
@@ -6709,6 +6713,13 @@ class Entry(_Drawable, XView):
         self._edited_while_validating = False
         # True between a press in the text and its release; see _entry_drag.
         self._dragging = False
+        # What a drag extends by - "char", "word" after a double-click, "line"
+        # after a triple - whether it has moved off the press, where the
+        # pointer was last, and the pending autoscroll. TkCurses-svtr.
+        self._select_mode = "char"
+        self._moved = False
+        self._drag_x = 0
+        self._autoscan: str | None = None
         # The screen cell the terminal's cursor goes in; see _draw_cursor.
         self._insert_at: tuple[int, int] | None = None
         super().__init__(master, cnf, name=name, **kw)
@@ -6732,6 +6743,14 @@ class Entry(_Drawable, XView):
         bind(name, "<Button-1>", _entry_click)
         bind(name, "<Motion>", _entry_drag)
         bind(name, "<ButtonRelease-1>", _entry_release)
+        bind(name, "<Double-Button-1>", _entry_double)
+        bind(name, "<Triple-Button-1>", _entry_triple)
+        for extend in _EXTEND_MODIFIERS:
+            bind(name, f"<{extend}-Button-1>", _entry_shift_click)
+            if not _is_ttk(self):
+                # ttk binds neither; a doubled shift-click there is just one.
+                bind(name, f"<Double-{extend}-Button-1>", _entry_double_shift)
+                bind(name, f"<Triple-{extend}-Button-1>", _entry_triple_shift)
         bind(name, "<FocusIn>", _entry_focus_in)
         bind(name, "<FocusOut>", _entry_focus_out)
         _bind_entry_clipboard(bind, name)
@@ -7667,14 +7686,246 @@ def _entry_click(event: Event) -> None:
     if str(entry._options["state"]) == "disabled":
         return
     entry.focus_set()
-    index = entry._field.index_at(event.x - entry._text_area().x)
+    index = _entry_index_at(entry, event.x)
     entry._field.move_to(index)
     # Tk's tk::EntryButton1 anchors there too: a click, then selection_to,
     # selects from the click (measured). TkCurses-bfy.
     entry._field.select_from(index)
-    entry._dragging = True
+    _entry_start_drag(entry, "char")
     entry._see_cursor()
     entry._redraw()
+
+
+# ------------------------------------------- selecting with the mouse, Entry
+#
+# Tk's own Entry bindings, READ from the running interpreter - bind_class
+# Entry and TEntry, and the bodies of tk::EntryMouseSelect,
+# tk::EntryAutoScan, ttk::entry::Select, WordSelect, CharSelect, ExtendTo
+# and AutoScroll - and the selections MEASURED on Tk 9.0.2 by calling those
+# procedures at each character (TkCurses-svtr):
+#
+# * a double-click selects the run around the pointer, word or not (see
+#   tkcurses._core.editing.run_start), and a drag after it extends a word at
+#   a time; a triple-click selects everything, and a drag after it keeps it;
+#   the cursor goes to the end of what was selected.
+# * Shift-click: classic Tk adjusts the selection - the nearer end moves, the
+#   cursor stays; ttk extends from the far end and moves the cursor there.
+# * a drag past either edge scrolls two characters every 50ms, selecting as
+#   it goes, until the pointer comes back or the button is let go. A
+#   terminal reports the pointer only inside itself, so an entry against the
+#   terminal's edge cannot be dragged past that edge.
+#
+# Two families, because ttk's procedures are not classic Tk's: ttk's word
+# drag measures from the anchor where classic measures from the character
+# before it, and ttk binds no Double-Shift or Triple-Shift at all. Classic
+# Spinbox has its own copy of the selection code with one difference, a
+# double-click on the first character of a word selecting nothing - a Tk
+# defect, measured, and not copied: it uses Entry's rule here.
+
+
+#: The modifiers whose click extends a selection. Shift is Tk's. Alt is ours,
+#: and a deliberate departure: VTE terminals - GNOME Terminal, Ptyxis and the
+#: rest - keep every Shift-click for their own text selection and never send
+#: it, even to a program that has asked for the mouse. Measured with a raw
+#: probe in the author's terminal: plain, Ctrl- and Alt-clicks all arrived,
+#: and not one Shift-click. Tk binds nothing to Alt-click, so nothing is lost;
+#: Ctrl-click was the other candidate, and is Tk's "move the cursor and leave
+#: the selection". TkCurses-svtr.
+_EXTEND_MODIFIERS = ("Shift", "Alt")
+
+
+def _is_ttk(widget: Any) -> bool:
+    """True for a ttk widget, whose bindings are ttk's own procedures."""
+    return getattr(widget, "_ttk_class", None) is not None
+
+
+def _entry_index_at(entry: Any, x: int) -> int:
+    """The gap a pointer at widget column ``x`` stands for.
+
+    A terminal cell is a whole character, so the pointer on a character means
+    the gap before it - Tk's ClosestGap with the pointer in the left half.
+
+    Held to the visible columns, as Tk's ``@x`` is: a pointer dragged past
+    the edge means the edge. Without that it named a character off screen,
+    and keeping the cursor in view then jumped the field by the whole
+    overshoot instead of the autoscroll's two characters.
+    """
+    area = entry._text_area()
+    column = min(max(x - area.x, 0), max(area.width - 1, 0))
+    return int(entry._field.index_at(column))
+
+
+def _entry_start_drag(entry: Any, mode: str) -> None:
+    """Begin a press: what a drag extends by, and nothing moved yet."""
+    _cancel_autoscan(entry)
+    entry._select_mode = mode
+    entry._moved = False
+    entry._dragging = True
+
+
+def _entry_select_to(entry: Any, x: int) -> None:
+    """Select from the anchor to the pointer by the current mode.
+
+    Classic Tk's ``tk::EntryMouseSelect`` or ttk's ``ttk::entry::DragTo``,
+    by the widget's family. The anchor is the field's own, which a press or a
+    shift-click set.
+    """
+    field = entry._field
+    text = field.text  # the real text, as Tk's [$w get]: not what show= shows
+    cur = _entry_index_at(entry, x)
+    anchor = field._anchor
+    if cur != anchor:
+        entry._moved = True
+    mode = entry._select_mode
+    if _is_ttk(entry):
+        if mode == "char":
+            entry.selection_range(min(cur, anchor), max(cur, anchor))
+            entry.icursor(cur)
+        elif mode == "word":
+            if cur < anchor:
+                entry.selection_range(run_start(text, cur), run_end(text, anchor))
+                entry.icursor(run_start(text, cur))
+            else:
+                last = run_end(text, cur)
+                entry.selection_range(run_start(text, anchor), last)
+                entry.icursor(last)
+        elif mode == "line":
+            entry.selection_range(0, "end")
+            entry.icursor("end")
+        entry._see_cursor()
+        entry._redraw()
+        return
+    if mode == "char":
+        if entry._moved:
+            if cur == anchor:
+                entry.selection_clear()
+            else:
+                entry.selection_range(min(cur, anchor), max(cur, anchor))
+    elif mode == "word":
+        if cur < anchor:
+            first, last = run_start(text, cur), run_end(text, anchor - 1)
+        elif cur > anchor:
+            first, last = run_start(text, anchor), run_end(text, cur - 1)
+        else:
+            first, last = run_start(text, anchor), run_end(text, anchor)
+        entry.selection_range(first, last)
+    elif mode == "line":
+        entry.selection_range(0, "end")
+    if entry._moved:
+        entry.icursor(cur)
+    entry._see_cursor()
+    entry._redraw()
+
+
+def _entry_selects(entry: Any) -> bool:
+    """Whether a mouse selection gesture applies: not to a disabled entry."""
+    return str(entry._options["state"]) != "disabled"
+
+
+def _entry_double(event: Event) -> None:
+    """Select the word under the pointer; a drag then extends by words."""
+    entry = event.widget
+    if not _entry_selects(entry):
+        return
+    if _is_ttk(entry):
+        # ttk::entry::Select: the anchor moves to the pointer first.
+        entry._field.select_from(_entry_index_at(entry, event.x))
+    _entry_start_drag(entry, "word")
+    _entry_select_to(entry, event.x)
+    if not _is_ttk(entry) and entry._field.selection is not None:
+        entry.icursor(entry._field.selection[1])
+    entry._see_cursor()
+    entry._redraw()
+
+
+def _entry_triple(event: Event) -> None:
+    """Select everything; a drag then keeps it so."""
+    entry = event.widget
+    if not _entry_selects(entry):
+        return
+    if _is_ttk(entry):
+        entry._field.select_from(_entry_index_at(entry, event.x))
+    _entry_start_drag(entry, "line")
+    _entry_select_to(entry, event.x)
+    entry.icursor("end")
+    entry._see_cursor()
+    entry._redraw()
+
+
+def _entry_shift_click(event: Event) -> None:
+    """Extend the selection to the pointer.
+
+    Classic: ``selection adjust`` - the nearer end moves and the cursor does
+    not. ttk: ``ttk::entry::ExtendTo`` - from the far end, or from the cursor
+    with nothing selected, and the cursor goes to the pointer.
+    """
+    entry = event.widget
+    if not _entry_selects(entry):
+        return
+    index = _entry_index_at(entry, event.x)
+    _entry_start_drag(entry, "char")
+    if not _is_ttk(entry):
+        entry.selection_adjust(index)
+        return
+    field = entry._field
+    selection = field.selection
+    insert = field.cursor
+    if selection is None:
+        anchor = insert
+    else:
+        first, last = selection
+        anchor = last if index < first or (insert == first and index <= last) else first
+    entry.focus_set()
+    field.select_from(anchor)
+    entry.selection_range(min(anchor, index), max(anchor, index))
+    entry.icursor(index)
+    entry._see_cursor()
+    entry._redraw()
+
+
+def _entry_double_shift(event: Event) -> None:
+    """Extend the selection from the anchor by whole words (classic only)."""
+    entry = event.widget
+    if _entry_selects(entry):
+        _entry_start_drag(entry, "word")
+        _entry_select_to(entry, event.x)
+
+
+def _entry_triple_shift(event: Event) -> None:
+    """Select everything, extending (classic only)."""
+    entry = event.widget
+    if _entry_selects(entry):
+        _entry_start_drag(entry, "line")
+        _entry_select_to(entry, event.x)
+
+
+def _cancel_autoscan(widget: Any) -> None:
+    """Stop scrolling a drag along, if it was."""
+    pending = getattr(widget, "_autoscan", None)
+    if pending is not None:
+        widget.after_cancel(pending)
+        widget._autoscan = None
+
+
+def _entry_autoscan(entry: Any) -> None:
+    """Scroll two characters towards the pointer and select to it, again.
+
+    Tk's ``tk::EntryAutoScan``: every 50ms while the button is held with the
+    pointer past either side of the widget. Motion reports stop when the hand
+    does, so without the repeat a drag past the edge would scroll once.
+    """
+    entry._autoscan = None
+    if not entry._dragging or not entry.winfo_exists():
+        return
+    x = entry._drag_x
+    if x >= entry.winfo_width():
+        entry.xview("scroll", 2, "units")
+    elif x < 0:
+        entry.xview("scroll", -2, "units")
+    else:
+        return
+    _entry_select_to(entry, x)
+    entry._autoscan = entry.after(50, lambda: _entry_autoscan(entry))
 
 
 # ------------------------------------------------- the clipboard, on an Entry
@@ -7686,9 +7937,9 @@ def _entry_click(event: Event) -> None:
 #   show="*" entry copies "*****" - and with nothing selected does nothing.
 # * <<Cut>> is copy, then delete. A readonly or disabled entry still copies
 #   and refuses the delete.
-# * <<Paste>> inserts the clipboard at the cursor and does NOT replace the
-#   selection - Tk's binding deletes it only when the windowing system is not
-#   x11, and on Linux it is. An empty clipboard pastes nothing.
+# * <<Paste>> replaces the selection with the clipboard - a deliberate
+#   departure from classic Tk on Linux, which keeps it (see _entry_paste).
+#   An empty clipboard pastes nothing.
 # * <<Clear>> deletes the selection; <<SelectAll>> selects everything and
 #   leaves the cursor; <<PasteSelection>> (middle button) inserts PRIMARY
 #   where the click landed.
@@ -7810,20 +8061,21 @@ def _entry_drag(event: Event) -> None:
     entry = event.widget
     if not entry._dragging:
         return
-    here = entry._field.index_at(event.x - entry._text_area().x)
-    anchor = entry._field._anchor
-    if here == anchor:
-        entry.selection_clear()
+    entry._drag_x = event.x
+    _entry_select_to(entry, event.x)
+    # Past either side, Tk's <B1-Leave> starts the repeat; back inside, its
+    # <B1-Enter> stops it. TkCurses-svtr.
+    if event.x < 0 or event.x >= entry.winfo_width():
+        if entry._autoscan is None:
+            entry._autoscan = entry.after(50, lambda: _entry_autoscan(entry))
     else:
-        entry.selection_range(min(here, anchor), max(here, anchor))
-    entry.icursor(here)
-    entry._see_cursor()
-    entry._redraw()
+        _cancel_autoscan(entry)
 
 
 def _entry_release(event: Event) -> None:
     """Stop dragging, wherever the pointer ended up."""
     event.widget._dragging = False
+    _cancel_autoscan(event.widget)
 
 
 def _entry_focus_in(event: Event) -> None:
@@ -8429,6 +8681,16 @@ class Spinbox(Entry):
         bind(name, "<Button-1>", _spinbox_click)
         bind(name, "<Motion>", _entry_drag)
         bind(name, "<ButtonRelease-1>", _entry_release)
+        bind(name, "<Double-Button-1>", _spinbox_double)
+        # ttk binds no triple-click, and in Tk a third click matches the
+        # double-click binding again; ours matches a click count exactly, so
+        # the same handler is bound for it.
+        bind(name, "<Triple-Button-1>", _spinbox_triple)
+        for extend in _EXTEND_MODIFIERS:
+            bind(name, f"<{extend}-Button-1>", _entry_shift_click)
+            if not _is_ttk(self):
+                bind(name, f"<Double-{extend}-Button-1>", _entry_double_shift)
+                bind(name, f"<Triple-{extend}-Button-1>", _entry_triple_shift)
         bind(name, "<FocusIn>", _entry_focus_in)
         bind(name, "<FocusOut>", _entry_focus_out)
         _bind_entry_clipboard(bind, name)
@@ -8670,6 +8932,60 @@ def _spinbox_click(event: Event) -> None:
         _entry_click(event)
 
 
+def _spinbox_arrow(spinbox: Any, event: Event) -> bool:
+    """True if the press was on an arrow, which steps instead of selecting."""
+    return Spinbox.identify(spinbox, event.x, event.y) in ("buttonup", "buttondown")
+
+
+def _spinbox_double(event: Event) -> None:
+    """On an arrow, another step; in the text, select.
+
+    Classic: a word, the cursor at its START (``tk::spinbox::MouseSelect`` is
+    given ``sel.first``, where Entry's binding moves to ``sel.last``). ttk:
+    everything (``ttk::spinbox::DoubleClick`` calls SelectAll). Measured.
+    """
+    spinbox = event.widget
+    if _spinbox_arrow(spinbox, event):
+        _spinbox_click(event)
+        return
+    if not _entry_selects(spinbox):
+        return
+    if _is_ttk(spinbox):
+        _entry_start_drag(spinbox, "char")
+        spinbox._dragging = False  # ttk's DoubleClick starts no drag
+        spinbox.selection_range(0, "end")
+        spinbox.icursor("end")
+    else:
+        _entry_start_drag(spinbox, "word")
+        _entry_select_to(spinbox, event.x)
+        if spinbox._field.selection is not None:
+            spinbox.icursor(spinbox._field.selection[0])
+    spinbox._see_cursor()
+    spinbox._redraw()
+
+
+def _spinbox_triple(event: Event) -> None:
+    """On an arrow, another step; in the text, select everything.
+
+    Classic puts the cursor at 0 (``MouseSelect ... 0``); ttk, which has no
+    triple binding, does its double-click again.
+    """
+    spinbox = event.widget
+    if _is_ttk(spinbox):
+        _spinbox_double(event)
+        return
+    if _spinbox_arrow(spinbox, event):
+        _spinbox_click(event)
+        return
+    if not _entry_selects(spinbox):
+        return
+    _entry_start_drag(spinbox, "line")
+    _entry_select_to(spinbox, event.x)
+    spinbox.icursor(0)
+    spinbox._see_cursor()
+    spinbox._redraw()
+
+
 #: The tag options whose values are cells and therefore move text about.
 #: Setting one of these is what makes a Text pay for margin resolution.
 _MARGIN_OPTIONS = frozenset({"lmargin1", "lmargin2", "rmargin"})
@@ -8765,6 +9081,13 @@ class Text(_Drawable, XView, YView):
         self._left = 0
         self._anchor: Index | None = None
         self._dragging = False
+        # What a drag extends by, whether it has moved off the press, where the
+        # press and the pointer were, and the pending autoscroll. TkCurses-svtr.
+        self._select_mode = "char"
+        self._moved = False
+        self._press_x = 0
+        self._drag_at = (0, 0)
+        self._autoscan: str | None = None
         # The screen cell the terminal's cursor goes in; see _draw_cursor.
         self._insert_at: tuple[int, int] | None = None
         self._tag_options: dict[str, dict[str, Any]] = {}
@@ -8815,6 +9138,12 @@ class Text(_Drawable, XView, YView):
         bind(name, "<<SelectAll>>", _text_select_all)
         bind(name, "<<PasteSelection>>", _text_paste_selection)
         bind(name, "<Button-1>", _text_press)
+        bind(name, "<Double-Button-1>", _text_double)
+        bind(name, "<Triple-Button-1>", _text_triple)
+        for extend in _EXTEND_MODIFIERS:
+            bind(name, f"<{extend}-Button-1>", _text_shift_press)
+            bind(name, f"<Double-{extend}-Button-1>", _text_double_shift)
+            bind(name, f"<Triple-{extend}-Button-1>", _text_triple_shift)
         # A drag arrives as Motion - curses reports motion-with-a-button and
         # there is no Button1 modifier to match against - and the implicit
         # grab keeps it with the widget that was pressed.
@@ -10259,27 +10588,211 @@ def _text_press(event: Event) -> None:
     text._buffer.mark_set("insert", index)
     text._buffer.mark_set("current", index)
     text._anchor = index
-    text._dragging = True
+    _text_start_drag(text, "char", event.x)
     text._select(index, index)
     text._redraw()
 
 
-def _text_motion(event: Event) -> None:
-    """Extend the selection to the pointer while a drag is going on."""
-    text = event.widget
-    if not text._dragging or text._anchor is None:
-        return
-    index = text._index_at_cell(event.x, event.y)
-    text._buffer.mark_set("insert", index)
-    text._select(text._anchor, index)
+# -------------------------------------------- selecting with the mouse, Text
+#
+# Tk's Text bindings, READ from the running interpreter - bind_class Text and
+# the bodies of tk::TextButton1, tk::TextSelectTo, tk::TextResetAnchor,
+# tk::TextAutoScan, tk::TextPrevPos and tk::TextNextPos - and the selections
+# MEASURED on Tk 9.0.2 by calling them (TkCurses-svtr):
+#
+# * a double-click selects the run around the pointer, as an Entry's does,
+#   except that a run can cross lines - a newline is not a word character,
+#   so "foo  \n  bar" double-clicked in the spaces selects "  \n  ". The
+#   cursor goes to the START of it, where an Entry's goes to the end.
+# * a triple-click selects the line with its newline.
+# * a drag after either extends a word or a line at a time.
+# * Shift-click moves whichever end of the selection Tk's
+#   tk::TextResetAnchor picks - the far end from the pointer, decided by
+#   character count - and selects from there to the pointer.
+# * a drag past the top or bottom scrolls, one line more than the pointer
+#   is past the edge, every 50ms; past either side, two columns.
+
+
+def _text_start_drag(text: Any, mode: str, x: int) -> None:
+    """Begin a press: what a drag extends by, and nothing moved yet."""
+    _cancel_autoscan(text)
+    text._select_mode = mode
+    text._moved = False
+    text._press_x = x
+    text._dragging = True
+
+
+def _text_select_to(text: Any, x: int, y: int) -> None:
+    """Select from the anchor to the pointer by the mode - ``tk::TextSelectTo``.
+
+    The anchor is taken to have right gravity, the pointer being on a
+    character rather than between two: the word or line it is IN.
+    """
+    buffer = text._buffer
+    # Held to the visible cells, as Tk's @x,y is: past an edge means the edge.
+    # The autoscroll moves the view; this only says where in it. See
+    # _entry_index_at for what went wrong without it.
+    area = text._text_area()
+    x = min(max(x, area.x), area.x + max(area.width - 1, 0))
+    y = min(max(y, area.y), area.y + max(area.height - 1, 0))
+    cur = text._index_at_cell(x, y)
+    if text._anchor is None:
+        text._anchor = cur
+    anchor = text._anchor
+    if cur != anchor or x != text._press_x:
+        text._moved = True
+    mode = text._select_mode
+    if mode == "char":
+        first, last = min(anchor, cur), max(anchor, cur)
+    elif mode == "word":
+        whole = buffer.text
+        first_at = buffer.offset_of(anchor)
+        last_at = min(first_at + 1, len(whole))
+        here = buffer.offset_of(cur)
+        if here < first_at:
+            first_at = here
+        elif here > last_at:
+            last_at = here
+        first = buffer.index_of(run_start(whole, first_at))
+        last = buffer.index_of(run_end(whole, last_at - 1))
+    else:
+        first, last = Index(anchor.line, 0), Index(anchor.line + 1, 0)
+        if cur < first:
+            first = Index(cur.line, 0)
+        elif cur >= last:
+            last = Index(cur.line + 1, 0)
+        last = min(last, buffer.end())
+    if text._moved or mode != "char":
+        buffer.mark_set("insert", cur)
+        text._select(first, last)
     text.see("insert")
     text._redraw()
     text._report_view()
 
 
+def _text_double(event: Event) -> None:
+    """Select the word under the pointer, the cursor at its start."""
+    text = event.widget
+    _text_start_drag(text, "word", event.x)
+    _text_select_to(text, event.x, event.y)
+    _text_cursor_to_selection(text)
+
+
+def _text_triple(event: Event) -> None:
+    """Select the line under the pointer and its newline."""
+    text = event.widget
+    _text_start_drag(text, "line", event.x)
+    _text_select_to(text, event.x, event.y)
+    _text_cursor_to_selection(text)
+
+
+def _text_cursor_to_selection(text: Any) -> None:
+    """Put the cursor at the start of the selection, as Tk's binding does."""
+    found = text._selection_range()
+    if found is not None:
+        text._buffer.mark_set("insert", found[0])
+        text._redraw()
+
+
+def _text_shift_press(event: Event) -> None:
+    """Extend from whichever end ``tk::TextResetAnchor`` keeps, to the pointer."""
+    text = event.widget
+    _text_reset_anchor(text, text._index_at_cell(event.x, event.y))
+    text._select_mode = "char"
+    text._dragging = True
+    _text_select_to(text, event.x, event.y)
+
+
+def _text_reset_anchor(text: Any, at: Index) -> None:
+    """Make the end of the selection farther from ``at`` the anchor.
+
+    ``tk::TextResetAnchor``, ported with its quirk: its test for a selection
+    spanning few lines compares the first line with the LAST plus two, which
+    always holds, so the choice is always made by counting characters - the
+    nearer end moves when the click is inside. With nothing selected the
+    anchor stays where the last click left it, so a click then a shift-click
+    selects between the two (Tk's comment cites its bug 5929).
+    """
+    found = text._selection_range()
+    if found is None:
+        return
+    first, last = found
+    if at < first:
+        text._anchor = last
+        return
+    if at > last:
+        text._anchor = first
+        return
+    total = len(text._buffer.get(first, last))
+    if total <= 2:
+        return
+    before = len(text._buffer.get(first, at))
+    text._anchor = last if before < total // 2 else first
+
+
+def _text_double_shift(event: Event) -> None:
+    """Extend the selection from the anchor by whole words."""
+    text = event.widget
+    text._select_mode = "word"
+    text._dragging = True
+    _text_select_to(text, event.x, event.y)
+
+
+def _text_triple_shift(event: Event) -> None:
+    """Extend the selection from the anchor by whole lines."""
+    text = event.widget
+    text._select_mode = "line"
+    text._dragging = True
+    _text_select_to(text, event.x, event.y)
+
+
+def _text_motion(event: Event) -> None:
+    """Extend the selection to the pointer while a drag is going on."""
+    text = event.widget
+    if not text._dragging:
+        return
+    text._drag_at = (event.x, event.y)
+    _text_select_to(text, event.x, event.y)
+    outside = not (
+        0 <= event.x < text.winfo_width() and 0 <= event.y < text.winfo_height()
+    )
+    if outside:
+        if text._autoscan is None:
+            text._autoscan = text.after(50, lambda: _text_autoscan(text))
+    else:
+        _cancel_autoscan(text)
+
+
+def _text_autoscan(text: Any) -> None:
+    """Scroll towards the pointer and select to it, every 50ms - ``tk::TextAutoScan``.
+
+    Tk scrolls ``1 + y - height`` PIXELS past the bottom; a row is the unit
+    here, and one row below a Text is roughly one line of Tk's, so it scrolls
+    a line more than the pointer is past the edge.
+    """
+    text._autoscan = None
+    if not text._dragging or not text.winfo_exists():
+        return
+    x, y = text._drag_at
+    height, width = text.winfo_height(), text.winfo_width()
+    if y >= height:
+        text.yview("scroll", 1 + y - height, "units")
+    elif y < 0:
+        text.yview("scroll", -1 + y, "units")
+    elif x >= width:
+        text.xview("scroll", 2, "units")
+    elif x < 0:
+        text.xview("scroll", -2, "units")
+    else:
+        return
+    _text_select_to(text, x, y)
+    text._autoscan = text.after(50, lambda: _text_autoscan(text))
+
+
 def _text_release(event: Event) -> None:
     """Stop dragging, wherever the pointer ended up."""
     event.widget._dragging = False
+    _cancel_autoscan(event.widget)
 
 
 def _text_wheel(event: Event) -> None:

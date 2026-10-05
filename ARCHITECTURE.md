@@ -2105,7 +2105,7 @@ Control-c, F16 and Meta-w.
   either way round, and the cursor follows the pointer — Tk's character-mode
   `tk::EntryMouseSelect`, read from the running interpreter. Entry had no drag
   until a person running UAT 43 tried one; double-click, Shift-click and
-  autoscroll are `TkCurses-svtr`;
+  autoscroll are the next section;
 - every edit goes through `insert` and `delete`, so validation and the state
   have their say. Shift-Delete is a cut, not a delete — Tk lets the virtual
   event have it — so the key handlers pass it on.
@@ -2143,6 +2143,97 @@ over painting a better imitation:
 - the image overlay (`_core/direct.py`) is written after `doupdate`, so it is
   wrapped in a cursor save and restore (DECSC / DECRC); otherwise the cursor
   would be left wherever the last image cell went.
+
+### Selecting with the mouse
+
+Double-, triple- and Shift-clicks, a drag after each, and autoscroll, in Entry,
+Spinbox, the ttk entries and Text (`TkCurses-svtr`). Tk's manuals describe none
+of it beyond a sentence each, so the rules are **read from Tk's own bindings**
+— `bind_class` and the bodies of `tk::EntryMouseSelect`, `tk::TextSelectTo`,
+`tk::TextResetAnchor`, the `ttk::entry` procedures and the autoscan ones —
+and every selection below **measured on Tk 9.0.2** by calling those procedures
+with the pointer just inside a character's left edge, which is where a
+terminal cell puts it. Synthetic mouse events do not reach Tk's Entry
+bindings in a headless probe, so calling the procedures is the only way to
+measure them. (`tkinter.Entry` also has no `bbox`: `e.bbox(i)` is
+`grid_bbox`, which answers zeros, and cost a round of wrong measurements.)
+
+**A word is a run of one kind of character**: word characters, or anything
+else. So double-clicking the `, ` in `hello, world` selects both characters,
+and a run of spaces is a "word". A word character is a letter, a decimal digit
+or connector punctuation — Tcl's `\w`, which is **not** Python's `isalnum`
+(that takes `²` and `½` and misses `‿`). `_core/editing.is_word_char` was
+checked against Tcl's regexp for all 1,114,112 code points with no
+difference. Words break on the text the widget **holds**, not what `show=`
+displays, as Tk's do.
+
+| | classic Entry | ttk Entry | classic Spinbox | ttk Spinbox | Text |
+|---|---|---|---|---|---|
+| double-click | the run; cursor after it | the run; cursor after it | the run; cursor **before** it | **everything** | the run, **across lines**; cursor before it |
+| triple-click | everything; cursor at end | everything; cursor at end | everything; cursor at **0** | as a double | the line **and its newline**; cursor at line start |
+| drag after a double | by words, to the character **before** the pointer | by words, **including** the pointer's | as Entry | — | by words |
+| Shift-click | `selection adjust`: nearer end moves, **cursor stays** | extends from the far end, **cursor moves** | as Entry | as ttk Entry | `tk::TextResetAnchor`, then to the pointer |
+| Double-/Triple-Shift | extend by words / everything | not bound | as Entry | not bound | extend by words / lines |
+
+The two "drag after a double" rules part company only where the pointer lands
+on a word's first letter: from `two`, dragged onto the `t` of `three`, classic
+selects `two ` and ttk `two three`.
+
+**Two Tk defects are not copied**, as `edit_undo` is not
+(`TkCurses-aah`):
+
+- **classic Spinbox's double-click selects nothing on the first character of
+  a run** — at 5, 7, 12 and 13 of `hello, world 42`, measured. Its
+  `tk::spinbox::MouseSelect` is an older copy of Entry's code without Entry's
+  case for the pointer on the anchor. It uses Entry's rule here, keeping its
+  own cursor placement.
+- `tk::TextResetAnchor`'s test for "the selection spans few lines" compares
+  the first line with the last **plus two**, which always holds — so it
+  always decides by character count. That is ported as it is, because it is
+  what Tk does and it is not wrong, only not what its author meant.
+
+**The pointer is held to the visible text**, as Tk's `@x` and `@x,y` are. A
+pointer dragged past an edge names the edge; without that it named a
+character off screen, and keeping the cursor in view jumped the field by the
+whole overshoot.
+
+**Autoscroll** is Tk's: while the button is held with the pointer past an edge,
+a timer scrolls every 50ms and selects to the pointer, until the pointer comes
+back or the button comes up. Motion reports stop when the hand does, so
+without the timer a drag held past the edge would scroll once.
+
+- an entry scrolls two characters a tick, either side;
+- a Text scrolls **one line more than the pointer is past** the top or bottom
+  — Tk's `1 + y - height` is in pixels, a row is the unit here, and one row
+  past a Text is about one line of Tk's, so it comes out the same speed; past
+  either side, two columns.
+
+A terminal reports the pointer only inside itself, so a widget against the
+terminal's edge cannot be dragged past that edge.
+
+**Clicks are counted by `MouseDecoder`**, within `mouse.click_interval`
+(200ms; `TKCURSES_MOUSE_CLICK_INTERVAL`, up to 1000), on the same cell. A
+double or triple press now **takes the implicit grab** as a single one does
+(`Tk._mouse_target`): without it, the drag after a double-click went to
+whatever was under the pointer.
+
+**Alt-click extends a selection as Shift-click does — a deliberate
+departure.** GNOME Terminal, Ptyxis and every other VTE terminal keep every
+Shift-click for their own text selection and never send it to a program, even
+one that has turned mouse reporting on. Measured with a raw probe (DECSET
+1000/1002/1006, bytes read straight from the terminal) in the author's
+terminal, `VTE_VERSION=8401`: plain clicks arrived as `ESC [<0;x;yM`, Ctrl
+as `ESC [<16;…`, Alt as `ESC [<8;…`, and Shift-clicks not at all. So every
+`Shift-` binding above — single, double and triple — has an `Alt-` twin
+(`_EXTEND_MODIFIERS`). Tk binds nothing to Alt-click, so nothing is lost. Ctrl
+was the other candidate and is not used: classic Entry, Spinbox and Text bind
+Ctrl-click to "move the cursor and leave the selection" (not yet done here,
+`TkCurses-mndh`). In a terminal that does send Shift-click, both work.
+
+**Combobox is left out.** It installs its own class bindings, and every click
+on it opens the list. In Tk an editable combobox's text takes these clicks as
+an entry would, and only the arrow or a read-only one opens it — which would
+change a click UAT 34 accepted, so it is its own issue.
 
 ### Cell Structure
 

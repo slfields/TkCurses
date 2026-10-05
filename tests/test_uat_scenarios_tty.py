@@ -1305,3 +1305,200 @@ def test_scenario_43_pasting_over_a_selection_replaces_it(uat_terminal):
         message="'world' replaced by 'hello', nothing left selected",
     )
     term.send(ESCAPE)
+
+
+# ---------------------------------------------------------------------------
+# Selecting with the mouse - double, triple and shift-clicks, and autoscroll
+#
+# The first tests anywhere to send a real double-click through a terminal: the
+# decoder's click counting was only ever unit-tested. Run with the click window
+# at its 1000ms maximum (TKCURSES_MOUSE_CLICK_INTERVAL) so that the harness can
+# pace each report by the screen, as every mouse test here must - ncurses drops
+# reports that arrive faster than the program reads them (TkCurses-txk) - and
+# still land the second press inside the window on a slow runner. TkCurses-svtr.
+
+#: Screen columns where each widget's text starts, and its row, at 90x24.
+ENTRY_44, TENTRY_44, NARROW_44 = (18, 5), (18, 8), (18, 17)
+TEXT_44 = (53, 5)
+
+
+def _scenario_44(uat_terminal):
+    term = uat_terminal(cols=90, rows=24, env={"TKCURSES_MOUSE_CLICK_INTERVAL": "1000"})
+    term.run([sys.executable, "-m", "uat.scenario_44_mouse_selection"])
+    term.wait_for_text("focus: entry")
+    term.wait_for_text("line 07")
+    return term
+
+
+def _settle(term):
+    term._drain(term._budget(0.05))
+
+
+def _clicks(term, x, y, count):
+    """``count`` presses and releases on one cell, each report settled."""
+    for _ in range(count):
+        term.send_mouse(x, y, action="press")
+        _settle(term)
+        term.send_mouse(x, y, action="release")
+        _settle(term)
+
+
+def _reversed(term, row, columns):
+    return all(term.attrs_at(row, c)["reverse"] for c in columns)
+
+
+def test_scenario_44_a_double_click_selects_a_word(uat_terminal):
+    term = _scenario_44(uat_terminal)
+    x, y = ENTRY_44
+    _clicks(term, x + 8, y, 2)  # the 'o' of 'world'
+    term.wait_for(
+        lambda t: (
+            "last: double-click on entry" in t.display[1]
+            and "selected: 7-12 'world'" in t.display[3]
+            and "cursor: 12" in t.display[2]
+            and _reversed(t, y, range(x + 7, x + 12))
+            and not t.attrs_at(y, x + 6)["reverse"]
+        ),
+        message="'world' selected by a double-click, the cursor after it",
+    )
+    term.send(ESCAPE)
+
+
+def test_scenario_44_a_triple_click_in_the_text_selects_its_line(uat_terminal):
+    term = _scenario_44(uat_terminal)
+    x, y = TEXT_44
+    _clicks(term, x + 3, y + 2, 3)  # in '  bar', line 3
+    term.wait_for(
+        lambda t: (
+            "last: triple-click on text" in t.display[1]
+            and "selected: 3.0-4.0 '  bar\\n'" in t.display[3]
+            and "cursor: 3.0" in t.display[2]
+        ),
+        message="line 3 and its newline selected, the cursor at its start",
+    )
+    term.send(ESCAPE)
+
+
+def test_scenario_44_a_drag_after_a_double_click_extends_by_words(uat_terminal):
+    term = _scenario_44(uat_terminal)
+    x, y = TEXT_44
+    _clicks(term, x + 5, y, 1)
+    term.send_mouse(x + 5, y, action="press")  # the second press: a double
+    _settle(term)
+    term.wait_for_text("selected: 1.4-1.7 'two'")
+    term.send_mouse(x + 10, y, action="move", button=1)
+    term.wait_for(
+        lambda t: (
+            "selected: 1.4-1.13 'two three'" in t.display[3]
+            and _reversed(t, y, range(x + 4, x + 13))
+        ),
+        message="extended to the whole of 'three'",
+    )
+    term.send_mouse(x + 10, y, action="release")
+    term.send(ESCAPE)
+
+
+def test_scenario_44_a_ttk_shift_click_extends_and_moves_the_cursor(uat_terminal):
+    term = _scenario_44(uat_terminal)
+    x, y = TENTRY_44
+    _clicks(term, x + 7, y, 1)
+    term.wait_for_text("focus: tentry")
+    term.send(b"\x1b[<4;31;9M")  # a shift-press at column 31, row 9 (1-based)
+    _settle(term)
+    term.send(b"\x1b[<4;31;9m")
+    term.wait_for(
+        lambda t: (
+            "last: shift-click on tentry" in t.display[1]
+            and "selected: 7-12 'world'" in t.display[3]
+            and "cursor: 12" in t.display[2]
+        ),
+        message="extended from the click to the shift-click, the cursor there",
+    )
+    term.send(ESCAPE)
+
+
+def test_scenario_44_a_double_clicks_drag_stays_with_its_widget(uat_terminal):
+    """The double press takes the grab, as a single one does: dragged down
+    over the ttk entry, it is still the first entry extending by words."""
+    term = _scenario_44(uat_terminal)
+    x, y = ENTRY_44
+    _clicks(term, x + 8, y, 1)
+    term.send_mouse(x + 8, y, action="press")
+    _settle(term)
+    term.wait_for_text("selected: 7-12 'world'")
+    term.send_mouse(x + 15, TENTRY_44[1], action="move", button=1)
+    term.wait_for(
+        lambda t: (
+            "focus: entry" in t.display[2]
+            and "selected: 7-21 'world  foo_bar'" in t.display[3]
+            and not _reversed(t, TENTRY_44[1], range(TENTRY_44[0], TENTRY_44[0] + 5))
+        ),
+        message="the first entry extended; the one under the pointer untouched",
+    )
+    term.send_mouse(x + 15, TENTRY_44[1], action="release")
+    term.send(ESCAPE)
+
+
+def test_scenario_44_dragging_past_the_narrow_field_keeps_scrolling(uat_terminal):
+    term = _scenario_44(uat_terminal)
+    x, y = NARROW_44
+    term.send_mouse(x + 1, y, action="press")
+    _settle(term)
+    term.send_mouse(x + 27, y, action="move", button=1)  # past its right edge
+    # Held still out there, it goes on scrolling: no further reports arrive,
+    # so only the repeating timer can be doing it.
+    term.wait_for(
+        lambda t: (
+            t.row(y)[x : x + 9] != "the quick"
+            and "selected: 1-" in t.display[3]
+            and int(t.display[3].split("selected: 1-")[1].split()[0]) > 30
+        ),
+        message="the field scrolled on its own and the selection grew past 30",
+    )
+    term.send_mouse(x + 27, y, action="release")
+    _settle(term)
+    term.wait_for_idle()
+    stopped = term.row(y)
+    term._drain(term._budget(0.3))
+    assert term.row(y) == stopped, "the release stopped it"
+    term.send(ESCAPE)
+
+
+def test_scenario_44_dragging_below_the_text_scrolls_it(uat_terminal):
+    term = _scenario_44(uat_terminal)
+    x, y = TEXT_44
+    term.send_mouse(x, y, action="press")
+    _settle(term)
+    term.send_mouse(x, y + 15, action="move", button=1)  # rows below its bottom
+    term.wait_for(
+        lambda t: t.row(y)[x : x + 7] != "one two" and "selected: 1.0-" in t.display[3],
+        message="the text scrolled down, selecting from the press",
+    )
+    term.send_mouse(x, y + 15, action="release")
+    term.send(ESCAPE)
+
+
+def test_scenario_44_an_alt_click_extends_where_shift_cannot_reach(uat_terminal):
+    """The bytes the author's VTE terminal sent for an Alt-click, recorded by a
+    raw probe that also showed it never sends a Shift-click: ESC [<8;x;yM. In
+    the text, from a drag over 'two' to an Alt-click in 'four'."""
+    term = _scenario_44(uat_terminal)
+    x, y = TEXT_44
+    term.send_mouse(x + 4, y, action="press")
+    _settle(term)
+    term.send_mouse(x + 7, y, action="move", button=1)
+    _settle(term)
+    term.send_mouse(x + 7, y, action="release")
+    term.wait_for_text("selected: 1.4-1.7 'two'")
+    term.send(f"\x1b[<8;{x + 16};{y + 1}M".encode())  # Alt, button 1, 1-based
+    _settle(term)
+    term.send(f"\x1b[<8;{x + 16};{y + 1}m".encode())
+    term.wait_for(
+        lambda t: (
+            "last: alt-click on text" in t.display[1]
+            and "selected: 1.4-1.15 'two three f'" in t.display[3]
+            and "cursor: 1.15" in t.display[2]
+        ),
+        message="extended from 'two' to the alt-click",
+    )
+    term.send(ESCAPE)

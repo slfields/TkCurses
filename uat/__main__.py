@@ -78,7 +78,11 @@ def show() -> int:
     print("                 docs/UAT_IMAGES.md (35-37),")
     print("                 docs/UAT_TEXT_EDITING.md (38),")
     print("                 docs/UAT_TABS_AND_INDENTATION.md (39),")
-    print("                 docs/UAT_TTK_CORE_WIDGETS.md (40)")
+    print("                 docs/UAT_TTK_CORE_WIDGETS.md (40),")
+    print("                 docs/UAT_ENTRY_VALIDATION.md (41),")
+    print("                 docs/UAT_VIEWS_AND_SELECTIONS.md (42),")
+    print("                 docs/UAT_CLIPBOARD.md (43),")
+    print("                 docs/UAT_MOUSE_SELECTION.md (44)")
     return 0
 
 
