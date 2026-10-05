@@ -26,6 +26,7 @@ is checked rather than trusted.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -145,3 +146,70 @@ def test_the_readme_carries_the_notice():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert f"Copyright (C) 2026 {AUTHOR}" in readme
     assert "WITHOUT ANY WARRANTY" in readme
+
+
+# ------------------------------------------------------------ third parties
+#
+# TkCurses follows logic in Tk's and Tcl's library scripts and adapts some of
+# tkinter's code. Tk's licence asks that its notice travel "verbatim in any
+# distributions", and the PSF's that its copyright notice be retained in any
+# derivative version. THIRD_PARTY_NOTICES.md holds the texts; these checks keep
+# the credits from drifting as code is added. TkCurses-qjg7.
+
+NOTICES = ROOT / "THIRD_PARTY_NOTICES.md"
+TCL_TK_CREDIT = "used under\n# the Tcl/Tk licence; see THIRD_PARTY_NOTICES.md"
+PSF_CREDIT = "# Copyright (c) 2001 Python Software Foundation; All Rights Reserved."
+
+#: What names a Tcl or Tk library procedure or script in a source file.
+TK_REFERENCE = re.compile(r"\b(?:tk|ttk)::\w|\btcl_word\w|\b\w+\.tcl\b")
+
+#: Modules that contain code adapted from CPython's Lib/tkinter, found by
+#: comparing each with its tkinter counterpart.
+ADAPTED_FROM_TKINTER = ("dnd.py", "simpledialog.py")
+
+
+def test_the_notices_ship_with_the_package():
+    # Read as text: tomllib is 3.11 and later, and this runs on 3.10 too.
+    line = next(
+        line
+        for line in (ROOT / "pyproject.toml").read_text().splitlines()
+        if line.startswith("license-files")
+    )
+    assert '"THIRD_PARTY_NOTICES.md"' in line
+
+
+def test_the_notices_carry_both_licences():
+    text = " ".join(NOTICES.read_text(encoding="utf-8").split())
+    # Tk's and Tcl's terms, and the PSF's, by phrases each must contain.
+    assert text.count("existing copyright notices are retained in all copies") == 2
+    assert "Corporation, Apple Inc. and other parties" in text  # Tk's own
+    assert "PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2" in text
+    assert "Copyright (c) 2001 Python Software Foundation" in text
+    assert "a brief summary of the changes" in text
+
+
+@pytest.mark.parametrize(
+    "path",
+    [path for path in source_files() if path.is_relative_to(ROOT / "src")],
+    ids=lambda path: str(path.relative_to(ROOT)),
+)
+def test_a_file_following_tk_scripts_credits_them(path):
+    """Naming a Tk procedure or script is how this project marks code that
+    follows one, so a file that names one must carry the credit."""
+    text = path.read_text(encoding="utf-8")
+    if TK_REFERENCE.search(text) is None:
+        return
+    header = text.split('"""', 1)[0]
+    assert TCL_TK_CREDIT in header, (
+        f"{path.name} names a Tcl/Tk procedure or script but its header does "
+        "not credit Tcl/Tk"
+    )
+
+
+@pytest.mark.parametrize("name", ADAPTED_FROM_TKINTER)
+def test_code_adapted_from_tkinter_keeps_the_psf_notice(name):
+    header = (ROOT / "src" / "tkcurses" / name).read_text(encoding="utf-8")
+    header = header.split('"""', 1)[0]
+    assert PSF_CREDIT in header
+    assert f"Lib/tkinter/{name}" in header
+    assert f"`src/tkcurses/{name}`" in NOTICES.read_text(encoding="utf-8")

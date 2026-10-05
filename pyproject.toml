@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "A tkinter-compatible API layer that renders to curses"
 readme = "README.md"
 license = "GPL-3.0-only"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.10"
 authors = [
     { name = "Scott L. Fields" },

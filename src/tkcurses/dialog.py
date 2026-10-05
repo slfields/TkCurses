@@ -14,6 +14,12 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Portions follow logic in the Tcl and Tk library scripts, each named beside
+# the code that follows it. Tcl and Tk are copyright the Regents of the
+# University of California, Sun Microsystems, Inc., Scriptics Corporation,
+# ActiveState Corporation, Apple Inc. and other parties, and are used under
+# the Tcl/Tk licence; see THIRD_PARTY_NOTICES.md.
 
 """The classic Tk dialog: a message, a row of buttons, and which one was hit.
 

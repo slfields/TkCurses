@@ -14,6 +14,11 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Portions adapted from CPython's Lib/tkinter/dnd.py.
+# Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
+# Used under the Python Software Foundation License Version 2; see
+# THIRD_PARTY_NOTICES.md for the licence and a summary of the changes.
 
 """Dragging something from one widget to another, within one application.
 

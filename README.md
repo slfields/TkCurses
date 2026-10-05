@@ -52,6 +52,27 @@ character grid back through [pyte](https://github.com/selectel/pyte).
 mapping, class hierarchy, rendering rules, input handling, configuration, and a
 complete tkinter-to-TkCurses API reference.
 
+## Acknowledgements
+
+TkCurses is an independent reimplementation, and it stands on others' work:
+
+- **Tcl and Tk**, by the Regents of the University of California, Sun
+  Microsystems, Scriptics, ActiveState, Apple and many others. Tk is the
+  behaviour TkCurses is measured against, and where its documentation is
+  silent the rules were read from Tk's and Tcl's own library scripts and
+  followed. Used under the Tcl/Tk licence.
+- **tkinter**, part of CPython, by the Python Software Foundation and its
+  contributors. TkCurses reimplements its interface so that tkinter programs
+  run unchanged, and two modules (`dnd`, `simpledialog`) adapt code from it.
+  Used under the Python Software Foundation License Version 2.
+- **chafa**, by Hans Petter Jansson, read as a reference for the image and
+  colour path. No code was taken from it.
+
+The Tcl/Tk and PSF licences are permissive and compatible with the GPL. Their
+full texts, and what was taken from each and how, are in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), which is also shipped in
+every built package.
+
 ## Author
 
 Scott L. Fields.

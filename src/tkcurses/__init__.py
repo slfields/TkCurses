@@ -14,6 +14,12 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Portions follow logic in the Tcl and Tk library scripts, each named beside
+# the code that follows it. Tcl and Tk are copyright the Regents of the
+# University of California, Sun Microsystems, Inc., Scriptics Corporation,
+# ActiveState Corporation, Apple Inc. and other parties, and are used under
+# the Tcl/Tk licence; see THIRD_PARTY_NOTICES.md.
 
 """TkCurses - a tkinter-compatible API layer that renders to curses.
 
@@ -13691,7 +13697,8 @@ class Scrollbar(_Drawable):
 def _scrollbar_press(event: Event) -> None:
     """Scroll by whatever part of the scrollbar was pressed.
 
-    A press on the thumb moves nothing. Tk remembers where the press landed
+    The Scrollbar's mouse bindings follow Tk's ``scrlbar.tcl`` (see
+    ARCHITECTURE.md). A press on the thumb moves nothing. Tk remembers where the press landed
     and where the view was, and waits for the pointer to move - measured
     against Tk 9.0, where pressing the slider and releasing it without moving
     calls the command not at all.
