@@ -2259,10 +2259,23 @@ classic Entry selects by words, as Tk's does — from the anchor the last
 *plain* click left, since the Ctrl press sets none (measured: a plain click at
 1, then a Ctrl-double-click at 9, reads `(0, 13)`).
 
-**Combobox is left out.** It installs its own class bindings, and every click
-on it opens the list. In Tk an editable combobox's text takes these clicks as
-an entry would, and only the arrow or a read-only one opens it — which would
-change a click UAT 34 accepted, so it is its own issue.
+**Combobox follows `ttk::combobox::Press`** (`TkCurses-fgke`), read from Tk
+9.0.2: a press is the *entry's* when the combobox is not read-only and the
+press lands on its `textarea` element, and is then ttk's entry press, word
+select, line select or shift-press; anywhere else — the arrow, the border, or
+a read-only combobox — it opens the list. Every click used to open it, so an
+editable combobox's text could not be clicked into at all. UAT 34's combobox
+is editable, so its "click opens the list" became "click the arrow".
+
+**The ttk `-state` option sets the state flags**, which it did not. Measured
+on Tk 9.0.2 on every themed widget that has the option (Entry, Combobox,
+Spinbox, Button, Checkbutton, Radiobutton, Label, Scale, Menubutton): setting
+it clears `active`, `disabled` and `readonly` and sets the one named —
+`normal` sets none — leaving the other flags; the other direction is not
+tied, `state(["disabled"])` leaves `cget("state")` alone. Ours stored the
+option and left the flags, at construction and on `configure` alike, so
+`ttk.Combobox(state="readonly")` — the usual pick-from-a-list combobox — still
+took typing, and could not have been told from an editable one here.
 
 ### Cell Structure
 

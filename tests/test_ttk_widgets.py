@@ -3089,3 +3089,72 @@ def test_a_state_change_repaints_the_widget(root, flag):
     assert len(painted) == 1, "nothing changed, so nothing to repaint"
     widget.state([f"!{flag}"])
     assert painted[-1] == ()
+
+
+# --------------------------------------------- the -state option and flags
+#
+# Measured on Tk 9.0.2, on every themed widget that has the option: setting it
+# clears active, disabled and readonly and sets the one named - normal sets
+# none - and leaves every other flag alone; the other direction is not tied.
+# Ours stored the option and left the flags, at construction and on configure
+# alike. TkCurses-fgke.
+
+WITH_STATE = (
+    "Entry",
+    "Combobox",
+    "Spinbox",
+    "Button",
+    "Checkbutton",
+    "Radiobutton",
+    "Label",
+    "Scale",
+    "Menubutton",
+)
+
+
+def with_state(root, kind, **kw):
+    import tkcurses.ttk as ttk_module
+
+    return getattr(ttk_module, kind)(root, **kw)
+
+
+@pytest.mark.parametrize("kind", WITH_STATE)
+@pytest.mark.parametrize("value", ["readonly", "disabled", "active"])
+def test_a_state_given_at_construction_sets_its_flag(root, kind, value):
+    assert value in with_state(root, kind, state=value).state()
+
+
+@pytest.mark.parametrize("kind", WITH_STATE)
+def test_configuring_the_state_replaces_the_flag_and_keeps_the_rest(root, kind):
+    widget = with_state(root, kind)
+    widget.configure(state="readonly")
+    assert "readonly" in widget.state()
+    widget.configure(state="disabled")
+    assert "disabled" in widget.state() and "readonly" not in widget.state()
+    widget.state(["readonly", "focus"])
+    widget.configure(state="normal")
+    assert {"active", "disabled", "readonly"} & set(widget.state()) == set()
+    assert "focus" in widget.state(), "flags the option does not name are kept"
+
+
+def test_the_flags_do_not_set_the_option(root):
+    widget = with_state(root, "Entry")
+    widget.state(["disabled"])
+    assert str(widget.cget("state")) == "normal"
+
+
+def test_a_widget_without_the_option_still_refuses_it(root):
+    with pytest.raises(TclError):
+        with_state(root, "Scrollbar", state="disabled")
+
+
+def test_a_combobox_made_readonly_by_its_option_refuses_typing(root):
+    """The symptom: the usual pick-from-a-list combobox took typing. The
+    test above sets the flag with state(); this is the option, which is how
+    programs write it."""
+    from tkcurses._core.events import KeyEvent
+
+    box = with_state(root, "Combobox", state="readonly", values=["one", "two"])
+    box.focus_set()
+    box._handle(KeyEvent(keysym="x", char="x"))
+    assert box.get() == ""

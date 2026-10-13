@@ -315,15 +315,59 @@ def test_ttk_click_then_shift_click_extends_from_the_cursor(tword, extend):
     assert state(tword) == ((2, 9), 9)
 
 
-def test_a_combobox_keeps_its_clicks(root):
-    """An open-the-list click must not become a word selection. Combobox
-    installs its own class bindings, not Entry's; in Tk an editable
-    combobox's text takes these clicks as an entry would, which is its own
-    issue."""
-    box = placed(ttk.Combobox(root, name="cb", values=["one", "two"]))
-    box.insert(0, "one two")
-    double(box, 5)
-    assert box._field.selection is None
+@pytest.fixture
+def combo(root):
+    widget = placed(ttk.Combobox(root, name="cb", values=["one", "two"]))
+    widget.insert(0, "one two three")
+    return widget
+
+
+def test_an_editable_combobox_selects_a_word_in_its_text(combo):
+    """ttk::combobox::Press, read from Tk 9.0.2: on the textarea of a
+    combobox that is not read-only, a double-click is ttk's word select. It
+    opened the list instead, for every click. TkCurses-fgke."""
+    double(combo, 5)
+    assert state(combo) == ((4, 7), 7)
+    assert not combo._open
+
+
+def test_an_editable_combobox_places_the_cursor_and_drags(combo):
+    mouse(combo, "pressed", column(combo, 4))
+    mouse(combo, "drag", column(combo, 7))
+    mouse(combo, "released", column(combo, 7))
+    assert state(combo) == ((4, 7), 7)
+    assert not combo._open
+    assert combo.focus_get() is combo
+
+
+def test_an_editable_combobox_extends_with_shift_or_alt(combo, extend):
+    mouse(combo, "pressed", column(combo, 2))
+    mouse(combo, "released", column(combo, 2))
+    mouse(combo, "pressed", column(combo, 9), modifiers=extend)
+    assert state(combo) == ((2, 9), 9)
+
+
+def test_the_arrow_still_opens_the_list(combo):
+    arrow = next(
+        x for x in range(combo.winfo_width()) if "downarrow" in combo.identify(x, 1)
+    )
+    mouse(combo, "pressed", arrow)
+    assert combo._open
+    assert combo._field.selection is None
+
+
+def test_a_read_only_combobox_opens_the_list_anywhere(combo):
+    combo.configure(state="readonly")
+    mouse(combo, "pressed", column(combo, 5))
+    assert combo._open
+
+
+def test_a_drag_after_opening_selects_nothing(combo):
+    """Tk's Drag acts only after a press in the text."""
+    combo.configure(state="readonly")
+    mouse(combo, "pressed", column(combo, 1))
+    mouse(combo, "drag", column(combo, 9))
+    assert combo._field.selection is None
 
 
 # ------------------------------------------------------------------ Spinbox

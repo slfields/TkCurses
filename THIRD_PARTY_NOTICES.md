@@ -23,7 +23,7 @@ it. The scripts, as installed with Tcl 9.0.2 and Tk 9.0.2:
 | Tk `entry.tcl` | `tk::EntryButton1`, `tk::EntryMouseSelect`, `tk::EntryAutoScan`, `tk::EntryKeySelect` | Entry's mouse and keyboard selection (`__init__.py`, `_core/editing.py`) |
 | Tk `text.tcl` | `tk::TextButton1`, `tk::TextSelectTo`, `tk::TextResetAnchor`, `tk::TextAutoScan`, `tk::TextPrevPos`, `tk::TextNextPos`, `tk_textPaste` | Text's mouse selection, autoscroll and clipboard (`__init__.py`) |
 | Tk `spinbox.tcl` | `tk::spinbox::MouseSelect` | Spinbox's selection (`__init__.py`) |
-| Tk `ttk/entry.tcl`, `ttk/spinbox.tcl`, `ttk/combobox.tcl` | `ttk::entry::Select`, `DragTo`, `ExtendTo`, `CharSelect`, `WordSelect`, `AutoScroll`, `PendingDelete`; `ttk::spinbox::DoubleClick`; `ttk::combobox::Press` | the ttk entries' selection and paste (`__init__.py`) |
+| Tk `ttk/entry.tcl`, `ttk/spinbox.tcl`, `ttk/combobox.tcl` | `ttk::entry::Select`, `DragTo`, `ExtendTo`, `CharSelect`, `WordSelect`, `AutoScroll`, `PendingDelete`; `ttk::spinbox::DoubleClick`; `ttk::combobox::Press` | the ttk entries' selection and paste (`__init__.py`); the combobox's clicks (`ttk.py`) |
 | Tk `tk.tcl` | `tk::wordBreakBefore`, `tk::wordBreakAfter`, `tk::SetFocusGrab`, `tk::RestoreFocusGrab`; the clipboard virtual events | word boundaries (`_core/editing.py`), dialog grabs (`commondialog.py`), `_core/application.py` |
 | Tk `focus.tcl` | `tk::FocusOK` | focus traversal (`__init__.py`) |
 | Tk `scrlbar.tcl` | the Scrollbar bindings | Scrollbar's mouse behaviour (`__init__.py`) |

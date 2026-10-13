@@ -14,6 +14,12 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Portions follow logic in the Tcl and Tk library scripts, each named beside
+# the code that follows it. Tcl and Tk are copyright the Regents of the
+# University of California, Sun Microsystems, Inc., Scriptics Corporation,
+# ActiveState Corporation, Apple Inc. and other parties, and are used under
+# the Tcl/Tk licence; see THIRD_PARTY_NOTICES.md.
 
 """Themed widgets, and the style database they draw from.
 
@@ -529,6 +535,16 @@ STATES: frozenset[str] = frozenset(
 )
 
 
+def _state_option_flags(value: str) -> list[str]:
+    """The state spec a ``-state`` value stands for: clear ``active``,
+    ``disabled`` and ``readonly``, then set the one named, if any."""
+    names = [f"!{flag}" for flag in ("active", "disabled", "readonly")]
+    if value in ("active", "disabled", "readonly"):
+        names.remove(f"!{value}")
+        names.append(value)
+    return names
+
+
 class Widget:
     """What every themed widget adds to an ordinary one.
 
@@ -597,7 +613,39 @@ class Widget:
         current = getattr(self, "_options", {}).get("class", "")
         if "class" in given and given["class"] != current:
             raise TclError("attempt to change read-only option")
-        return super().configure(cnf, **kw)  # type: ignore[misc]
+        result = super().configure(cnf, **kw)  # type: ignore[misc]
+        if "state" in given and "state" in getattr(self, "_options", {}):
+            self._state_from_option(str(given["state"]))
+        return result
+
+    def _state_from_option(self, value: str) -> None:
+        """Set the state flags a ``-state`` value stands for, as ttk does.
+
+        Measured on Tk 9.0.2, on every themed widget that has the option
+        (Entry, Combobox, Spinbox, Button, Checkbutton, Radiobutton, Label,
+        Scale, Menubutton): it clears ``active``, ``disabled`` and
+        ``readonly`` and sets the one named - ``normal`` sets none - and
+        leaves every other flag alone. Ours stored the option and left the
+        flags as they were, so ``ttk.Combobox(state="readonly")``, the usual
+        pick-from-a-list combobox, still took typing. The other direction is
+        not tied: ``state(["disabled"])`` leaves ``cget("state")`` alone, in
+        Tk too. TkCurses-fgke.
+        """
+        self.state(_state_option_flags(value))
+
+    def _initial_options(self, given: dict[str, Any]) -> dict[str, Any]:
+        """The classic options, and the flags a ``state=`` given at birth means.
+
+        Construction does not pass through :meth:`configure`, so without this
+        ``ttk.Combobox(state="readonly")`` set the option and not the flag.
+        Applied to the flags directly: nothing can be redrawn yet.
+        """
+        options: dict[str, Any] = super()._initial_options(given)  # type: ignore[misc]
+        if "state" in given and "state" in options:
+            flags = self._state_flags
+            for name in _state_option_flags(str(given["state"])):
+                flags.discard(name[1:]) if name.startswith("!") else flags.add(name)
+        return options
 
     config = configure
 
@@ -1590,7 +1638,22 @@ class Combobox(Widget, _EntryCommands):
         # This widget's own first: bindings on one tag run in the order they
         # were registered, and Down and Escape mean something here that they
         # do not mean in a plain field.
-        bind(self._ttk_class, "<Button-1>", _combobox_click)
+        # Tk's ttk::combobox::Press: on an editable combobox's text these are
+        # an entry's clicks, and anywhere else - the arrow, the border, or a
+        # read-only combobox - they open the list. TkCurses-fgke.
+        bind(self._ttk_class, "<Button-1>", lambda e: _combobox_press(e, ""))
+        bind(self._ttk_class, "<Double-Button-1>", lambda e: _combobox_press(e, "2"))
+        bind(self._ttk_class, "<Triple-Button-1>", lambda e: _combobox_press(e, "3"))
+        for extend in tkcurses._EXTEND_MODIFIERS:
+            bind(
+                self._ttk_class,
+                f"<{extend}-Button-1>",
+                lambda e: _combobox_press(e, "s"),
+            )
+        # Tk's Drag acts only after a press in the text; the entry's drag
+        # handler already does nothing unless such a press began one.
+        bind(self._ttk_class, "<Motion>", tkcurses._entry_drag)
+        bind(self._ttk_class, "<ButtonRelease-1>", tkcurses._entry_release)
         bind(self._ttk_class, "<Key-Down>", _combobox_open)
         bind(self._ttk_class, "<Key-Escape>", _combobox_escape)
         bind(self._ttk_class, "<Any-Key>", tkcurses._entry_key)
@@ -1825,6 +1888,34 @@ class Combobox(Widget, _EntryCommands):
                 ARROW,
                 self._themed_attribute(),
             )
+
+
+def _combobox_press(event: Event, mode: str) -> Any:
+    """Select in the text, or open the list - ``ttk::combobox::Press``.
+
+    Read from Tk 9.0.2: a press counts as the ENTRY's when the combobox is
+    not read-only and the press is on its ``textarea`` element, and is then
+    ttk's entry press, word select, line select or shift-press by ``mode``
+    ("", "2", "3", "s"). Anywhere else it opens the list. Until this, every
+    click opened it, so the text of an editable combobox could not be
+    clicked into or selected with the mouse at all. TkCurses-fgke.
+    """
+    combobox = event.widget
+    if not isinstance(combobox, Combobox) or combobox.instate(["disabled"]):
+        return "break"
+    entry_press = not combobox.instate(["readonly"]) and str(
+        combobox.identify(event.x, event.y)
+    ).endswith("textarea")
+    if not entry_press:
+        return _combobox_click(event)
+    combobox.focus_set()
+    {
+        "": tkcurses._entry_click,
+        "2": tkcurses._entry_double,
+        "3": tkcurses._entry_triple,
+        "s": tkcurses._entry_shift_click,
+    }[mode](event)
+    return "break"
 
 
 def _combobox_click(event: Event) -> Any:

@@ -384,6 +384,27 @@ def test_clicking_opens_the_list(combobox):
     assert dropdown_values(combobox) == ["alpha", "beta", "gamma"], combobox.describe()
 
 
+def test_a_click_in_an_editable_comboboxs_text_places_the_cursor(combobox):
+    """Tk's ttk::combobox::Press: the text of an editable combobox is an
+    entry's, and only the arrow, the border or a read-only combobox opens the
+    list. Every click opened it until TkCurses-fgke. The box is at x=2..17,
+    rows 2-4: its text is on row 3, the arrow in column 16."""
+    combobox.send(b"abcdef")
+    combobox.wait_for_text("value='abcdef'")
+    combobox.click(5, 3)  # on the 'c'
+    combobox.wait_for(lambda t: t.cursor_cell() == (3, 5), message="cursor on c")
+    combobox.wait_for_idle()
+    assert not any("gamma" in row for row in combobox.display), combobox.describe()
+
+
+def test_the_arrow_opens_the_list(combobox):
+    combobox.click(16, 3)
+    combobox.wait_for(
+        lambda t: dropdown_values(t) == ["alpha", "beta", "gamma"],
+        message="the list, opened by the arrow",
+    )
+
+
 def test_clicking_again_closes_it(combobox):
     combobox.click(4, 2)
     combobox.wait_for_idle()

@@ -191,8 +191,15 @@ to be, which only a hand can answer.
 
 ### Combobox
 
-- [ ] Clicking it drops a **bordered** list of four values, as Tk's popdown
-      is bordered
+*Changed with `TkCurses-fgke`, after the first run: the first item and the
+three after "The Down arrow" are new or reworded. Run again and accepted by
+the author on 2026-10-13: "I confirm this works".*
+This combobox is **editable**, and in Tk an editable combobox's text takes
+clicks as an entry's does. **Only the arrow `▾`** — or its border, or a
+read-only combobox anywhere — **opens the list.** Every click used to open it.
+
+- [ ] Clicking its **arrow** drops a **bordered** list of four values, as Tk's
+      popdown is bordered
 - [ ] Clicking a value puts it in the field, and line 1 shows
       `combobox='...'`
 - [ ] **Escape closes the list and changes nothing**
@@ -203,6 +210,13 @@ to be, which only a hand can answer.
       It did exactly that at first (the fifth time a widget reported a class
       nothing was bound to)
 - [ ] The Down arrow opens the list
+- [ ] **Click in its text**: the cursor goes where you clicked, and the list
+      does **not** open
+- [ ] **Drag** across its text, or **double-click** a word, and it is selected
+      — as in any entry
+- [ ] Click in its text, then **Alt-click** (or Shift-click, where your
+      terminal sends one) further along: the text between is selected, as in
+      UAT 44
 
 ### Notebook
 

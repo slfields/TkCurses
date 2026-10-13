@@ -31,8 +31,10 @@ one of them while they are on screen.
 
 What to look for, in the order it is easiest to get wrong:
 
-The **combobox** drops a list that closes three ways - choosing, Escape, and
-a click anywhere else - and the value you chose is in the field afterwards.
+The **combobox** drops a list from its arrow - clicking its text places the
+cursor instead, as in Tk (TkCurses-fgke) - that closes three ways - choosing,
+Escape, and a click anywhere else - and the value you chose is in the field
+afterwards.
 Typing into it works: it is an Entry underneath, and a combobox that took
 keys and did nothing with them would look identical until you tried.
 
