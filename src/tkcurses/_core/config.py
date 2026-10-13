@@ -44,6 +44,7 @@ from typing import Any
 
 __all__ = [
     "AccessibilitySettings",
+    "ClipboardSettings",
     "DebugSettings",
     "DisplaySettings",
     "InputSettings",
@@ -54,6 +55,9 @@ __all__ = [
 
 #: Values accepted for ``[display] color_mode``.
 COLOR_MODES = ("auto", "8", "16", "256", "truecolor")
+
+#: Values accepted for ``[clipboard] system``.
+CLIPBOARD_SYSTEMS = ("auto", "osc52", "command", "off")
 
 #: Values accepted for ``[debug] log_level``.
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
@@ -125,6 +129,16 @@ class AccessibilitySettings:
 
 
 @dataclass
+class ClipboardSettings:
+    """Reaching the system clipboard - see :mod:`tkcurses._core.system_clipboard`."""
+
+    #: ``auto`` asks the terminal for OSC 52 and falls back to the desktop's
+    #: clipboard tool; ``osc52`` and ``command`` force one route; ``off``
+    #: keeps the clipboard inside the program. TkCurses-hpr.
+    system: str = "auto"
+
+
+@dataclass
 class DebugSettings:
     """Diagnostics."""
 
@@ -179,12 +193,14 @@ _FIELDS: tuple[tuple[str, str, str, str | None, tuple[int, int] | None], ...] = 
     ("debug", "enabled", "bool", "TKCURSES_DEBUG", None),
     ("debug", "log_file", "str", "TKCURSES_DEBUG_LOG_FILE", None),
     ("debug", "log_level", "choice", "TKCURSES_DEBUG_LOG_LEVEL", None),
+    ("clipboard", "system", "choice", "TKCURSES_CLIPBOARD_SYSTEM", None),
 )
 
 #: Allowed values for the settings validated against a fixed list.
 _CHOICES: dict[tuple[str, str], tuple[str, ...]] = {
     ("display", "color_mode"): COLOR_MODES,
     ("debug", "log_level"): LOG_LEVELS,
+    ("clipboard", "system"): CLIPBOARD_SYSTEMS,
 }
 
 
@@ -211,6 +227,7 @@ class TkCursesConfig:
     input: InputSettings = field(default_factory=InputSettings)
     accessibility: AccessibilitySettings = field(default_factory=AccessibilitySettings)
     debug: DebugSettings = field(default_factory=DebugSettings)
+    clipboard: ClipboardSettings = field(default_factory=ClipboardSettings)
     #: Problems found while loading, for the application to surface later.
     warnings: list[str] = field(default_factory=list)
 

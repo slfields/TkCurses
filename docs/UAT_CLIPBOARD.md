@@ -15,10 +15,10 @@ arrive as nothing, Ctrl-Shift-C arrives as plain Ctrl-C, Alt-W as Escape then
 the program when it has none.** Most of what follows checks one half or the
 other.
 
-**The readout under the title** shows what the clipboard and the PRIMARY
-selection hold, after every event. The clipboard is this program's own —
-nothing copied here reaches another application yet (`TkCurses-hpr`) — so the
-readout is the only place to see a copy before pasting it.
+**The readout under the title** shows what this program's clipboard and
+PRIMARY selection hold after every event, and on its second line **how the
+clipboard reaches the rest of your desktop** — see "Reaching other
+applications" below.
 
 **How to run**
 
@@ -35,7 +35,7 @@ selected**. It wants a terminal at least **90 columns by 24 rows**.
 | Terminal | |
 | Size | |
 | Date | 2026-10-04 |
-| Result | **Accepted.** Run by the author: "I consider uat 43 as complete, now", after the five faults listed at the end were fixed. Terminal and size not recorded. |
+| Result | **Accepted.** Run by the author: "I consider uat 43 as complete, now", after the five faults listed at the end were fixed. Terminal and size not recorded. "Reaching other applications" was added afterwards (`TkCurses-hpr`) and accepted on its own on 2026-10-13: "That works". Whether `wl-copy` flickers on GNOME was not reported either way. |
 
 The boxes below are left unticked deliberately: the acceptance was given as a
 whole rather than item by item, and ticking them would claim a record that was
@@ -113,6 +113,55 @@ surprise is not reported as a fault:
 - **Shift-Insert** usually pastes the *system* clipboard as typed text.
   It works, but it is the terminal typing, not this program pasting
 - **Ctrl-Insert** and **Ctrl-Shift-V** may do nothing at all here
+
+## Reaching other applications
+
+*Added after the acceptance above, with `TkCurses-hpr`, and accepted
+separately on 2026-10-13.* A copy here can now
+leave the program, and a copy made elsewhere can be pasted in. There are two
+routes, chosen when the program starts, and the readout's `system:` names the
+one in use:
+
+- **OSC 52** — the terminal sets the clipboard. Chosen when the terminal says
+  it can. **Yours cannot**: Ptyxis and GNOME Terminal are VTE, which declines
+  OSC 52 on security grounds, and a raw probe in your terminal confirmed it.
+  kitty, foot and WezTerm can.
+- **The desktop's clipboard tool** — `wl-copy` and `wl-paste` on Wayland,
+  `xclip` or `xsel` on X11. Works in any terminal, VTE included, on the
+  machine the desktop is on (not over SSH). It is **not installed yet**:
+
+```bash
+sudo dnf install wl-clipboard
+```
+
+Before installing it:
+
+- [ ] The readout says `system: no OSC 52, and wl-copy not installed
+      (wl-clipboard)`
+- [ ] Copy something with **Ctrl-C** and quit with **Escape**. Once the screen
+      is back, one line says the copy **stayed inside this program**, and why
+
+After installing it:
+
+- [ ] The readout says `system: the desktop's wl-copy`
+- [ ] Select `hello` in **source** and press **Ctrl-C**. Paste into another
+      application — a text editor, a browser's address bar. `hello` arrives
+- [ ] Copy some text in another application, click into **target** here and
+      press **Ctrl-V**. That text arrives
+- [ ] Quit. **No** "stayed inside" line this time
+- [ ] Watch, while copying and pasting, whether anything **flickers** or a
+      window briefly appears: GNOME does not give clipboard tools a way to
+      work unseen, and `wl-clipboard` may briefly show a window of its own to
+      reach it. *Not measured yet - this checklist is where it would be*
+
+The setting, either way:
+
+- [ ] Run it as `TKCURSES_CLIPBOARD_SYSTEM=off python3 -m uat 43`. The
+      readout says `turned off`, a copy stays inside, and quitting says
+      **nothing** — you asked for it
+- [ ] *Optional*, in **foot** or **kitty** (`sudo dnf install foot`): the
+      readout says `OSC 52 - the terminal says it has it`, and a copy here
+      pastes elsewhere
 
 ## Faults found by running it
 

@@ -22,11 +22,11 @@ explicit copy and paste — and tkinter exposes both: ``clipboard_*`` works on
 one, ``selection_*`` on the other. A terminal has neither, so both are kept
 here as ordinary strings in the process.
 
-That means a copy is not visible to other programs, which is a real
-limitation rather than a stub: the surrounding API behaves exactly as tkinter
-does, but the data does not leave the application. Escape-sequence clipboard
-access (OSC 52) would lift that, and is deliberately not attempted here
-because it is not supported by every terminal and fails silently on the rest.
+A copy leaves the process, and another application's copy comes in, only
+through a :class:`~tkcurses._core.system_clipboard.Route` - OSC 52 or the
+desktop's clipboard tool, chosen when the application starts. Without one,
+which is every test and every terminal and desktop that offers neither, the
+clipboard is this program's alone. TkCurses-hpr.
 """
 
 from __future__ import annotations
@@ -37,6 +37,8 @@ from tkcurses._core.errors import TclError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from tkcurses._core.system_clipboard import Route
 
 __all__ = ["CLIPBOARD", "PRIMARY", "Selections"]
 
@@ -60,6 +62,12 @@ class Selections:
         self._content: dict[str, str] = {}
         self._owners: dict[str, Any] = {}
         self._lost: dict[str, Callable[[], Any]] = {}
+        #: How CLIPBOARD reaches the system, decided at startup; None until
+        #: then, and for good where there is no screen.
+        self.route: Route | None = None
+        #: True once a copy was made that the route could not carry out -
+        #: what the notice at exit is about.
+        self.kept_inside = False
         self._handlers: dict[tuple[str, Any], Callable[..., str]] = {}
 
     # ------------------------------------------------------------- contents
@@ -67,8 +75,25 @@ class Selections:
     def get(self, selection: str = PRIMARY) -> str:
         """Return the contents of ``selection``.
 
+        CLIPBOARD is asked of the system first, when the route can read it,
+        so a paste brings in what another application copied - tkinter's
+        clipboard_get answers whichever application owns the clipboard.
+
         Raises:
             TclError: If nothing owns the selection, as tkinter does.
+        """
+        reader = self.route.reader if self.route is not None else None
+        if selection == CLIPBOARD and reader is not None:
+            text = reader.paste()
+            if text is not None:
+                return text
+        return self.held(selection)
+
+    def held(self, selection: str = PRIMARY) -> str:
+        """This program's own copy of ``selection``, not asking the system.
+
+        Raises:
+            TclError: If nothing has been put in it here.
         """
         try:
             return self._content[selection]
@@ -80,6 +105,7 @@ class Selections:
     def set(self, text: str, selection: str = CLIPBOARD) -> None:
         """Replace the contents of ``selection``."""
         self._content[selection] = text
+        self._send(selection)
 
     def append(self, text: str, selection: str = CLIPBOARD) -> None:
         """Add to ``selection``, starting it if it is empty.
@@ -88,6 +114,21 @@ class Selections:
         which is why a bare append works without a preceding clear.
         """
         self._content[selection] = self._content.get(selection, "") + text
+        self._send(selection)
+
+    def _send(self, selection: str) -> None:
+        """Carry CLIPBOARD to the system, if this run has a way to.
+
+        The whole of it, every time: tkinter builds a copy with
+        ``clipboard_clear()`` then one or more ``clipboard_append``, and the
+        system clipboard has no append. PRIMARY stays here; see
+        ARCHITECTURE.md.
+        """
+        if selection != CLIPBOARD or self.route is None:
+            return
+        writer = self.route.writer
+        if writer is None or not writer.copy(self._content[CLIPBOARD]):
+            self.kept_inside = self.route.notify
 
     def clear(self, selection: str = CLIPBOARD) -> None:
         """Discard the contents of ``selection``.

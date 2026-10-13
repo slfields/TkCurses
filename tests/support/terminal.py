@@ -137,7 +137,17 @@ _CHILD_ENV = {
     # machine - where COLORTERM is usually truecolor - disagree with CI,
     # where it usually is not. A test that wants direct colour asks for it.
     "COLORTERM": "",
+    # Off: a test run must never put anything on the developer's own
+    # clipboard, which a machine with wl-copy installed otherwise would. A
+    # test that is about the system clipboard turns it back on and says how
+    # the terminal should answer (osc52=). TkCurses-hpr.
+    "TKCURSES_CLIPBOARD_SYSTEM": "off",
 }
+
+#: What the application asks the terminal at startup when the clipboard
+#: setting lets it: XTGETTCAP for Ms, and DA1 as a fence.
+_ASK_MS = b"\x1bP+q" + b"Ms".hex().encode() + b"\x1b\\"
+_ASK_DA1 = b"\x1b[c"
 
 
 class TerminalTimeout(AssertionError):
@@ -294,11 +304,15 @@ class TerminalHarness:
         timeout: float = DEFAULT_TIMEOUT,
         env: dict[str, str] | None = None,
         stderr_to_terminal: bool = False,
+        osc52: bool = False,
     ) -> None:
         self.cols = cols
         self.rows = rows
         self.timeout = timeout
         self._extra_env = dict(env or {})
+        #: How this terminal answers "do you have OSC 52?" - as kitty does
+        #: (True), or as VTE does (False), measured: ``ESC P 0 + r``.
+        self._osc52 = osc52
         #: Send the child's stderr to the pty rather than to a pipe of its
         #: own. Off by default, because a traceback written into the terminal
         #: corrupts the very output under assertion - which is the point of
@@ -683,11 +697,32 @@ class TerminalHarness:
                     continue
                 if fd == self._master:
                     self._received.extend(data)
+                    self._answer_queries(data)
                     self._note_modes(data)
                     self._stream.feed(data)
                     got = True
                 else:
                     self._stderr.extend(data)
+
+    def _answer_queries(self, data: bytes) -> None:
+        """Answer what a real terminal would: the OSC 52 capability, and DA1.
+
+        Without a DA1 answer, a program that fences its queries with one waits
+        out its whole timeout instead of a round trip.
+        """
+        if self._master is None:
+            return
+        reply = b""
+        if _ASK_MS in data:
+            if self._osc52:
+                value = b"\x1b]52;%p1%s;%p2%s\x07".hex().encode()
+                reply += b"\x1bP1+r" + b"Ms".hex().encode() + b"=" + value + b"\x1b\\"
+            else:
+                reply += b"\x1bP0+r\x1b\\"
+        if _ASK_DA1 in data:
+            reply += b"\x1b[?62;22c"
+        if reply:
+            os.write(self._master, reply)
 
     def _note_modes(self, data: bytes) -> None:
         """Track terminal modes the child sets that change how keys encode.

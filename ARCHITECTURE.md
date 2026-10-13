@@ -1570,6 +1570,11 @@ enabled = true
 ; Required for drag support, may increase CPU usage
 report_motion = true
 
+[clipboard]
+; How copies reach other applications: auto, osc52, command, or off.
+; auto asks the terminal for OSC 52, else uses wl-copy/xclip/xsel locally.
+system = auto
+
 [display]
 ; Color mode: 8, 16, 256, or truecolor
 ; Use "auto" to detect terminal capability
@@ -1846,6 +1851,7 @@ class TkCursesConfig:
 | `TKCURSES_DEBUG` | `[debug] enabled` | bool | Enable debug logging |
 | `TKCURSES_DEBUG_LOG_FILE` | `[debug] log_file` | str | Debug log file path |
 | `TKCURSES_DEBUG_LOG_LEVEL` | `[debug] log_level` | str | Log level |
+| `TKCURSES_CLIPBOARD_SYSTEM` | `[clipboard] system` | str | `auto`, `osc52`, `command` or `off`: how the clipboard reaches other applications |
 
 ### Usage Examples
 
@@ -2122,8 +2128,51 @@ its `sel` range is not empty (the Text half of `TkCurses-9e8`). Before this,
 several fields stayed highlighted at once, which a person running UAT 43
 reported.
 
-The clipboard is still the process's own: what is copied here does not reach
-other applications. That is `TkCurses-hpr`, the OSC 52 transport.
+**The clipboard reaches other applications** (`TkCurses-hpr`) by one of two
+routes, chosen once when the application starts
+(`_core/system_clipboard.py`):
+
+- **OSC 52**, `ESC ] 52 ; c ; <base64> BEL`: the terminal sets the
+  clipboard. Works over SSH, but only where the terminal implements it, and a
+  terminal that does not ignores it silently — so it is not sent on hope. The
+  terminal is **asked** first, with XTGETTCAP for `Ms` (the terminfo
+  capability tmux decides the same question by), fenced with DA1 so a
+  terminal that answers costs a round trip and a silent one at most 0.5s. The
+  question is asked **before curses starts**, which would read the answer as
+  keystrokes.
+- **The desktop's clipboard tool**: `wl-copy`/`wl-paste` on Wayland, `xclip`
+  or `xsel` on X11. Works in any terminal, and can read as well as write,
+  but only on the machine the desktop is on — over SSH (`SSH_CONNECTION`,
+  `SSH_CLIENT`, `SSH_TTY`) it would fill the remote machine's clipboard, so it
+  is not used there.
+
+Measured in the author's terminal, Ptyxis (`VTE_VERSION=8401`), with a raw
+probe: DA1 answered `ESC[?61;1;21;22;28c`, XTVERSION `VTE(8401)`, and the
+`Ms` query **`ESC P 0 + r ESC \`** — an explicit "not a capability I have";
+an OSC 52 read was ignored, and an OSC 52 set of both CLIPBOARD and PRIMARY
+was ignored too (the paste key still pasted the previous clipboard). VTE —
+GNOME Terminal, Ptyxis — does not implement OSC 52, its developers having
+declined it on security grounds.
+
+`clipboard.system` (`TKCURSES_CLIPBOARD_SYSTEM`) chooses: **`auto`** writes by
+OSC 52 when the terminal says it has it and by the desktop tool otherwise,
+and reads through the desktop tool whenever there is one, so Ctrl-V brings in
+what another application copied — tkinter's `clipboard_get` answers whichever
+application owns the clipboard. `osc52` and `command` force one route; `off`
+keeps the clipboard inside. **OSC 52 is never read**: terminals restrict or
+prompt for it, for the reason VTE refused the sequence at all.
+
+A copy that cannot leave — no route, or a tool that failed — is **said once,
+on stderr, after the screen is given back**: what was copied stayed inside
+this program, and why. Not when the person chose `off`. A copy is sent whole
+after every `clipboard_append`, because the system clipboard has no append.
+**PRIMARY stays in the process**: X11 updates it on every change of selection,
+and running `wl-copy --primary` for each one is not worth it; the terminal's
+own middle-click pastes its own PRIMARY anyway.
+
+The test harness turns the setting **off** for every child, so a test run
+never touches a developer's clipboard, and answers DA1 and `Ms` as a real
+terminal would — as kitty (`osc52=True`) or as VTE was measured to.
 
 **The insertion cursor is the terminal's own** (`TkCurses-lw2`). Entry and
 Text painted it as a reversed cell — the same attribute as a selection, and
@@ -3107,10 +3156,10 @@ Where the table above and the implementation need reading together.
   approximation, and how close it gets depends on how many colours there are.
 - **`winfo_colordepth`** has no tkinter equivalent and is how anything drawing
   a colour ramp asks which of the four tiers it is drawing on.
-- **Clipboard contents do not leave the process.** A terminal has no clipboard;
-  `CLIPBOARD` and `PRIMARY` are strings held in the `Application`. Escape-
-  sequence clipboard access (OSC 52) is not attempted, because it is
-  unsupported by many terminals and fails silently on the rest.
+- **The clipboard reaches the system only by a route a terminal or desktop
+  offers.** `CLIPBOARD` and `PRIMARY` are held in the `Application`;
+  CLIPBOARD is carried out by OSC 52 or the desktop's clipboard tool where
+  one is available, and PRIMARY never is. See "Copy, cut and paste".
 - **Multi-event sequences** (`<Control-x><Control-s>`) are rejected by the
   sequence parser rather than silently mis-parsed.
 
@@ -3686,8 +3735,8 @@ An empty selection must read as "doesn't exist" rather than as the empty
 string, so the handler raises. A caller needs to tell "nothing is selected"
 from "an empty string was selected", which is why tkinter raises too.
 
-The data still does not leave the process — that is `TkCurses-hpr`, OSC 52 — but
-the per-widget option is meaningful without it, and `TkCurses-9e8` carries
+PRIMARY's data does not leave the process (CLIPBOARD's can — see "Copy, cut
+and paste"), but the per-widget option is meaningful without it, and `TkCurses-9e8` carries
 `Listbox` and `Text`, whose selection models differ. `TkCurses-163`.
 
 **A focused entry shows it in its border, in every state.** Tk signals the

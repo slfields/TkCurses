@@ -21,11 +21,10 @@ What to do: select text with Shift and the arrows, then cut, copy and paste
 between the fields. Try the masked field and the read-only one. Try Ctrl-C
 with something selected, and again with nothing selected.
 
-What to look for: **the readout under the title**, which shows what the
-clipboard holds and what the PRIMARY selection holds after every event. The
-clipboard is this program's own - nothing copied here reaches another
-application yet (TkCurses-hpr) - so the readout is the only place a copy can
-be seen before it is pasted.
+What to look for: **the readout under the title**, which shows what this
+program's clipboard and PRIMARY selection hold after every event, and **how
+the clipboard reaches the rest of the desktop** - OSC 52, the desktop's own
+clipboard tool, or not at all, and why (TkCurses-hpr).
 
 The keys, as measured in the author's terminal (TkCurses-lw2):
 
@@ -88,21 +87,31 @@ def build(root, screen):
         except tkcurses.TclError:
             return "(empty)"
 
+    route = root.tk.selections.route
+    system = route.reason if route is not None else "-"
+
     def describe():
         """The clipboard and PRIMARY, which are the whole point.
 
         Polled rather than redrawn from each handler, because the handlers
         are the library's own class bindings - the thing under test - and
         this must not depend on them to report what they did.
+
+        The clipboard shown is this program's own copy, not the system's:
+        asking the system ten times a second through wl-paste would start ten
+        processes a second. A paste still asks the system - that is what the
+        checklist tests.
         """
         focus = root.focus_get()
         screen.line(
             1,
-            f" clipboard: {held(root.clipboard_get):<32}"
+            f" clipboard: {held(lambda: root.tk.selections.held('CLIPBOARD')):<32}"
             f"  PRIMARY: {held(root.selection_get)}",
         )
         screen.line(
-            2, f" focus: {focus.winfo_name() if focus is not None else '-':<10}"
+            2,
+            f" focus: {focus.winfo_name() if focus is not None else '-':<10}"
+            f" system: {system}",
         )
         screen.line(3, f" last: {last['text']}")
         screen.refresh()

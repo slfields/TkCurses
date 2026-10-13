@@ -147,6 +147,7 @@ from tkcurses._core.paned import SASH_WIDTH, PanedLayout, PaneOptions
 from tkcurses._core.panels import PanelStack
 from tkcurses._core.place import BORDERMODES, PlaceLayout, PlaceOptions
 from tkcurses._core.screen import CursesScreen, TerminalCursor
+from tkcurses._core.system_clipboard import ask_terminal_for_osc52, choose_route
 from tkcurses._core.text import align_offset, measure, wrap, wrap_spans
 from tkcurses._core.textbuffer import Index, TextBuffer
 from tkcurses._core.textlayout import (
@@ -3993,6 +3994,13 @@ class Tk(BaseWidget, Wm):
         risky: ``initscr()`` has already changed the terminal by the time the
         next line runs.
         """
+        # Before curses starts: deciding on OSC 52 asks the terminal a
+        # question, and curses would read the answer as keystrokes.
+        self.tk.selections.route = choose_route(
+            TkCursesConfig.load().clipboard.system,
+            os.environ,
+            ask_terminal=ask_terminal_for_osc52,
+        )
         buffer = self._screen.start()
         try:
             settings = TkCursesConfig.load()
@@ -4487,6 +4495,7 @@ class Tk(BaseWidget, Wm):
         with contextlib.suppress(Exception):
             self._screen.stop()
             self._flush_held_reports()
+            self._report_clipboard_kept_inside()
         CursesDispatcher.reset()
 
     def __enter__(self) -> Tk:
@@ -4545,6 +4554,24 @@ class Tk(BaseWidget, Wm):
         if screen is not None and screen.started:
             with contextlib.suppress(_curses.error):
                 screen.repaint()
+
+    def _report_clipboard_kept_inside(self) -> None:
+        """Say once, on the way out, that a copy never left this program.
+
+        The acceptance the issue asked for: a terminal that cannot carry the
+        clipboard is detected and said, not silently trusted. Said after the
+        screen is given back, so it is read rather than painted over.
+        TkCurses-hpr.
+        """
+        selections = self.tk.selections
+        route = selections.route
+        if not selections.kept_inside or route is None:
+            return
+        selections.kept_inside = False
+        _write_to_stderr(
+            "tkcurses: what was copied stayed inside this program - "
+            f"{route.reason}. Set clipboard.system to change how it is tried.\n"
+        )
 
     def _flush_held_reports(self) -> None:
         """Print anything held back, now that the screen has been given up."""
