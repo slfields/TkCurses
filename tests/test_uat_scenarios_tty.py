@@ -1502,3 +1502,31 @@ def test_scenario_44_an_alt_click_extends_where_shift_cannot_reach(uat_terminal)
         message="extended from 'two' to the alt-click",
     )
     term.send(ESCAPE)
+
+
+def test_scenario_44_a_ctrl_click_moves_the_cursor_and_keeps_the_selection(
+    uat_terminal,
+):
+    """With the bytes the author's terminal sends for a Ctrl-click, recorded
+    by the raw mouse probe: ESC [<16;x;yM. TkCurses-mndh."""
+    term = _scenario_44(uat_terminal)
+    x, y = ENTRY_44
+    term.send_mouse(x + 7, y, action="press")
+    _settle(term)
+    term.send_mouse(x + 12, y, action="move", button=1)
+    _settle(term)
+    term.send_mouse(x + 12, y, action="release")
+    term.wait_for_text("selected: 7-12 'world'")
+    term.send(f"\x1b[<16;{x + 3};{y + 1}M".encode())  # Ctrl, button 1, 1-based
+    _settle(term)
+    term.send(f"\x1b[<16;{x + 3};{y + 1}m".encode())
+    term.wait_for(
+        lambda t: (
+            "last: ctrl-click on entry" in t.display[1]
+            and "selected: 7-12 'world'" in t.display[3]
+            and "cursor: 2" in t.display[2]
+            and _reversed(t, y, range(x + 7, x + 12))
+        ),
+        message="the cursor moved to 2 and 'world' stayed selected",
+    )
+    term.send(ESCAPE)

@@ -2227,8 +2227,37 @@ as `ESC [<16;…`, Alt as `ESC [<8;…`, and Shift-clicks not at all. So every
 `Shift-` binding above — single, double and triple — has an `Alt-` twin
 (`_EXTEND_MODIFIERS`). Tk binds nothing to Alt-click, so nothing is lost. Ctrl
 was the other candidate and is not used: classic Entry, Spinbox and Text bind
-Ctrl-click to "move the cursor and leave the selection" (not yet done here,
-`TkCurses-mndh`). In a terminal that does send Shift-click, both work.
+Ctrl-click to "move the cursor and leave the selection" (below). In a terminal
+that does send Shift-click, both work.
+
+**Ctrl-click moves the cursor and leaves the selection** (`TkCurses-mndh`),
+as Tk binds it, read from Tk 9.0.2: classic Entry and Spinbox
+`<Control-Button-1>` is `%W icursor @%x`, and Text's is `mark set insert
+@%x,%y` with an undo separator when `-autoseparators` is on. Nothing else
+moves — not the selection, not its anchor, and not the focus. Text also binds
+`<Control-B1-Motion>` and `<Control-Double-Button-1>` to *nothing*, to stop a
+plain drag or double-click taking over while Ctrl is held; ours has no
+separate drag binding to block, and blocks the double. ttk binds none of
+this, so in a ttk entry a Ctrl-click is a plain click. Not copied: in Tk a
+Ctrl-*drag* on a classic Entry selects from whatever anchor the last plain
+press left, through state its bindings share.
+
+**A longer click sequence outranks more modifiers**, which our binding engine
+had the wrong way round. Tk's manual orders specificity as the detail, then
+the length of the sequence, then the modifiers; measured with synthetic clicks
+on a Frame:
+
+| Held | Bound | Second click fires | Third |
+|---|---|---|---|
+| Control | `<Control-Button-1>`, `<Double-Button-1>` | `<Double-Button-1>` | |
+| Shift | `<Shift-Button-1>`, `<Double-Button-1>` | `<Double-Button-1>` | |
+| Shift | the same, and `<Double-Shift-Button-1>` | `<Double-Shift-Button-1>` | |
+| Shift | `<Button-1>`, `<Shift-Button-1>`, `<Triple-Button-1>` | `<Shift-Button-1>` | `<Triple-Button-1>` |
+
+Ours fired the modified single click every time. So a Ctrl-double-click on a
+classic Entry selects by words, as Tk's does — from the anchor the last
+*plain* click left, since the Ctrl press sets none (measured: a plain click at
+1, then a Ctrl-double-click at 9, reads `(0, 13)`).
 
 **Combobox is left out.** It installs its own class bindings, and every click
 on it opens the list. In Tk an editable combobox's text takes these clicks as

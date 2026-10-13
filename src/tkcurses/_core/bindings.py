@@ -222,13 +222,21 @@ class EventPattern:
 
         Ordered the way Tk orders them, checked against Tk 9.0.2: a named
         detail outranks any number of modifiers - ``<Key-A>`` beats
-        ``<Shift-Key>`` - and among patterns with the same detail, more
-        modifiers wins. ``Any`` is not counted: it waives the comparison
-        rather than demanding anything, so a pattern using it is the least
-        particular of all.
+        ``<Shift-Key>`` - then a LONGER sequence outranks more modifiers, and
+        only then do more modifiers win. ``Any`` is not counted: it waives
+        the comparison rather than demanding anything, so a pattern using it
+        is the least particular of all.
+
+        The click count is the "longer sequence", as Tk's manual has it, and
+        it used to rank below the modifiers here. Measured with synthetic
+        clicks on a Frame: held Control, the second click of a double fires
+        ``<Double-Button-1>`` over ``<Control-Button-1>``; held Shift, with no
+        double-shift binding, ``<Double-Button-1>`` over ``<Shift-Button-1>``,
+        and the third ``<Triple-Button-1>``. Ours fired the modified single
+        click every time. TkCurses-mndh.
         """
         modifiers = self.modifiers & ~MOD_ANY
-        return (int(bool(self.detail)), int(modifiers).bit_count(), self.repeat)
+        return (int(bool(self.detail)), self.repeat, int(modifiers).bit_count())
 
     def __str__(self) -> str:
         """The canonical sequence string for this pattern."""

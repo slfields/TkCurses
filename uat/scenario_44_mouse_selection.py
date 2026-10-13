@@ -20,7 +20,8 @@
 What to do: double-click words, triple-click lines, shift-click or alt-click to
 extend a selection, and drag past the edge of the narrow field and the text.
 GNOME Terminal and the other VTE terminals never send a shift-click to a
-program - measured - so Alt-click does the same here.
+program - measured - so Alt-click does the same here. A Ctrl-click moves the
+cursor and leaves the selection where it is (TkCurses-mndh).
 
 What to look for: **the readout under the title**. It names the click that
 was recognised - a double-click has to land within 200ms on the same cell, so
@@ -105,6 +106,7 @@ def build(root, screen):
     root.bind_all("<Triple-Button-1>", clicked("triple-click"), add="+")
     root.bind_all("<Shift-Button-1>", clicked("shift-click"), add="+")
     root.bind_all("<Alt-Button-1>", clicked("alt-click"), add="+")
+    root.bind_all("<Control-Button-1>", clicked("ctrl-click"), add="+")
 
     def selection_of(widget):
         if isinstance(widget, tkcurses.Text):

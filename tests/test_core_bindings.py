@@ -200,6 +200,24 @@ def test_more_modifiers_wins_when_the_detail_is_the_same():
     )
 
 
+@pytest.mark.parametrize(
+    ("longer", "modified"),
+    [
+        ("<Double-Button-1>", "<Control-Button-1>"),
+        ("<Double-Button-1>", "<Shift-Button-1>"),
+        ("<Triple-Button-1>", "<Shift-Button-1>"),
+        ("<Double-Shift-Button-1>", "<Double-Button-1>"),
+    ],
+)
+def test_a_longer_click_sequence_outranks_more_modifiers(longer, modified):
+    """Measured on a tkinter.Frame with synthetic clicks: held Control, a
+    double-click's second press fires <Double-Button-1>, not
+    <Control-Button-1>; held Shift with no double-shift binding,
+    <Double-Button-1> and then <Triple-Button-1>, not <Shift-Button-1>. The
+    click count used to rank below the modifiers here. TkCurses-mndh."""
+    assert parse_sequence(longer).specificity > parse_sequence(modified).specificity
+
+
 def test_any_is_not_counted_as_a_modifier():
     """It waives the comparison rather than demanding anything."""
     assert (

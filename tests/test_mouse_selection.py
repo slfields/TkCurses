@@ -34,7 +34,7 @@ import pytest
 
 from tkcurses import Entry, Misc, Spinbox, Text, ttk
 from tkcurses._core.editing import is_word_char, run_end, run_start
-from tkcurses._core.events import MOD_ALT, MOD_SHIFT, MouseEvent
+from tkcurses._core.events import MOD_ALT, MOD_CTRL, MOD_SHIFT, KeyEvent, MouseEvent
 from tkcurses._core.geometry import Rect
 from tkcurses._core.panels import PanelStack
 
@@ -626,3 +626,119 @@ def test_a_text_drag_above_and_to_the_left_scrolls_back(root, clock):
     assert widget.xview()[0] < left, "scrolled left"
     assert widget.yview()[0] == pytest.approx(top - up_by), "and only sideways"
     mouse(widget, "released", -1, area.y + 1)
+
+
+# --------------------------------------------------------------- Ctrl-click
+#
+# Tk's classic Entry and Spinbox bind <Control-Button-1> to "icursor @x" and
+# Text to "mark set insert @x,y" with an undo separator: the cursor moves, and
+# the selection, its anchor and the focus stay. ttk binds nothing, so there a
+# Ctrl-click is a plain click. Read from Tk 9.0.2's bindings. TkCurses-mndh.
+
+
+@pytest.fixture
+def elsewhere(root):
+    """Something else to hold the focus, so a move of it would show."""
+    widget = placed(Entry(root, name="other"), Rect(0, 10, 22, 3))
+    widget.focus_set()
+    return widget
+
+
+def test_a_ctrl_click_moves_the_cursor_and_keeps_the_selection(words, elsewhere):
+    words.selection_range(4, 7)
+    elsewhere.focus_set()
+    mouse(words, "pressed", column(words, 10), modifiers=MOD_CTRL)
+    mouse(words, "released", column(words, 10), modifiers=MOD_CTRL)
+    assert state(words) == ((4, 7), 10)
+    assert words.focus_get() is elsewhere, "Tk's binding does not take the focus"
+
+
+def test_a_ctrl_click_keeps_the_anchor(words):
+    """A shift-click after it still extends from where the selection began."""
+    mouse(words, "pressed", column(words, 4))
+    mouse(words, "drag", column(words, 7))
+    mouse(words, "released", column(words, 7))
+    mouse(words, "pressed", column(words, 1), modifiers=MOD_CTRL)
+    mouse(words, "released", column(words, 1), modifiers=MOD_CTRL)
+    mouse(words, "pressed", column(words, 12), modifiers=MOD_SHIFT)
+    assert words._field.selection == (4, 12)
+
+
+def test_no_drag_follows_a_ctrl_click(words):
+    words.selection_range(4, 7)
+    mouse(words, "pressed", column(words, 1), modifiers=MOD_CTRL)
+    mouse(words, "drag", column(words, 14), modifiers=MOD_CTRL)
+    assert state(words) == ((4, 7), 1)
+
+
+def test_a_ctrl_double_click_extends_by_words_from_the_last_plain_click(words):
+    """Measured, by running the two binding scripts as Tk fires them: the
+    double-click outranks the Ctrl-click, and since the Ctrl press set no
+    anchor, the words run from where the last plain click left it - a
+    plain click at 1, then a Ctrl-double-click at 9, reads (0, 13)."""
+    mouse(words, "pressed", column(words, 1))
+    mouse(words, "released", column(words, 1))
+    x = column(words, 9)
+    mouse(words, "pressed", x, modifiers=MOD_CTRL)
+    mouse(words, "released", x, modifiers=MOD_CTRL)
+    mouse(words, "double", x, modifiers=MOD_CTRL)
+    assert state(words) == ((0, 13), 13)
+
+
+def test_a_spinbox_ctrl_click_moves_the_cursor_only(spin):
+    spin.selection_range(0, 5)
+    mouse(spin, "pressed", column(spin, 9), modifiers=MOD_CTRL)
+    assert state(spin) == ((0, 5), 9)
+
+
+@pytest.mark.parametrize(
+    "make", [ttk.Entry, ttk.Spinbox], ids=["ttk.Entry", "ttk.Spinbox"]
+)
+def test_a_ttk_ctrl_click_is_a_plain_click(root, elsewhere, make):
+    """ttk binds no Ctrl-click, so the press binding has it."""
+    widget = placed(make(root, name="tc"))
+    widget.delete(0, "end")
+    widget.insert(0, "one two three")
+    widget.selection_range(0, 3)
+    elsewhere.focus_set()
+    mouse(widget, "pressed", column(widget, 6), modifiers=MOD_CTRL)
+    assert state(widget) == (None, 6)
+    assert widget.focus_get() is widget
+
+
+def test_a_text_ctrl_click_moves_the_insert_mark_and_keeps_the_selection(
+    text, elsewhere
+):
+    load(text, "one two three four")
+    text.tag_add("sel", "1.4", "1.7")
+    elsewhere.focus_set()
+    tclick(text, "1.14", modifiers=MOD_CTRL)
+    tclick(text, "1.14", "released", modifiers=MOD_CTRL)
+    assert tsel(text) == ("two", "1.14")
+    assert text.focus_get() is elsewhere
+
+
+def test_a_text_ctrl_double_click_does_nothing(text):
+    """Tk binds <Control-Double-Button-1> to nothing, on purpose."""
+    load(text, "one two three four")
+    tclick(text, "1.5", modifiers=MOD_CTRL)
+    tclick(text, "1.5", "released", modifiers=MOD_CTRL)
+    tclick(text, "1.5", "double", modifiers=MOD_CTRL)
+    assert tsel(text) == (None, "1.5")
+
+
+def test_a_text_ctrl_click_ends_the_undo_group(root):
+    """Tk's comment: moving the insert mark without making it one end of the
+    selection must insert an autoseparator."""
+    widget = Text(root, name="tu", width=20, height=3, undo=True)
+    placed(widget, Rect(0, 0, 22, 5))
+    widget.focus_set()
+    for char in "ab":
+        widget._handle(KeyEvent(keysym=char, char=char))
+    x, y = cell(widget, "1.0")
+    mouse(widget, "pressed", x, y, modifiers=MOD_CTRL)
+    for char in "cd":
+        widget._handle(KeyEvent(keysym=char, char=char))
+    assert widget.get("1.0", "end-1c") == "cdab"
+    widget.edit_undo()
+    assert widget.get("1.0", "end-1c") == "ab"

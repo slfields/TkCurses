@@ -28,7 +28,7 @@ TKCURSES_MOUSE_CLICK_INTERVAL=400 python3 -m uat 44   # slower double-clicks
 | Terminal | A VTE terminal (`VTE_VERSION=8401`, `TERM=xterm-256color`), from the mouse probe's log |
 | Size | |
 | Date | 2026-10-04 |
-| Result | **Accepted.** Run by the author: "uat 44 is now complete", after the fault below was fixed. Size not recorded. |
+| Result | **Accepted.** Run by the author: "uat 44 is now complete", after the fault below was fixed. Size not recorded. The Ctrl-click section was added afterwards (`TkCurses-mndh`) and accepted on its own on 2026-10-13: "uat 44 ctrl-click section passes". |
 
 The boxes below are left unticked deliberately: the acceptance was given as a
 whole rather than item by item, and ticking them would claim a record that was
@@ -98,6 +98,26 @@ both work. The readout says `alt-click` or `shift-click`.
       from `two` to the click
 - [ ] In the **text**, double-click `two`, then double-Alt-click in `four`.
       It extends by whole words
+
+## Ctrl-click: move the cursor, keep the selection
+
+*Added after the acceptance above, with `TkCurses-mndh`, and accepted
+separately on 2026-10-13.* Tk's classic
+Entry, Spinbox and Text bind Ctrl-click to move the cursor without touching
+the selection — and without taking the focus. ttk binds nothing to it, so in
+a ttk widget a Ctrl-click is an ordinary click. VTE terminals do pass
+Ctrl-clicks on (measured).
+
+- [ ] In **Entry**, drag over `world`, then Ctrl-click on `hello`. `world` is
+      still selected, and the readout's `cursor:` moves to where you clicked
+- [ ] Click into **ttk.Entry**, then Ctrl-click in **Entry**. The focus stays in
+      ttk.Entry — the readout's `focus:` does not change
+- [ ] In **ttk.Entry**, select something and Ctrl-click. The selection goes,
+      as an ordinary click's would: *ttk binds no Ctrl-click*
+- [ ] In the **text**, drag over `two`, then Ctrl-click in `four`. `two` stays
+      selected and the cursor moves
+- [ ] In the **text**, Ctrl-double-click a word. **Nothing** is selected:
+      *Tk binds that to nothing, on purpose*
 
 ## Dragging past the edge: autoscroll
 

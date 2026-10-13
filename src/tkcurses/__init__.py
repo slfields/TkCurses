@@ -6751,6 +6751,9 @@ class Entry(_Drawable, XView):
         bind(name, "<ButtonRelease-1>", _entry_release)
         bind(name, "<Double-Button-1>", _entry_double)
         bind(name, "<Triple-Button-1>", _entry_triple)
+        if not _is_ttk(self):
+            # ttk binds no Ctrl-click: there it is a plain click.
+            bind(name, "<Control-Button-1>", _entry_control_click)
         for extend in _EXTEND_MODIFIERS:
             bind(name, f"<{extend}-Button-1>", _entry_shift_click)
             if not _is_ttk(self):
@@ -7889,6 +7892,23 @@ def _entry_shift_click(event: Event) -> None:
     entry._redraw()
 
 
+def _entry_control_click(event: Event) -> None:
+    """Move the cursor to the pointer and leave everything else alone.
+
+    Tk's classic Entry and Spinbox bind ``<Control-Button-1>`` to ``%W
+    icursor @%x`` and nothing more: the selection stays, its anchor stays,
+    and the focus does not move. No drag follows - a Ctrl-drag in Tk selects
+    from whatever anchor the LAST plain press left, through state its
+    bindings share, which is not copied. TkCurses-mndh.
+    """
+    entry = event.widget
+    _cancel_autoscan(entry)
+    entry._dragging = False
+    entry.icursor(_entry_index_at(entry, event.x))
+    entry._see_cursor()
+    entry._redraw()
+
+
 def _entry_double_shift(event: Event) -> None:
     """Extend the selection from the anchor by whole words (classic only)."""
     entry = event.widget
@@ -8692,6 +8712,8 @@ class Spinbox(Entry):
         # double-click binding again; ours matches a click count exactly, so
         # the same handler is bound for it.
         bind(name, "<Triple-Button-1>", _spinbox_triple)
+        if not _is_ttk(self):
+            bind(name, "<Control-Button-1>", _entry_control_click)
         for extend in _EXTEND_MODIFIERS:
             bind(name, f"<{extend}-Button-1>", _entry_shift_click)
             if not _is_ttk(self):
@@ -9146,6 +9168,10 @@ class Text(_Drawable, XView, YView):
         bind(name, "<Button-1>", _text_press)
         bind(name, "<Double-Button-1>", _text_double)
         bind(name, "<Triple-Button-1>", _text_triple)
+        bind(name, "<Control-Button-1>", _text_control_click)
+        # Tk binds this to nothing, on purpose: without it a double-click
+        # with Ctrl held would select a word, as a plain one does.
+        bind(name, "<Control-Double-Button-1>", _do_nothing)
         for extend in _EXTEND_MODIFIERS:
             bind(name, f"<{extend}-Button-1>", _text_shift_press)
             bind(name, f"<Double-{extend}-Button-1>", _text_double_shift)
@@ -10674,6 +10700,29 @@ def _text_select_to(text: Any, x: int, y: int) -> None:
     text.see("insert")
     text._redraw()
     text._report_view()
+
+
+def _text_control_click(event: Event) -> None:
+    """Move the insert mark to the pointer and leave the selection alone.
+
+    Tk's ``<Control-Button-1>``: ``mark set insert @%x,%y``, and an undo
+    separator when ``-autoseparators`` is on, because "an operation that
+    moves the insert mark without making it one end of the selection must
+    insert an autoseparator" (Tk's own comment, text.tcl). The focus does not
+    move and no drag follows. TkCurses-mndh.
+    """
+    text = event.widget
+    _cancel_autoscan(text)
+    text._dragging = False
+    text._separate_if_asked(None)
+    text._buffer.mark_set("insert", text._index_at_cell(event.x, event.y))
+    text.see("insert")
+    text._redraw()
+
+
+def _do_nothing(event: Event) -> None:
+    """A binding that does nothing, to stand in front of a less specific one."""
+    del event
 
 
 def _text_double(event: Event) -> None:
