@@ -41,7 +41,15 @@ __all__ = ["Screen", "run"]
 
 
 class Screen:
-    """Somewhere to put text, until there are widgets that do it properly."""
+    """Somewhere to put text, until there are widgets that do it properly.
+
+    It writes straight to the screen buffer, which curses draws UNDER no
+    panel: a line written while a menu is open paints over the menu. A widget
+    would not - its panel stacks - and a real program draws with widgets, so
+    this is a limit of the readout, not of the library. A scenario should not
+    update its readout while one of its menus is open. Found in UAT 46,
+    where a shortcut that should not have fired did (TkCurses-aj1.13.1).
+    """
 
     def __init__(self, root: tkcurses.Tk) -> None:
         self._root = root

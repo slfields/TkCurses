@@ -1587,3 +1587,112 @@ def test_scenario_45_the_quirk_holds_with_real_keys(uat_terminal):
     term.send(b"\x13")
     term.wait_for_text("chords: save")
     term.send(ESCAPE)
+
+
+# ---------------------------------------------------------------------------
+# Menu columns and shortcuts. The menubar's "Colours" is drawn by a widget, so
+# waiting for it is waiting for the layout. TkCurses-aj1.13.1.
+
+
+def _scenario_46(uat_terminal):
+    term = uat_terminal(cols=80, rows=20)
+    term.run([sys.executable, "-m", "uat.scenario_46_menu_columns_accelerators"])
+    term.wait_for_text("Colours")
+    term.wait_for_text("last chosen: -")
+    term.wait_for_idle()
+    return term
+
+
+def test_scenario_46_a_click_in_the_second_column_chooses_there(uat_terminal):
+    term = _scenario_46(uat_terminal)
+    term.send(b"\x1bOR")  # F3: Colours
+    term.wait_for_text("Purple")
+    row = next(i for i, line in enumerate(term.display) if "Teal" in line)
+    term.click(term.display[row].index("Teal") + 1, row)
+    term.wait_for_text("last chosen: colour Teal")
+    term.send(ESCAPE)
+
+
+def test_scenario_46_down_goes_from_a_columns_foot_to_the_next_top(uat_terminal):
+    term = _scenario_46(uat_terminal)
+    term.send(b"\x1bOR")
+    term.wait_for_text("Purple")
+    for _ in range(6):  # Black, Maroon, Green, Olive, Navy, then Purple
+        term.send_keys("<Down>")
+        term.wait_for_idle()
+    term.send(b"\r")
+    term.wait_for_text("last chosen: colour Purple")
+    term.send(ESCAPE)
+
+
+def test_scenario_46_the_shortcuts_work_with_the_menu_closed(uat_terminal):
+    term = _scenario_46(uat_terminal)
+    term.send(b"\x0f")  # Ctrl+O
+    term.wait_for_text("last chosen: Open")
+    term.send(b"\x18")  # Ctrl+X ...
+    term.wait_for_idle()
+    term.send(b"\x13")  # ... Ctrl+S
+    term.wait_for_text("last chosen: Save")
+    term.send(b"\x10")  # Ctrl+P: Print is disabled
+    term.wait_for_idle()
+    assert "last chosen: Save" in term.row(1), term.describe()
+    term.send(b"\x1b[15~")  # F5, from the Recent submenu
+    term.wait_for_text("last chosen: Last file")
+    term.send(ESCAPE)
+
+
+def test_scenario_46_left_in_a_dropdown_opens_the_menu_to_its_left(uat_terminal):
+    """Found writing this checklist: Left closed the dropdown instead."""
+    term = _scenario_46(uat_terminal)
+    term.send(b"\x1bOR")  # F3: Colours
+    term.wait_for_text("Purple")
+    term.send_keys("<Left>")
+    term.wait_for(
+        lambda t: (
+            any("Open..." in row for row in t.display)
+            and not any("Purple" in row for row in t.display)
+        ),
+        message="File's menu open in place of Colours",
+    )
+    term.send(ESCAPE)
+
+
+def test_scenario_46_a_shortcut_does_nothing_while_a_menu_is_open(uat_terminal):
+    """The author's report: F3, then F5, and "last file" was written over
+    the menu's top border. F5 should not have fired at all - Tk's open menu
+    keeps every key - and the readout writing over the menu was the visible
+    half of that."""
+    term = _scenario_46(uat_terminal)
+    term.send(b"\x1bOR")  # F3: Colours
+    term.wait_for_text("Purple")
+    top = next(i for i, row in enumerate(term.display) if "┌" in row)
+    term.send(b"\x1b[15~")  # F5
+    term.wait_for_idle()
+    term._drain(term._budget(0.3))
+    assert "Last file" not in "\n".join(term.display), term.describe()
+    assert "┌" in term.display[top], "the menu's top border is intact"
+    term.send(ESCAPE)
+
+
+def test_scenario_46_escape_leaves_nothing_highlighted_on_the_bar(uat_terminal):
+    """The author's report: F3, Escape, and Colours stayed highlighted while
+    the arrows did nothing to it. Tk clears the bar's highlight."""
+    term = _scenario_46(uat_terminal)
+    column = term.display[0].index("Colours")
+    term.send(b"\x1bOR")  # F3
+    term.wait_for(
+        lambda t: "Purple" in "\n".join(t.display) and t.attrs_at(0, column)["reverse"],
+        message="Colours open and highlighted",
+    )
+    term.send(ESCAPE)
+    term.wait_for(
+        lambda t: (
+            "Purple" not in "\n".join(t.display)
+            and not t.attrs_at(0, column)["reverse"]
+        ),
+        message="Colours closed, and not highlighted",
+    )
+    term.send_keys("<Right>")
+    term.wait_for_idle()
+    assert "Open..." not in "\n".join(term.display), "no menu opened"
+    assert not term.attrs_at(0, column)["reverse"]

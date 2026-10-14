@@ -39,10 +39,19 @@ can be tested directly.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ["MenuEntry", "measure_entries", "place_popup", "visible_window"]
+__all__ = [
+    "MenuEntry",
+    "Placed",
+    "accelerator_sequence",
+    "lay_out",
+    "measure_entries",
+    "place_popup",
+    "visible_window",
+]
 
 #: Entry kinds, in the spelling Tk uses for ``type``.
 KINDS = ("command", "cascade", "checkbutton", "radiobutton", "separator")
@@ -75,6 +84,12 @@ class MenuEntry:
     def accelerator(self) -> str:
         """The shortcut shown on the right, if any."""
         return str(self.options.get("accelerator") or "")
+
+    @property
+    def breaks_column(self) -> bool:
+        """True if this entry starts a new column - ``-columnbreak``."""
+        value = self.options.get("columnbreak", 0)
+        return str(value).strip().lower() not in ("", "0", "false", "no", "off")
 
     @property
     def selectable(self) -> bool:
@@ -150,3 +165,191 @@ def visible_window(count: int, active: int, rows: int) -> int:
         return 0
     first = min(max(0, active - rows + 1), count - rows)
     return max(0, min(first, count - rows))
+
+
+#: Cells between one column of a menu and the next.
+COLUMN_GAP = 2
+
+
+@dataclass(frozen=True)
+class Placed:
+    """Where one entry of a posted menu goes, relative to its text area."""
+
+    #: The column's left edge.
+    x: int
+    #: The row within the column.
+    row: int
+    #: The column's width, which the entry is drawn across.
+    width: int
+
+
+def lay_out(
+    entries: list[MenuEntry], *, indicators: bool
+) -> tuple[list[Placed], tuple[int, int]]:
+    """Place a posted menu's entries in columns, as ``-columnbreak`` asks.
+
+    An entry with ``-columnbreak`` starts a new column at the top; the rest
+    go below the one before. Measured on Tk 9.0.2 with ``xposition`` and
+    ``yposition``: each column is as wide as ITS OWN labels and accelerators
+    need - a column of short entries stays narrow beside a wide one - and the
+    menu is as tall as its tallest column. A break on the first entry starts
+    nothing, there being no column before it. TkCurses-aj1.13.1.
+
+    Returns each entry's place, in order, and the size of the whole.
+    """
+    columns: list[list[int]] = [[]]
+    for number, entry in enumerate(entries):
+        if entry.breaks_column and columns[-1]:
+            columns.append([])
+        columns[-1].append(number)
+    placed: dict[int, Placed] = {}
+    x = 0
+    for column in columns:
+        width, _ = measure_entries(
+            [entries[number] for number in column], indicators=indicators
+        )
+        for row, number in enumerate(column):
+            placed[number] = Placed(x, row, width)
+        x += width + COLUMN_GAP
+    total_width = max(1, x - COLUMN_GAP)
+    height = max(1, max((len(column) for column in columns), default=1))
+    return [placed[number] for number in range(len(entries))], (total_width, height)
+
+
+# ---------------------------------------------------------- accelerators
+#
+# An entry's -accelerator is display only, in Tk as here: its manual says it
+# "does not actually set the corresponding binding (which can be achieved
+# using the bind command)". So every application writes the shortcut twice,
+# once as text and once as a binding, and the two drift. accelerator_sequence
+# reads the text the way people write it, so Menu.bind_accelerators can make
+# the binding from it - a TkCurses addition, not tkinter API. aj1.13.1.
+
+#: Modifier spellings, lower-cased, to the name a binding sequence uses.
+_ACCELERATOR_MODIFIERS = {
+    "ctrl": "Control",
+    "control": "Control",
+    "ctl": "Control",
+    "alt": "Alt",
+    "option": "Alt",
+    "opt": "Alt",
+    "meta": "Meta",
+    "shift": "Shift",
+}
+
+#: Key spellings, lower-cased, to the keysym a binding names.
+_ACCELERATOR_KEYS = {
+    "del": "Delete",
+    "delete": "Delete",
+    "ins": "Insert",
+    "insert": "Insert",
+    "home": "Home",
+    "end": "End",
+    "pgup": "Prior",
+    "pageup": "Prior",
+    "prior": "Prior",
+    "pgdn": "Next",
+    "pgdown": "Next",
+    "pagedown": "Next",
+    "next": "Next",
+    "esc": "Escape",
+    "escape": "Escape",
+    "enter": "Return",
+    "return": "Return",
+    "tab": "Tab",
+    "space": "space",
+    "spacebar": "space",
+    "backspace": "BackSpace",
+    "bksp": "BackSpace",
+    "up": "Up",
+    "down": "Down",
+    "left": "Left",
+    "right": "Right",
+    "plus": "plus",
+    "minus": "minus",
+    "comma": "comma",
+    "period": "period",
+    "dot": "period",
+    "slash": "slash",
+}
+
+#: A punctuation key written as itself, to its keysym name - kept as a name,
+#: so a "<" or ">" never sits inside the brackets of a sequence.
+_ACCELERATOR_PUNCTUATION = {
+    "+": "plus",
+    "-": "minus",
+    ",": "comma",
+    ".": "period",
+    "/": "slash",
+    ";": "semicolon",
+    "=": "equal",
+    "[": "bracketleft",
+    "]": "bracketright",
+    "<": "less",
+    ">": "greater",
+    "'": "apostrophe",
+    "`": "grave",
+    "\\": "backslash",
+}
+
+_FUNCTION_KEY = re.compile(r"^f([1-9]|1[0-9]|2[0-4])$")
+
+
+def accelerator_sequence(text: str) -> str:
+    """The binding sequence an accelerator's text describes.
+
+    ``Ctrl+O`` gives ``<Control-Key-o>``. Modifiers are ``Ctrl``, ``Control``
+    or a leading ``^``, ``Alt`` or ``Option``, ``Meta`` and ``Shift``, joined
+    by ``+`` or ``-``; keys are a character, ``F1`` to ``F24``, or a name -
+    ``Del``, ``Ins``, ``Home``, ``End``, ``PgUp``, ``PgDn``, ``Esc``,
+    ``Enter``, ``Tab``, ``Space``, ``Backspace``, the arrows. A chord is
+    written with a space or a comma between its keys: ``Ctrl+X Ctrl+S``.
+
+    A letter is the key, not the character: ``Ctrl+O`` means the o key with
+    Control held, as menus write it, and ``Shift+O`` the O. A terminal sends
+    Ctrl+Shift+O as it sends Ctrl+O, so that one can be bound but never told
+    apart here.
+
+    Raises:
+        ValueError: For text it cannot read - better than a shortcut shown on
+            screen that nothing binds.
+    """
+    # A comma between keys has a space after it ("Ctrl+K, Ctrl+C"); one with
+    # none is the comma key ("Ctrl+,").
+    keys = [part for part in re.split(r",\s+|\s+", text.strip()) if part]
+    if not keys:
+        raise ValueError(f"no key in accelerator {text!r}")
+    return "".join(_one_key(key, text) for key in keys)
+
+
+def _one_key(key: str, text: str) -> str:
+    modifiers: list[str] = []
+    rest = key
+    if rest.startswith("^") and len(rest) > 1:
+        modifiers.append("Control")
+        rest = rest[1:]
+    while True:
+        match = re.match(r"^([A-Za-z]+)[+-](?=.)", rest)
+        if match is None or match.group(1).lower() not in _ACCELERATOR_MODIFIERS:
+            break
+        name = _ACCELERATOR_MODIFIERS[match.group(1).lower()]
+        if name not in modifiers:
+            modifiers.append(name)
+        rest = rest[match.end() :]
+    keysym = _keysym(rest, shifted="Shift" in modifiers)
+    if keysym is None:
+        raise ValueError(f"cannot read the key {rest!r} in accelerator {text!r}")
+    return "<" + "".join(f"{name}-" for name in modifiers) + f"Key-{keysym}>"
+
+
+def _keysym(key: str, *, shifted: bool) -> str | None:
+    if len(key) == 1:
+        if key.isalpha():
+            return key.upper() if shifted else key.lower()
+        if key.isdigit():
+            return key
+        return _ACCELERATOR_PUNCTUATION.get(key)
+    lowered = key.lower()
+    if _FUNCTION_KEY.match(lowered):
+        return lowered.upper()
+    return _ACCELERATOR_KEYS.get(lowered)

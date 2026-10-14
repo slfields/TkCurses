@@ -229,9 +229,6 @@ GAPS: dict[str, dict[str, str]] = {
         "scan_dragto": "TkCurses-6lh",
         "scan_mark": "TkCurses-6lh",
     },
-    "tk.Menu": {
-        "xposition": "TkCurses-5rt",
-    },
     "tk.Misc": {
         "anchor": "TkCurses-zmf",
         "bbox": "TkCurses-zmf",

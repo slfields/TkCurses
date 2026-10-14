@@ -4129,8 +4129,9 @@ Menu bar and popup menus.
 | `post(x, y)` | ○ | Show at cell pos |
 | `type(index)` | ✓ | Get item type |
 | `unpost()` | ✓ | Hide menu |
-| `xposition(index)` | ☐ | Cell X position - not implemented; TkCurses-5rt |
-| `yposition(index)` | ○ | Cell Y position |
+| `xposition(index)` | ✓ | Where the entry's column starts, in cells (TkCurses-aj1.13.1) |
+| `yposition(index)` | ○ | Cell Y position; within its column |
+| `bind_accelerators(target=None)` | ✓ | **Not tkinter API** - binds each entry's accelerator text |
 
 **Rendering:**
 ```
@@ -4144,6 +4145,64 @@ Menu bar and popup menus.
 │ Exit          Ctrl+Q │
 └──────────────────────┘
 ```
+
+**`-columnbreak`** lays a menu out in columns (`TkCurses-aj1.13.1`). Measured
+on Tk 9.0.2 with `xposition`, `yposition` and the `@x,y` index:
+
+- an entry with `-columnbreak` starts a new column **at the top**, beside the
+  column before; the rest go below the entry before them;
+- **each column is as wide as its own** labels and accelerators need — a
+  column of short entries stays narrow beside a wide one (65 px between 166
+  and 116, measured) — and the menu is as tall as its tallest column;
+- every kind but a **separator**, which Tk refuses it on ("unknown option");
+- `@x,y` picks by column, and `@y` alone reads the first one.
+
+**Closing a dropdown of the menubar clears the bar's highlight**, as Tk's
+`MenuUnpost` does (`$parent activate {}`, read from Tk 9.0.2); the focus goes
+back where it was. The bar is never posted, so the clean-up that a posted
+parent gets never ran for it, and the entry stayed highlighted after Escape —
+looking like a keyboard mode the bar was not in. **An open menu keeps every
+key**, as Tk's Menu class does (`<KeyPress>` … `break`): a key it had no use
+for used to go on to `bind_all` shortcuts behind it. **Left in a dropdown of
+the menubar** opens the menu to its left, where it closed the dropdown; only
+a submenu closes back to its parent. All three found running UAT 46.
+
+Tk's keyboard traversal ignores columns (`menu.tcl`, `MenuNextEntry`): Up and
+Down go by index and wrap, so Down from a column's foot is the next column's
+top; Left and Right still move between menus. A menu in columns **does not
+scroll** — a column is how a long menu was made short — where a single
+column scrolls as before.
+
+```
+┌─────────────────────────┐
+│ Black   Purple  Lime    │
+│ Maroon  Teal    Yellow  │
+│ Green   Silver  Blue    │
+└─────────────────────────┘
+```
+
+**`bind_accelerators()`** — **not tkinter API**, a TkCurses addition like
+`winfo_colordepth`. Tk's `-accelerator` is display only: its manual says the
+option "does not actually set the corresponding binding (which can be achieved
+using the bind command)". So an application writes every shortcut twice, as
+text and as a binding, and the two drift. `menu.bind_accelerators()` reads
+each entry's text, in its submenus too, and binds it:
+
+- the text is read as people write it (`_core/menus.accelerator_sequence`):
+  `Ctrl+O`, `Ctrl-O`, `Control+O`, `^S`, `Alt`/`Option`, `Meta`, `Shift`,
+  `F1`–`F24`, `Del`, `PgUp`, `Esc`, `Enter` and the rest, punctuation
+  (`Ctrl++`, `Ctrl+,`), and **chords** — `Ctrl+X Ctrl+S`, `Ctrl+K, Ctrl+C`
+  (a comma with a space after it separates keys; one without is the key);
+- a letter is the key, not the character — `Ctrl+O` is the o key — and
+  `Shift+O` the O. A terminal sends Ctrl+Shift+O as it sends Ctrl+O, so that
+  one can be bound but not told apart here;
+- **all or nothing**: every accelerator is read before anything is bound,
+  and one that cannot be read raises `ValueError` naming its entry;
+- bindings are **added**, never replacing the application's own; by default
+  through `bind_all`, or on a `target`;
+- each runs its entry by **what it is**, not its index, so entries inserted
+  later do not move a shortcut onto another; a deleted entry's shortcut does
+  nothing, and a disabled one's does nothing, as choosing it would.
 
 ---
 

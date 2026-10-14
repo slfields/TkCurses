@@ -138,7 +138,11 @@ from tkcurses._core.menus import (
     CASCADE as CASCADE_GLYPH,
 )
 from tkcurses._core.menus import (
+    COLUMN_GAP,
     MenuEntry,
+    Placed,
+    accelerator_sequence,
+    lay_out,
     measure_entries,
     place_popup,
     visible_window,
@@ -11792,11 +11796,18 @@ class Menu(_Drawable):
     """
 
     #: Entry kinds, and what each one accepts on top of the common options.
+    #: -columnbreak on every kind but a separator, which refuses it - as Tk
+    #: 9.0.2 does, measured ("unknown option"). TkCurses-aj1.13.1.
     _ENTRY_OPTIONS: ClassVar[dict[str, dict[str, Any]]] = {
-        "command": {},
-        "cascade": {"menu": None},
-        "checkbutton": {"onvalue": 1, "offvalue": 0, "variable": None},
-        "radiobutton": {"value": "", "variable": None},
+        "command": {"columnbreak": 0},
+        "cascade": {"menu": None, "columnbreak": 0},
+        "checkbutton": {
+            "onvalue": 1,
+            "offvalue": 0,
+            "variable": None,
+            "columnbreak": 0,
+        },
+        "radiobutton": {"value": "", "variable": None, "columnbreak": 0},
         "separator": {},
     }
     _COMMON_ENTRY_OPTIONS: ClassVar[dict[str, Any]] = {
@@ -11974,7 +11985,12 @@ class Menu(_Drawable):
         if text == "none":
             return None
         if text.startswith("@"):
-            return self._entry_at_row(int(text[1:]))
+            # "@y", or "@x,y" in a menu laid out in columns - Tk 9.0.2 takes
+            # both, measured, and "@y" alone reads as the first column.
+            x, _, y = text[1:].rpartition(",")
+            if x:
+                return self._entry_at(int(x), int(y))
+            return self._entry_at_row(int(y))
         if text.lstrip("-").isdigit():
             number = int(text)
             return number if 0 <= number < len(self._entries) else None
@@ -11990,12 +12006,42 @@ class Menu(_Drawable):
         return len(self._entries) if resolved is None else resolved
 
     def _entry_at_row(self, row: int) -> int | None:
-        """Which entry a row within the widget falls on."""
-        area = self._text_area()
+        """Which entry a row within the widget falls on, in the first column."""
         if self._as_menubar:
             return self._entry_at_column(row)
-        offset = row - area.y + self._first
-        return offset if 0 <= offset < len(self._entries) else None
+        return self._entry_at(self._text_area().x, row)
+
+    def _entry_at(self, column: int, row: int) -> int | None:
+        """Which entry a cell within the widget falls on.
+
+        A menu in one column answers by the row alone, wherever across it
+        the cell is, as it always has; one laid out in columns asks which
+        column the cell is in, too. TkCurses-aj1.13.1.
+        """
+        if self._as_menubar:
+            return self._entry_at_column(column)
+        area = self._text_area()
+        places = self._places()
+        columned = self._columned(places)
+        wanted = row - area.y + (0 if columned else self._first)
+        for number, place in enumerate(places):
+            if place.row != wanted:
+                continue
+            if not columned:
+                return number
+            if place.x <= column - area.x < place.x + place.width + COLUMN_GAP:
+                return number
+        return None
+
+    def _places(self) -> list[Placed]:
+        """Where each entry goes when posted - see :func:`lay_out`."""
+        places, _ = lay_out(self._entries, indicators=self._has_indicators())
+        return places
+
+    @staticmethod
+    def _columned(places: list[Placed]) -> bool:
+        """True if the entries are laid out in more than one column."""
+        return any(place.x for place in places)
 
     def _entry_at_column(self, column: int) -> int | None:
         """Which menubar entry a column falls on."""
@@ -12013,9 +12059,28 @@ class Menu(_Drawable):
         return None if at is None else self._entries[at].kind
 
     def yposition(self, spec: Any) -> int:
-        """The row an entry occupies within the menu, as Tk reports it."""
+        """The row an entry occupies within the menu, as Tk reports it.
+
+        Within its column, in a menu laid out in columns.
+        """
         at = self.index(spec)
-        return 0 if at is None else at - self._first
+        if at is None:
+            return 0
+        places = self._places()
+        if self._columned(places):
+            return places[at].row
+        return at - self._first
+
+    def xposition(self, spec: Any) -> int:
+        """The column an entry's column starts at, counted as yposition is.
+
+        0 in a menu of one column; in one laid out with ``-columnbreak``,
+        how far across its column begins. Tk answers in pixels and counts
+        the border; this counts cells from where the entries start, as
+        :meth:`yposition` does. TkCurses-aj1.13.1.
+        """
+        at = self.index(spec)
+        return 0 if at is None else self._places()[at].x
 
     # ------------------------------------------------------ changing entries
 
@@ -12087,7 +12152,7 @@ class Menu(_Drawable):
             return
         self._active = at
         if at is not None and not self._as_menubar:
-            self._first = visible_window(len(self._entries), at, self._rows())
+            self._first = self._scrolled_to(at)
         self._refresh()
 
     def invoke(self, spec: Any) -> Any:
@@ -12111,6 +12176,59 @@ class Menu(_Drawable):
         self._dismiss_all()
         command = entry.options.get("command")
         return None if command is None else command()
+
+    def bind_accelerators(self, target: Misc | None = None) -> list[str]:
+        """Bind every entry's accelerator to the entry, submenus included.
+
+        **Not tkinter API** - a TkCurses addition, like ``winfo_colordepth``.
+        In Tk the accelerator is display only: its manual says the option
+        "does not actually set the corresponding binding", so an application
+        writes each shortcut twice, as text and as a binding, and the two
+        drift apart. This makes the binding from the text, read by
+        :func:`~tkcurses._core.menus.accelerator_sequence` - ``Ctrl+O``,
+        ``^S``, ``Alt+F4``, ``Ctrl+X Ctrl+S``.
+
+        Args:
+            target: The widget to bind on. By default every widget, through
+                ``bind_all``, which is how Tk programs usually bind a menu's
+                shortcuts.
+
+        Returns:
+            The sequences bound, in order.
+
+        Raises:
+            ValueError: If an accelerator cannot be read, naming the entry -
+                before anything is bound, so it is all or nothing.
+
+        Each binding is added rather than replacing what is there, and runs
+        the entry by what it IS, not by its index: entries inserted
+        afterwards do not move it onto another. A disabled entry's shortcut
+        does nothing, as choosing it would. TkCurses-aj1.13.1.
+        """
+        found: list[tuple[str, Menu, MenuEntry]] = []
+        self._collect_accelerators(found, set())
+        bind = target.bind if target is not None else self.bind_all
+        for sequence, menu, entry in found:
+            bind(sequence, _accelerated(menu, entry), add=True)
+        return [sequence for sequence, _, _ in found]
+
+    def _collect_accelerators(
+        self, found: list[tuple[str, Menu, MenuEntry]], seen: set[int]
+    ) -> None:
+        """Gather (sequence, menu, entry) for this menu and its submenus."""
+        if id(self) in seen:
+            return
+        seen.add(id(self))
+        for entry in self._entries:
+            if entry.accelerator:
+                try:
+                    sequence = accelerator_sequence(entry.accelerator)
+                except ValueError as error:
+                    raise ValueError(f"menu entry {entry.label!r}: {error}") from None
+                found.append((sequence, self, entry))
+            submenu = entry.options.get("menu")
+            if entry.kind == "cascade" and isinstance(submenu, Menu):
+                submenu._collect_accelerators(found, seen)
 
     def _write_variable(self, entry: MenuEntry) -> None:
         """Put the entry's value in its variable, for the two kinds that have one."""
@@ -12173,9 +12291,7 @@ class Menu(_Drawable):
         self._focus_before = self.tk.focus
         self.grab_set()
         self.focus_set()
-        self._first = visible_window(
-            len(self._entries), self._active or 0, self._rows()
-        )
+        self._first = self._scrolled_to(self._active or 0)
         self._refresh()
 
     def unpost(self) -> None:
@@ -12193,6 +12309,18 @@ class Menu(_Drawable):
         self._parent_menu = None
         previous = self._focus_before
         self._focus_before = None
+        if parent is not None and parent._as_menubar:
+            # A dropdown of the menubar takes the bar's highlight with it, as
+            # Tk's MenuUnpost does ("$parent activate {}", read from Tk
+            # 9.0.2). The bar is never posted, so the branch below never ran
+            # for it, and Colours stayed highlighted after Escape - looking
+            # like a keyboard mode the bar was not in. Found by the author in
+            # UAT 46; TkCurses-aj1.13.1. Opening the next menu along the bar
+            # comes through here too, and _open sets the new active entry
+            # after closing the old dropdown, so it is not lost.
+            parent._open_cascade = None
+            parent._active = None
+            parent._refresh()
         if parent is not None and parent._posted:
             parent._open_cascade = None
             parent.grab_set()
@@ -12264,11 +12392,19 @@ class Menu(_Drawable):
 
     # -------------------------------------------------------------- geometry
 
+    def _scrolled_to(self, at: int) -> int:
+        """The first row to show so ``at`` is visible.
+
+        A menu laid out in columns does not scroll - a column is how a long
+        menu was made short - so it always starts at the top.
+        """
+        if self._columned(self._places()):
+            return 0
+        return visible_window(len(self._entries), at, self._rows())
+
     def _posted_size(self) -> tuple[int, int]:
         """The size a posted menu wants, border included."""
-        width, height = measure_entries(
-            self._entries, indicators=self._has_indicators()
-        )
+        _, (width, height) = lay_out(self._entries, indicators=self._has_indicators())
         edge = 2 * BORDER_WIDTH if self._bordered else 0
         return (width + edge + 2, height + edge)
 
@@ -12357,11 +12493,19 @@ class Menu(_Drawable):
         if area.is_empty:
             return
         cascades = any(entry.kind == "cascade" for entry in self._entries)
-        for row in range(area.height):
-            number = self._first + row
-            if number >= len(self._entries):
-                break
+        places = self._places()
+        columned = self._columned(places)
+        for number, place in enumerate(places):
+            row = place.row - (0 if columned else self._first)
+            if not 0 <= row < area.height:
+                continue
             entry = self._entries[number]
+            # One column draws across the whole menu, as it always has; a
+            # column of several, across its own width.
+            x = area.x + place.x if columned else area.x
+            width = min(place.width, area.width - place.x) if columned else area.width
+            if width <= 0:
+                continue
             style = attribute
             if str(entry.options.get("state")) == "disabled":
                 with contextlib.suppress(ValueError):
@@ -12373,27 +12517,34 @@ class Menu(_Drawable):
                     dispatcher,
                     window,
                     area.y + row,
-                    area.x - 1,
-                    "─" * (area.width + 2),
+                    x - 1 if not columned else x,
+                    "─" * (width + 2 if not columned else width),
                     attribute,
                 )
                 continue
             text = self._indicator_for(entry) + entry.label
-            line = text.ljust(area.width)
+            line = text.ljust(width)
             accelerator = entry.accelerator
             if accelerator:
-                line = line[: area.width - len(accelerator)] + accelerator
+                line = line[: width - len(accelerator)] + accelerator
             if entry.kind == "cascade" and cascades:
-                line = line[: area.width - 1] + CASCADE_GLYPH
+                line = line[: width - 1] + CASCADE_GLYPH
             self._write_line(
                 dispatcher,
                 window,
                 area.y + row,
-                area.x,
-                clip_text(line, area.width),
+                x,
+                clip_text(line, width),
                 style,
             )
-            self._draw_underline(dispatcher, window, area, row, entry, style)
+            self._draw_underline(
+                dispatcher,
+                window,
+                Rect(x, area.y, width, area.height),
+                row,
+                entry,
+                style,
+            )
 
     def _draw_underline(
         self,
@@ -12475,12 +12626,22 @@ def _menu_key(event: Event) -> str | None:
         else:
             _to_parent_bar(menu, 1)
     elif keysym == "Left":
-        if menu._parent_menu is not None:
+        # A submenu closes back to the menu it came from; a dropdown of the
+        # menubar moves along the bar instead, as Tk's MenuNextMenu does.
+        # This asked only "is there a parent?", and a menubar is one, so Left
+        # in a dropdown closed it rather than opening the menu to its left.
+        parent = menu._parent_menu
+        if parent is not None and not parent._as_menubar:
             menu.unpost()
         else:
             _to_parent_bar(menu, -1)
     else:
-        return _by_mnemonic(menu, event.char)
+        _by_mnemonic(menu, event.char)
+    # Every key, whether the menu had a use for it or not: Tk's Menu class
+    # binds <KeyPress> to "tk::TraverseWithinMenu %W %A; break", read from
+    # Tk 9.0.2. A key let through reached bind_all shortcuts behind the open
+    # menu - F5 chose "Last file" with Colours open in UAT 46, found by the
+    # author. TkCurses-aj1.13.1.
     return "break"
 
 
@@ -12517,6 +12678,17 @@ def _to_parent_bar(menu: Menu, direction: int) -> None:
         root_menu._open(root_menu._active)
 
 
+def _accelerated(menu: Menu, entry: MenuEntry) -> Callable[[Event], str]:
+    """A binding that chooses ``entry``, wherever it now is in ``menu``."""
+
+    def choose(_event: Event) -> str:
+        if entry in menu._entries:
+            menu.invoke(menu._entries.index(entry))
+        return "break"
+
+    return choose
+
+
 def _first_selectable(menu: Menu, direction: int) -> int:
     """The first or last entry that can be chosen."""
     numbers = list(range(len(menu._entries)))
@@ -12528,8 +12700,8 @@ def _first_selectable(menu: Menu, direction: int) -> int:
 def _by_mnemonic(menu: Menu, char: str) -> str | None:
     """Choose the entry whose underlined letter was typed.
 
-    Returns None when nothing matches, so an unrelated key is not silently
-    swallowed by a menu that had no use for it.
+    Returns None when nothing matches. The open menu keeps the key either
+    way - see :func:`_menu_key`.
     """
     if not char or not char.isprintable():
         return None
@@ -12559,10 +12731,8 @@ def _menu_click(event: Event) -> None:
         else:
             menu._dismiss_all()
         return
-    at = (
-        menu._entry_at_column(event.x_root - menu.winfo_rootx())
-        if menu._as_menubar
-        else menu._entry_at_row(event.y_root - menu.winfo_rooty())
+    at = menu._entry_at(
+        event.x_root - menu.winfo_rootx(), event.y_root - menu.winfo_rooty()
     )
     if at is not None:
         menu.activate(at)
@@ -12574,10 +12744,8 @@ def _menu_motion(event: Event) -> None:
     menu = event.widget
     if not menu._within(event.x_root, event.y_root):
         return
-    at = (
-        menu._entry_at_column(event.x_root - menu.winfo_rootx())
-        if menu._as_menubar
-        else menu._entry_at_row(event.y_root - menu.winfo_rooty())
+    at = menu._entry_at(
+        event.x_root - menu.winfo_rootx(), event.y_root - menu.winfo_rooty()
     )
     if at is None or at == menu._active:
         return
