@@ -160,8 +160,12 @@ NOTICES = ROOT / "THIRD_PARTY_NOTICES.md"
 TCL_TK_CREDIT = "used under\n# the Tcl/Tk licence; see THIRD_PARTY_NOTICES.md"
 PSF_CREDIT = "# Copyright (c) 2001 Python Software Foundation; All Rights Reserved."
 
-#: What names a Tcl or Tk library procedure or script in a source file.
-TK_REFERENCE = re.compile(r"\b(?:tk|ttk)::\w|\btcl_word\w|\b\w+\.tcl\b")
+#: What names a Tcl or Tk library procedure or script in a source file - or
+#: one of Tk's C sources, such as tkBind.c, whose algorithm bindings.py
+#: follows (TkCurses-jfm).
+TK_REFERENCE = re.compile(
+    r"\b(?:tk|ttk)::\w|\btcl_word\w|\b\w+\.tcl\b|\btk[A-Z]\w*\.c\b"
+)
 
 #: Modules that contain code adapted from CPython's Lib/tkinter, found by
 #: comparing each with its tkinter counterpart.

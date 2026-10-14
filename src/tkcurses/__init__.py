@@ -68,6 +68,7 @@ from tkcurses._core.attributes import (
 )
 from tkcurses._core.bindings import (
     EventPattern,
+    PatternSequence,
     parse_sequence,
     pattern_for_event,
 )
@@ -849,6 +850,10 @@ class Misc:
         click without a terminal in the loop.
         """
         pattern = parse_sequence(sequence)
+        if isinstance(pattern, PatternSequence):
+            # Measured, Tk 9.0.2: event generate of a two-event sequence, or
+            # of "ab", answers exactly this.
+            raise TclError("only one event specification allowed")
         event = Event(widget=self, **kw)
         event.type = pattern.type
         if pattern.is_virtual:
@@ -8735,10 +8740,10 @@ class Spinbox(Entry):
         bind(name, "<Motion>", _entry_drag)
         bind(name, "<ButtonRelease-1>", _entry_release)
         bind(name, "<Double-Button-1>", _spinbox_double)
-        # ttk binds no triple-click, and in Tk a third click matches the
-        # double-click binding again; ours matches a click count exactly, so
-        # the same handler is bound for it.
-        bind(name, "<Triple-Button-1>", _spinbox_triple)
+        if not _is_ttk(self):
+            # ttk binds no triple-click: there a third click matches the
+            # double-click binding again, a count of at least two.
+            bind(name, "<Triple-Button-1>", _spinbox_triple)
         if not _is_ttk(self):
             bind(name, "<Control-Button-1>", _entry_control_click)
         for extend in _EXTEND_MODIFIERS:
@@ -9022,13 +9027,10 @@ def _spinbox_double(event: Event) -> None:
 def _spinbox_triple(event: Event) -> None:
     """On an arrow, another step; in the text, select everything.
 
-    Classic puts the cursor at 0 (``MouseSelect ... 0``); ttk, which has no
-    triple binding, does its double-click again.
+    Classic only - ttk binds no triple-click. The cursor goes to 0
+    (``MouseSelect ... 0``).
     """
     spinbox = event.widget
-    if _is_ttk(spinbox):
-        _spinbox_double(event)
-        return
     if _spinbox_arrow(spinbox, event):
         _spinbox_click(event)
         return

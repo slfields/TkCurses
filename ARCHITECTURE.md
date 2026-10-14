@@ -860,6 +860,65 @@ User presses key or clicks mouse
 └──────────────────────────────────────────┘
 ```
 
+### Multi-event sequences
+
+`<Control-x><Control-s>`, `<Key-a><Key-b><Key-c>`, and `"ab"` — which Tk reads
+as `<Key-a><Key-b>` — bind and fire (`TkCurses-jfm`). Tk's manual says a
+sequence matches when "the recent events … match", with Key and Button events
+in between preventing it and the rest ignored. That is **not** how Tk behaves,
+in 8.6 or 9.0. The rules were measured with `wish8.6` and `wish9.0` — synthetic
+key events with real timestamps, which agree in every case — and then **read
+from Tk 9.0.2's `generic/tkBind.c`** (`Tk_BindEvent`, `MatchPatterns`, the
+promotion lists, Gregor Cramer's 2018–19 rewrite) to explain the surprising
+ones. `_core/bindings.py` follows that code:
+
+- An event that matches a sequence's first pattern **promotes** it, bound to
+  the event's window; each event that matches the next pattern promotes it a
+  level, and the last one fires it. **There is no timeout**: Ctrl-x, any pause,
+  Ctrl-s still fires.
+- A waiting sequence is **dropped** by an event of the type it waits for with
+  another key or button, or the wrong modifiers; by a Key event while it waits
+  for a Button, or the reverse; and by **any event in another window** — a
+  resize, an `Expose`, a `<Configure>` on another widget cancels it, measured.
+  So a sequence never spans two widgets, even through a class tag both share.
+- Everything else leaves it waiting: motion, focus, a release, a lone
+  modifier key (curses delivers neither of the last two).
+- **The quirk.** An event is tried as a fresh start while the entry it is
+  dropping is still listed one level in, and a sequence already listed there is
+  not promoted again — so the restart is lost. For `<a><b>`, "a a b" does
+  **not** fire and "a a a b" does; for `<Control-x><Control-s>`, Ctrl-x Ctrl-x
+  Ctrl-s does nothing. A drop further in is on another list: for `<a><b><c>`,
+  "a b a b c" fires. Copied, since both Tks do it and an Emacs-style chord
+  reads it as "a wrong second key cancels".
+
+| `<a><b>` | fires | `<a><b><c>` | fires |
+|---|---|---|---|
+| a b | yes | a b c | yes |
+| a a b | **no** | a b a b c | **yes** |
+| a a a b | yes | a b b c | no |
+| a a a a b | no | a a b c | no |
+| b a b | yes | | |
+
+**Ranking** is Tk's `IsBetterMatch`: first the click counts of the patterns
+that name a key or button, then every pattern's count weighted, then the last
+pattern's modifiers. For single patterns that is the order this engine already
+had; it also makes a finished `<Control-x><Control-s>` run **instead of**
+`<Control-s>`, and `<Key-a><Key-b>` instead of `<Key><Key-b>`, both measured.
+
+**A pattern fires for a click count of at least its own** — Tk's
+`patPtr->count <= count`, and its manual: `<Double-Button-1>` "will match each
+button press but the first". This required the count exactly, so a third click
+fired nothing bound to a double; ttk Spinbox had a duplicate triple-click
+binding to make up for it, now gone.
+
+`event_generate` of a sequence raises **"only one event specification
+allowed"**, Tk's words. A **virtual** event defined by a sequence —
+`event_add("<<Save>>", "<Control-x><Control-s>")` — is accepted and reported by
+`event_info` and **never fires**, as in Tk ("virtual events cannot promote").
+A key inside a sequence counts as bound for the terminal's signal keys, so
+`<Control-c><Control-c>` gets Control-C delivered as a key. Ctrl-S reaches the
+program because the input layer turns flow control (`IXON`) off.
+
 ### Focus traversal: Tab, and F6 when Tab is spoken for
 
 Traversal lives on the `all` tag — the last tag consulted — so a widget that
@@ -3160,8 +3219,8 @@ Where the table above and the implementation need reading together.
   offers.** `CLIPBOARD` and `PRIMARY` are held in the `Application`;
   CLIPBOARD is carried out by OSC 52 or the desktop's clipboard tool where
   one is available, and PRIMARY never is. See "Copy, cut and paste".
-- **Multi-event sequences** (`<Control-x><Control-s>`) are rejected by the
-  sequence parser rather than silently mis-parsed.
+- **Multi-event sequences** (`<Control-x><Control-s>`, `"ab"`) bind and fire
+  as Tk's do; see "Multi-event sequences" under Event Handling Flow.
 
 ---
 

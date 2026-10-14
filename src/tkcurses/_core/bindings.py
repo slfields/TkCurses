@@ -14,6 +14,12 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Portions follow logic in the Tcl and Tk library scripts, each named beside
+# the code that follows it. Tcl and Tk are copyright the Regents of the
+# University of California, Sun Microsystems, Inc., Scriptics Corporation,
+# ActiveState Corporation, Apple Inc. and other parties, and are used under
+# the Tcl/Tk licence; see THIRD_PARTY_NOTICES.md.
 
 """Event bindings: sequence parsing and the binding table.
 
@@ -194,8 +200,12 @@ class EventPattern:
 
         Asymmetries all the way down, which is what makes this a one-way test
         rather than equality. An empty ``detail`` is a wildcard, so ``<Key>``
-        catches every key. A single-click pattern also fires on a double or
-        triple click, matching Tk.
+        catches every key. A pattern fires for a click count of AT LEAST its
+        own: a single-click pattern on a double or triple click, and
+        ``<Double-Button-1>`` on a triple - Tk's ``patPtr->count <= count``,
+        and its manual: "<Double-Button-1> will match each button press but
+        the first". This required the count exactly until TkCurses-jfm, so a
+        third click fired nothing bound to a double.
 
         And the modifiers need only be a **subset** of the event's, which is
         Tk's rule and not an obvious one: ``<Key>`` fires for a key held with
@@ -209,7 +219,7 @@ class EventPattern:
             return False
         if self.detail and self.detail != event.detail:
             return False
-        if self.repeat > 1 and self.repeat != event.repeat:
+        if self.repeat > event.repeat:
             return False
         if self.modifiers & MOD_ANY:
             return True
@@ -235,8 +245,7 @@ class EventPattern:
         and the third ``<Triple-Button-1>``. Ours fired the modified single
         click every time. TkCurses-mndh.
         """
-        modifiers = self.modifiers & ~MOD_ANY
-        return (int(bool(self.detail)), self.repeat, int(modifiers).bit_count())
+        return _rank((self,))
 
     def __str__(self) -> str:
         """The canonical sequence string for this pattern."""
@@ -248,6 +257,59 @@ class EventPattern:
         if self.detail:
             parts.append(self.detail)
         return "<" + "-".join(parts) + ">"
+
+
+#: Tk's weight for a pattern's click count when ranking matches (IsBetterMatch
+#: in tkBind.c): a double outweighs any number of singles, and so on up.
+_COUNT_WEIGHT = (0, 1, 10**6, 10**12, 10**18)
+
+
+def _rank(patterns: tuple[EventPattern, ...]) -> tuple[int, int, int]:
+    """How particular a match is - Tk's ``IsBetterMatch``, read from tkBind.c.
+
+    First, the click counts of the patterns that name a detail (a key or a
+    button) - so ``<Key-A>`` beats ``<Shift-Key>``, a double beats a single,
+    and ``<Control-x><Control-s>`` beats ``<Control-s>``. Then every
+    pattern's count, weighted, so a longer sequence wins a tie. Then the
+    modifiers of the last pattern, Tk's ``CompareModMasks``. ``Any`` is not a
+    modifier here: it waives the comparison rather than demanding anything.
+    """
+    detailed = sum(pattern.repeat for pattern in patterns if pattern.detail)
+    weighted = sum(_COUNT_WEIGHT[min(pattern.repeat, 4)] for pattern in patterns)
+    modifiers = int(patterns[-1].modifiers & ~MOD_ANY).bit_count()
+    return (detailed, weighted, modifiers)
+
+
+@dataclass(frozen=True)
+class PatternSequence:
+    """Several events that must arrive in order: ``<Control-x><Control-s>``.
+
+    It never matches one event by itself; :class:`BindingTable` follows it
+    across events, as Tk does - see :meth:`BindingTable.dispatch`.
+    """
+
+    patterns: tuple[EventPattern, ...]
+
+    @property
+    def type(self) -> str:
+        """The type of the event that completes it - its last pattern's."""
+        return self.patterns[-1].type
+
+    @property
+    def is_virtual(self) -> bool:
+        return False
+
+    def matches(self, event: EventPattern) -> bool:
+        """Never: a sequence is matched across events, not by one."""
+        del event
+        return False
+
+    @property
+    def specificity(self) -> tuple[int, int, int]:
+        return _rank(self.patterns)
+
+    def __str__(self) -> str:
+        return "".join(str(pattern) for pattern in self.patterns)
 
 
 #: Modifier flags in the order Tk writes them, used to render a pattern back
@@ -267,39 +329,67 @@ _CANONICAL_MODIFIERS: tuple[tuple[int, str], ...] = (
 )
 
 
-def parse_sequence(sequence: str) -> EventPattern:
-    """Parse a tkinter binding sequence into an :class:`EventPattern`.
+def parse_sequence(sequence: str) -> EventPattern | PatternSequence:
+    """Parse a tkinter binding sequence.
 
-    Accepts the bracketed form (``<Control-Key-a>``, ``<Double-Button-1>``,
-    ``<<Paste>>``) and the bare form, where a single character stands for a
-    key press: ``"a"`` means ``<Key-a>``.
+    One event gives an :class:`EventPattern`: the bracketed form
+    (``<Control-Key-a>``, ``<Double-Button-1>``, ``<<Paste>>``) or a bare
+    character, which stands for a key press - ``"a"`` means ``<Key-a>``.
+    Several give a :class:`PatternSequence`: ``<Control-x><Control-s>``, or
+    ``"ab"``, which is ``<Key-a><Key-b>`` as it is in Tk. TkCurses-jfm.
 
     Raises:
-        ValueError: If the sequence is malformed, names something unknown, or
-            chains several events (``<Control-x><Control-s>``), which has no
-            implementation here yet.
+        ValueError: If the sequence is malformed or names something unknown,
+            or puts a virtual event in a sequence of several.
     """
     if not sequence:
         raise ValueError("binding sequence is empty")
+    patterns = [_parse_event(sequence, token) for token in _tokens(sequence)]
+    if len(patterns) == 1:
+        return patterns[0]
+    if any(pattern.is_virtual for pattern in patterns):
+        raise ValueError(
+            f"cannot parse binding sequence {sequence!r}: a virtual event "
+            "cannot be part of a sequence of several"
+        )
+    return PatternSequence(tuple(patterns))
 
-    virtual = _VIRTUAL_RE.match(sequence)
+
+def _tokens(sequence: str) -> list[str]:
+    """Split a sequence into its events: ``<...>``, ``<<...>>``, or one char."""
+    tokens: list[str] = []
+    at = 0
+    while at < len(sequence):
+        if sequence.startswith("<<", at):
+            end = sequence.find(">>", at + 2)
+            if end < 0:
+                raise ValueError(f"cannot parse binding sequence {sequence!r}")
+            tokens.append(sequence[at : end + 2])
+            at = end + 2
+        elif sequence[at] == "<":
+            end = sequence.find(">", at + 1)
+            if end < 0:
+                raise ValueError(
+                    f"cannot parse binding sequence {sequence!r}: no closing '>'"
+                )
+            tokens.append(sequence[at : end + 1])
+            at = end + 1
+        else:
+            tokens.append(sequence[at])
+            at += 1
+    return tokens
+
+
+def _parse_event(sequence: str, token: str) -> EventPattern:
+    """One event of a sequence."""
+    virtual = _VIRTUAL_RE.match(token)
     if virtual:
         return EventPattern(type="Virtual", detail=virtual.group(1))
-
-    if not sequence.startswith("<"):
-        if len(sequence) != 1:
-            raise ValueError(
-                f"cannot parse binding sequence {sequence!r}: a bare sequence "
-                "must be a single character; bracket it as <Key-...> otherwise"
-            )
-        return EventPattern(type="Key", detail=_bare_keysym(sequence))
-
-    physical = _PHYSICAL_RE.match(sequence)
+    if not token.startswith("<"):
+        return EventPattern(type="Key", detail=_bare_keysym(token))
+    physical = _PHYSICAL_RE.match(token)
     if physical is None:
-        raise ValueError(
-            f"cannot parse binding sequence {sequence!r}: multi-event sequences "
-            "such as <Control-x><Control-s> are not supported"
-        )
+        raise ValueError(f"cannot parse binding sequence {sequence!r}")
     return _parse_fields(sequence, _split_fields(physical.group(1)))
 
 
@@ -369,6 +459,20 @@ def _parse_fields(sequence: str, fields: list[str]) -> EventPattern:
     )
 
 
+def _same_event(pattern: EventPattern, event: EventPattern) -> bool:
+    """The type and the detail match - what makes Tk count a pattern as met."""
+    return pattern.type == event.type and (
+        not pattern.detail or pattern.detail == event.detail
+    )
+
+
+def _modifiers_fit(pattern: EventPattern, event: EventPattern) -> bool:
+    if pattern.modifiers & MOD_ANY:
+        return True
+    wanted = pattern.modifiers & ~MOD_ANY
+    return wanted & event.modifiers == wanted
+
+
 def pattern_for_event(event: Event) -> EventPattern:
     """Convert an input event into the pattern that bindings match against.
 
@@ -414,6 +518,31 @@ def _mouse_pattern(event: MouseEvent) -> EventPattern:
 
 
 @dataclass
+class _Promoted:
+    """A sequence partway through, as tkBind.c keeps it: a "promoted" entry.
+
+    It sits at the level of how many of its events have matched, belongs to
+    one binding tag and one window, and is ``expired`` when the event it was
+    waiting for came and went, ``keep`` when it must survive this event's
+    clean-up - as a fresh promotion always does.
+    """
+
+    tag: str
+    sequence: PatternSequence
+    window: object
+    expired: bool = False
+    keep: bool = True
+
+
+def _is_key(type_: str) -> bool:
+    return type_ in ("Key", "KeyRelease")
+
+
+def _is_button(type_: str) -> bool:
+    return type_ in ("Button", "ButtonRelease")
+
+
+@dataclass
 class Binding:
     """One registered callback.
 
@@ -425,7 +554,7 @@ class Binding:
 
     funcid: str
     func: Callable[[Any], Any]
-    pattern: EventPattern
+    pattern: EventPattern | PatternSequence
 
     @property
     def sequence(self) -> str:
@@ -450,10 +579,13 @@ class BindingTable:
                 otherwise turn into a signal has to be claimed back while a
                 binding wants it.
         """
-        self._tags: dict[str, dict[EventPattern, list[Binding]]] = {}
+        self._tags: dict[str, dict[EventPattern | PatternSequence, list[Binding]]] = {}
         # Maps a funcid back to where it lives, so unbind() by id does not
         # have to scan every tag.
-        self._located: dict[str, tuple[str, EventPattern]] = {}
+        self._located: dict[str, tuple[str, EventPattern | PatternSequence]] = {}
+        #: Sequences partway through, by how many of their events have
+        #: matched less one: level 0 holds those one event in. Tk's promArr.
+        self._levels: list[list[_Promoted]] = []
         self._ids = itertools.count(1)
         self._on_change = on_change
 
@@ -477,12 +609,17 @@ class BindingTable:
             question, since a binding on any widget is reason enough to stop
             the terminal eating the key.
         """
+        # Every event of a sequence counts: <Control-c><Control-c> needs the
+        # terminal to deliver Control-C as much as <Control-c> does.
         return {
             pattern.detail
             for patterns in self._tags.values()
-            for pattern, bindings in patterns.items()
+            for bound, bindings in patterns.items()
             if bindings
-            and pattern.type == type
+            for pattern in (
+                bound.patterns if isinstance(bound, PatternSequence) else (bound,)
+            )
+            if pattern.type == type
             and pattern.detail
             and pattern.modifiers & ~MOD_ANY == modifiers
         }
@@ -490,7 +627,7 @@ class BindingTable:
     def bind(
         self,
         tag: str,
-        pattern: EventPattern,
+        pattern: EventPattern | PatternSequence,
         func: Callable[[Any], Any],
         add: bool = False,
     ) -> str:
@@ -514,7 +651,10 @@ class BindingTable:
         return binding.funcid
 
     def unbind(
-        self, tag: str, pattern: EventPattern | None = None, funcid: str | None = None
+        self,
+        tag: str,
+        pattern: EventPattern | PatternSequence | None = None,
+        funcid: str | None = None,
     ) -> None:
         """Remove bindings from ``tag``.
 
@@ -540,7 +680,9 @@ class BindingTable:
             del self._tags[tag]
         self._changed()
 
-    def bindings(self, tag: str, pattern: EventPattern | None = None) -> list[Binding]:
+    def bindings(
+        self, tag: str, pattern: EventPattern | PatternSequence | None = None
+    ) -> list[Binding]:
         """Bindings on ``tag``, or only those on ``pattern`` if given.
 
         Exact pattern lookup, not matching: this answers "what is bound here",
@@ -566,7 +708,12 @@ class BindingTable:
         """Tags that currently hold at least one binding."""
         return list(self._tags)
 
-    def matching(self, tag: str, patterns: Iterable[EventPattern]) -> Iterator[Binding]:
+    def matching(
+        self,
+        tag: str,
+        patterns: Iterable[EventPattern],
+        completed: Iterable[PatternSequence] = (),
+    ) -> Iterator[Binding]:
         """Bindings on ``tag`` for the most particular pattern that fires.
 
         One pattern per tag, not every pattern that matches. With ``<Key>``
@@ -577,11 +724,16 @@ class BindingTable:
 
         Yields in registration order within that pattern, so handlers added
         with ``add=True`` run in the order they were added.
+
+        ``completed`` are the sequences on this tag that this event finished;
+        they compete with the single patterns by the same ranking, so a
+        finished ``<Control-x><Control-s>`` runs instead of ``<Control-s>``.
         """
         registered = self._tags.get(tag)
         if not registered:
             return
         wanted = list(patterns)
+        finished = set(completed)
         # Grouped by event type, because a physical event and the virtual
         # event it triggers are two different events and Tk delivers both.
         # Specificity chooses between patterns for the *same* event, so
@@ -589,7 +741,10 @@ class BindingTable:
         best: dict[str, tuple[int, int, int]] = {}
         chosen: dict[str, list[Binding]] = {}
         for pattern, bindings in list(registered.items()):
-            if not any(pattern.matches(candidate) for candidate in wanted):
+            if isinstance(pattern, PatternSequence):
+                if pattern not in finished:
+                    continue
+            elif not any(pattern.matches(candidate) for candidate in wanted):
                 continue
             kind, rank = pattern.type, pattern.specificity
             if kind not in best or rank > best[kind]:
@@ -612,11 +767,125 @@ class BindingTable:
         caller should treat the event as handled.
         """
         wanted = list(patterns)
+        tags = list(tags)
+        completed = self._advance(tags, wanted, getattr(event, "widget", None))
         for tag in tags:
-            for binding in list(self.matching(tag, wanted)):
+            for binding in list(self.matching(tag, wanted, completed.get(tag, ()))):
                 if binding.func(event) == BREAK:
                     return True
         return False
+
+    # ------------------------------------------------------------- sequences
+    #
+    # Multi-event sequences, followed across events the way tkBind.c follows
+    # them (Tk_BindEvent, MatchPatterns), READ from Tk 9.0.2's source and
+    # MEASURED against both wish8.6 and wish9.0, which agree (TkCurses-jfm):
+    #
+    # * an event that matches a sequence's first pattern PROMOTES it to level
+    #   0, bound to the event's window; each later event that matches the next
+    #   pattern promotes it a level, and the last one fires it.
+    # * a waiting sequence is DROPPED by an event of the type it waits for
+    #   with another key or button, or the wrong modifiers; by a Key event
+    #   while it waits for a Button, or the other way round; and by any event
+    #   in another window - so a sequence never spans two widgets.
+    # * every other event leaves it waiting: motion, focus, a release. There
+    #   is NO timeout - Ctrl-x, a pause of any length, Ctrl-s still fires.
+    # * the quirk, from how the lists are kept: an event is tried as a fresh
+    #   start while the entry it is dropping is still on level 0, and a
+    #   sequence already listed there is not promoted again. So for <a><b>,
+    #   "a a b" does NOT fire and "a a a b" does; for <a><b><c>, "a b a b c"
+    #   does, its drop happening on another level. Measured, both Tks.
+    #
+    # Not reproduced, because curses never delivers them: a lone modifier key
+    # press, which Tk ignores in a sequence, and a key release.
+
+    def _advance(
+        self, tags: list[str], wanted: list[EventPattern], window: object
+    ) -> dict[str, list[PatternSequence]]:
+        """Move every sequence along for one event; return those it finished."""
+        physical = next((p for p in wanted if not p.is_virtual), None)
+        if physical is None or not (self._levels or self._has_sequences()):
+            return {}
+        completed: dict[str, list[PatternSequence]] = {}
+        # Waiting sequences first, the highest level first, as Tk does.
+        for level in range(len(self._levels) - 1, -1, -1):
+            for entry in self._levels[level]:
+                if entry.tag not in tags or entry.window is not window:
+                    continue
+                nxt = entry.sequence.patterns[level + 1]
+                entry.keep = False
+                if not _same_event(nxt, physical):
+                    continue
+                entry.expired = True
+                if not _modifiers_fit(nxt, physical):
+                    continue
+                if level + 2 == len(entry.sequence.patterns):
+                    if nxt.repeat <= physical.repeat:
+                        completed.setdefault(entry.tag, []).append(entry.sequence)
+                    else:
+                        entry.expired, entry.keep = False, True
+                else:
+                    self._promote(level + 1, entry.tag, entry.sequence, window)
+        # Then fresh starts: a sequence whose first pattern this event is.
+        for tag in tags:
+            for bound in list(self._tags.get(tag, {})):
+                if not isinstance(bound, PatternSequence):
+                    continue
+                first = bound.patterns[0]
+                if first.matches(physical):
+                    self._promote(0, tag, bound, window)
+        self._clean_up(physical, window)
+        return completed
+
+    def _has_sequences(self) -> bool:
+        return any(
+            isinstance(bound, PatternSequence)
+            for patterns in self._tags.values()
+            for bound in patterns
+        )
+
+    def _promote(
+        self, level: int, tag: str, sequence: PatternSequence, window: object
+    ) -> None:
+        """List a sequence at ``level`` unless it is already listed there.
+
+        Already listed is checked against EVERY entry at that level, stale
+        ones included - which is where the "a a b" quirk comes from.
+        """
+        while len(self._levels) <= level:
+            self._levels.append([])
+        listed = self._levels[level]
+        if any(e.tag == tag and e.sequence == sequence for e in listed):
+            return
+        listed.append(_Promoted(tag, sequence, window))
+
+    def _clean_up(self, physical: EventPattern, window: object) -> None:
+        """Drop what this event ended, keeping what it just promoted."""
+        for level, listed in enumerate(self._levels):
+            kept: list[_Promoted] = []
+            for entry in listed:
+                if entry.keep:
+                    entry.keep = False
+                    kept.append(entry)
+                    continue
+                nxt = entry.sequence.patterns[level + 1]
+                if (
+                    entry.expired
+                    or entry.window is not window
+                    or (
+                        nxt.detail
+                        and physical.detail
+                        and nxt.type == physical.type
+                        and nxt.detail != physical.detail
+                    )
+                    or (_is_button(nxt.type) and _is_key(physical.type))
+                    or (_is_key(nxt.type) and _is_button(physical.type))
+                ):
+                    continue
+                kept.append(entry)
+            listed[:] = kept
+        while self._levels and not self._levels[-1]:
+            self._levels.pop()
 
     def _unbind_id(self, funcid: str) -> None:
         """Remove one callback by its handle."""
@@ -651,17 +920,23 @@ class VirtualEvents:
     """
 
     def __init__(self) -> None:
-        self._events: dict[str, list[EventPattern]] = {}
+        self._events: dict[str, list[EventPattern | PatternSequence]] = {}
 
-    def add(self, virtual: str, *patterns: EventPattern) -> None:
-        """Make ``patterns`` raise ``virtual``, keeping any already added."""
+    def add(self, virtual: str, *patterns: EventPattern | PatternSequence) -> None:
+        """Make ``patterns`` raise ``virtual``, keeping any already added.
+
+        A sequence of several events is accepted and kept, and reported by
+        ``info``, and never raises anything - as in Tk 9.0.2, measured:
+        ``event add <<Save>> <Control-x><Control-s>`` is listed and does not
+        fire, "virtual events cannot promote" (tkBind.c). TkCurses-jfm.
+        """
         name = self._name(virtual)
         registered = self._events.setdefault(name, [])
         for pattern in patterns:
             if pattern not in registered:
                 registered.append(pattern)
 
-    def delete(self, virtual: str, *patterns: EventPattern) -> None:
+    def delete(self, virtual: str, *patterns: EventPattern | PatternSequence) -> None:
         """Stop ``patterns`` raising ``virtual``; with none given, remove all."""
         name = self._name(virtual)
         if not patterns:
@@ -674,7 +949,7 @@ class VirtualEvents:
         if not self._events[name]:
             del self._events[name]
 
-    def info(self, virtual: str) -> tuple[EventPattern, ...]:
+    def info(self, virtual: str) -> tuple[EventPattern | PatternSequence, ...]:
         """Physical patterns registered for ``virtual``."""
         return tuple(self._events.get(self._name(virtual), ()))
 

@@ -1530,3 +1530,60 @@ def test_scenario_44_a_ctrl_click_moves_the_cursor_and_keeps_the_selection(
         message="the cursor moved to 2 and 'world' stayed selected",
     )
     term.send(ESCAPE)
+
+
+# ---------------------------------------------------------------------------
+# Key sequences - chords, with the real bytes a terminal sends: Ctrl-X is 0x18,
+# Ctrl-S 0x13. Each waits for the help Label before pressing anything: the
+# readout is written straight to the screen and appears BEFORE the widgets
+# are laid out, and the layout's <Configure> on another widget cancels a chord
+# - as it does in Tk, measured. TkCurses-jfm.
+
+
+def _scenario_45(uat_terminal):
+    term = uat_terminal(cols=80, rows=16)
+    term.run([sys.executable, "-m", "uat.scenario_45_key_sequences"])
+    term.wait_for_text("Ctrl-X then Ctrl-S")
+    term.wait_for_text("focus: pad")
+    return term
+
+
+def test_scenario_45_a_chord_fires(uat_terminal):
+    term = _scenario_45(uat_terminal)
+    term.send(b"\x18")
+    term.wait_for_text("last key: x")
+    term.send(b"\x13")
+    term.wait_for_text("chords: save")
+    term.send(ESCAPE)
+
+
+def test_scenario_45_a_key_in_between_cancels_it(uat_terminal):
+    term = _scenario_45(uat_terminal)
+    term.send(b"\x18")
+    term.wait_for_text("last key: x")
+    term.send(b"a")
+    term.wait_for_text("last key: a")
+    term.send(b"\x13")
+    term.wait_for_text("last key: s")
+    term.wait_for_idle()
+    assert "chords: (none yet)" in term.row(2), term.describe()
+    term.send(ESCAPE)
+
+
+def test_scenario_45_the_quirk_holds_with_real_keys(uat_terminal):
+    """Ctrl-X twice then Ctrl-S does nothing, as in both Tks; a third
+    Ctrl-X and it does."""
+    term = _scenario_45(uat_terminal)
+    for _ in range(2):
+        term.send(b"\x18")
+        term.wait_for_idle()
+    term.send(b"\x13")
+    term.wait_for_text("last key: s")
+    term.wait_for_idle()
+    assert "chords: (none yet)" in term.row(2), term.describe()
+    for _ in range(3):
+        term.send(b"\x18")
+        term.wait_for_idle()
+    term.send(b"\x13")
+    term.wait_for_text("chords: save")
+    term.send(ESCAPE)

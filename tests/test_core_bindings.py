@@ -112,8 +112,8 @@ def test_a_type_with_no_detail_matches_anything_of_that_type():
     [
         "",
         "<>",
-        "ab",
-        "<Control-x><Control-s>",
+        "<Control-x><<Paste>>",
+        "<Control-x",
         "<Control-Nonsense-a>",
         "<Control>",
         "<Key--a>",

@@ -14,8 +14,8 @@ that draws with curses.
 **How TkCurses uses them.** Tk is the specification TkCurses is measured
 against. Its behaviour was measured in Tk 9.0.2, and where Tk's own
 documentation is silent or imprecise the rules were **read from the Tcl and Tk
-library scripts** and their logic followed — in places ported procedure by
-procedure. The procedure is named in the source next to the code that follows
+library scripts**, and for binding sequences from Tk's C source, and their
+logic followed, in places ported procedure by procedure. The procedure is named in the source next to the code that follows
 it. The scripts, as installed with Tcl 9.0.2 and Tk 9.0.2:
 
 | Script | Procedures followed | In TkCurses |
@@ -29,6 +29,7 @@ it. The scripts, as installed with Tcl 9.0.2 and Tk 9.0.2:
 | Tk `scrlbar.tcl` | the Scrollbar bindings | Scrollbar's mouse behaviour (`__init__.py`) |
 | Tk `msgbox.tcl`, `dialog.tcl`, `clrpick.tcl` | the message box's button sets, `tk_dialog`, the colour chooser's layout | `messagebox.py` (its button table is taken from `msgbox.tcl`), `dialog.py`, `colorchooser.py` |
 | Tcl `word.tcl` | `tcl_wordBreakBefore`, `tcl_wordBreakAfter` | word boundaries (`_core/editing.py`) |
+| Tk `generic/tkBind.c` (C) | `Tk_BindEvent`, `MatchPatterns`, the promotion lists, `IsBetterMatch`, `CountSpecialized` | multi-event binding sequences and how matches are ranked (`_core/bindings.py`) |
 
 The project documentation (`ARCHITECTURE.md`, `docs/`) also quotes Tk's
 manual pages and these scripts where it records a measurement. Tk's licence
