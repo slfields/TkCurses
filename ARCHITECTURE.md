@@ -5097,9 +5097,8 @@ scrolling above. Measured on Tk 9.0.2:
 
 - The count includes `#0` **even when the tree column is hidden**: with
   `show="headings"`, 1 freezes nothing and 2 freezes the first data column.
-- They are the first columns in display order. This tree does not honour
-  `-displaycolumns` yet (`TkCurses-aq04`), so they are read from the columns
-  as drawn and will follow it when it does.
+- They are the first columns in display order: `displaycolumns=("c", "a",
+  "b")` with 2 frozen freezes `#0` and `c`.
 - Columns that scroll pass **under** the frozen ones: Tk's `bbox` put a
   scrolled column at x=51, inside a frozen one 100 wide, and `identify_column`
   there answers the frozen column.
@@ -5112,6 +5111,45 @@ scrolling above. Measured on Tk 9.0.2:
 
 The cell joining the last frozen column to the next is frozen with it, as it
 belongs to that column for a click.
+
+**`-displaycolumns` chooses which data columns are drawn, and in what
+order** (`TkCurses-aq04`; it was stored and ignored before). The manual says
+only that it is a list of column identifiers or `#all`. Measured on Tk 9.0.2
+with `columns=("a", "b", "c")`:
+
+- An entry is a column's name or its **index in `-columns`**: `(2, 0)` draws
+  c then a. A string is split as a list, `"b a"`. `"01"` is index 1.
+- **The same column may be listed twice, and is drawn twice.** `()` draws no
+  data columns.
+- `#n` counts **displayed** columns everywhere it is accepted — `column`,
+  `heading`, `set`, `bbox`, `identify_column` — so under `("c", "a")` `#1` is
+  c. Past the end is `Column #3 out of range`; `set(item, "#0")` is `Display
+  column #0 cannot be set`.
+- A hidden column keeps its value (`set(item)` answers every data column) and
+  has no `bbox`.
+- Refused: `Invalid column index "zz"` for a name that is not a column and
+  for `#0`, `#1`, `1.0`, and `#all` other than alone; `Column index "5" out of
+  bounds` for an index past the columns or below zero.
+- Changing `-columns` keeps the list. **Dropping a displayed column from
+  `-columns` is refused** with `Invalid column index "c"` — but Tk applies
+  half of it first: `cget("columns")` still answers the old three while
+  `set(item)` already answers only the new two. Here the refusal changes
+  nothing. Changing both options in one call is accepted.
+
+Not reproduced: Tk answered `bbox(item, "a")` under `("a", "a")` with a width
+covering both copies (200 for two 100-wide columns). Here it is the first
+copy's rectangle.
+
+**The mouse wheel scrolls it** (`TkCurses-94fn`). Tk 9.0.2's Treeview class
+binds `<MouseWheel>`, `<Alt-MouseWheel>`, `<Shift-MouseWheel>` and
+`<Shift-Alt-MouseWheel>` to `tk::MouseWheel` with factors -40 and -12.
+Measured with `event_generate("<MouseWheel>", delta=-120)`, one notch: 3 rows
+down, 10 with Alt; with Shift, 3 and 10 units sideways. Tk's sideways unit is
+a pixel and ours is a cell, so the same notch moves much further here — the
+same trade as `xview scroll` itself. Here they are bindings on buttons 4 and 5
+with each modifier, since curses reports the wheel as buttons. Whether
+Shift-wheel arrives at all is up to the terminal: many keep it for their own
+scrollback.
 
 The issue asked whether a frozen column can be dragged to resize. There is no
 drag to resize any column here, frozen or not (`identify_region` never says

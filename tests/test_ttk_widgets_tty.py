@@ -1374,3 +1374,43 @@ def test_titles_that_overflow_stop_at_the_border(terminal, tmp_path):
         message="four title rows, then the bottom border",
     )
     assert "row4" not in term.row(6), "\n".join(term.display)
+
+
+# ------------------------------------ Treeview's mouse wheel (TkCurses-94fn)
+
+WHEELED_TREE = """
+import tkcurses
+from tkcurses import ttk
+
+root = tkcurses.Tk()
+tree = ttk.Treeview(root, columns=("a", "b", "c"))
+tree.column("#0", width=8, stretch=False)
+for name in ("a", "b", "c"):
+    tree.column(name, width=7, stretch=False)
+tree.heading("#0", text="ABCDEFGH")
+for n in range(20):
+    tree.insert("", "end", text="row%d" % n)
+tree.place(x=0, y=0, width=22, height=7)
+root.after(8000, root.quit)
+root.mainloop()
+"""
+
+
+def test_the_wheel_scrolls_a_tree_both_ways(terminal, tmp_path):
+    """Down three rows a notch, and with Shift three cells sideways."""
+    term = terminal(cols=30, rows=10)
+    term.run_source(WHEELED_TREE, workdir=tmp_path)
+    term.wait_for(
+        lambda t: "ABCDEFGH" in t.row(1) and "row0" in t.row(2),
+        message="the tree at the top left",
+    )
+    term.send_mouse(3, 3, button=5)
+    term.wait_for(
+        lambda t: "row3" in t.row(2) and "ABCDEFGH" in t.row(1),
+        message="three rows down, nothing sideways",
+    )
+    term.send_mouse(3, 3, button=5, shift=True)
+    term.wait_for(
+        lambda t: t.row(1)[1:6] == "DEFGH" and "w3" in t.row(2),
+        message="three cells sideways, nothing down",
+    )

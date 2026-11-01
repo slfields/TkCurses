@@ -29,6 +29,7 @@ import pytest
 
 import tkcurses
 from tkcurses import Misc, TclError
+from tkcurses._core.events import MOD_ALT, MOD_SHIFT, MouseEvent
 from tkcurses.ttk import (
     Button,
     Checkbutton,
@@ -3476,3 +3477,168 @@ def test_identify_row_keeps_counting_below_the_titles_as_tk_does(titled):
     titled.configure(titleitems=10)
     first = titled._rows_area().y + 1
     assert titled.identify_row(first + 9) == "i9"
+
+
+# ------------------------------- Treeview -displaycolumns (TkCurses-aq04)
+#
+# Every case measured on Tk 9.0.2 with columns ("a", "b", "c") before it was
+# asserted. The wide tree's columns are 5 cells each after an 8-cell #0.
+
+
+def test_displaycolumns_draws_the_listed_columns_in_their_order(wide):
+    wide.configure(displaycolumns=("c", "a"))
+    assert [name for name, _s, _e in wide._column_spans()] == ["#0", "c", "a"]
+    assert wide._row_text(wide.row, 20) == " Alpha   cc    aa   "
+    assert wide._heading_text(20).startswith("Name     C     A")
+
+
+def test_display_identifiers_count_in_display_order(wide):
+    """Tk: identify answers #1 over c; column("#1") is c; "#3" is refused."""
+    area = wide._rows_area()
+    wide.configure(displaycolumns=("c", "a"))
+    assert wide.identify_column(area.x + 10) == "#1"
+    assert wide.column("#1", "id") == "c"
+    assert wide.column("#2", "id") == "a"
+    with pytest.raises(TclError, match="Column #3 out of range"):
+        wide.column("#3", "id")
+    wide.heading("#1", text="H")
+    assert wide.heading("c", "text") == "H"
+
+
+def test_a_hidden_column_has_no_bbox_and_keeps_its_value(wide):
+    wide.configure(displaycolumns=("c", "a"))
+    assert wide.bbox(wide.row, "a")[0] == wide._rows_area().x + 15
+    assert wide.bbox(wide.row, "b") == ""
+    assert wide.set(wide.row) == {"a": "aa", "b": "bb", "c": "cc"}
+
+
+def test_set_names_a_cell_by_its_display_identifier(wide):
+    wide.configure(displaycolumns=("c", "b"))
+    wide.set(wide.row, "#2", "Z")
+    assert wide.set(wide.row) == {"a": "aa", "b": "Z", "c": "cc"}
+    assert wide.set(wide.row, "#1") == "cc"
+    with pytest.raises(TclError, match="Display column #0 cannot be set"):
+        wide.set(wide.row, "#0")
+    with pytest.raises(TclError, match="Column #9 out of range"):
+        wide.set(wide.row, "#9")
+
+
+@pytest.mark.parametrize(
+    ("given", "drawn"),
+    [
+        ((2, 0), ["c", "a"]),
+        (("2", "0"), ["c", "a"]),
+        (("01",), ["b"]),
+        ("b a", ["b", "a"]),
+        (("a", "a"), ["a", "a"]),
+        ((), []),
+        ("#all", ["a", "b", "c"]),
+    ],
+)
+def test_displaycolumns_takes_names_indices_and_repeats(wide, given, drawn):
+    wide.configure(displaycolumns=given)
+    assert wide._displayed_names() == drawn
+
+
+@pytest.mark.parametrize(
+    ("given", "message"),
+    [
+        (("zz",), 'Invalid column index "zz"'),
+        ((5,), 'Column index "5" out of bounds'),
+        ((-1,), 'Column index "-1" out of bounds'),
+        (("#0",), 'Invalid column index "#0"'),
+        (("#1",), 'Invalid column index "#1"'),
+        (("#all", "a"), 'Invalid column index "#all"'),
+        (("1.0",), 'Invalid column index "1.0"'),
+        (("1_0",), 'Invalid column index "1_0"'),
+    ],
+)
+def test_displaycolumns_refuses_what_tk_refuses(root, given, message):
+    with pytest.raises(TclError, match=message):
+        Treeview(root, columns=("a", "b", "c"), displaycolumns=given)
+    tree = Treeview(root, columns=("a", "b", "c"), displaycolumns=(2, 0))
+    with pytest.raises(TclError, match=message):
+        tree.configure(displaycolumns=given)
+    assert tree.cget("displaycolumns") == (2, 0)
+
+
+def test_columns_cannot_drop_a_displayed_column(wide):
+    """Tk refuses this too, but applies half of it first; here nothing changes."""
+    wide.configure(displaycolumns=("c", "a"))
+    with pytest.raises(TclError, match='Invalid column index "c"'):
+        wide.configure(columns=("a", "b"))
+    assert wide.cget("columns") == ("a", "b", "c")
+    assert wide.set(wide.row) == {"a": "aa", "b": "bb", "c": "cc"}
+    wide.configure(columns=("a", "b"), displaycolumns="#all")
+    assert wide._displayed_names() == ["a", "b"]
+
+
+def test_new_columns_keep_the_display_list(wide):
+    wide.configure(displaycolumns=("c", "a"))
+    wide.configure(columns=("a", "b", "c", "d"))
+    assert wide.cget("displaycolumns") == ("c", "a")
+    assert wide._displayed_names() == ["c", "a"]
+
+
+def test_title_columns_count_the_displayed_columns(wide):
+    """Measured: displaycolumns=(c, a, b) with 2 frozen freezes #0 and c."""
+    wide.configure(displaycolumns=("c", "a", "b"), titlecolumns=2)
+    assert wide._frozen_width() == 15
+    wide.xview_moveto(1.0)
+    assert wide.identify_column(wide._rows_area().x + 10) == "#1"
+
+
+def test_a_column_string_is_a_list_of_names(root):
+    tree = Treeview(root, columns="one two")
+    assert tree._column_names() == ["one", "two"]
+
+
+# ------------------------------------ Treeview's mouse wheel (TkCurses-94fn)
+#
+# Measured on Tk 9.0.2 with event_generate("<MouseWheel>", delta=-120): a
+# notch moves 3 rows, 10 with Alt; with Shift the same counts move sideways.
+
+
+@pytest.fixture
+def tall(root):
+    """Forty rows in a tree twenty cells wide, scrolled down to row 10."""
+    view = Treeview(root, name="tall", columns=("a", "b", "c"))
+    view.place(x=0, y=0, width=22, height=8)
+    view.column("#0", width=8, stretch=False)
+    for name in ("a", "b", "c"):
+        view.column(name, width=20, stretch=False)
+    for n in range(40):
+        view.insert("", "end", iid=f"i{n}", text=f"row {n}")
+    root.update_layout()
+    view.selection_set("i0")
+    view.yview(10)
+    view.xview(20)
+    return view
+
+
+def _wheel(tree, button, modifiers=0):
+    area = tree._rows_area()
+    tree._handle(
+        MouseEvent(
+            button=button, state="pressed", x=area.x, y=area.y, modifiers=modifiers
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("button", "modifiers", "top", "left"),
+    [
+        (5, 0, 13, 20),
+        (4, 0, 7, 20),
+        (5, MOD_ALT, 20, 20),
+        (4, MOD_ALT, 0, 20),
+        (5, MOD_SHIFT, 10, 23),
+        (4, MOD_SHIFT, 10, 17),
+        (5, MOD_SHIFT | MOD_ALT, 10, 30),
+        (4, MOD_SHIFT | MOD_ALT, 10, 10),
+    ],
+)
+def test_the_wheel_scrolls_the_tree(tall, button, modifiers, top, left):
+    _wheel(tall, button, modifiers)
+    assert (tall._top, tall._left) == (top, left)
+    assert tall.selection() == ("i0",), "a wheel is not a click"

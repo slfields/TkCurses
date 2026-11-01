@@ -2502,12 +2502,56 @@ class _Item:
     detached: bool = False
 
 
+def _as_words(value: Any) -> list[str]:
+    """A list-valued option as its words: ``"a b"`` and ``("a", "b")`` alike.
+
+    Tk reads ``-columns`` and ``-displaycolumns`` as Tcl lists, so a string is
+    split on whitespace rather than taken as a sequence of characters, which is
+    what iterating it would do.
+    """
+    if isinstance(value, str):
+        return value.split()
+    return [str(word) for word in value]
+
+
 def _tcl_integer(value: Any) -> int:
     """``value`` read as Tcl reads an integer option, or Tk's refusal."""
     try:
         return int(str(value).strip())
     except ValueError:
         raise TclError(f'expected integer but got "{value}"') from None
+
+
+def _displayed(columns: Any, displaycolumns: Any) -> list[str]:
+    """The data columns ``displaycolumns`` draws, by name, in its order.
+
+    Measured on Tk 9.0.2. ``#all`` alone is every column in data order; any
+    other entry is a column's name or its index in ``-columns``, and the same
+    column may be listed twice and is drawn twice. ``()`` draws none. Display
+    identifiers are refused, ``#all`` among others too, and ``#0`` with them:
+
+    * ``Invalid column index "zz"`` - not a column, nor an integer
+    * ``Column index "5" out of bounds`` - an integer past the columns, or
+      below zero
+    """
+    names = _as_words(columns)
+    words = _as_words(displaycolumns)
+    if words == ["#all"]:
+        return names
+    shown = []
+    for word in words:
+        if word in names:
+            shown.append(word)
+            continue
+        # Tcl's integers, not Python's: "1_0" and "1.0" are not column indices.
+        digits = word.lstrip("+-")
+        if not (digits.isascii() and digits.isdigit()):
+            raise TclError(f'Invalid column index "{word}"')
+        index = int(word)
+        if not 0 <= index < len(names):
+            raise TclError(f'Column index "{word}" out of bounds')
+        shown.append(names[index])
+    return shown
 
 
 class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
@@ -2644,6 +2688,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         kw.setdefault("relief", "sunken")
         self._check_striped({**(cnf or {}), **kw})
         self._check_titles({**(cnf or {}), **kw})
+        self._check_display({**(cnf or {}), **kw})
         super().__init__(master, cnf, name=name, **kw)
         self._install_class_bindings()
 
@@ -2658,6 +2703,15 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         bind(self._ttk_class, "<Key-Up>", _treeview_up)
         bind(self._ttk_class, "<Key-Right>", _treeview_expand)
         bind(self._ttk_class, "<Key-Left>", _treeview_collapse)
+        # Tk binds <MouseWheel> and these three forms of it. Modifiers match
+        # exactly, so each needs its own binding. TkCurses-94fn.
+        for modifiers, axis, units in _TREEVIEW_WHEEL:
+            for button, sign in ((4, -1), (5, 1)):
+                bind(
+                    self._ttk_class,
+                    f"<{modifiers}Button-{button}>",
+                    functools.partial(_treeview_wheel, axis, sign * units),
+                )
 
     # -------------------------------------------------------------- the tree
 
@@ -2838,7 +2892,11 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         values = list(entry.options["values"])
         if column is None:
             return dict(zip(names, values, strict=False))
-        position = names.index(str(column))
+        # Measured on Tk 9.0.2: "#1" is the first DISPLAYED column, as
+        # everywhere else, and "#0" is refused - the tree column has no value.
+        if str(column) == TREE_COLUMN:
+            raise TclError("Display column #0 cannot be set")
+        position = names.index(self._column_for(column))
         if value is None:
             return values[position] if position < len(values) else ""
         while len(values) <= position:
@@ -2850,7 +2908,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
 
     def heading(self, column: str, option: str | None = None, **kw: Any) -> Any:
         """Read or set a column's heading."""
-        name = str(column)
+        name = self._column_for(column)
         heading = self._headings.setdefault(
             name, {"text": "", "image": "", "anchor": "center", "command": ""}
         )
@@ -2868,7 +2926,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         ``width`` and ``minwidth`` are cells here rather than pixels, which
         is the only sense they have on a character grid.
         """
-        name = str(column)
+        name = self._column_for(column)
         entry = self._columns_entry(name)
         if kw:
             if "width" in kw:
@@ -2909,8 +2967,16 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         )
 
     def _column_names(self) -> list[str]:
-        """The data columns, in order, without the tree column."""
-        return [str(name) for name in self._options["columns"]]
+        """The data columns, in order, without the tree column.
+
+        Data order, which is what a row's ``values`` are indexed by. The order
+        they are DRAWN in is :meth:`_displayed_names`.
+        """
+        return _as_words(self._options["columns"])
+
+    def _displayed_names(self) -> list[str]:
+        """The data columns as drawn: ``-displaycolumns``, resolved to names."""
+        return _displayed(self._options["columns"], self._options["displaycolumns"])
 
     def _checked_item(self, given: dict[str, Any]) -> dict[str, Any]:
         """Reject an item option Tk does not have."""
@@ -3225,10 +3291,9 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         column is hidden**: with ``show="headings"``, 1 freezes nothing and 2
         freezes the first data column. The columns are the first in DISPLAY
         order, so read here from the spans as drawn rather than from
-        ``-columns``: this tree does not honour ``-displaycolumns`` yet
-        (TkCurses-aq04), and when it does the frozen ones follow with no change
-        here. A count past the last column freezes them all, and then nothing
-        scrolls.
+        ``-columns``: measured, ``displaycolumns=("c", "a", "b")`` with 2
+        frozen freezes ``#0`` and ``c``. A count past the last column freezes
+        them all, and then nothing scrolls.
 
         The cell that joins the last frozen column to the next is frozen with
         it, as it belongs to that column for a click (see
@@ -3449,7 +3514,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         """
         spans: list[tuple[str, int, int]] = []
         position = 0
-        names = ([TREE_COLUMN] if self._shows_tree else []) + self._column_names()
+        names = ([TREE_COLUMN] if self._shows_tree else []) + self._displayed_names()
         widths = self._stretched_widths(names)
         for name, width in zip(names, widths, strict=True):
             spans.append((name, position, position + width))
@@ -3700,9 +3765,15 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         """The internal column name for a name or a display identifier.
 
         ``"#0"`` is the tree column; ``"#1"`` onwards are the data columns in
-        display order. Tk accepts either spelling wherever a column is named,
-        and ``bbox(item, "#0")`` was measured answering the tree column's
+        DISPLAY order, so under ``displaycolumns=("c", "a")`` ``"#1"`` is
+        ``c``. Tk accepts either spelling wherever a column is named, and
+        ``bbox(item, "#0")`` was measured answering the tree column's
         rectangle.
+
+        Raises:
+            TclError: For ``"#n"`` past the displayed columns. Measured on Tk
+                9.0.2, ``column``, ``heading`` and ``set`` all answer
+                ``Column #9 out of range``.
         """
         text = str(column)
         if not text.startswith("#"):
@@ -3713,8 +3784,10 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
             index = int(text[1:]) - 1
         except ValueError:
             return text
-        names = self._column_names()
-        return names[index] if 0 <= index < len(names) else text
+        names = self._displayed_names()
+        if not 0 <= index < len(names):
+            raise TclError(f"Column {text} out of range")
+        return names[index]
 
     def _row_at(self, y: int) -> str | None:
         """Which row a click landed on, if any."""
@@ -3831,6 +3904,24 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
             count = _tcl_integer(given["titlecolumns"])
             if count < 0:
                 raise TclError(f'"#{count}" is out of range')
+
+    def _check_display(self, given: dict[str, Any]) -> None:
+        """Refuse a ``columns`` and ``displaycolumns`` pair Tk would refuse.
+
+        Either may change alone, so the pair is checked as it would stand:
+        dropping a displayed column from ``-columns`` is refused as surely as
+        naming one that does not exist. Tk 9.0.2 refuses that case too, but
+        only after applying half of it - ``-columns`` reads back unchanged
+        while ``set(item)`` already answers with the new columns. Here nothing
+        changes. Measured; ARCHITECTURE.md has it.
+        """
+        if "columns" not in given and "displaycolumns" not in given:
+            return
+        current = getattr(self, "_options", self._widget_options)
+        _displayed(
+            given.get("columns", current["columns"]),
+            given.get("displaycolumns", current["displaycolumns"]),
+        )
 
     def _striped(self) -> bool:
         """Whether alternate rows are tinted.
@@ -3953,6 +4044,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         given = {**(cnf or {}), **kw}
         self._check_striped(given)
         self._check_titles(given)
+        self._check_display(given)
         result = super().configure(cnf, **kw)
         if given:
             self._redraw()
@@ -4038,6 +4130,28 @@ def _treeview_step(tree: Treeview, step: int) -> Any:
     tree.selection_set(rows[place])
     tree.see(rows[place])
     return "break"
+
+
+#: The wheel as Tk 9.0.2 binds it on a Treeview: ``tk::MouseWheel`` with a
+#: factor of -40, or -12 with Alt, for X11's 120 a notch. Measured, a notch
+#: moves 3 rows, or 10 with Alt; with Shift the same counts move it sideways,
+#: in pixels there and cells here.
+_TREEVIEW_WHEEL = (
+    ("", "y", 3),
+    ("Alt-", "y", 10),
+    ("Shift-", "x", 3),
+    ("Shift-Alt-", "x", 10),
+)
+
+
+def _treeview_wheel(axis: str, units: int, event: Event) -> None:
+    """Scroll the tree, leaving the selection and the focus item where they are.
+
+    Sideways is only as good as the terminal: many keep Shift-wheel for their
+    own scrollback and never report it.
+    """
+    view = event.widget.xview if axis == "x" else event.widget.yview
+    view("scroll", units, "units")
 
 
 def _treeview_down(event: Event) -> Any:
