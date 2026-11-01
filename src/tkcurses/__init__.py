@@ -46,6 +46,7 @@ import contextlib
 # facade the moment anybody imported it, and every reference below would
 # resolve against the wrong module. Measured, not theorised: it clobbers.
 import curses as _curses
+import functools
 import inspect
 import itertools
 import math
@@ -148,6 +149,7 @@ from tkcurses._core.menus import (
     place_popup,
     visible_window,
 )
+from tkcurses._core.option_names import WIDGET_CLASSES, database_names
 from tkcurses._core.pack import FILLS, SIDES, PackLayout, PackOptions, parse_anchor
 from tkcurses._core.paned import SASH_WIDTH, PanedLayout, PaneOptions
 from tkcurses._core.panels import PanelStack
@@ -579,6 +581,22 @@ _MOUSE_EVENT_TYPES: dict[str, str] = {
 }
 
 
+def _answering_queries(method: Callable[..., Any]) -> Callable[..., Any]:
+    """``method`` as a ``configure`` that also answers ``configure("name")``.
+
+    See :meth:`Misc.__init_subclass__`, which applies it.
+    """
+
+    @functools.wraps(method)
+    def configure(self: Misc, cnf: Any = None, **kw: Any) -> Any:
+        if isinstance(cnf, str):
+            return self._configure_query(cnf)
+        return method(self, cnf, **kw)
+
+    configure._answers_queries = True  # type: ignore[attr-defined]
+    return configure
+
+
 class Misc:
     """Behaviour shared by every widget: bindings, focus, timers, queries.
 
@@ -608,6 +626,26 @@ class Misc:
 
     #: The parent widget, None for the root of the tree.
     master: Misc | None
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Let every ``configure`` a subclass defines answer a query.
+
+        ``configure("relief")`` asks for one option rather than setting any,
+        and Tk answers it on every widget. Nearly thirty classes here override
+        ``configure`` to check or react to what is set, and every one began
+        by merging ``cnf`` into a dict - so a string crashed them all with
+        ``'str' object is not a mapping``, the root window included
+        (TkCurses-kifn). Answering it here, once, means an override written
+        later cannot forget to.
+        """
+        super().__init_subclass__(**kwargs)
+        # What the class RESOLVES, not what it defines: the ttk widgets take
+        # configure from ttk.Widget, a mixin that is no Misc and never comes
+        # through here itself.
+        for name in ("configure", "config"):
+            method = getattr(cls, name)
+            if not getattr(method, "_answers_queries", False):
+                setattr(cls, name, _answering_queries(method))
 
     def __init__(self, master: Misc | None = None, name: str | None = None) -> None:
         """
@@ -2004,6 +2042,9 @@ class Misc:
         tkinter returns a five-tuple per option describing its resource name,
         class and default. Those come from Tcl's widget definitions, which do
         not exist here, so the current values are returned instead.
+
+        Asked for one option by name, it does answer the five-tuple: see
+        :meth:`_configure_query`.
         """
         options = {**(cnf or {}), **kw}
         if not options:
@@ -2013,6 +2054,15 @@ class Misc:
         return None
 
     config = configure
+
+    def _configure_query(self, key: str) -> tuple[Any, ...]:
+        """``configure(key)``: Tk's five-tuple for one option.
+
+        ``(name, database name, database class, default, value)``. A widget
+        knows its defaults and its class, so :class:`BaseWidget` answers this
+        properly; here there is only the value.
+        """
+        return (key, *database_names("", key), "", self.cget(key))
 
     def cget(self, key: str) -> Any:
         """The value of one option.
@@ -2386,6 +2436,43 @@ class BaseWidget(Misc):
     def keys(self) -> list[str]:
         """The option names this widget accepts, sorted."""
         return sorted(self._option_spec())
+
+    def _configure_query(self, key: str) -> tuple[Any, ...]:
+        """``configure(key)``: Tk's five-tuple for one option.
+
+        Measured on Tk 9.0.2, a short spelling answers the FULL entry under the
+        full name - ``configure("bg")`` is ``("background", "background",
+        "Background", ...)``, not the two-tuple ``configure()`` lists for
+        ``bg`` - and the name is taken as it stands: ``configure("-text")`` is
+        ``unknown option "--text"``, as ``cget`` already refuses it.
+
+        The database name and class are Tk's, from
+        :mod:`tkcurses._core.option_names`. The default is this library's own,
+        which is not always Tk's: colours and sizes here are cells and curses
+        colours, not pixels and X colours.
+        """
+        value = self.cget(key)
+        option = self._option_synonyms.get(key, key)
+        return (
+            option,
+            *database_names(self._database_class(), option),
+            self._option_spec().get(option, ""),
+            value,
+        )
+
+    @classmethod
+    def _database_class(cls) -> str:
+        """Which of Tk's widget classes this is, for its database names.
+
+        The nearest along the MRO, so a program's own subclass of
+        ``ttk.Entry`` answers as a ttk Entry. ``""`` when there is none.
+        """
+        for klass in cls.__mro__:
+            prefix = "ttk" if klass.__module__ == "tkcurses.ttk" else "tk"
+            name = f"{prefix}.{klass.__name__}"
+            if name in WIDGET_CLASSES:
+                return name
+        return ""
 
     # ---------------------------------------------------------- lifecycle
 

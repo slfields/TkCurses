@@ -3203,6 +3203,21 @@ Where the table above and the implementation need reading together.
 - **`configure()` with no arguments** returns the current option values.
   tkinter returns a five-tuple per option carrying its resource name, class and
   default; those come from Tcl's widget definitions.
+
+  **`configure("name")` does answer Tk's five-tuple** (`TkCurses-kifn`; it
+  crashed on every widget before). The database name and class are Tk's own,
+  captured from Tcl/Tk 9.0.2's `configure()` on all forty tkinter and ttk widget
+  classes into `tkcurses/_core/option_names.py`. They are not uniform: a ttk
+  Entry's `background` is `windowColor`/`WindowColor`, a ttk Label's is
+  `frameColor`, and a ttk widget's `class` has no database name at all. The
+  default is this library's own, and the last field is `cget`'s answer. Also
+  measured: a short spelling answers the **full** entry under the full name
+  (`configure("bg")` is `("background", "background", "Background", …)`, not
+  the two-tuple `configure()` lists for `bg`), and `configure("-text")` is
+  `unknown option "--text"`. `Misc.__init_subclass__` adds the query to every
+  class's `configure`, so an override cannot forget it.
+  `tests/test_configure_query.py` compares every shared option of every widget
+  with the real toolkit when there is a display.
 - **`update()`** runs pending idle and timer callbacks but does not read input.
   Draining the keyboard from inside a callback is what makes tkinter's
   `update()` reentrant and hazardous; the loop in `Tk` is the only place that
