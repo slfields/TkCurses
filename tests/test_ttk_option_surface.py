@@ -122,8 +122,6 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
     # xe9.3) each closed all three at once.
     "Treeview": {
         "selecttype": "TkCurses-xe9.5: selecting cells rather than rows",
-        "titlecolumns": "TkCurses-xe9.6: frozen columns",
-        "titleitems": "TkCurses-xe9.6: frozen rows",
     },
 }
 

@@ -1304,3 +1304,73 @@ def test_an_unstriped_treeview_tints_nothing(terminal, tmp_path):
     assert not any(dim for _label, dim in banding), (
         f"rows were tinted with striped off: {banding}\n{term.describe()}"
     )
+
+
+# ------------------------------- Treeview scrolled sideways (TkCurses-xe9.6)
+
+WIDE_TREE = """
+import tkcurses
+from tkcurses import ttk
+
+root = tkcurses.Tk()
+tree = ttk.Treeview(root, columns=("a", "b", "c"), height=3)
+tree.column("#0", width=8, stretch=False)
+for name in ("a", "b", "c"):
+    tree.column(name, width=7, stretch=False)
+tree.heading("#0", text="Name")
+tree.heading("a", text="Alpha")
+tree.heading("b", text="Beta")
+tree.heading("c", text="Omega")
+tree.insert("", "end", text="first", values=("a1", "b1", "zz9"))
+tree.place(x=0, y=0, width=22, height=6)
+root.bind("x", lambda event: tree.xview_moveto(1.0))
+root.after(8000, root.quit)
+root.mainloop()
+"""
+
+
+def test_scrolling_sideways_brings_the_last_column_into_view(terminal, tmp_path):
+    """The heading and the row move together, and the tree column goes."""
+    term = terminal(cols=30, rows=8)
+    term.run_source(WIDE_TREE, workdir=tmp_path)
+    term.wait_for(
+        lambda t: "Name" in t.row(1) and "Omega" not in t.row(1),
+        message="the tree drawn at the left",
+    )
+    term.send_keys("x")
+    term.wait_for(
+        lambda t: "Omega" in t.row(1) and "Name" not in t.row(1) and "zz9" in t.row(2),
+        message="the heading and the row scrolled to the last column",
+    )
+    assert _column_of(term, 1, "Omega") == _column_of(term, 2, "zz9"), "\n".join(
+        term.display
+    )
+
+
+def _column_of(term, row, text):
+    return term.row(row).index(text)
+
+
+TITLED_TREE = """
+import tkcurses
+from tkcurses import ttk
+
+root = tkcurses.Tk()
+tree = ttk.Treeview(root, titleitems=10)
+for n in range(20):
+    tree.insert("", "end", text="row%d" % n)
+tree.place(x=0, y=0, width=20, height=7)
+root.after(8000, root.quit)
+root.mainloop()
+"""
+
+
+def test_titles_that_overflow_stop_at_the_border(terminal, tmp_path):
+    """Four rows of room and ten titles: the fifth must not cover the border."""
+    term = terminal(cols=30, rows=10)
+    term.run_source(TITLED_TREE, workdir=tmp_path)
+    term.wait_for(
+        lambda t: "row3" in t.row(5) and t.row(6)[1:5] not in ("", "    "),
+        message="four title rows, then the bottom border",
+    )
+    assert "row4" not in term.row(6), "\n".join(term.display)

@@ -2734,7 +2734,7 @@ def test_a_treeview_moveto_rounds_to_the_nearest_row(root, rows, top):
 
 
 def test_a_treeview_answers_the_horizontal_methods_and_stays_whole(root):
-    """It never scrolls sideways; the named forms must not raise either."""
+    """An unplaced tree has nothing to scroll - measured, Tk answers (0, 1) too."""
     tree = Treeview(root)
     assert tree.xview_moveto(0.5) is None
     assert tree.xview_scroll(1, "units") is None
@@ -3166,3 +3166,313 @@ def test_a_themed_scrollbar_refuses_activate_as_tk_does(root):
     for args in ((), ("slider",)):
         with pytest.raises(TclError, match='bad command "activate"'):
             bar.activate(*args)
+
+
+# ------------------------------- Treeview scrolled sideways (TkCurses-xe9.6)
+#
+# Measured on Tk 9.0.2 in pixels and asserted here in cells: one unit is one,
+# one page is the width the scrolling columns are seen through, a bare number
+# is an offset, and the fractions are of the scrolling columns only.
+
+
+@pytest.fixture
+def wide(root):
+    """Columns 26 cells wide in a rows area 20 wide: six cells to scroll."""
+    view = Treeview(root, name="wide", columns=("a", "b", "c"))
+    view.place(x=0, y=0, width=22, height=8)
+    view.column("#0", width=8, stretch=False)
+    for name in ("a", "b", "c"):
+        view.column(name, width=5, stretch=False)
+        view.heading(name, text=name.upper())
+    view.heading("#0", text="Name")
+    root.update_layout()
+    view.row = view.insert("", "end", text="Alpha", values=("aa", "bb", "cc"))
+    assert view._rows_area().width == 20
+    assert view._column_spans()[-1][2] == 26
+    return view
+
+
+def _whole_row(tree):
+    """The row as it would be drawn with nothing scrolled and room for all."""
+    tree._left = 0
+    return tree._row_text(tree.row, 99)
+
+
+def test_columns_wider_than_the_tree_can_be_scrolled_to(wide):
+    whole = _whole_row(wide)
+    assert wide.xview() == (0.0, 20 / 26)
+    wide.xview_moveto(1.0)
+    assert wide.xview() == (6 / 26, 1.0)
+    assert wide._row_text(wide.row, 20) == whole[6:26], "the last column is reachable"
+
+
+def test_the_heading_scrolls_with_the_rows(wide):
+    wide.xview_scroll(4, "units")
+    assert wide._heading_text(20) == "Name     A     B     C    "[4:24]
+
+
+def test_a_unit_is_a_cell_and_a_page_is_the_view(wide):
+    wide.xview_scroll(1, "units")
+    assert wide._left == 1
+    wide.xview_moveto(0)
+    wide.xview(20 - 20)  # a bare offset
+    wide.xview("scroll", 1, "pages")
+    assert wide._left == 6, "a page is 20 cells, clamped to the 6 there are"
+
+
+def test_a_bare_number_is_an_offset(wide):
+    wide.xview(3)
+    assert wide._left == 3
+
+
+@pytest.mark.parametrize(("fraction", "left"), [(2.4 / 26, 2), (2.5 / 26, 3)])
+def test_xview_moveto_rounds_as_yview_does(wide, fraction, left):
+    wide.xview_moveto(fraction)
+    assert wide._left == left
+
+
+def test_the_view_cannot_run_past_either_end(wide):
+    wide.xview(-5)
+    assert wide._left == 0
+    wide.xview(50)
+    assert wide._left == 6
+
+
+def test_the_scrollbar_is_told_the_horizontal_view(wide):
+    seen = []
+    wide.configure(xscrollcommand=lambda *f: seen.append(f))
+    wide.xview_moveto(1.0)
+    assert seen[-1] == (6 / 26, 1.0)
+
+
+def test_columns_that_fit_leave_nothing_to_scroll(laid_out):
+    laid_out.xview_moveto(0.5)
+    assert laid_out.xview() == (0.0, 1.0)
+    assert laid_out._left == 0
+
+
+def test_identify_column_reads_through_the_scroll(wide):
+    area = wide._rows_area()
+    assert wide.identify_column(area.x + 9) == "#1"
+    wide.xview(6)
+    assert wide.identify_column(area.x + 9) == "#2", "a moved under the pointer"
+    assert wide.identify_column(area.x + 20) == "", "past the rows area"
+
+
+def test_bbox_follows_the_scroll_unclipped(wide):
+    """Tk answers a column scrolled off the left with a negative x (-101)."""
+    area = wide._rows_area()
+    wide.xview(6)
+    assert wide.bbox(wide.row, "#0")[0] == area.x - 6
+    assert wide.bbox(wide.row, "a")[0] == area.x + 3
+
+
+def test_a_marker_scrolled_away_cannot_be_clicked(wide):
+    parent = wide.insert("", "end", text="P")
+    wide.insert(parent, "end", text="child")
+    area = wide._rows_area()
+    assert wide._marker_column(parent) == area.x
+    wide.xview(1)
+    assert wide._marker_column(parent) == -1
+
+
+# ------------------------------------ Treeview's title rows (TkCurses-xe9.6)
+#
+# Replays the Tk 9.0.2 probe: twenty rows, eight showing, three frozen.
+
+
+@pytest.fixture
+def titled(root):
+    view = Treeview(root, name="titled", titleitems=3)
+    view.place(x=0, y=0, width=30, height=11)
+    root.update_layout()
+    for n in range(20):
+        view.insert("", "end", iid=f"i{n}", text=f"row{n}")
+    assert view._content_height() == 8
+    return view
+
+
+def _rows_shown(tree):
+    first = tree._rows_area().y + 1
+    return [tree.identify_row(first + n) for n in range(tree._content_height())]
+
+
+def test_title_rows_stay_on_top_while_the_rest_scroll(titled):
+    titled.yview_moveto(0.5)
+    assert titled.yview() == (9 / 17, 14 / 17)
+    assert _rows_shown(titled) == ["i0", "i1", "i2", "i12", "i13", "i14", "i15", "i16"]
+
+
+def test_the_fractions_are_of_the_rows_that_scroll(titled):
+    assert titled.yview() == (0.0, 5 / 17)
+
+
+def test_a_page_is_the_rows_under_the_titles(titled):
+    titled.yview_scroll(1, "pages")
+    assert titled._top == 5
+
+
+def test_bbox_answers_for_titles_and_not_for_rows_scrolled_under_them(titled):
+    titled.yview_moveto(0.5)
+    first = titled._rows_area().y + 1
+    assert titled.bbox("i1")[1] == first + 1
+    assert titled.bbox("i12")[1] == first + 3
+    assert titled.bbox("i10") == ""
+    assert titled.bbox("i3") == "", "scrolled up under the titles, so not drawn"
+
+
+def test_seeing_a_title_row_moves_nothing(titled):
+    titled.yview_moveto(0.5)
+    titled.see("i1")
+    assert titled._top == 9
+
+
+def test_seeing_a_scrolled_row_counts_only_the_rows_that_scroll(titled):
+    titled.see("i19")
+    assert titled._top == 12
+    assert "i19" in _rows_shown(titled)
+
+
+def test_the_titles_are_counted_in_display_order(root):
+    """Measured: two frozen, an open first branch - the branch and its child."""
+    tree = Treeview(root, name="nested", titleitems=2)
+    tree.place(x=0, y=0, width=30, height=6)
+    root.update_layout()
+    tree.insert("", "end", iid="p", text="p", open=True)
+    tree.insert("p", "end", iid="c0", text="c0")
+    for n in range(10):
+        tree.insert("", "end", iid=f"i{n}", text=f"i{n}")
+    assert tree._split_rows()[0] == ["p", "c0"]
+    tree.item("p", open=False)
+    assert tree._split_rows()[0] == ["p", "i0"]
+
+
+def test_titles_past_the_end_freeze_every_row(titled):
+    titled.configure(titleitems=99)
+    assert titled.cget("titleitems") == 99, "kept as given, as Tk keeps it"
+    assert titled.yview() == (0.0, 1.0)
+
+
+def test_titles_that_do_not_fit_leave_no_room_to_scroll(titled):
+    titled.configure(titleitems=10)
+    assert _rows_shown(titled) == [f"i{n}" for n in range(8)]
+    titled.yview_scroll(5, "units")
+    assert _rows_shown(titled)[-1] == "i7"
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [(-1, '"-1" is out of range'), ("x", 'expected integer but got "x"')],
+)
+def test_titleitems_refuses_what_tk_refuses(root, value, message):
+    with pytest.raises(TclError, match=message):
+        Treeview(root, titleitems=value)
+    tree = Treeview(root)
+    with pytest.raises(TclError, match=message):
+        tree.configure(titleitems=value)
+    assert tree.cget("titleitems") == 0
+
+
+# ------------------------------- Treeview's title columns (TkCurses-xe9.6)
+#
+# The wide tree again: #0 is 8 cells and the joining cell makes the frozen
+# part 9, leaving 17 cells of columns seen through 11.
+
+
+def test_title_columns_stay_put_while_the_rest_scroll(wide):
+    whole = _whole_row(wide)
+    wide.configure(titlecolumns=1)
+    assert wide._frozen_width() == 9
+    wide.xview_moveto(1.0)
+    assert wide._row_text(wide.row, 20) == whole[:9] + whole[15:26]
+    assert wide._heading_text(20).startswith("Name     ")
+
+
+def test_the_fractions_are_of_the_columns_that_scroll(wide):
+    """Tk's (0.0, 0.596) became (0.0, 0.327) with two frozen; here 20/26 to 11/17."""
+    wide.configure(titlecolumns=1)
+    assert wide.xview() == (0.0, 11 / 17)
+    wide.xview_moveto(1.0)
+    assert wide.xview() == (6 / 17, 1.0)
+
+
+def test_a_page_is_the_view_beside_the_title_columns(wide):
+    wide.configure(titlecolumns=1)
+    wide.xview_scroll(1, "pages")
+    assert wide._left == 6, "11 cells, clamped to the 6 there are"
+
+
+def test_a_click_on_a_title_column_finds_it_however_far_scrolled(wide):
+    area = wide._rows_area()
+    wide.configure(titlecolumns=1)
+    wide.xview(6)
+    assert wide.identify_column(area.x + 3) == "#0"
+    assert wide.identify_column(area.x + 8) == "#0", "the joining cell is #0's"
+    assert wide.identify_column(area.x + 9) == "#2", "b, scrolled to the frozen edge"
+
+
+def test_scrolled_columns_pass_under_the_title_columns(wide):
+    """Measured: Tk's bbox puts a scrolled column inside the frozen ones."""
+    area = wide._rows_area()
+    wide.configure(titlecolumns=1)
+    wide.xview(6)
+    assert wide.bbox(wide.row, "#0")[0] == area.x
+    assert wide.bbox(wide.row, "a")[0] == area.x + 3
+
+
+def test_a_frozen_marker_can_still_be_clicked(wide):
+    parent = wide.insert("", "end", text="P")
+    wide.insert(parent, "end", text="child")
+    wide.configure(titlecolumns=1)
+    wide.xview(6)
+    assert wide._marker_column(parent) == wide._rows_area().x
+
+
+@pytest.mark.parametrize(("count", "frozen"), [(1, 0), (2, 6)])
+def test_the_hidden_tree_column_is_still_counted(wide, count, frozen):
+    """Measured: with show="headings", 1 freezes nothing and 2 freezes a."""
+    wide.configure(show="headings", titlecolumns=count)
+    assert wide._frozen_width() == frozen
+
+
+def test_title_columns_past_the_end_freeze_everything(wide):
+    wide.configure(titlecolumns=99)
+    assert wide.cget("titlecolumns") == 99
+    assert wide._frozen_width() == 26
+    assert wide.xview() == (0.0, 1.0)
+    wide.xview_moveto(1.0)
+    assert wide._row_text(wide.row, 20) == _whole_row(wide)[:20]
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [(-1, '"#-1" is out of range'), ("x", 'expected integer but got "x"')],
+)
+def test_titlecolumns_refuses_what_tk_refuses(root, value, message):
+    with pytest.raises(TclError, match=message):
+        Treeview(root, titlecolumns=value)
+    tree = Treeview(root)
+    with pytest.raises(TclError, match=message):
+        tree.configure(titlecolumns=value)
+    assert tree.cget("titlecolumns") == 0
+
+
+def test_a_page_moves_the_whole_view_when_there_is_room(wide):
+    wide.column("c", width=30, stretch=False)
+    wide.xview("scroll", 1, "pages")
+    assert wide._left == 20
+
+
+def test_identify_column_answers_nothing_outside_the_rows_area(wide):
+    """Even where scrolled-away columns would be, were the tree wider."""
+    area = wide._rows_area()
+    assert wide.identify_column(area.x + 21) == ""
+    wide.xview(6)
+    assert wide.identify_column(area.x - 1) == ""
+
+
+def test_identify_row_keeps_counting_below_the_titles_as_tk_does(titled):
+    """Measured: Tk answers rows past the bottom, titles too when they overflow."""
+    titled.configure(titleitems=10)
+    first = titled._rows_area().y + 1
+    assert titled.identify_row(first + 9) == "i9"

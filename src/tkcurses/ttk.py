@@ -2502,6 +2502,14 @@ class _Item:
     detached: bool = False
 
 
+def _tcl_integer(value: Any) -> int:
+    """``value`` read as Tcl reads an integer option, or Tk's refusal."""
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        raise TclError(f'expected integer but got "{value}"') from None
+
+
 class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
     """A hierarchy of rows, with columns. ``ttk.Treeview``.
 
@@ -2539,6 +2547,11 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         # default 0; Tk rejects anything else with
         # 'expected boolean value but got "..."'.
         "striped": 0,
+        # Tk 9.0's frozen leading rows - TkCurses-xe9.6. A count of displayed
+        # rows, default 0; see _check_titles for what Tk refuses.
+        "titleitems": 0,
+        # And the frozen leading columns, counted with #0 - see _frozen_width.
+        "titlecolumns": 0,
         # Real ttk.Treeview has -padding and ours did not. Measured widget by
         # widget rather than assumed: ttk carries it on Label, Notebook,
         # Treeview and LabeledScale, and NOT on Separator, Sizegrip,
@@ -2626,8 +2639,11 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         self._columns: dict[str, dict[str, Any]] = {}
         self._counter = 0
         self._top = 0
+        #: Cells the columns are scrolled left by. TkCurses-xe9.6.
+        self._left = 0
         kw.setdefault("relief", "sunken")
         self._check_striped({**(cnf or {}), **kw})
+        self._check_titles({**(cnf or {}), **kw})
         super().__init__(master, cnf, name=name, **kw)
         self._install_class_bindings()
 
@@ -3135,10 +3151,12 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         while parent:
             self._items[parent].options["open"] = 1
             parent = self._items[parent].parent
-        rows = self._visible()
+        _titles, rows = self._split_rows()
+        # A title row is always in view, so seeing one moves nothing -
+        # measured on Tk 9.0.2.
         if item in rows:
             position = rows.index(item)
-            height = max(1, self._content_height())
+            height = max(1, self._rows_window())
             self._top = max(min(self._top, position), position - height + 1)
         self._clamp_view()
         self._redraw()
@@ -3157,13 +3175,13 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         """
         if not args:
             return self._view_fractions()
-        rows = len(self._visible())
+        rows = len(self._split_rows()[1])
         if args[0] == "moveto":
             # Rounded, halves up, as Tk does; this truncated. TkCurses-md5.
             self._top = math.floor(float(args[1]) * rows + 0.5)
         elif args[0] == "scroll":
             count = int(args[1])
-            step = max(1, self._content_height()) if args[2] == "pages" else 1
+            step = max(1, self._rows_window()) if args[2] == "pages" else 1
             self._top += count * step
         else:  # a bare index, as Tk also accepts
             self._top = int(args[0])
@@ -3172,30 +3190,152 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         return None
 
     def xview(self, *args: Any) -> Any:
-        """Report the horizontal view.
+        """Report or move the horizontal view, as a scrollbar expects.
 
-        A tree here never scrolls sideways - its columns are sized in cells to
-        fit the width it has - so the view is always the whole of it. The method
-        exists because ``-xscrollcommand`` does: a scrollbar wired to it must get
-        an answer rather than an AttributeError, and what it gets says "all of
-        me is showing", which is the truth.
+        The same contract as :meth:`yview`, in cells: ``("moveto", fraction)``,
+        ``("scroll", count, "units"|"pages")`` or a bare offset. Measured on
+        Tk 9.0.2, where the unit is a pixel: one unit moves one, one page moves
+        the width of the part that scrolls, and ``xview(50)`` puts offset 50 at
+        the left edge. Columns that fit the tree - the usual case, since they
+        stretch to fill it - leave nothing to scroll, and the view stays
+        ``(0.0, 1.0)``.
+
+        Until TkCurses-xe9.6 a tree here never scrolled sideways, and columns
+        wider than it were clipped where they could not be reached.
         """
-        del args
-        return (0.0, 1.0)
+        if not args:
+            return self._x_fractions()
+        extent = self._scrolled_width()
+        if args[0] == "moveto":
+            self._left = math.floor(float(args[1]) * extent + 0.5)
+        elif args[0] == "scroll":
+            count = int(args[1])
+            step = max(1, self._scroll_window()) if args[2] == "pages" else 1
+            self._left += count * step
+        else:
+            self._left = int(args[0])
+        self._clamp_view()
+        self._redraw()
+        return None
+
+    def _frozen_width(self) -> int:
+        """Cells at the left that do not scroll sideways: ``-titlecolumns``.
+
+        Measured on Tk 9.0.2, the count includes ``#0`` **even when the tree
+        column is hidden**: with ``show="headings"``, 1 freezes nothing and 2
+        freezes the first data column. The columns are the first in DISPLAY
+        order, so read here from the spans as drawn rather than from
+        ``-columns``: this tree does not honour ``-displaycolumns`` yet
+        (TkCurses-aq04), and when it does the frozen ones follow with no change
+        here. A count past the last column freezes them all, and then nothing
+        scrolls.
+
+        The cell that joins the last frozen column to the next is frozen with
+        it, as it belongs to that column for a click (see
+        :meth:`identify_column`).
+        """
+        count = int(self._options["titlecolumns"])
+        spans = self._column_spans()
+        drawn = [name for name, _start, _end in spans if name != TREE_COLUMN]
+        frozen = set([TREE_COLUMN, *drawn][:count])
+        width = 0
+        for index, (name, _start, end) in enumerate(spans):
+            if name not in frozen:
+                break
+            width = end + (1 if index + 1 < len(spans) else 0)
+        return width
+
+    def _scrolled_width(self) -> int:
+        """Cells of columns that scroll sideways: all but the frozen ones.
+
+        None at all before the tree has been laid out. Measured on Tk 9.0.2:
+        a tree never shown answers ``(0.0, 1.0)`` and ignores ``moveto`` and
+        ``scroll``, rather than reporting every column as out of view.
+        """
+        if self._rows_area().width <= 0:
+            return 0
+        spans = self._column_spans()
+        total = spans[-1][2] if spans else 0
+        return max(0, total - self._frozen_width())
+
+    def _scroll_window(self) -> int:
+        """Cells of the rows area that the scrolling columns are seen through."""
+        return max(0, self._rows_area().width - self._frozen_width())
+
+    def _x_fractions(self) -> tuple[float, float]:
+        """Where the view is across the columns that scroll, as Tk reports it.
+
+        Measured on Tk 9.0.2: the fractions are of the scrolling part only,
+        so frozen columns change them - 100-pixel columns in a 298-pixel tree
+        report ``(0.0, 0.596)``, and ``(0.0, 0.327)`` once two are frozen.
+        """
+        extent = self._scrolled_width()
+        if extent <= 0:
+            return (0.0, 1.0)
+        return (
+            self._left / extent,
+            min(1.0, (self._left + self._scroll_window()) / extent),
+        )
+
+    def _content_x(self, offset: int) -> int:
+        """The column-span position seen ``offset`` cells into the rows area."""
+        frozen = self._frozen_width()
+        return offset if offset < frozen else offset + self._left
+
+    def _view_x(self, position: int, frozen: bool) -> int:
+        """Where column-span ``position`` is drawn, in cells into the rows area.
+
+        A scrolling column can come out left of the frozen ones, or of the
+        tree itself; Tk's bbox answers such positions unclipped, measured
+        (``-101`` for a column scrolled a column's width past the edge).
+        """
+        return position if frozen else position - self._left
+
+    def _in_view(self, line: str, width: int) -> str:
+        """The part of a whole row of columns that the view shows."""
+        frozen = self._frozen_width()
+        line = line.ljust(frozen)
+        return (line[:frozen] + line[frozen + self._left :])[:width]
 
     def _view_fractions(self) -> tuple[float, float]:
-        """Where the visible rows are, as two fractions of the whole tree."""
-        rows = len(self._visible())
+        """Where the visible rows are, as two fractions of the rows that scroll.
+
+        Measured on Tk 9.0.2: title rows are not counted, so 20 rows with 3
+        frozen and 5 more in view report ``(0.0, 5/17)``.
+        """
+        rows = len(self._split_rows()[1])
         if rows <= 0:
             return (0.0, 1.0)
-        height = max(1, self._content_height())
+        height = max(1, self._rows_window())
         return (self._top / rows, min(1.0, (self._top + height) / rows))
 
+    def _split_rows(self) -> tuple[list[str], list[str]]:
+        """The displayed rows as ``(title rows, rows that scroll)``.
+
+        ``-titleitems`` counts DISPLAYED rows in display order, measured on
+        Tk 9.0.2: with two frozen and an open first branch, the branch and
+        its first child stay put; closed, the branch and the next top-level
+        row do. A count past the end freezes them all.
+        """
+        rows = self._visible()
+        count = min(int(self._options["titleitems"]), len(rows))
+        return rows[:count], rows[count:]
+
+    def _drawn_titles(self) -> list[str]:
+        """The title rows that fit, which is all of them unless the tree is short."""
+        return self._split_rows()[0][: self._content_height()]
+
+    def _rows_window(self) -> int:
+        """How many rows that scroll the tree has room for, under its titles."""
+        return max(0, self._content_height() - len(self._drawn_titles()))
+
     def _clamp_view(self) -> None:
-        """Keep the visible rows inside the tree."""
-        height = max(1, self._content_height())
-        rows = len(self._visible())
+        """Keep the visible rows inside the tree, and the columns too."""
+        height = max(1, self._rows_window())
+        rows = len(self._split_rows()[1])
         self._top = max(0, min(self._top, max(0, rows - height)))
+        across = self._scrolled_width() - self._scroll_window()
+        self._left = max(0, min(self._left, max(0, across)))
 
     def _publish_view(self) -> None:
         """Tell the scrollbars where the view is, if any are listening."""
@@ -3205,7 +3345,8 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
             vertical(first, last)
         horizontal = self._options["xscrollcommand"]
         if horizontal is not None:
-            horizontal(0.0, 1.0)
+            first, last = self._x_fractions()
+            horizontal(first, last)
 
     # ------------------------------------------------------------ painting
 
@@ -3300,11 +3441,11 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         :meth:`identify_column` to ask about. Both now compose from this, so a
         click and a repaint cannot disagree about where a column is.
 
-        Absolute, with no scroll offset, **because a tree here never scrolls
-        sideways** - see :meth:`xview`, whose columns are sized in cells to fit
-        the width they are given. That is an invariant the whole identify
-        family rests on: adding horizontal scrolling means every answer here
-        needs the view subtracting from it. TkCurses-p9h.
+        Absolute, with no scroll offset: these are positions along the whole
+        row of columns. What the view shows of them is :meth:`_in_view`,
+        :meth:`_content_x` and :meth:`_view_x`, which every painter and every
+        identify answer goes through - TkCurses-xe9.6, which is when the tree
+        began scrolling sideways and the offset had to be applied somewhere.
         """
         spans: list[tuple[str, int, int]] = []
         position = 0
@@ -3379,7 +3520,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
             self._cell_text(iid, name).ljust(end - start)
             for name, start, end in self._column_spans()
         ]
-        return " ".join(pieces)[:width]
+        return self._in_view(" ".join(pieces), width)
 
     def _heading_text(self, width: int) -> str:
         """The heading row, drawn above the rows when ``show`` asks for it."""
@@ -3387,7 +3528,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
             str(self.heading(name, "text")).ljust(end - start)
             for name, start, end in self._column_spans()
         ]
-        return " ".join(pieces)[:width]
+        return self._in_view(" ".join(pieces), width)
 
     def identify_column(self, x: int) -> str:
         """The display column identifier at ``x``, or ``""`` outside them all.
@@ -3409,7 +3550,9 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
           now when no column is stretchable, or the columns overflow.
         """
         area = self._rows_area()
-        offset = x - area.x
+        if not 0 <= x - area.x < area.width:
+            return ""
+        offset = self._content_x(x - area.x)
         spans = self._column_spans()
         # No "past the last column" test here: the walk below falls through to
         # "" for any offset beyond the final span, so adding one could not be
@@ -3528,21 +3671,29 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         """
         if item not in self._items:
             raise TclError(f"Item {item} not found")
-        rows = self._visible()
-        if item not in rows:
+        titles = self._drawn_titles()
+        rows = self._split_rows()[1]
+        if item in titles:
+            position = titles.index(item)
+        elif item in rows:
+            position = len(titles) + rows.index(item) - self._top
+            if position < len(titles):
+                return ""
+        else:
             return ""
-        position = rows.index(item) - self._top
         area = self._rows_area()
         height = self._content_height()
-        if position < 0 or position >= height:
+        if position >= height:
             return ""
         row = area.y + position + (1 if self._shows_headings else 0)
         if column is None:
             return (area.x, row, area.width, 1)
         name = self._column_for(column)
+        frozen = self._frozen_width()
         for candidate, start, end in self._column_spans():
             if candidate == name:
-                return (area.x + start, row, end - start, 1)
+                x = self._view_x(start, start < frozen)
+                return (area.x + x, row, end - start, 1)
         return ""
 
     def _column_for(self, column: str) -> str:
@@ -3569,16 +3720,32 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         """Which row a click landed on, if any."""
         area = self._rows_area()
         offset = y - area.y - (1 if self._shows_headings else 0)
-        rows = self._visible()
-        position = self._top + offset
+        # Every title, not just those drawn: measured on Tk 9.0.2, identify
+        # keeps counting rows below the bottom of the tree, titles included
+        # when they overflow it.
+        titles, rows = self._split_rows()
+        if 0 <= offset < len(titles):
+            return titles[offset]
+        position = self._top + offset - len(titles)
         if offset >= 0 and position < len(rows):
             return rows[position]
         return None
 
     def _marker_column(self, iid: str) -> int:
-        """Where the open/closed marker of ``iid`` is drawn."""
+        """Where the open/closed marker of ``iid`` is drawn, or -1 if hidden.
+
+        The marker is in the tree column, so it scrolls with it: a click at
+        the place it would be with the view at the left must not open a
+        branch whose marker is not there. -1 is never a click's column.
+        """
         area = self._rows_area()
-        return area.x + INDENT * self._depth(iid)
+        position = INDENT * self._depth(iid)
+        # #0 is the first column, so it is frozen whole or not at all: a
+        # marker never scrolls under the frozen ones, only off the edge.
+        x = self._view_x(position, position < self._frozen_width())
+        if x < 0 or x >= area.width:
+            return -1
+        return area.x + x
 
     def _redraw(self) -> None:
         """Paint the headings and whichever rows are in view."""
@@ -3620,7 +3787,10 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
                     attribute | curses.A_BOLD,
                 )
                 row += 1
-            rows = self._visible()[self._top : self._top + self._content_height()]
+            rows = (
+                self._drawn_titles()
+                + self._split_rows()[1][self._top : self._top + self._rows_window()]
+            )
             for offset, iid in enumerate(rows):
                 self._write_line(
                     dispatcher,
@@ -3644,6 +3814,23 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         """
         if "striped" in given:
             self.getboolean(given["striped"])
+
+    def _check_titles(self, given: dict[str, Any]) -> None:
+        """Refuse a ``titleitems`` or ``titlecolumns`` Tk would refuse.
+
+        Measured on Tk 9.0.2: not an integer is ``expected integer but got
+        "x"``, and a negative count is ``"-1" is out of range``. A count past
+        the number of rows is kept as given and freezes them all.
+        """
+        if "titleitems" in given:
+            count = _tcl_integer(given["titleitems"])
+            if count < 0:
+                raise TclError(f'"{count}" is out of range')
+        # The same check, and Tk's message names a COLUMN: "#-1".
+        if "titlecolumns" in given:
+            count = _tcl_integer(given["titlecolumns"])
+            if count < 0:
+                raise TclError(f'"#{count}" is out of range')
 
     def _striped(self) -> bool:
         """Whether alternate rows are tinted.
@@ -3765,6 +3952,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         """
         given = {**(cnf or {}), **kw}
         self._check_striped(given)
+        self._check_titles(given)
         result = super().configure(cnf, **kw)
         if given:
             self._redraw()

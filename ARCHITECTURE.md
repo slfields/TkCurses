@@ -4995,8 +4995,7 @@ own command removes a tag from every item and cell and drops its bindings. A
 program that wants the effect here can `item(iid, tags=...)` the tag off each
 row.
 
-**Hit-testing rests on one column model, and on the tree not scrolling
-sideways.** `_column_spans()` answers where every column sits, in cells, and
+**Hit-testing rests on one column model.** `_column_spans()` answers where every column sits, in cells, and
 both the row painter and the heading painter compose from it — they each
 recomputed the same arithmetic before, so a click and a repaint could disagree
 about where a column was. `identify_column`, `identify_region` and `bbox` all
@@ -5041,10 +5040,82 @@ and here a resize keeps none:
 A grow-and-shrink-back that stays at or above the configured total comes out
 identical: 600 → 900 → 600 → 300 → 600 pixels, every step.
 
-The spans carry no scroll offset **because a tree here never scrolls
-sideways** — see `xview`. That is an invariant the whole family rests on:
-adding horizontal scrolling means every answer needs the view subtracted from
-it.
+The spans carry no scroll offset: they are positions along the whole row of
+columns. **The tree scrolls sideways as of `TkCurses-xe9.6`**, and every
+painter and every identify answer reads the spans through the view —
+`_in_view` for what is drawn, `_content_x` for a click, `_view_x` for `bbox` —
+so they cannot disagree about the offset any more than about the spans. Until
+then a tree never scrolled sideways, and columns wider than it were clipped
+where nothing could reach them.
+
+Measured on Tk 9.0.2, in pixels, and kept here in cells:
+
+- One unit moves one; one page moves the width the scrolling columns are seen
+  through; a bare `xview(50)` puts offset 50 at the left edge. `moveto`
+  rounds, halves up, as `yview` does.
+- The fractions are of the **scrolling** columns only, so frozen columns
+  change them (see `-titlecolumns` below).
+- A tree that has never been laid out answers `(0.0, 1.0)` and ignores
+  `moveto` and `scroll`.
+- `bbox` of a column scrolled off the left is answered unclipped: Tk gave
+  `-101` for one scrolled a column's width past the edge.
+
+The open/closed marker is in the tree column and scrolls with it. A click where
+it would be with the view at the left opens nothing once it has scrolled away.
+
+There is no sideways scrolling by keyboard: Tk binds none either, and Left and
+Right open and close branches. Tk scrolls sideways on `<Shift-MouseWheel>`;
+this tree takes no wheel at all yet, either way — `TkCurses-94fn`.
+
+**`-titleitems` freezes the first rows** (`TkCurses-xe9.6`). Tk 9.0 added it
+and `ttk_treeview(n)` gives it one sentence; measured on Tk 9.0.2:
+
+- It counts **displayed** rows in display order, not top-level items: two
+  frozen under an open first branch are the branch and its first child; with
+  the branch closed, the branch and the next top-level row.
+- The default is 0. A negative count is refused as `"-1" is out of range`
+  and a non-integer as `expected integer but got "x"`, at construction and at
+  `configure` alike. A count past the end is kept as given and freezes every
+  row.
+- `yview` reports fractions of the rows that **scroll**: twenty rows, three
+  frozen and five more in view, is `(0.0, 5/17)`. A page is the rows under the
+  titles.
+- `see` of a title row moves nothing. `bbox` of a row scrolled up under the
+  titles answers `""`, since it is not drawn.
+
+Titles that do not all fit take the whole tree and nothing scrolls; the ones
+past the bottom are not drawn. Tk then reports a negative end for `yview` —
+`(0.0, -0.4)` with ten titles in six rows — which is not copied: this answers
+one row's worth, as it does for any tree with no room. `identify_row` keeps
+counting below the bottom of the tree, as Tk's does (`i18` at y=400 in a
+150-pixel tree), and so it names title rows that are not drawn. Whether Tk
+draws anything between the titles and the rest, a rule or a shade, could not
+be read through the API and is for UAT 47 to look at.
+
+**`-titlecolumns` freezes the first columns**, built on the sideways
+scrolling above. Measured on Tk 9.0.2:
+
+- The count includes `#0` **even when the tree column is hidden**: with
+  `show="headings"`, 1 freezes nothing and 2 freezes the first data column.
+- They are the first columns in display order. This tree does not honour
+  `-displaycolumns` yet (`TkCurses-aq04`), so they are read from the columns
+  as drawn and will follow it when it does.
+- Columns that scroll pass **under** the frozen ones: Tk's `bbox` put a
+  scrolled column at x=51, inside a frozen one 100 wide, and `identify_column`
+  there answers the frozen column.
+- `xview` reports fractions of the scrolling columns only, and a page is the
+  width beside the frozen ones. A count past the last column freezes them all;
+  `xview` is then `(0.0, 1.0)` and nothing moves.
+- A negative count is refused as `"#-1" is out of range` (a column name, where
+  `-titleitems` says `"-1"`) and a non-integer as `expected integer but got
+  "x"`. A large count is kept as given.
+
+The cell joining the last frozen column to the next is frozen with it, as it
+belongs to that column for a click.
+
+The issue asked whether a frozen column can be dragged to resize. There is no
+drag to resize any column here, frozen or not (`identify_region` never says
+`separator`), so the question does not arise yet.
 
 Three answers differ from Tk deliberately:
 

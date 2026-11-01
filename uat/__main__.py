@@ -84,7 +84,8 @@ def show() -> int:
     print("                 docs/UAT_CLIPBOARD.md (43),")
     print("                 docs/UAT_MOUSE_SELECTION.md (44),")
     print("                 docs/UAT_KEY_SEQUENCES.md (45),")
-    print("                 docs/UAT_MENU_COLUMNS_SHORTCUTS.md (46)")
+    print("                 docs/UAT_MENU_COLUMNS_SHORTCUTS.md (46),")
+    print("                 docs/UAT_TREEVIEW_FROZEN_TITLES.md (47)")
     return 0
 
 

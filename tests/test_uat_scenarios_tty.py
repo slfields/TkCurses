@@ -1696,3 +1696,80 @@ def test_scenario_46_escape_leaves_nothing_highlighted_on_the_bar(uat_terminal):
     term.wait_for_idle()
     assert "Open..." not in "\n".join(term.display), "no menu opened"
     assert not term.attrs_at(0, column)["reverse"]
+
+
+# ---------------------------------------------------------------------------
+# Treeview frozen rows and columns. "Region" is the tree's own heading, so
+# waiting for it is waiting for the tree to draw. TkCurses-xe9.6.
+
+
+def _scenario_47(uat_terminal):
+    term = uat_terminal(cols=80, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_47_treeview_frozen_titles"])
+    term.wait_for(
+        lambda t: (
+            "titlecolumns=0" in t.row(1) and any("Region" in r for r in t.display)
+        ),
+        message="the readout and the tree's heading",
+    )
+    term.wait_for_idle()
+    return term
+
+
+def _heading_row(term):
+    return next(row for row in term.display if "Region" in row or "North" in row)
+
+
+def test_scenario_47_a_frozen_tree_column_stays_as_the_rest_scroll(uat_terminal):
+    term = _scenario_47(uat_terminal)
+    term.send_keys("c")
+    term.wait_for_text("titlecolumns=1")
+    term.send_keys(">")
+    term.wait_for(
+        lambda t: "Region" in _heading_row(t) and "North" not in _heading_row(t),
+        message="Region frozen, North scrolled away under it",
+    )
+    term.send(ESCAPE)
+
+
+def test_scenario_47_unfrozen_the_tree_column_scrolls_away(uat_terminal):
+    term = _scenario_47(uat_terminal)
+    term.send_keys(">")
+    term.wait_for(
+        lambda t: not any("Region" in r for r in t.display),
+        message="the tree column scrolled off the left",
+    )
+    term.send(ESCAPE)
+
+
+def test_scenario_47_frozen_rows_stay_on_top(uat_terminal):
+    term = _scenario_47(uat_terminal)
+    term.send_keys("i", "i")
+    term.wait_for_text("titleitems=2")
+    # Two titles leave ten rows that scroll, so the sixteenth row is past
+    # them: the twelfth, tried first, was still in view and moved nothing.
+    for _ in range(16):
+        term.send_keys("<Down>")
+    term.wait_for(
+        lambda t: (
+            any("Group 0" in r for r in t.display)
+            and any("Item 0.0" in r for r in t.display)
+            and not any("Item 0.1 " in r for r in t.display)
+            and "yview (0.00" not in t.row(2)
+        ),
+        message="Group 0 and Item 0.0 frozen while the rows under them scrolled",
+    )
+    term.send(ESCAPE)
+
+
+def test_scenario_47_a_click_names_the_cell_under_it(uat_terminal):
+    term = _scenario_47(uat_terminal)
+    term.send_keys("c", ">")
+    term.wait_for(
+        lambda t: "titlecolumns=1" in t.row(1) and "North" not in _heading_row(t),
+        message="scrolled with the tree column frozen",
+    )
+    row = next(i for i, line in enumerate(term.display) if "Item 0.0" in line)
+    term.click(term.display[row].index("Item 0.0") + 1, row)
+    term.wait_for_text("last clicked: Item 0.0 #0")
+    term.send(ESCAPE)
