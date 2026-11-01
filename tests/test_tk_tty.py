@@ -985,3 +985,23 @@ def test_f6_moves_the_focus_when_tab_is_spoken_for(terminal, tmp_path):
     )
 
     assert "Traceback" not in term.stderr
+
+
+def test_loadtk_starts_a_root_made_without_the_terminal(terminal, tmp_path):
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        """
+import tkcurses
+
+root = tkcurses.Tk(useTk=False)
+assert root.tk.screen is None
+root.loadtk()
+root.loadtk()
+root.tk.screen.buffer.write(0, 0, "loaded late")
+root.tk.screen.refresh()
+root.after(4000, root.quit)
+root.mainloop()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("loaded late")

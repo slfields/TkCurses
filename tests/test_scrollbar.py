@@ -344,3 +344,24 @@ def test_a_horizontal_bar_fills_its_width_too(root):
         bar._allocate(Rect(0, 0, width, 1))
         bar._map()
         assert bar._length() == width
+
+
+# ---------------------------------------------------------------- activate
+
+
+def test_no_element_is_active_at_first(bar):
+    assert bar.activate() is None
+
+
+@pytest.mark.parametrize("element", ["arrow1", "slider", "arrow2"])
+def test_an_element_can_be_made_active(bar, element):
+    assert bar.activate(element) is None
+    assert bar.activate() == element
+
+
+@pytest.mark.parametrize("other", ["trough1", "trough2", "bogus", ""])
+def test_any_other_name_clears_it_rather_than_raising(bar, other):
+    """Measured on Tk 9.0.2: a trough cannot be active, and nothing raises."""
+    bar.activate("slider")
+    bar.activate(other)
+    assert bar.activate() is None

@@ -3432,8 +3432,8 @@ Main application window.
 |----------------|----------|-------|
 | `__init__(screenName, baseName, className, useTk, sync, use)` | ○ | Initializes curses screen |
 | `destroy()` | ✓ | Destroy application, call curses.endwin() |
-| `loadtk()` | ☐ | No-op (curses already initialized) - not implemented; TkCurses-5rt |
-| `readprofile(baseName, className)` | ✗ | N/A |
+| `loadtk()` | ○ | Starts curses if `Tk(useTk=False)` did not |
+| `readprofile(baseName, className)` | ◐ | Runs `~/.<className>.py` and `~/.<baseName>.py`; the `.tcl` files are skipped, and `Tk()` never calls it itself |
 | `report_callback_exception(exc, val, tb)` | ✓ | Exception handler |
 
 Inherits all methods from `Misc` and `Wm`.
@@ -4020,7 +4020,7 @@ Scroll control widget.
 | tkinter Method | TkCurses | Notes |
 |----------------|----------|-------|
 | `__init__(master=None, cnf={}, **kw)` | ○ | `▲█░░▼` display |
-| `activate(element=None)` | ☐ | Highlight element - not implemented; TkCurses-5rt |
+| `activate(element=None)` | ○ | Records `arrow1`, `slider` or `arrow2`; drawn no differently |
 | `delta(deltax, deltay)` | ○ | Calculate delta |
 | `fraction(x, y)` | ○ | Position fraction |
 | `identify(x, y)` | ○ | Element at cell |
@@ -4429,6 +4429,7 @@ Multi-line text display.
 | `trace_remove(mode, cbname)` | ✓ | Remove trace |
 | `trace_info()` | ✓ | List traces |
 | `trace_variable(mode, callback)` | ✓ | Legacy trace |
+| `trace(mode, callback)` | ✓ | Alias of `trace_variable`, as in tkinter |
 | `trace_vdelete(mode, cbname)` | ✓ | Legacy delete |
 | `trace_vinfo()` | ✓ | Legacy info |
 | `__eq__(other)` | ✓ | Compare variables |
@@ -4539,7 +4540,8 @@ through.
 | `__init__(name, cnf, master, **kw)` | ○ | PNG, GIF, PGM, PPM, or rows |
 | `blank()` | ○ | Every pixel becomes transparent |
 | `cget(option)` | ○ | Get option |
-| `copy(...)` | ○ | Independent copy |
+| `copy(...)` | ○ | Independent copy; `from_coords`, `zoom`, `subsample` |
+| `copy_replace(sourceImage, ...)` | ○ | In place: `from_coords`, `to` (tiles), `shrink`, `zoom`, `subsample`, `compositingrule` |
 | `zoom(...)` | ○ | Repeats each pixel |
 | `subsample(...)` | ○ | Keeps every n-th pixel, as Tk does |
 | `reduce(...)` | ○ | Averages each block; what fitting wants |

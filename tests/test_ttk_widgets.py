@@ -3158,3 +3158,11 @@ def test_a_combobox_made_readonly_by_its_option_refuses_typing(root):
     box.focus_set()
     box._handle(KeyEvent(keysym="x", char="x"))
     assert box.get() == ""
+
+
+def test_a_themed_scrollbar_refuses_activate_as_tk_does(root):
+    """ttk::scrollbar has no activate; tkinter's inherited method raises."""
+    bar = Scrollbar(root, name="sa")
+    for args in ((), ("slider",)):
+        with pytest.raises(TclError, match='bad command "activate"'):
+            bar.activate(*args)

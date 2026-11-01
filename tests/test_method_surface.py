@@ -181,6 +181,10 @@ NOT_INSTANTIATED = frozenset(
 #: And by one more the same day (TkCurses-elb): ttk.Spinbox.set.
 #: PARTIAL_GAPS lost every scroll-protocol entry to TkCurses-019.
 #:
+#: And by four on 2026-11-01 (TkCurses-5rt): PhotoImage.copy_replace,
+#: Scrollbar.activate, Tk.loadtk and readprofile, Variable.trace. The fifth
+#: it named, Menu.xposition, had gone with TkCurses-aj1.13.1.
+#:
 #: A gap not listed here is a test failure, which is the point: this list may
 #: shrink and must never silently grow.
 GAPS: dict[str, dict[str, str]] = {
@@ -280,12 +284,6 @@ GAPS: dict[str, dict[str, str]] = {
         "sash": "TkCurses-xy2",
         "sash_mark": "TkCurses-xy2",
     },
-    "tk.PhotoImage": {
-        "copy_replace": "TkCurses-5rt",
-    },
-    "tk.Scrollbar": {
-        "activate": "TkCurses-5rt",
-    },
     "tk.Spinbox": {
         "scan": "TkCurses-6lh",
         "scan_dragto": "TkCurses-6lh",
@@ -314,13 +312,6 @@ GAPS: dict[str, dict[str, str]] = {
         "window_create": "TkCurses-mzj",
         "window_names": "TkCurses-mzj",
         "yview_pickplace": "TkCurses-mzj",
-    },
-    "tk.Tk": {
-        "loadtk": "TkCurses-5rt",
-        "readprofile": "TkCurses-5rt",
-    },
-    "tk.Variable": {
-        "trace": "TkCurses-5rt",
     },
     "tk.Wm": {
         "aspect": "TkCurses-k1i",

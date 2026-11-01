@@ -56,6 +56,7 @@ import time
 import traceback
 import weakref
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from tkcurses._core.application import Application
@@ -3953,7 +3954,8 @@ class Tk(BaseWidget, Wm):
             baseName: Ignored. Names the resource file tkinter would read.
             className: The widget class this root binds and looks options up
                 under, as in tkinter.
-            useTk: Ignored; there is no Tcl-without-Tk mode to select.
+            useTk: False leaves the terminal alone until :meth:`loadtk`,
+                the nearest thing here to tkinter's Tcl-without-Tk mode.
             sync: Ignored. X11 synchronous mode.
             use: Ignored. Embeds Tk in a foreign window.
 
@@ -3994,6 +3996,37 @@ class Tk(BaseWidget, Wm):
             _default_root = self
 
     # ------------------------------------------------------------- startup
+
+    def loadtk(self) -> None:
+        """Take over the terminal, if ``Tk(useTk=False)`` did not.
+
+        tkinter's loads Tk into an interpreter made without it. The
+        equivalent here is starting curses, so a root that already has, or
+        has been destroyed, is left as it is.
+        """
+        if not self._started and not self._destroyed:
+            self._start()
+
+    def readprofile(self, baseName: str, className: str) -> None:
+        """Run ``~/.<className>.py`` and then ``~/.<baseName>.py``, if they exist.
+
+        tkinter's profile hook, kept for programs that call it. Each file is
+        run with ``self`` bound to this root and everything from
+        ``tkcurses`` imported, as tkinter imports itself. The ``.tcl`` files
+        tkinter would source beside them are skipped: there is no Tcl.
+
+        Unlike tkinter, ``Tk()`` never calls this itself. tkinter's
+        constructor does, unless Python was started with ``-E``, which means
+        any program would run code from the home directory without asking.
+        A program that wants it calls it.
+        """
+        home = Path(os.environ.get("HOME", os.curdir))
+        namespace: dict[str, Any] = {"self": self}
+        exec("from tkcurses import *", namespace)
+        for name in (className, baseName):
+            path = home / f".{name}.py"
+            if path.is_file():
+                exec(path.read_text(encoding="utf-8"), namespace)
 
     def _start(self) -> None:
         """Initialise curses and hang the screen-dependent pieces off it.
@@ -5005,6 +5038,9 @@ class Variable:
             TclError: If the mode letter is not one of the three.
         """
         return self.trace_add(self._legacy_modes(mode), callback)
+
+    #: The oldest spelling of all, which tkinter still defines as this alias.
+    trace = trace_variable
 
     def trace_vdelete(self, mode: str, cbname: str) -> None:
         """Remove a trace added with :meth:`trace_variable`."""
@@ -13738,6 +13774,8 @@ class Scrollbar(_Drawable):
         self._last = 1.0
         self._drag_from: tuple[int, int] | None = None
         self._drag_origin = 0.0
+        #: The element :meth:`activate` named, or "" for none.
+        self._active_element = ""
         super().__init__(master, cnf, name=name, **kw)
         self._apply_requested_size()
         self._install_class_bindings()
@@ -13805,6 +13843,29 @@ class Scrollbar(_Drawable):
     def get(self) -> tuple[float, float]:
         """Where the view is, as ``(first, last)``."""
         return self._first, self._last
+
+    def activate(self, index: str | None = None) -> str | None:
+        """Mark one element active, or ask which one is.
+
+        Measured on Tk 9.0.2: only ``arrow1``, ``slider`` and ``arrow2`` can
+        be active. Any other name, a trough included, clears it rather than
+        raising, and asking with none active answers None.
+
+        The state is recorded and nothing is drawn differently for it: this
+        Scrollbar has no ``activebackground`` or ``activerelief`` to draw it
+        in. Tk's ``scrlbar.tcl`` also activates the element under the
+        pointer on ``<Enter>`` and ``<Motion>``, which is not bound here.
+
+        Args:
+            index: The element to make active. Omitted, nothing changes.
+
+        Returns:
+            The active element's name when asked, None when setting.
+        """
+        if index is None:
+            return self._active_element or None
+        self._active_element = index if index in ("arrow1", "slider", "arrow2") else ""
+        return None
 
     def fraction(self, x: int, y: int) -> float:
         """The fraction of the way along that a position within this widget is.

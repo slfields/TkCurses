@@ -394,6 +394,147 @@ def test_scaling_by_a_non_positive_factor_raises(root, factor):
         photo.reduce(factor)
 
 
+# ---------------------------------------------------------- copy_replace
+#
+# Every expectation below was produced by Tk 9.0.2 through tkinter, from the
+# same three-by-two source, and transcribed: R red, B blue, . a hole. The
+# table is the record; photo(n) leaves most of these rules out.
+
+
+def _letters(photo):
+    names = {"red": "R", "blue": "B", None: "."}
+    return "|".join("".join(names[pixel] for pixel in row) for row in photo.rows())
+
+
+@pytest.fixture
+def source(root):
+    """BRR over RR., the source every measurement was taken from."""
+    return PhotoImage(master=root, data=[["blue", "red", "red"], ["red", "red", None]])
+
+
+def _unsized(root, width, height):
+    return PhotoImage(master=root, data=[["blue"] * width] * height)
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ({}, "BRR|RR."),
+        ({"to": (2, 1)}, ".....|..BRR|..RR."),
+        ({"to": (0, 0, 5, 3)}, "BRRBR|RR.RR|BRRBR"),
+        ({"to": (1,)}, "....|.BRR|.RR."),
+        ({"to": (0, 0, 1)}, "B"),
+        ({"from_coords": (1, 0)}, "RR|R."),
+        ({"from_coords": (1,)}, "R."),
+        ({"from_coords": (1, 0, 2, 2)}, "R|R"),
+        ({"from_coords": (2, 2, 1, 0)}, "R|R"),
+        ({"from_coords": (0, 0, 1)}, "B"),
+        ({"zoom": 2}, "BBRRRR|BBRRRR|RRRR..|RRRR.."),
+        ({"zoom": (2, 1)}, "BBRRRR|RRRR.."),
+        ({"subsample": 2}, "BR"),
+        ({"subsample": -1}, ".RR|RRB"),
+        ({"subsample": (-1, 1)}, "RRB|.RR"),
+        ({"subsample": 0}, ""),
+        ({"subsample": 2, "zoom": 3}, "BBBRRR|BBBRRR|BBBRRR"),
+    ],
+)
+def test_copy_replace_into_an_empty_image(root, source, options, expected):
+    dest = PhotoImage(master=root)
+    dest.copy_replace(source, **options)
+    assert _letters(dest) == expected
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ({}, "BRRB|RRBB|BBBB|BBBB"),
+        ({"shrink": True}, "BRR|RRB"),
+        ({"shrink": True, "to": (1, 1)}, "BBBB|BBRR|BRRB"),
+    ],
+)
+def test_an_unsized_image_grows_and_shrink_trims_it(root, source, options, expected):
+    dest = _unsized(root, 4, 4)
+    dest.copy_replace(source, **options)
+    assert _letters(dest) == expected
+
+
+@pytest.mark.parametrize("shrink", [False, True])
+def test_an_image_given_a_size_keeps_it_and_clips(root, source, shrink):
+    dest = PhotoImage(master=root, width=2, height=2)
+    dest.put("blue", to=(0, 0, 2, 2))
+    dest.copy_replace(source, shrink=shrink)
+    assert _letters(dest) == "BR|RR"
+
+
+def test_overlay_shows_the_destination_through_the_holes(root, source):
+    dest = _unsized(root, 3, 2)
+    dest.copy_replace(source)
+    assert _letters(dest) == "BRR|RRB"
+
+
+def test_set_copies_the_holes_too(root, source):
+    dest = _unsized(root, 3, 2)
+    dest.copy_replace(source, compositingrule="set")
+    assert _letters(dest) == "BRR|RR."
+
+
+def test_copy_replace_takes_a_source_by_name(root, source):
+    dest = PhotoImage(master=root)
+    dest.copy_replace(str(source))
+    assert _letters(dest) == "BRR|RR."
+
+
+def test_an_image_can_be_copied_onto_itself(root, source):
+    """The region is read before anything is written - measured, BBRR|RRR."""
+    source.copy_replace(source, to=(1, 0))
+    assert _letters(source) == "BBRR|RRR."
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"from_coords": (0, 0, 9, 9)}, "extend outside source image"),
+        ({"from_coords": (-1, 0)}, "-from option must be non-negative"),
+        ({"to": (-1, 0)}, "-to option must be non-negative"),
+        ({"from_coords": ()}, '"-from" option requires one to four integer'),
+        ({"to": ()}, '"-to" option requires one to four integer'),
+        ({"subsample": ()}, '"-subsample" option requires one or two integer'),
+        (
+            {"from_coords": (0, 0, 1, 1, 1)},
+            r"wrong # args: should be \"pyimage\d+ copy",
+        ),
+        ({"zoom": (1, 2, 3)}, r"wrong # args: should be \"pyimage\d+ copy"),
+        ({"zoom": 0}, "-zoom option must be positive"),
+        ({"compositingrule": "xor"}, 'bad compositing rule "xor"'),
+    ],
+)
+def test_copy_replace_refuses_what_tk_refuses(root, source, options, message):
+    dest = PhotoImage(master=root)
+    with pytest.raises(TclError, match=message):
+        dest.copy_replace(source, **options)
+    assert dest.rows() == [], "a refused copy must change nothing"
+
+
+def test_copy_replace_refuses_a_name_that_is_no_photo(root):
+    with pytest.raises(TclError, match='image "nosuch" does not exist'):
+        PhotoImage(master=root).copy_replace("nosuch")
+
+
+def test_copy_replace_tells_the_widgets_showing_it(root, source):
+    dest = PhotoImage(master=root)
+    told = []
+    dest._watch(root, lambda: told.append(True))
+    dest.copy_replace(source)
+    assert told
+
+
+def test_copy_zoom_and_subsample_take_a_region(root, source):
+    """Python 3.13's keywords, which reach copy_replace as tkinter's do."""
+    assert _letters(source.copy(from_coords=(1, 0))) == "RR|R."
+    assert _letters(source.zoom(2, from_coords=(0, 0, 1, 1))) == "BB|BB"
+    assert _letters(source.subsample(2, from_coords=(1, 0))) == "R"
+
+
 # ---------------------------------------------------------------- reducing
 
 

@@ -4569,6 +4569,18 @@ class Scrollbar(Widget, tkcurses.Scrollbar):
 
     _ttk_class = "TScrollbar"
 
+    def activate(self, index: str | None = None) -> str | None:  # noqa: ARG002
+        """Refused, as Tk refuses it: ``ttk::scrollbar`` has no ``activate``.
+
+        tkinter's ttk.Scrollbar inherits the method from the classic one and
+        Tk rejects the command, measured on 9.0.2 with and without an
+        element. A theme draws the active state from ``state()`` instead.
+        """
+        raise TclError(
+            'bad command "activate": must be cget, configure, delta, fraction, '
+            "get, identify, instate, set, state, or style"
+        )
+
     def _element_at(self, x: int, y: int) -> Any:
         """ttk's names for the classic scrollbar's parts.
 

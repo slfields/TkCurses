@@ -325,6 +325,16 @@ def test_a_legacy_trace_fires(root):
     assert seen == ["write"]
 
 
+def test_trace_is_the_legacy_trace_by_another_name(root):
+    """tkinter's ``trace = trace_variable``; pre-3.6 programs still call it."""
+    assert Variable.trace is Variable.trace_variable
+    var = StringVar(root)
+    seen = []
+    var.trace("w", lambda *args: seen.append(args[2]))
+    var.set("x")
+    assert seen == ["write"]
+
+
 def test_a_legacy_trace_can_be_removed(root):
     var = StringVar(root)
     handle = var.trace_variable("w", lambda *args: pytest.fail("should not fire"))

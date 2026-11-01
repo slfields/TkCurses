@@ -462,6 +462,48 @@ class Image:
         }
 
 
+#: Tk's complaint when ``copy`` is given more numbers than an option takes:
+#: measured, the extra one is read as the next argument and the whole
+#: command is refused.
+_COPY_USAGE = (
+    'wrong # args: should be "{} copy source-image ?-compositingrule rule? '
+    '?-from x1 y1 x2 y2? ?-to x1 y1 x2 y2? ?-zoom x y? ?-subsample x y?"'
+)
+
+
+def _corner_values(image: str, option: str, values: Sequence[int]) -> list[int]:
+    """``-from`` or ``-to``'s numbers, as two or four.
+
+    Measured on Tk 9.0.2: one number stands for both of a pair and a third
+    for the fourth, so ``(1,)`` is ``(1, 1)`` and ``(0, 0, 1)`` is
+    ``(0, 0, 1, 1)``.
+    """
+    numbers = [int(value) for value in values]
+    if not numbers:
+        raise TclError(f'the "{option}" option requires one to four integer values')
+    if len(numbers) > 4:
+        raise TclError(_COPY_USAGE.format(image))
+    if any(number < 0 for number in numbers):
+        raise TclError(f"value(s) for the {option} option must be non-negative")
+    if len(numbers) % 2:
+        numbers.append(numbers[-1])
+    return numbers
+
+
+def _factor_pair(
+    image: str, option: str, factor: int | Sequence[int] | None
+) -> tuple[int, int]:
+    """``-zoom`` or ``-subsample`` as ``(across, down)``; one number is both."""
+    if factor is None:
+        return 1, 1
+    numbers = [int(factor)] if isinstance(factor, int) else [int(n) for n in factor]
+    if not numbers:
+        raise TclError(f'the "{option}" option requires one or two integer values')
+    if len(numbers) > 2:
+        raise TclError(_COPY_USAGE.format(image))
+    return numbers[0], numbers[-1]
+
+
 class PhotoImage(Image):
     """A plane of coloured pixels.
 
@@ -496,6 +538,12 @@ class PhotoImage(Image):
             "foreground": "white",
             "background": "",
         }
+        #: The width and height a caller asked for, 0 where none was. The
+        #: options cannot answer this: they follow the pixels. It decides
+        #: whether :meth:`copy_replace` may grow the image - measured on Tk
+        #: 9.0.2, an image made with ``width=2, height=2`` keeps that size
+        #: and clips what is copied in, and one made without grows to fit.
+        self._user_size = {"width": 0, "height": 0}
         self._configure(options)
 
     def _configure(self, options: dict[str, Any]) -> None:
@@ -503,6 +551,9 @@ class PhotoImage(Image):
         if unknown:
             raise TclError(f'unknown option "-{sorted(unknown)[0]}"')
         self._options.update(options)
+        for axis in ("width", "height"):
+            if axis in options:
+                self._user_size[axis] = int(options[axis] or 0)
         if options.get("file"):
             self._read_file(str(options["file"]))
         elif options.get("data"):
@@ -669,14 +720,33 @@ class PhotoImage(Image):
 
     # ------------------------------------------------------------ copying
 
-    def copy(self) -> PhotoImage:
-        """A new image with the same pixels and options."""
+    def copy(
+        self,
+        *,
+        from_coords: Sequence[int] | None = None,
+        zoom: int | Sequence[int] | None = None,
+        subsample: int | Sequence[int] | None = None,
+    ) -> PhotoImage:
+        """A new image with the same pixels and options.
+
+        The keywords are Python 3.13's, and mean what they mean to
+        :meth:`copy_replace`, which this is built on as it is in tkinter.
+        """
         clone = PhotoImage(master=self._master)
         clone._options.update(self._options)
-        clone._pixels = self.rows()
+        clone.copy_replace(
+            self,
+            from_coords=from_coords,
+            zoom=zoom,
+            subsample=subsample,
+            compositingrule="set",
+        )
+        clone._remeasure()
         return clone
 
-    def zoom(self, x: int, y: int | None = None) -> PhotoImage:
+    def zoom(
+        self, x: int, y: int | None = None, *, from_coords: Sequence[int] | None = None
+    ) -> PhotoImage:
         """A copy with every pixel repeated ``x`` across and ``y`` down.
 
         ``y`` defaults to ``x``, as in Tk. Worth knowing what doubling means
@@ -689,16 +759,11 @@ class PhotoImage(Image):
         across, down = x, x if y is None else y
         if across <= 0 or down <= 0:
             raise TclError("zoom factors must be positive")
-        clone = self.copy()
-        clone._pixels = [
-            [pixel for pixel in row for _ in range(across)]
-            for row in self._pixels
-            for _ in range(down)
-        ]
-        clone._remeasure()
-        return clone
+        return self.copy(from_coords=from_coords, zoom=(across, down))
 
-    def subsample(self, x: int, y: int | None = None) -> PhotoImage:
+    def subsample(
+        self, x: int, y: int | None = None, *, from_coords: Sequence[int] | None = None
+    ) -> PhotoImage:
         """A copy keeping every ``x``-th pixel across and ``y``-th down.
 
         Raises:
@@ -707,10 +772,125 @@ class PhotoImage(Image):
         across, down = x, x if y is None else y
         if across <= 0 or down <= 0:
             raise TclError("subsample factors must be positive")
-        clone = self.copy()
-        clone._pixels = [row[::across] for row in self._pixels[::down]]
-        clone._remeasure()
-        return clone
+        return self.copy(from_coords=from_coords, subsample=(across, down))
+
+    def copy_replace(
+        self,
+        sourceImage: PhotoImage | str,
+        *,
+        from_coords: Sequence[int] | None = None,
+        to: Sequence[int] | None = None,
+        shrink: bool = False,
+        zoom: int | Sequence[int] | None = None,
+        subsample: int | Sequence[int] | None = None,
+        compositingrule: str | None = None,
+    ) -> None:
+        """Copy a region of another image into this one, in place.
+
+        Python 3.13's spelling of Tk's ``$photo copy``. Every rule below was
+        measured on Tk 9.0.2 rather than read, because ``photo(n)`` leaves
+        most of them out:
+
+        - ``from_coords`` and ``to`` take one to four numbers. One is used
+          for both of a pair and a third stands for the fourth, so ``(1,)``
+          is ``(1, 1)`` and ``(0, 0, 1)`` is ``(0, 0, 1, 1)``. Reversed
+          corners are put in order. A region outside the source is refused.
+        - The source region is subsampled, then zoomed. A negative subsample
+          walks that axis backwards, mirroring it; a zero copies nothing.
+        - ``to`` with two numbers places the region; with four it tiles it
+          across that rectangle, starting at the rectangle's corner.
+        - An image with no ``width``/``height`` of its own grows to take the
+          region, and with ``shrink`` becomes exactly as large as the
+          region's far corner. One whose size was given keeps it, and clips.
+        - ``overlay``, the default, lets the destination show through the
+          source's holes; ``set`` copies the holes too.
+
+        Args:
+            sourceImage: A PhotoImage, or the name of one. It may be this
+                image: the region is read before anything is written.
+
+        Raises:
+            TclError: With Tk's message, for a source that is not a photo
+                image, coordinates that are negative or of the wrong count,
+                a ``from_coords`` outside the source, a zoom that is not
+                positive, or a compositing rule other than the two.
+        """
+        source = self._photo_named(sourceImage)
+        rule = compositingrule or "overlay"
+        if rule not in ("overlay", "set"):
+            raise TclError(f'bad compositing rule "{rule}": must be overlay or set')
+        across, down = _factor_pair(self._name, "-subsample", subsample)
+        wide, tall = _factor_pair(self._name, "-zoom", zoom)
+        if wide <= 0 or tall <= 0:
+            raise TclError("value(s) for the -zoom option must be positive")
+        place = None if to is None else _corner_values(self._name, "-to", to)
+
+        x1, y1, x2, y2 = 0, 0, source.width(), source.height()
+        if from_coords is not None:
+            given = _corner_values(self._name, "-from", from_coords)
+            x1, y1 = given[0], given[1]
+            if len(given) == 4:
+                x2, y2 = given[2], given[3]
+            x1, x2 = min(x1, x2), max(x1, x2)
+            y1, y2 = min(y1, y2), max(y1, y2)
+            if x2 > source.width() or y2 > source.height():
+                raise TclError(
+                    "coordinates for -from option extend outside source image"
+                )
+        if across == 0 or down == 0:
+            return
+
+        columns = range(x1, x2, across) if across > 0 else range(x2 - 1, x1 - 1, across)
+        lines = range(y1, y2, down) if down > 0 else range(y2 - 1, y1 - 1, down)
+        block = [
+            [pixel for x in columns for pixel in [source._pixels[y][x]] * wide]
+            for y in lines
+            for _ in range(tall)
+        ]
+        width = len(block[0]) if block else 0
+        height = len(block)
+        if width == 0 or height == 0:
+            return
+
+        if place is None:
+            tx1, ty1, tx2, ty2 = 0, 0, width, height
+        elif len(place) == 2:
+            tx1, ty1 = place
+            tx2, ty2 = tx1 + width, ty1 + height
+        else:
+            tx1, tx2 = min(place[0], place[2]), max(place[0], place[2])
+            ty1, ty2 = min(place[1], place[3]), max(place[1], place[3])
+
+        size = {"width": self.width(), "height": self.height()}
+        for axis, far in (("width", tx2), ("height", ty2)):
+            if self._user_size[axis]:
+                continue
+            size[axis] = far if shrink else max(size[axis], far)
+        if (size["width"], size["height"]) != (self.width(), self.height()):
+            self._resize(size["width"], size["height"])
+
+        span = min(tx2, size["width"]) - tx1
+        if span > 0:
+            repeats = -(-span // width)
+            for y in range(ty1, min(ty2, size["height"])):
+                segment = (block[(y - ty1) % height] * repeats)[:span]
+                target = self._pixels[y]
+                if rule == "set" or TRANSPARENT not in segment:
+                    target[tx1 : tx1 + span] = segment
+                    continue
+                for offset, pixel in enumerate(segment):
+                    if pixel is not TRANSPARENT:
+                        target[tx1 + offset] = pixel
+        self._changed()
+
+    def _photo_named(self, image: PhotoImage | str) -> PhotoImage:
+        """The PhotoImage ``image`` is or names, as Tk resolves a source."""
+        if isinstance(image, PhotoImage):
+            return image
+        found = self._tk.images.get(str(image))
+        if not isinstance(found, PhotoImage):
+            raise TclError(f'image "{image}" does not exist or is not a photo image')
+        return found
 
     def reduce(self, x: int, y: int | None = None) -> PhotoImage:
         """A copy averaged down by ``x`` across and ``y`` down.
