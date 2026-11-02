@@ -3924,6 +3924,41 @@ reads back and compares as `""`, keeps the focused look, and survives
 `configure(x=cget(x))`. A colour given draws the unfocused selection on it, as
 in Tk. Decided with the author.
 
+**Tk's state and part colours are taken, and a state nobody coloured looks as
+it did** (`TkCurses-gm66.4`). Thirty-seven options on eleven widgets. Tk's
+defaults are real colours (`#ececec`, `#a3a3a3`, `#d9d9d9`, `#b3b3b3`); here
+each is `""`, so an active widget is still reversed and a disabled one still
+dimmed until a program gives a colour, which is then drawn *instead* -
+`BaseWidget._in_state`. A colour given on a terminal with no colour is not
+drawn, and the old look stays. Given one colour of a pair, the widget's own
+stands in for the other.
+
+| Option | Drawn here as |
+|--------|---------------|
+| `activebackground`, `activeforeground` (Label, Button, Checkbutton, Radiobutton, Menubutton, OptionMenu) | the whole widget, border included, while `state` is `active` or the button is held down |
+| `disabledforeground` (the same, Listbox, Entry, Spinbox) | the text while `disabled` |
+| `disabledbackground`, `readonlybackground` (Entry, Spinbox) | the field in that state |
+| `selectcolor` (Checkbutton, Radiobutton) | the indicator's background; with `indicatoron` off, the whole widget's while it is on |
+| `activebackground`, `activeforeground`, `disabledforeground` (Menu) | the active entry, in the bar and in a posted menu; a disabled entry's text |
+| `selectcolor` (Menu) | the tick or bullet of a chosen check or radio entry - the mark, not the brackets |
+| `troughcolor` (Scale, Scrollbar) | the empty trough cells; the handle and thumb keep the widget's own |
+| `activebackground` (Scrollbar) | the element `activate()` names |
+| `activebackground` (Scale) | the handle, while `state` is `active` or it is dragged |
+| `buttonbackground` (Spinbox) | the arrows |
+| `activebackground` (Spinbox) | stored only: an arrow is not drawn held down |
+
+**Active is what Tk would have made active, so far as a terminal sees it.** A
+button held down is active: Tk only presses an active button, the pointer
+being over it, and `tk::ButtonInvoke` sets `active` for its flash when Space
+presses one. Tk's `<Enter>` and `<Motion>` activation is not bound here, so
+hovering activates nothing; a program's `state="active"` and a Scrollbar's
+`activate()` are honoured as given.
+
+As everywhere here, `""` is accepted for each, where Tk refuses it for
+`activebackground`, `troughcolor`, `buttonbackground` and, on a Menu, for
+`activeforeground` and `selectcolor`. A menu *entry's* own colours are a
+separate surface, still refused: `TkCurses-g373`.
+
 **Validation gates `insert` and `delete`, not only keystrokes.** `-validate`
 is a condition, and the two that name an edit - `key` and `all` - apply to a
 programmatic edit exactly as to a typed one. So does `-state`: a `readonly` or

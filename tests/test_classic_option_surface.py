@@ -59,7 +59,6 @@ CLASSIC = (
 #: been closed is too: this list may shrink and must never silently grow.
 KNOWN_GAPS: dict[str, dict[str, str]] = {
     "Button": {
-        "TkCurses-gm66.4": "activebackground activeforeground disabledforeground",
         "TkCurses-gm66.5": "overrelief",
         "TkCurses-gm66.6": "repeatdelay repeatinterval",
         "TkCurses-l26": "bitmap",
@@ -68,20 +67,16 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
         "TkCurses-gm66.10": "confine offset xscrollincrement yscrollincrement",
     },
     "Checkbutton": {
-        "TkCurses-gm66.4": "activebackground activeforeground disabledforeground selectcolor",
         "TkCurses-gm66.5": "offrelief overrelief",
         "TkCurses-gm66.10": "selectimage tristateimage",
         "TkCurses-l26": "bitmap",
     },
-    "Entry": {
-        "TkCurses-gm66.4": "disabledbackground disabledforeground readonlybackground",
-    },
+    "Entry": {},
     "Frame": {
         "TkCurses-gm66.7": "class colormap container tile visual",
         "TkCurses-yi4": "backgroundimage bgimg",
     },
     "Label": {
-        "TkCurses-gm66.4": "activebackground activeforeground disabledforeground",
         "TkCurses-l26": "bitmap",
     },
     "LabelFrame": {
@@ -90,45 +85,37 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
     },
     "Listbox": {
         "TkCurses-9e8": "exportselection",
-        "TkCurses-gm66.4": "disabledforeground",
         "TkCurses-gm66.7": "setgrid",
         "TkCurses-gm66.10": "justify listvariable",
     },
     "Menu": {
-        "TkCurses-gm66.4": "activebackground activeforeground disabledforeground selectcolor",
         "TkCurses-gm66.5": "activeborderwidth activerelief",
         "TkCurses-gm66.10": "font tearoffcommand type",
     },
     "Menubutton": {
-        "TkCurses-gm66.4": "activebackground activeforeground disabledforeground",
         "TkCurses-l26": "bitmap",
     },
     "Message": {},
     "OptionMenu": {
-        "TkCurses-gm66.4": "activebackground activeforeground disabledforeground",
         "TkCurses-l26": "bitmap",
     },
     "PanedWindow": {
         "TkCurses-gm66.9": "handlepad handlesize height opaqueresize proxybackground proxyborderwidth proxyrelief sashcursor sashpad sashrelief width",
     },
     "Radiobutton": {
-        "TkCurses-gm66.4": "activebackground activeforeground disabledforeground selectcolor",
         "TkCurses-gm66.5": "offrelief overrelief",
         "TkCurses-gm66.10": "selectimage tristateimage tristatevalue",
         "TkCurses-l26": "bitmap",
     },
     "Scale": {
-        "TkCurses-gm66.4": "activebackground troughcolor",
         "TkCurses-gm66.5": "sliderlength sliderrelief",
         "TkCurses-gm66.6": "repeatdelay repeatinterval",
     },
     "Scrollbar": {
-        "TkCurses-gm66.4": "activebackground troughcolor",
         "TkCurses-gm66.5": "activerelief elementborderwidth",
         "TkCurses-gm66.6": "jump repeatdelay repeatinterval",
     },
     "Spinbox": {
-        "TkCurses-gm66.4": "activebackground buttonbackground disabledbackground disabledforeground readonlybackground",
         "TkCurses-gm66.5": "buttoncursor buttondownrelief buttonuprelief",
         "TkCurses-gm66.6": "repeatdelay repeatinterval",
     },

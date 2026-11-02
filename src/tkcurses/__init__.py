@@ -653,6 +653,16 @@ _SELECTION_WIDGET_OPTIONS = {
     tag: widget for widget, tag in _SELECTION_TAG_OPTIONS.items()
 }
 
+#: The colours Tk gives a label or button for its active and disabled states.
+#: Tk 9.0.2's defaults are real colours; these are "", the look the states
+#: had before: reversed and dimmed. See ``BaseWidget._in_state``.
+#: TkCurses-gm66.4.
+_STATE_COLOUR_OPTIONS: dict[str, Any] = {
+    "activebackground": "",
+    "activeforeground": "",
+    "disabledforeground": "",
+}
+
 _TCL_INTEGER = re.compile(r"\s*[+-]?\d+\s*")
 
 
@@ -723,7 +733,12 @@ def _insert_unfocussed(widget: Any, value: Any) -> str:
 #: options here are not: a colour or a relief is taken as given and resolved
 #: when drawn. These are checked because they reach the terminal itself.
 _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
+    "activebackground": _colour_or_terminals,
+    "activeforeground": _colour_or_terminals,
     "blockcursor": _tcl_boolean,
+    "buttonbackground": _colour_or_terminals,
+    "disabledbackground": _colour_or_terminals,
+    "disabledforeground": _colour_or_terminals,
     "inactiveselectbackground": _colour_or_terminals,
     "insertbackground": _colour_or_terminals,
     "insertborderwidth": _screen_distance,
@@ -731,9 +746,12 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "insertontime": _tcl_integer,
     "insertunfocussed": _insert_unfocussed,
     "insertwidth": _screen_distance,
+    "readonlybackground": _colour_or_terminals,
     "selectbackground": _colour_or_terminals,
     "selectborderwidth": _screen_distance,
+    "selectcolor": _colour_or_terminals,
     "selectforeground": _colour_or_terminals,
+    "troughcolor": _colour_or_terminals,
 }
 
 
@@ -2682,9 +2700,23 @@ class BaseWidget(Misc):
             foreground = options.get("selectforeground", "")
         if background is None:
             background = options.get("selectbackground", "")
+        if self.tk.colors is None or not (foreground or background):
+            return attribute | _curses.A_REVERSE
+        return self._coloured(attribute, foreground, background)
+
+    #: The options that colour each state, as ``(foreground, background)``
+    #: option names, either of which may be None. See ``_in_state``.
+    _STATE_COLOURS: ClassVar[dict[str, tuple[str | None, str | None]]] = {}
+
+    def _coloured(self, attribute: int, foreground: Any, background: Any) -> int:
+        """``attribute`` wearing these colours, the widget's own for a ``""``.
+
+        Unchanged when neither is given or the terminal has no colour.
+        """
         colors = self.tk.colors
         if colors is None or not (foreground or background):
-            return attribute | _curses.A_REVERSE
+            return attribute
+        options = self._options
         return with_colors(
             attribute,
             colors.attribute_for(
@@ -2692,6 +2724,37 @@ class BaseWidget(Misc):
                 str(background or options.get("background") or "black"),
             ),
         )
+
+    def _state_colours(self, state: str) -> tuple[Any, Any] | None:
+        """The colours a program gave ``state``, or None if it gave none.
+
+        None too on a terminal with no colour, where they cannot be shown.
+        """
+        names = self._STATE_COLOURS.get(state)
+        if names is None or self.tk.colors is None:
+            return None
+        foreground, background = (
+            self._options.get(name, "") if name else "" for name in names
+        )
+        return (foreground, background) if foreground or background else None
+
+    def _in_state(self, attribute: int, state: str | None = None) -> int:
+        """``attribute`` as this widget looks in ``state``, its own by default.
+
+        In the colours a program gave the state - ``activebackground``,
+        ``disabledforeground`` and the rest - and otherwise reversed or dimmed
+        as ``for_state`` has always drawn it. Tk's defaults for these are
+        real colours; here they are ``""``, so a program that gives none
+        looks as it did before they were taken (TkCurses-gm66.4).
+        """
+        if state is None:
+            state = str(self._options.get("state", "normal"))
+        colours = self._state_colours(state)
+        if colours is not None:
+            return self._coloured(attribute, *colours)
+        with contextlib.suppress(ValueError):
+            return for_state(state, attribute)
+        return attribute
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, or return them all when called with none.
@@ -6368,11 +6431,44 @@ class _TextWidget(_Drawable):
             max(0, self._rect.height - 2 * (edge + pady)),
         )
 
+    _STATE_COLOURS: ClassVar[dict[str, tuple[str | None, str | None]]] = {
+        "active": ("activeforeground", "activebackground"),
+        "disabled": ("disabledforeground", None),
+    }
+
+    def _shown_state(self) -> str:
+        """The state the widget is drawn in: ``active`` while held down.
+
+        Tk's press is always on an active button - the pointer is over it,
+        or Space has set the state for the flash, in ``tk::ButtonInvoke`` -
+        so its active colours show through a press. Here a press is ``_pressed``, on the widgets that
+        have one.
+        """
+        if getattr(self, "_pressed", False):
+            return "active"
+        return str(self._options["state"])
+
+    def _background_attribute(self) -> int:
+        """The widget's colours, or its state's if a program gave them.
+
+        The whole widget, as Tk paints it: an active button's background is
+        ``activebackground`` from edge to edge, not only behind the text.
+        """
+        attribute = super()._background_attribute()
+        colours = self._state_colours(self._shown_state())
+        return attribute if colours is None else self._coloured(attribute, *colours)
+
     def _text_attribute(self) -> int:
-        """Attributes the font and state put on the text."""
+        """Attributes the font and state put on the text.
+
+        A state given colours is shown by them, in ``_background_attribute``,
+        and not reversed or dimmed as well.
+        """
         attribute = self._font_attribute()
-        with contextlib.suppress(ValueError):
-            attribute = for_state(str(self._options["state"]), attribute)
+        state = str(self._options["state"])
+        if self._state_colours(state) is None:
+            with contextlib.suppress(ValueError):
+                attribute = for_state(state, attribute)
         return attribute
 
     def _draw_underline(
@@ -6430,6 +6526,8 @@ class Label(_TextWidget):
     boundaries where it can.
     """
 
+    _widget_options: ClassVar[dict[str, Any]] = dict(_STATE_COLOUR_OPTIONS)
+
 
 class Button(_TextWidget):
     """A button: text in a box that runs something when pressed.
@@ -6456,6 +6554,7 @@ class Button(_TextWidget):
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
+        **_STATE_COLOUR_OPTIONS,
         "command": None,
         "default": "disabled",
         "relief": "raised",
@@ -6724,6 +6823,10 @@ class _ChoiceWidget(_TextWidget):
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
+        **_STATE_COLOUR_OPTIONS,
+        # The indicator's background, and an indicatorless button's while it
+        # is on. "" here, Tk's #ffffff: the indicator as it was drawn before.
+        "selectcolor": "",
         "command": None,
         "indicatoron": True,
         "takefocus": True,
@@ -6904,11 +7007,31 @@ class _ChoiceWidget(_TextWidget):
         attribute = super()._text_attribute()
         if self._indicator_on:
             return attribute
-        if self._indicator_state == "on":
+        if self._indicator_state == "on" and not self._selected_colour():
             attribute |= _curses.A_REVERSE
         if self.focus_get() is self:
             attribute |= _curses.A_UNDERLINE
         return attribute
+
+    def _selected_colour(self) -> bool:
+        """True if ``selectcolor`` is given and the terminal can show it."""
+        return bool(self._options.get("selectcolor")) and self.tk.colors is not None
+
+    def _background_attribute(self) -> int:
+        """An indicatorless button that is on takes ``selectcolor`` as its
+        background, "in place of background or activeBackground", as Tk's
+        manual has it. With an indicator, ``selectcolor`` is the indicator's.
+        """
+        attribute = super()._background_attribute()
+        if (
+            self._indicator_on
+            or self._indicator_state != "on"
+            or not self._selected_colour()
+        ):
+            return attribute
+        active = self._state_colours(self._shown_state())
+        foreground = active[0] if active is not None else ""
+        return self._coloured(attribute, foreground, self._options["selectcolor"])
 
     def _redraw(self) -> None:
         """Paint the widget, then the indicator to the left of the text."""
@@ -6927,7 +7050,9 @@ class _ChoiceWidget(_TextWidget):
         focused = self.focus_get() is self
         mark = self._INDICATORS[self._indicator_state][1 if focused else 0]
         attribute = self._background_attribute() | self._text_attribute()
-        if self._pressed:
+        if self._selected_colour():
+            attribute = self._coloured(attribute, "", self._options["selectcolor"])
+        if self._pressed and self._state_colours("active") is None:
             attribute |= _curses.A_REVERSE
         with contextlib.suppress(_curses.error):
             self._write_line(
@@ -7136,10 +7261,20 @@ class Entry(_Drawable, XView):
         "invcmd": "invalidcommand",
     }
 
+    _STATE_COLOURS: ClassVar[dict[str, tuple[str | None, str | None]]] = {
+        "disabled": ("disabledforeground", "disabledbackground"),
+        "readonly": (None, "readonlybackground"),
+    }
+
     _widget_options: ClassVar[dict[str, Any]] = {
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         **_INSERT_CURSOR_OPTIONS,
         **_SELECTION_OPTIONS,
+        # The disabled and readonly looks; see _STATE_COLOURS. Tk's defaults
+        # are real colours, these are "": dimmed, and as normal.
+        "disabledbackground": "",
+        "disabledforeground": "",
+        "readonlybackground": "",
         # tkinter reports 1, not True: the value is what cget answers.
         "exportselection": 1,
         # Tk 9.0's ghost text - TkCurses-xe9.3. On the CLASSIC entry as well as
@@ -7965,9 +8100,9 @@ class Entry(_Drawable, XView):
         # no-op, so text inserted early is not scrolled against no width.
         self._field.fit_view(area.width)
         dispatcher = CursesDispatcher.get()
-        attribute = self._background_attribute() | self._font_attribute()
-        with contextlib.suppress(ValueError):
-            attribute = for_state(str(self._options["state"]), attribute)
+        attribute = self._in_state(
+            self._background_attribute() | self._font_attribute()
+        )
         with contextlib.suppress(_curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
@@ -8611,6 +8746,7 @@ class Menubutton(_TextWidget):
     _INDICATOR = "▾"
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        **_STATE_COLOUR_OPTIONS,
         "direction": "below",
         "indicatoron": False,
         "menu": None,
@@ -9126,6 +9262,10 @@ class Spinbox(Entry):
     _ARROW_WIDTH = 2
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        # The arrows: activebackground is stored only, since an arrow is not
+        # drawn held down; buttonbackground is theirs. TkCurses-gm66.4.
+        "activebackground": "",
+        "buttonbackground": "",
         "command": None,
         "format": "",
         "from": 0.0,
@@ -9389,9 +9529,16 @@ class Spinbox(Entry):
         if up_column is None or down_column is None:
             return
         area = super()._text_area()
-        attribute = self._background_attribute() | self._font_attribute()
-        with contextlib.suppress(ValueError):
-            attribute = for_state(str(self._options["state"]), attribute)
+        attribute = self._in_state(
+            self._background_attribute() | self._font_attribute()
+        )
+        if self._options["buttonbackground"]:
+            state = self._state_colours(str(self._options["state"]))
+            attribute = self._coloured(
+                attribute,
+                state[0] if state is not None else "",
+                self._options["buttonbackground"],
+            )
         dispatcher = CursesDispatcher.get()
         # Both arrows in one write, through the shared writer, for the reason
         # the listbox does the same: the second used to go on with insstr,
@@ -10735,9 +10882,9 @@ class Text(_Drawable, XView, YView):
         if window is None or self.tk.screen is None:
             return
         dispatcher = CursesDispatcher.get()
-        attribute = self._background_attribute() | self._font_attribute()
-        with contextlib.suppress(ValueError):
-            attribute = for_state(str(self._options["state"]), attribute)
+        attribute = self._in_state(
+            self._background_attribute() | self._font_attribute()
+        )
         area = self._text_area()
         with contextlib.suppress(_curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
@@ -12301,7 +12448,16 @@ class Menu(_Drawable):
         "radiobutton": ("(•) ", "( ) "),
     }
 
+    _STATE_COLOURS: ClassVar[dict[str, tuple[str | None, str | None]]] = {
+        "active": ("activeforeground", "activebackground"),
+        "disabled": ("disabledforeground", None),
+    }
+
     _widget_options: ClassVar[dict[str, Any]] = {
+        **_STATE_COLOUR_OPTIONS,
+        # The tick or bullet of a chosen check or radio entry. "" here, Tk's
+        # #000000: drawn as the label is. TkCurses-gm66.4.
+        "selectcolor": "",
         "postcommand": None,
         "relief": "raised",
         "takefocus": False,
@@ -12949,9 +13105,9 @@ class Menu(_Drawable):
             text = f" {entry.label} "
             style = attribute
             if number == self._active:
-                style |= _curses.A_REVERSE
+                style = self._in_state(style, "active")
             if str(entry.options.get("state")) == "disabled":
-                style = for_state("disabled", style)
+                style = self._in_state(style, "disabled")
             self._write_line(
                 dispatcher,
                 window,
@@ -12987,10 +13143,9 @@ class Menu(_Drawable):
                 continue
             style = attribute
             if str(entry.options.get("state")) == "disabled":
-                with contextlib.suppress(ValueError):
-                    style = for_state("disabled", style)
+                style = self._in_state(style, "disabled")
             if number == self._active:
-                style |= _curses.A_REVERSE
+                style = self._in_state(style, "active")
             if entry.kind == "separator":
                 self._write_line(
                     dispatcher,
@@ -13016,6 +13171,15 @@ class Menu(_Drawable):
                 clip_text(line, width),
                 style,
             )
+            self._draw_chosen_mark(
+                dispatcher,
+                window,
+                area.y + row,
+                x,
+                entry,
+                style,
+                number == self._active,
+            )
             self._draw_underline(
                 dispatcher,
                 window,
@@ -13024,6 +13188,38 @@ class Menu(_Drawable):
                 entry,
                 style,
             )
+
+    def _draw_chosen_mark(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        row: int,
+        x: int,
+        entry: MenuEntry,
+        style: int,
+        active: bool,
+    ) -> None:
+        """Draw a chosen entry's tick or bullet in ``selectcolor``, if given.
+
+        Tk's manual: "the color to display in the indicator when the check
+        button or radio button is selected". The mark, not the brackets.
+        """
+        colour = self._options["selectcolor"]
+        if not colour or entry.kind not in self._INDICATORS:
+            return
+        mark = self._INDICATORS[entry.kind][0]
+        if self._indicator_for(entry) != mark:
+            return
+        state = self._state_colours("active") if active else None
+        background = state[1] if state is not None else ""
+        self._write_line(
+            dispatcher,
+            window,
+            row,
+            x + 1,
+            mark[1],
+            self._coloured(style, colour, background),
+        )
 
     def _draw_underline(
         self,
@@ -13249,9 +13445,14 @@ class Listbox(_Drawable, XView, YView):
     browse it can be somewhere the selection is not.
     """
 
+    _STATE_COLOURS: ClassVar[dict[str, tuple[str | None, str | None]]] = {
+        "disabled": ("disabledforeground", None),
+    }
+
     _widget_options: ClassVar[dict[str, Any]] = {
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         **_SELECTION_OPTIONS,
+        "disabledforeground": "",  # dimmed, as before; see _in_state
         "activestyle": "underline",
         "font": "",
         "height": 10,
@@ -13667,9 +13868,9 @@ class Listbox(_Drawable, XView, YView):
             return
         area = self._text_area()
         dispatcher = CursesDispatcher.get()
-        attribute = self._background_attribute() | self._font_attribute()
-        with contextlib.suppress(ValueError):
-            attribute = for_state(str(self._options["state"]), attribute)
+        attribute = self._in_state(
+            self._background_attribute() | self._font_attribute()
+        )
         with contextlib.suppress(_curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
@@ -14199,6 +14400,10 @@ class Scrollbar(_Drawable):
     """
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        # Tk's are real colours; "" draws the scrollbar as it was. See
+        # _part_attribute. TkCurses-gm66.4.
+        "activebackground": "",
+        "troughcolor": "",
         "command": None,
         "orient": "vertical",
         "relief": "sunken",
@@ -14310,10 +14515,10 @@ class Scrollbar(_Drawable):
         be active. Any other name, a trough included, clears it rather than
         raising, and asking with none active answers None.
 
-        The state is recorded and nothing is drawn differently for it: this
-        Scrollbar has no ``activebackground`` or ``activerelief`` to draw it
-        in. Tk's ``scrlbar.tcl`` also activates the element under the
-        pointer on ``<Enter>`` and ``<Motion>``, which is not bound here.
+        The active element is drawn on ``activebackground``, when a program
+        gives one (TkCurses-gm66.4); ``activerelief`` is not taken. Tk's
+        ``scrlbar.tcl`` also activates the element under the pointer on
+        ``<Enter>`` and ``<Motion>``, which is not bound here.
 
         Args:
             index: The element to make active. Omitted, nothing changes.
@@ -14434,12 +14639,16 @@ class Scrollbar(_Drawable):
         ]
         trough = self._trough_bounds()
         thumb_start, thumb_end = self._thumb_range()
-        cells = [first_arrow]
+        cells = [(first_arrow, self._part_attribute("arrow1", attribute))]
+        thumb = self._part_attribute("slider", attribute)
+        empty = self._part_attribute("trough", attribute)
         for index in range(trough):
             cells.append(
-                self._THUMB if thumb_start <= index < thumb_end else self._TROUGH
+                (self._THUMB, thumb)
+                if thumb_start <= index < thumb_end
+                else (self._TROUGH, empty)
             )
-        cells.append(last_arrow)
+        cells.append((last_arrow, self._part_attribute("arrow2", attribute)))
 
         edge = BORDER_WIDTH if self._border_drawn else 0
         with contextlib.suppress(_curses.error):
@@ -14449,15 +14658,26 @@ class Scrollbar(_Drawable):
                 self._draw_border(
                     dispatcher, window, self._rect.width, self._rect.height, attribute
                 )
-            if self._vertical:
-                for offset, cell in enumerate(cells):
-                    self._write_line(
-                        dispatcher, window, edge + offset, edge, cell, attribute
-                    )
-            else:
+            # A cell at a time, each in its part's colours. One write of the
+            # whole row was enough while every part looked the same.
+            for offset, (cell, look) in enumerate(cells):
+                row, column = (offset, 0) if self._vertical else (0, offset)
                 self._write_line(
-                    dispatcher, window, edge, edge, "".join(cells), attribute
+                    dispatcher, window, edge + row, edge + column, cell, look
                 )
+
+    def _part_attribute(self, part: str, attribute: int) -> int:
+        """How one part is drawn: ``troughcolor`` behind the trough, and
+        ``activebackground`` behind the element ``activate`` names.
+
+        Both "" by default, Tk's being real colours: the scrollbar as it was.
+        TkCurses-gm66.4.
+        """
+        if part == "trough":
+            return self._coloured(attribute, "", self._options["troughcolor"])
+        if part == self._active_element:
+            return self._coloured(attribute, "", self._options["activebackground"])
+        return attribute
 
 
 def _scrollbar_press(event: Event) -> None:
@@ -14546,6 +14766,10 @@ class Scale(_Drawable):
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
+        # The handle while active or dragged, and the trough. Tk's are real
+        # colours; "" draws the scale as it was. TkCurses-gm66.4.
+        "activebackground": "",
+        "troughcolor": "",
         "bigincrement": 0,
         "command": None,
         "digits": 0,
@@ -14892,8 +15116,10 @@ class Scale(_Drawable):
             return
         dispatcher = CursesDispatcher.get()
         attribute = self._background_attribute() | self._font_attribute()
-        with contextlib.suppress(ValueError):
-            attribute = for_state(str(self._options["state"]), attribute)
+        # Tk shows an active scale by its handle, in activebackground. Given
+        # one, that is how it is shown here too, instead of reversed whole.
+        if not (self._active_handle() and self._handle_coloured()):
+            attribute = self._in_state(attribute)
         with contextlib.suppress(_curses.error):
             dispatcher.call(window.bkgd, " ", attribute)
             dispatcher.call(window.erase)
@@ -14956,8 +15182,13 @@ class Scale(_Drawable):
             return
         origin_x, origin_y = self._trough_origin()
         handle = self._offset_for(self._value)
+        empty = self._coloured(attribute, "", self._options["troughcolor"])
+        held = attribute
+        if self._active_handle() and self._handle_coloured():
+            held = self._coloured(attribute, "", self._options["activebackground"])
         cells = [
-            self._SLIDER if offset == handle else self._TROUGH for offset in range(span)
+            (self._SLIDER, held) if offset == handle else (self._TROUGH, empty)
+            for offset in range(span)
         ]
         focused = self.focus_get() is self
         left, right = self._FOCUS_CAPS if focused else (" ", " ")
@@ -14966,14 +15197,14 @@ class Scale(_Drawable):
                 dispatcher, window, origin_y - 1, origin_x, left, attribute
             )
             for thick in range(self._thickness()):
-                for offset, cell in enumerate(cells):
+                for offset, (cell, look) in enumerate(cells):
                     self._write_line(
                         dispatcher,
                         window,
                         origin_y + offset,
                         origin_x + thick,
                         cell,
-                        attribute,
+                        look,
                     )
             self._write_line(
                 dispatcher, window, origin_y + span, origin_x, right, attribute
@@ -14983,14 +15214,15 @@ class Scale(_Drawable):
                 self._write_line(
                     dispatcher, window, origin_y + thick, origin_x - 1, left, attribute
                 )
-                self._write_line(
-                    dispatcher,
-                    window,
-                    origin_y + thick,
-                    origin_x,
-                    "".join(cells),
-                    attribute,
-                )
+                for offset, (cell, look) in enumerate(cells):
+                    self._write_line(
+                        dispatcher,
+                        window,
+                        origin_y + thick,
+                        origin_x + offset,
+                        cell,
+                        look,
+                    )
                 self._write_line(
                     dispatcher,
                     window,
@@ -14999,6 +15231,19 @@ class Scale(_Drawable):
                     right,
                     attribute,
                 )
+
+    def _active_handle(self) -> bool:
+        """True while the handle is active: the state says so, or it is held.
+
+        Tk's ``tk::ScaleActivate``, in ``scale.tcl``, makes the scale active
+        while the pointer is over its handle, which it is for the whole of a
+        drag. Here there is no hover, so only the drag is seen.
+        """
+        return str(self._options["state"]) == "active" or self._dragging
+
+    def _handle_coloured(self) -> bool:
+        """True if ``activebackground`` is given and the terminal can show it."""
+        return bool(self._options["activebackground"]) and self.tk.colors is not None
 
     def _draw_ticks(
         self, dispatcher: CursesDispatcher, window: Any, attribute: int
