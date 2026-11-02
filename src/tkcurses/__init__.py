@@ -618,6 +618,41 @@ _INSERT_CURSOR_OPTIONS: dict[str, Any] = {
 #: left at it asks nothing of the terminal; see ``BaseWidget._cursor_style``.
 _TK_INSERT_WIDTH = _INSERT_CURSOR_OPTIONS["insertwidth"]
 
+
+class _TerminalsOwn(str):
+    """The ``""`` a colour option starts at, told apart from a ``""`` given.
+
+    It reads back, compares and prints as ``""``. Text's
+    ``inactiveselectbackground`` needs the difference: Tk's default is a grey,
+    so the selection stays visible without the focus, and a program that sets
+    ``""`` is asking for it to vanish. Here the default is the terminal's own
+    look, which is also ``""``. ``cget`` hands this object back, so
+    ``configure(option=cget(option))`` keeps the default. TkCurses-gm66.3.
+    """
+
+    __slots__ = ()
+
+
+#: Tk's selection options, on every widget that has a selection: Entry and
+#: Spinbox, Listbox, Text, and Canvas's text items. Tk 9.0.2's defaults except
+#: the colours, "" here: a selection nobody coloured is reversed, as it always
+#: was. See ``BaseWidget._selection_attribute``. TkCurses-gm66.3.
+_SELECTION_OPTIONS: dict[str, Any] = {
+    "selectbackground": "",
+    "selectborderwidth": 0,
+    "selectforeground": "",
+}
+
+#: Text's select colours and its ``sel`` tag's are one setting: measured on Tk
+#: 9.0.2, configuring either changes what the other reads back.
+_SELECTION_TAG_OPTIONS = {
+    "selectbackground": "background",
+    "selectforeground": "foreground",
+}
+_SELECTION_WIDGET_OPTIONS = {
+    tag: widget for widget, tag in _SELECTION_TAG_OPTIONS.items()
+}
+
 _TCL_INTEGER = re.compile(r"\s*[+-]?\d+\s*")
 
 
@@ -689,12 +724,16 @@ def _insert_unfocussed(widget: Any, value: Any) -> str:
 #: when drawn. These are checked because they reach the terminal itself.
 _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "blockcursor": _tcl_boolean,
+    "inactiveselectbackground": _colour_or_terminals,
     "insertbackground": _colour_or_terminals,
     "insertborderwidth": _screen_distance,
     "insertofftime": _tcl_integer,
     "insertontime": _tcl_integer,
     "insertunfocussed": _insert_unfocussed,
     "insertwidth": _screen_distance,
+    "selectbackground": _colour_or_terminals,
+    "selectborderwidth": _screen_distance,
+    "selectforeground": _colour_or_terminals,
 }
 
 
@@ -2626,6 +2665,33 @@ class BaseWidget(Misc):
             )
             colour = f"#{red:02x}{green:02x}{blue:02x}"
         return CursorStyle(shape=shape, colour=colour)
+
+    def _selection_attribute(
+        self, attribute: int, foreground: Any = None, background: Any = None
+    ) -> int:
+        """How selected text is drawn: in the colours given, else reversed.
+
+        ``foreground`` and ``background`` default to ``selectforeground`` and
+        ``selectbackground``. With neither set, or no colour on the terminal,
+        the selection is reversed, as it was before Tk's options were taken
+        (TkCurses-gm66.3). One set alone keeps the widget's colour for the
+        other, as a Text tag does.
+        """
+        options = self._options
+        if foreground is None:
+            foreground = options.get("selectforeground", "")
+        if background is None:
+            background = options.get("selectbackground", "")
+        colors = self.tk.colors
+        if colors is None or not (foreground or background):
+            return attribute | _curses.A_REVERSE
+        return with_colors(
+            attribute,
+            colors.attribute_for(
+                str(foreground or options.get("foreground") or "white"),
+                str(background or options.get("background") or "black"),
+            ),
+        )
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, or return them all when called with none.
@@ -7073,6 +7139,7 @@ class Entry(_Drawable, XView):
     _widget_options: ClassVar[dict[str, Any]] = {
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         **_INSERT_CURSOR_OPTIONS,
+        **_SELECTION_OPTIONS,
         # tkinter reports 1, not True: the value is what cget answers.
         "exportselection": 1,
         # Tk 9.0's ghost text - TkCurses-xe9.3. On the CLASSIC entry as well as
@@ -7928,7 +7995,7 @@ class Entry(_Drawable, XView):
     def _draw_selection(
         self, dispatcher: CursesDispatcher, window: Any, area: Rect, attribute: int
     ) -> None:
-        """Show the selected range in reverse video."""
+        """Show the selected range in the select colours, else reversed."""
         selection = self._field.selection
         if selection is None:
             return
@@ -7945,7 +8012,7 @@ class Entry(_Drawable, XView):
                 area.y,
                 area.x + start,
                 text,
-                attribute | _curses.A_REVERSE,
+                self._selection_attribute(attribute),
             )
 
     def _draw_cursor(
@@ -9449,7 +9516,9 @@ class Text(_Drawable, XView, YView):
     _widget_options: ClassVar[dict[str, Any]] = {
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         **_INSERT_CURSOR_OPTIONS,
+        **_SELECTION_OPTIONS,
         "blockcursor": 0,
+        "inactiveselectbackground": _TerminalsOwn(),
         "insertunfocussed": "none",
         "autoseparators": True,
         "exportselection": True,
@@ -9547,9 +9616,13 @@ class Text(_Drawable, XView, YView):
         self._buffer.mark_set("insert", "1.0")
         self._buffer.mark_set("current", "1.0")
         # The selection is a tag like any other, which is why sel.first works
-        # as an index. It is given its look here so a selection shows up
-        # without the application configuring anything.
-        self.tag_configure("sel", background="", foreground="")
+        # as an index. Its colours are the widget's select colours, and in Tk
+        # each follows the other: see _SELECTION_TAG_OPTIONS.
+        self.tag_configure(
+            "sel",
+            background=self._options["selectbackground"],
+            foreground=self._options["selectforeground"],
+        )
         self._apply_requested_size()
         self._install_class_bindings()
 
@@ -9601,6 +9674,9 @@ class Text(_Drawable, XView, YView):
         result = super().configure(cnf, **kw)
         if not given:
             return result
+        selection = self._tag_options["sel"]
+        for widget_option, tag_option in _SELECTION_TAG_OPTIONS.items():
+            selection[tag_option] = self._options[widget_option]
         if {"width", "height"} & set(given):
             self._apply_requested_size()
             self._invalidate_layout()
@@ -10079,6 +10155,8 @@ class Text(_Drawable, XView, YView):
             if resolved not in self._TAG_OPTIONS:
                 raise TclError(f'unknown option "-{option}"')
             options[resolved] = value
+            if name == "sel" and resolved in _SELECTION_WIDGET_OPTIONS:
+                self._options[_SELECTION_WIDGET_OPTIONS[resolved]] = value
             if resolved in _MARGIN_OPTIONS and value not in (0, "", None):
                 # Latches on rather than being recomputed: a margin set and
                 # then cleared is rare, and paying for the scan once is
@@ -10795,9 +10873,7 @@ class Text(_Drawable, XView, YView):
     def _tag_attribute(self, name: str) -> int | None:
         """What a tag does to the cells it covers, or None if nothing.
 
-        ``sel`` with no colours configured falls back to reverse video, so a
-        selection is visible on a terminal that has no colour and in an
-        application that never configured the tag.
+        ``sel`` is the selection, drawn by ``_selected_text_attribute``.
         """
         options = self._tag_options.get(name)
         if options is None:
@@ -10810,15 +10886,33 @@ class Text(_Drawable, XView, YView):
             underline="underline" in font or bool(options.get("underline")),
         )
         foreground, background = options.get("foreground"), options.get("background")
+        if name == "sel":
+            return self._selected_text_attribute(attribute, foreground, background)
         colors = self.tk.colors
         if colors is not None and (foreground or background):
             attribute |= colors.attribute_for(
                 str(foreground or self._options["foreground"] or "white"),
                 str(background or self._options["background"] or "black"),
             )
-        elif name == "sel":
-            attribute |= _curses.A_REVERSE
         return attribute or None
+
+    def _selected_text_attribute(
+        self, attribute: int, foreground: Any, background: Any
+    ) -> int | None:
+        """What the ``sel`` tag does: the select colours, else reversed.
+
+        Without the focus, ``inactiveselectbackground`` takes the background's
+        place, as in Tk, and a ``""`` a program gave it hides the selection.
+        The ``""`` it starts at does not: that one is the terminal's own look,
+        the same as with the focus (TkCurses-gm66.3, and ``_TerminalsOwn``).
+        """
+        if self.focus_get() is not self:
+            inactive = self._options["inactiveselectbackground"]
+            if inactive == "" and not isinstance(inactive, _TerminalsOwn):
+                return None
+            if inactive:
+                background = inactive
+        return self._selection_attribute(attribute, foreground or "", background or "")
 
     def _draw_cursor(
         self,
@@ -11349,6 +11443,8 @@ class Canvas(_Drawable, XView, YView):
     _widget_options: ClassVar[dict[str, Any]] = {
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         **_INSERT_CURSOR_OPTIONS,
+        **_SELECTION_OPTIONS,
+        "selectborderwidth": 1,  # Tk's default on a Canvas alone
         # How far from an item's ink still counts as being on it. Tk's
         # default is 1, and a terminal needs it more than Tk does: a thin
         # outline is one pixel wide and a click only names a whole cell.
@@ -13155,6 +13251,7 @@ class Listbox(_Drawable, XView, YView):
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
+        **_SELECTION_OPTIONS,
         "activestyle": "underline",
         "font": "",
         "height": 10,
@@ -13600,7 +13697,7 @@ class Listbox(_Drawable, XView, YView):
     ) -> None:
         """Draw one row: its markers if selected, then its text."""
         selected = position in self._selection
-        style = attribute | (_curses.A_REVERSE if selected else 0)
+        style = self._selection_attribute(attribute) if selected else attribute
         if position == self._active and self.focus_get() is self and not selected:
             style |= _curses.A_UNDERLINE
         left, right = self._SELECTED_MARKERS if selected else (" ", " ")

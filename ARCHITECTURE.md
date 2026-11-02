@@ -3896,6 +3896,34 @@ terminal of where the keyboard is. Decided with the author;
 `tests/test_button_tty.py` and `tests/test_entry_tty.py` pin the cue at
 thickness 0.
 
+**Tk's selection colours are taken, and a selection nobody coloured stays
+reversed** (`TkCurses-gm66.3`). `-selectbackground`, `-selectforeground` and
+`-selectborderwidth` on Entry, Spinbox, Listbox, Text and Canvas, and
+`-inactiveselectbackground` on Text. Given either colour, a selection is drawn
+in it, the widget's own colour standing in for the other, as a Text tag's do.
+Given neither, or on a terminal with no colour, it is reversed as before.
+`-selectborderwidth` is stored and answered only: a cell has no 3-D edge.
+Measured on Tk 9.0.2, where the manual says nothing:
+
+| What | Tk 9.0.2 | Here |
+|------|----------|------|
+| Colour defaults | `#c3c3c3` on `#000000` | `""`, the terminal's own: reversed |
+| `-selectborderwidth` default | 1 on a Canvas, 0 elsewhere | the same |
+| `-selectbackground ""` | refused, `unknown color name ""` | accepted, as every colour here |
+| `-selectforeground ""` | accepted | accepted |
+| `-selectborderwidth -3` / `2.7` | 0 / 2.7 | 0 / 3 (whole cells) |
+| Text's select options and its `sel` tag's | one setting: configuring either changes what the other reads back, `-selectborderwidth` with the tag's `-borderwidth` too | the same for the colours; a tag here has no `-borderwidth` |
+
+**`-inactiveselectbackground ""` hides an unfocused selection, and its default
+does not.** Tk's manual: if it is empty, "no selection is shown when the window
+does not have the focus". Tk's default is the same grey as the active colour,
+so a selection normally stays visible; here every colour defaults to `""`,
+which would have hidden every unfocused selection. The default is therefore a
+`""` that can be told apart from one a program gives (`_TerminalsOwn`): it
+reads back and compares as `""`, keeps the focused look, and survives
+`configure(x=cget(x))`. A colour given draws the unfocused selection on it, as
+in Tk. Decided with the author.
+
 **Validation gates `insert` and `delete`, not only keystrokes.** `-validate`
 is a condition, and the two that name an edit - `key` and `all` - apply to a
 programmatic edit exactly as to a typed one. So does `-state`: a `readonly` or
