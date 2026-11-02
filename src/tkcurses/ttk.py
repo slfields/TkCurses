@@ -4694,17 +4694,31 @@ class Panedwindow(Widget, tkcurses.PanedWindow):
         """Remove a pane, and with it the weight the layout held for it."""
         super().forget(child)
 
-    def pane(self, index: Any, **kw: Any) -> Any:
+    def pane(self, index: Any, option: str | None = None, **kw: Any) -> Any:
         """Read or set one pane's options.
 
         Args:
             index: Which pane, by position or by widget.
+            option: One option to read, by name - ``pane(child, "weight")``.
+                It was refused here with a TypeError until TkCurses-kopw.
             **kw: Options to set; omit them to read instead.
 
         Returns:
             Reading: a dict of the pane's ttk options. Measured against ttk
-            9.0, that is ``{'weight': N}`` and nothing else.
+            9.0, that is ``{'weight': N}`` and nothing else. With ``option``,
+            that one value.
+
+        Raises:
+            TclError: For an ``option`` a ttk pane does not have. Measured on
+                Tk 9.0.2, that is every name but ``weight`` - ``minsize``
+                included - as ``unknown option "-minsize"``, and the name is
+                taken as given: ``"-weight"`` is ``unknown option "--weight"``.
         """
+        if option is not None:
+            current = self.pane(index)
+            if option not in current:
+                raise TclError(f'unknown option "-{option}"')
+            return current[option]
         if kw and not tkcurses._given(None, kw):
             return None  # every option None, which tkinter drops
         kw = tkcurses._given(None, kw)

@@ -3669,3 +3669,27 @@ def test_adding_a_pane_again_is_refused(root):
     with pytest.raises(TclError, match=r"\.pw\.a already added"):
         paned.add(child)
     assert paned.pane(child) == {"weight": 3}
+
+
+# -------------------------------- ttk.Panedwindow.pane(child, option) (kopw)
+
+
+def test_pane_answers_one_option_by_name(root):
+    """Measured on ttk 9.0.2: by widget or by index, with ttk's default 0."""
+    paned = Panedwindow(root, name="pw")
+    weighted, plain = tkcurses.Frame(paned, name="a"), tkcurses.Frame(paned, name="b")
+    paned.add(weighted, weight=2)
+    paned.add(plain)
+    assert paned.pane(weighted, "weight") == 2
+    assert paned.pane(0, "weight") == 2
+    assert paned.pane(plain, "weight") == 0
+    assert paned.pane(weighted, option="weight") == 2
+
+
+@pytest.mark.parametrize("name", ["nope", "minsize", "-weight"])
+def test_pane_refuses_an_option_ttk_panes_lack(root, name):
+    paned = Panedwindow(root, name="pw")
+    child = tkcurses.Frame(paned, name="a")
+    paned.add(child)
+    with pytest.raises(TclError, match=f'unknown option "-{name}"'):
+        paned.pane(child, name)
