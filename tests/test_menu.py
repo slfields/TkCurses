@@ -566,3 +566,100 @@ def test_clicking_away_from_a_bar_dropdown_frees_the_keyboard(root):
     bar.invoke(0)
     dropdown._handle(MouseEvent(button=1, state="pressed", x=55, y=20))
     assert root.focus_get() is None
+
+
+# ------------------------------------- setting and removing a window's menubar
+#
+# TkCurses-un8i. Measured on Tk 9.0.2: menu="" removes the bar and leaves the
+# menu in existence; a path name works as well as the widget; a name that
+# matches nothing is stored as given and shows no bar.
+
+
+@pytest.fixture
+def window(root):
+    from tkcurses import Frame, Toplevel
+
+    top = Toplevel(root, name="top")
+    top._allocate(Rect(0, 0, 30, 10))
+    top._map()
+    top.body = Frame(top, name="body")
+    top.body.pack(fill="both", expand=True)
+    top.bars = []
+    for label in ("One", "Two"):
+        bar = Menu(top, name=label.lower())
+        bar.add_cascade(label=label)
+        top.bars.append(bar)
+    top.top_row = _body_row(top)
+    return top
+
+
+def _body_row(window):
+    """How far down the window its contents start: its border, plus any bar."""
+    window.update_layout()
+    return window.body.winfo_y()
+
+
+def _shows_bar(window):
+    return _body_row(window) == window.top_row + 1
+
+
+def test_an_empty_menu_removes_the_menubar(window):
+    one = window.bars[0]
+    window.configure(menu=one)
+    assert _shows_bar(window)
+    window.configure(menu="")
+    assert window.cget("menu") == ""
+    assert not _shows_bar(window), "the row goes back to the children"
+    assert not one.winfo_ismapped() and not one._as_menubar
+    assert one.winfo_exists(), "removed from the window, not destroyed"
+
+
+def test_a_window_can_be_built_with_no_menubar(root):
+    """It never crashed, but it took a row from the children for a bar not there."""
+    from tkcurses import Toplevel
+
+    plain = Toplevel(root, name="plain")
+    empty = Toplevel(root, name="empty", menu="")
+    for top in (plain, empty):
+        top._allocate(Rect(0, 0, 30, 10))
+    assert empty.cget("menu") == ""
+    assert empty._content_rect() == plain._content_rect()
+
+
+def test_a_new_menubar_replaces_the_old_one(window):
+    one, two = window.bars
+    window.configure(menu=one)
+    window.configure(menu=two)
+    assert _shows_bar(window)
+    assert two.winfo_ismapped() and two._as_menubar
+    assert not one.winfo_ismapped(), "the old bar was left drawn over the new"
+    assert not one._as_menubar
+
+
+def test_a_menubar_can_be_named_by_its_path(window):
+    one = window.bars[0]
+    window.configure(menu=str(one))
+    assert _shows_bar(window)
+    assert one.winfo_ismapped() and one._as_menubar
+
+
+@pytest.mark.parametrize("name", [".nosuch", ".top.body"])
+def test_a_name_that_is_no_menu_is_kept_and_shows_no_bar(window, name):
+    window.configure(menu=window.bars[0])
+    window.configure(menu=name)
+    assert window.cget("menu") == name
+    assert not _shows_bar(window)
+    assert not window.bars[0].winfo_ismapped()
+
+
+def test_none_removes_the_bar_it_used_to_leave_drawn(window):
+    """Before, None gave the row back to the children with the bar still on it.
+
+    tkinter itself ignores an option given as None (TkCurses-bx5b); until this
+    library does too, None at least has to leave the window consistent.
+    """
+    one = window.bars[0]
+    window.configure(menu=one)
+    window.configure(menu=None)
+    assert not _shows_bar(window)
+    assert not one.winfo_ismapped()

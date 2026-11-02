@@ -581,6 +581,28 @@ _MOUSE_EVENT_TYPES: dict[str, str] = {
 }
 
 
+def _menubar_of(window: Any) -> Menu | None:
+    """The Menu a window's ``menu`` option names, or None for no menubar.
+
+    Tk takes the menu as a widget or as its path name, and ``""`` for none -
+    which is also what ``cget("menu")`` answers by default, and how a program
+    removes a menubar (TkCurses-un8i: it crashed here). Measured on Tk 9.0.2,
+    the name is not checked when it is set: one that names nothing, or names a
+    widget that is not a menu, is stored as given, and no bar is shown.
+    """
+    value = getattr(window, "_options", {}).get("menu")
+    if isinstance(value, str):
+        if not value:
+            return None
+        try:
+            value = window.nametowidget(value)
+        except KeyError:
+            return None
+    if isinstance(value, Menu) and value.winfo_exists():
+        return value
+    return None
+
+
 def _answering_queries(method: Callable[..., Any]) -> Callable[..., Any]:
     """``method`` as a ``configure`` that also answers ``configure("name")``.
 
@@ -1332,7 +1354,7 @@ class Misc:
         rect = Rect(
             self.winfo_rootx(), self.winfo_rooty(), self._rect.width, self._rect.height
         )
-        if self._options.get("menu") is not None:
+        if _menubar_of(self) is not None:
             # A menubar sits inside the window's border and above everything
             # else in it, so the row it occupies is not the children's to
             # use. Taken off here rather than in each window class, because
@@ -1375,7 +1397,7 @@ class Misc:
         """
         edge = 2 * BORDER_WIDTH if self._bordered else 0
         padding = self._content_padding()
-        menu = 1 if self._options.get("menu") is not None else 0
+        menu = 1 if _menubar_of(self) is not None else 0
         return Size(
             content.width + edge + padding.width,
             content.height + edge + padding.height + menu,
@@ -3453,6 +3475,7 @@ class Wm:
         _is_toplevel: bool
 
         _menubar_bound: bool
+        _menubar_shown: Menu | None
 
         @property
         def _border_drawn(self) -> bool: ...
@@ -3469,6 +3492,7 @@ class Wm:
         def _screen_size(self) -> tuple[int, int]: ...
         def winfo_exists(self) -> bool: ...
         def tkraise(self, aboveThis: Misc | None = None) -> None: ...
+        def _invalidate_layout(self) -> None: ...
 
     def _attach_menubar(self) -> None:
         """Lay the window's ``menu`` across its top row, and keep it there.
@@ -3480,8 +3504,21 @@ class Wm:
         ``<Configure>`` binding re-places it, so the bar follows the window
         when the terminal is resized.
         """
-        if self._options.get("menu") is None:
+        bar = _menubar_of(self)
+        old = self._menubar_shown
+        if old is not None and old is not bar:
+            # Replaced or removed: the old bar goes back to being an ordinary
+            # menu, off screen, and its row goes back to the children. Left
+            # alone it stayed drawn and live on top of whatever took the row.
+            old._as_menubar = False
+            if old.winfo_exists():
+                old._unmap()
+            self._invalidate_layout()
+        self._menubar_shown = bar
+        if bar is None:
             return
+        if old is None:
+            self._invalidate_layout()
         if not self._menubar_bound:
             self._menubar_bound = True
             self.bind("<Configure>", lambda _event: self._place_menubar(), add=True)
@@ -3489,7 +3526,7 @@ class Wm:
 
     def _place_menubar(self) -> None:
         """Put the menubar across the top of this window's border."""
-        bar = self._options.get("menu")
+        bar = self._menubar_shown
         if bar is None or not bar.winfo_exists():
             return
         bar._as_menubar = True
@@ -3507,6 +3544,7 @@ class Wm:
         itself, and these defaults have to be in place before geometry is.
         """
         self._menubar_bound = False
+        self._menubar_shown = None
         self._title = ""
         self._protocols: dict[str, Callable[[], Any]] = {}
         self._min_size: tuple[int, int] = (1, 1)

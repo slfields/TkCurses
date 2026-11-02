@@ -322,3 +322,32 @@ def test_a_menu_survives_the_terminal_shrinking(terminal, tmp_path):
     term.resize(cols=30, rows=10)
     term.wait_for_text("File")
     assert "Traceback" not in term.stderr
+
+
+REMOVED_MENUBAR = """
+import tkcurses
+
+root = tkcurses.Tk()
+bar = tkcurses.Menu(root)
+bar.add_cascade(label="File", menu=tkcurses.Menu(bar))
+root.configure(menu=bar)
+tkcurses.Label(root, text='window contents').pack(anchor='nw')
+root.bind('x', lambda event: root.configure(menu=''))
+root.after(8000, root.quit)
+root.mainloop()
+"""
+
+
+def test_an_empty_menu_takes_the_bar_off_screen(terminal, tmp_path):
+    """TkCurses-un8i: menu="" crashed. Now the bar goes and the row comes back."""
+    term = terminal(cols=40, rows=10)
+    term.run_source(REMOVED_MENUBAR, workdir=tmp_path)
+    term.wait_for(
+        lambda t: "File" in t.display[0] and "window contents" in t.display[1],
+        message="the bar above the contents",
+    )
+    term.send_keys("x")
+    term.wait_for(
+        lambda t: "File" not in t.display[0] and "window contents" in t.display[0],
+        message="the bar gone and the contents moved up into its row",
+    )

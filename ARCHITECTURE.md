@@ -4182,6 +4182,17 @@ for used to go on to `bind_all` shortcuts behind it. **Left in a dropdown of
 the menubar** opens the menu to its left, where it closed the dropdown; only
 a submenu closes back to its parent. All three found running UAT 46.
 
+**A window's `-menu` is a widget, a path name, or `""` for none.** The manual
+says only that it names a menu to use as the menubar. Measured on Tk 9.0.2:
+`""` is the default `cget("menu")` answers and how a program removes a bar,
+and the menu itself survives; a path name works as well as the widget; and the
+name is **not checked when it is set** — `.nosuch`, or a Frame's path, is
+stored as given and shows no bar. Here `""` used to crash
+(`TkCurses-un8i`), and replacing or removing a bar left the old one drawn and
+live while the children got its row back. Now the old bar is unmapped and
+stops being a menubar. `menu=None` removes the bar too, where tkinter ignores
+an option given as `None` — that difference is library-wide (`TkCurses-bx5b`).
+
 Tk's keyboard traversal ignores columns (`menu.tcl`, `MenuNextEntry`): Up and
 Down go by index and wrap, so Down from a column's foot is the next column's
 top; Left and Right still move between menus. A menu in columns **does not
