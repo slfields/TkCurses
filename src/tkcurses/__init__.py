@@ -154,7 +154,12 @@ from tkcurses._core.pack import FILLS, SIDES, PackLayout, PackOptions, parse_anc
 from tkcurses._core.paned import SASH_WIDTH, PanedLayout, PaneOptions
 from tkcurses._core.panels import PanelStack
 from tkcurses._core.place import BORDERMODES, PlaceLayout, PlaceOptions
-from tkcurses._core.screen import CursesScreen, TerminalCursor
+from tkcurses._core.screen import (
+    TERMINALS_OWN,
+    CursesScreen,
+    CursorStyle,
+    TerminalCursor,
+)
 from tkcurses._core.system_clipboard import ask_terminal_for_osc52, choose_route
 from tkcurses._core.text import align_offset, measure, wrap, wrap_spans
 from tkcurses._core.textbuffer import Index, TextBuffer
@@ -595,6 +600,102 @@ def _given(cnf: dict[str, Any] | None, kw: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value for key, value in {**(cnf or {}), **kw}.items() if value is not None
     }
+
+
+#: Tk's insertion-cursor options, on every widget with an insert point: Entry
+#: and Spinbox, Text, and Canvas's text items. Tk 9.0.2's defaults, except the
+#: colour, which is "" as every colour here is - the terminal's own. What they
+#: do is ``BaseWidget._cursor_style``. TkCurses-gm66.2.
+_INSERT_CURSOR_OPTIONS: dict[str, Any] = {
+    "insertbackground": "",
+    "insertborderwidth": 0,
+    "insertofftime": 300,
+    "insertontime": 600,
+    "insertwidth": 2,
+}
+
+#: Tk draws its cursor this many pixels wide unless told otherwise. A width
+#: left at it asks nothing of the terminal; see ``BaseWidget._cursor_style``.
+_TK_INSERT_WIDTH = _INSERT_CURSOR_OPTIONS["insertwidth"]
+
+_TCL_INTEGER = re.compile(r"\s*[+-]?\d+\s*")
+
+
+def _tcl_integer(widget: Any, value: Any) -> int:
+    """An integer option, refused as Tk refuses it. Measured on Tk 9.0.2."""
+    del widget
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, str) and _TCL_INTEGER.fullmatch(value):
+        return int(value)
+    raise TclError(f'expected integer but got "{value}"')
+
+
+def _as_int(value: Any, otherwise: int) -> int:
+    """An integer option as stored, which the option database leaves a string."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return otherwise
+
+
+def _screen_distance(widget: Any, value: Any) -> int:
+    """A size that cannot go below zero: Tk stores -3 as 0, measured.
+
+    Suffixed distances - ``2p``, ``1c`` - are refused, as everywhere here
+    (TkCurses-2qo).
+    """
+    del widget
+    try:
+        number = round(float(value))
+    except (TypeError, ValueError):
+        raise TclError(f'expected screen distance but got "{value}"') from None
+    return max(0, number)
+
+
+def _colour_or_terminals(widget: Any, value: Any) -> Any:
+    """A colour, or "" for the terminal's own. Tk refuses "", and has no such
+    thing as the terminal's colour to give it."""
+    if value == "":
+        return value
+    try:
+        widget.winfo_rgb(str(value))
+    except (TclError, ValueError):
+        raise TclError(f'unknown color name "{value}"') from None
+    return value
+
+
+def _tcl_boolean(widget: Any, value: Any) -> int:
+    """A boolean option, answered as Tk answers it: ``yes`` reads back 1."""
+    try:
+        return int(widget.getboolean(value))
+    except TclError:
+        raise TclError(f'expected boolean value but got "{value}"') from None
+
+
+def _insert_unfocussed(widget: Any, value: Any) -> str:
+    """``hollow``, ``none`` or ``solid``, by any unique prefix, as Tk takes it."""
+    del widget
+    choices = ("hollow", "none", "solid")
+    text = str(value)
+    matches = [choice for choice in choices if text and choice.startswith(text)]
+    if len(matches) != 1:
+        raise TclError(f'bad insertunfocussed "{text}": must be hollow, none, or solid')
+    return matches[0]
+
+
+#: Options whose values are checked, and stored as Tk would store them. Most
+#: options here are not: a colour or a relief is taken as given and resolved
+#: when drawn. These are checked because they reach the terminal itself.
+_OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
+    "blockcursor": _tcl_boolean,
+    "insertbackground": _colour_or_terminals,
+    "insertborderwidth": _screen_distance,
+    "insertofftime": _tcl_integer,
+    "insertontime": _tcl_integer,
+    "insertunfocussed": _insert_unfocussed,
+    "insertwidth": _screen_distance,
+}
 
 
 def _menubar_of(window: Any) -> Menu | None:
@@ -1194,6 +1295,15 @@ class Misc:
             return False
         focused.event_generate("<<Copy>>")
         return True
+
+    def _focused_cursor_style(self) -> CursorStyle:
+        """What the focused widget asks of the terminal cursor's look."""
+        focused = self.tk.focus
+        return TERMINALS_OWN if focused is None else focused._cursor_style()
+
+    def _cursor_style(self) -> CursorStyle:
+        """Nothing, for anything with no insertion cursor of its own."""
+        return TERMINALS_OWN
 
     def _focused_insert_cell(self) -> tuple[int, int] | None:
         """Where the terminal's cursor belongs: the focused widget's insert point.
@@ -2475,8 +2585,47 @@ class BaseWidget(Misc):
             option = _keyword_option(name, spec, self._option_synonyms)
             if option not in spec:
                 raise TclError(f'unknown option "-{name}"')
-            resolved[option] = value
+            check = _OPTION_VALUES.get(option)
+            resolved[option] = value if check is None else check(self, value)
         return resolved
+
+    def _cursor_style(self) -> CursorStyle:
+        """What this widget asks of the terminal's cursor while it has the focus.
+
+        Tk draws its own cursor and these options shape it. Here the cursor is
+        the terminal's, as the person set it up (UAT 43, TkCurses-lw2), so an
+        option left at Tk's default asks for nothing. One a program changed
+        asks for the nearest thing a terminal has (TkCurses-gm66.2):
+
+        - ``blockcursor`` on a Text: a block over the character, as Tk draws.
+        - ``insertwidth`` at anything but Tk's 2: a bar, which is Tk's shape
+          at every width. A terminal cell has no width to give it.
+        - ``insertofftime`` of 0 or less: a cursor that does not blink, which
+          is what Tk's manual says 0 means. Asked alone, it is a steady *bar*,
+          because that is the cursor Tk would be drawing.
+        - ``insertbackground``: the cursor's colour.
+
+        ``insertontime``'s length and ``insertborderwidth``'s 3-D edge have no
+        terminal request, nor has the blink's speed, and ``insertunfocussed``
+        would need a second cursor; they are stored and answered only.
+        """
+        options = self._options
+        if "insertwidth" not in options:
+            return TERMINALS_OWN
+        block = bool(options.get("blockcursor", 0))
+        steady = _as_int(options["insertofftime"], 300) <= 0
+        reshaped = _as_int(options["insertwidth"], _TK_INSERT_WIDTH) != _TK_INSERT_WIDTH
+        shape = None
+        if block or reshaped or steady:
+            shape = (2 if steady else 1) if block else (6 if steady else 5)
+        colour = None
+        if options["insertbackground"]:
+            red, green, blue = (
+                channel // 257
+                for channel in self.winfo_rgb(options["insertbackground"])
+            )
+            colour = f"#{red:02x}{green:02x}{blue:02x}"
+        return CursorStyle(shape=shape, colour=colour)
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, or return them all when called with none.
@@ -4278,7 +4427,9 @@ class Tk(BaseWidget, Wm):
             self.tk.panels = PanelStack()
             # The terminal's own cursor, at the focused widget's insert point;
             # see TerminalCursor. Both flush paths place it.
-            cursor = TerminalCursor(self._focused_insert_cell)
+            cursor = TerminalCursor(
+                self._focused_insert_cell, self._focused_cursor_style
+            )
             self._screen.cursor = cursor
             self.tk.panels.cursor = cursor
             self._rect = Rect(0, 0, buffer.width, buffer.height)
@@ -6921,6 +7072,7 @@ class Entry(_Drawable, XView):
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
+        **_INSERT_CURSOR_OPTIONS,
         # tkinter reports 1, not True: the value is what cget answers.
         "exportselection": 1,
         # Tk 9.0's ghost text - TkCurses-xe9.3. On the CLASSIC entry as well as
@@ -9296,6 +9448,9 @@ class Text(_Drawable, XView, YView):
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
+        **_INSERT_CURSOR_OPTIONS,
+        "blockcursor": 0,
+        "insertunfocussed": "none",
         "autoseparators": True,
         "exportselection": True,
         "font": "",
@@ -11193,6 +11348,7 @@ class Canvas(_Drawable, XView, YView):
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
+        **_INSERT_CURSOR_OPTIONS,
         # How far from an item's ink still counts as being on it. Tk's
         # default is 1, and a terminal needs it more than Tk does: a thin
         # outline is one pixel wide and a click only names a whole cell.

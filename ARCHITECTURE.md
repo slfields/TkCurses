@@ -2252,6 +2252,41 @@ over painting a better imitation:
   wrapped in a cursor save and restore (DECSC / DECRC); otherwise the cursor
   would be left wherever the last image cell went.
 
+**Tk's insertion-cursor options steer it** (`TkCurses-gm66.2`), and only when a
+program changes them. Canvas, Entry, Spinbox and Text take `-insertbackground`,
+`-insertborderwidth`, `-insertofftime`, `-insertontime` and `-insertwidth`, and
+Text also `-blockcursor` and `-insertunfocussed`. They were refused until this.
+The values are checked and stored as Tk 9.0.2 does, with its messages:
+`insertwidth=-3` reads back 0, `blockcursor="yes"` reads back 1,
+`insertunfocussed="h"` reads back `hollow`, `insertofftime="x"` is
+`expected integer but got "x"`. The one difference is the colour's default,
+`""` for the terminal's own where Tk's is `#000000`.
+
+An option left at Tk's default asks for nothing, so the UAT 43 choice stands:
+the person's cursor, as their terminal is set up. One a program changed asks
+the terminal for the nearest thing it has, decided with the author:
+
+| Tk asks for | The terminal is asked for |
+|---|---|
+| `blockcursor=1` on a Text | a block (DECSCUSR 1), steady (2) if it does not blink |
+| `insertwidth` other than 2 | a bar (5), steady (6) if it does not blink: Tk's shape at every width, and a cell has no width to give it |
+| `insertofftime` 0 or less | a steady cursor, which is what Tk's manual says 0 means; asked alone, a steady **bar**, the cursor Tk would draw |
+| `insertbackground` | its colour (OSC 12), as `#rrggbb` |
+
+`insertontime`'s length, the blink's speed and `insertborderwidth`'s 3-D edge
+have no request a terminal understands. `insertunfocussed` would need a second
+cursor, because the terminal has one and it is where typing goes. All of them
+are stored and answered only.
+
+**The request goes with the focus.** `TerminalCursor` sends it when the focused
+widget's style changes, never each frame. Focus moving to a widget that asks
+nothing sends the resets, DECSCUSR 0 and OSC 112, which are the person's own
+settings rather than a guess at them. `CursesScreen.stop` sends them at exit
+too, because a cursor shape outlives the program that set it. A terminal that
+does not understand a request ignores it. The tests read the bytes the program
+writes, since the emulator under the harness keeps no cursor shape:
+`tests/test_insert_cursor_tty.py`.
+
 ### Selecting with the mouse
 
 Double-, triple- and Shift-clicks, a drag after each, and autoscroll, in Entry,
@@ -3760,7 +3795,7 @@ and until `TkCurses-bfy` all three of ours did.
 | `show` | char | Password mask |
 | `state` | NORMAL/DISABLED/READONLY | Same |
 | `justify` | LEFT/CENTER/RIGHT | Text alignment |
-| `insertwidth` | pixels | 1 cell (cursor) |
+| `insertwidth` | pixels | Changed from 2, asks the terminal for a bar cursor (see "The insertion cursor is the terminal's own") |
 | `exportselection` | puts the selection on PRIMARY | Same, against the in-process PRIMARY |
 | `placeholder` | ghost text in an empty field | Same |
 | `placeholderforeground` | its colour | Honoured; **dim** when unset (see below) |

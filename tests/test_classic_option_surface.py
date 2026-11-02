@@ -65,7 +65,6 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
         "TkCurses-l26": "bitmap",
     },
     "Canvas": {
-        "TkCurses-gm66.2": "insertbackground insertborderwidth insertofftime insertontime insertwidth",
         "TkCurses-gm66.3": "selectbackground selectborderwidth selectforeground",
         "TkCurses-gm66.10": "confine offset xscrollincrement yscrollincrement",
     },
@@ -76,7 +75,6 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
         "TkCurses-l26": "bitmap",
     },
     "Entry": {
-        "TkCurses-gm66.2": "insertbackground insertborderwidth insertofftime insertontime insertwidth",
         "TkCurses-gm66.3": "selectbackground selectborderwidth selectforeground",
         "TkCurses-gm66.4": "disabledbackground disabledforeground readonlybackground",
     },
@@ -133,14 +131,12 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
         "TkCurses-gm66.6": "jump repeatdelay repeatinterval",
     },
     "Spinbox": {
-        "TkCurses-gm66.2": "insertbackground insertborderwidth insertofftime insertontime insertwidth",
         "TkCurses-gm66.3": "selectbackground selectborderwidth selectforeground",
         "TkCurses-gm66.4": "activebackground buttonbackground disabledbackground disabledforeground readonlybackground",
         "TkCurses-gm66.5": "buttoncursor buttondownrelief buttonuprelief",
         "TkCurses-gm66.6": "repeatdelay repeatinterval",
     },
     "Text": {
-        "TkCurses-gm66.2": "blockcursor insertbackground insertborderwidth insertofftime insertontime insertunfocussed insertwidth",
         "TkCurses-gm66.3": "inactiveselectbackground selectbackground selectborderwidth selectforeground",
         "TkCurses-gm66.7": "setgrid",
         "TkCurses-gm66.8": "endline maxundo spacing1 spacing2 spacing3 startline",

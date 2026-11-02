@@ -37,6 +37,7 @@ import atexit
 import contextlib
 import curses
 import os
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -308,6 +309,30 @@ class ScreenBuffer:
         return f"<ScreenBuffer {self._width}x{self._height} dirty={self.is_dirty}>"
 
 
+@dataclass(frozen=True)
+class CursorStyle:
+    """What a widget asks of the terminal's cursor, beyond where it goes.
+
+    Built from Tk's insertion-cursor options - see
+    ``BaseWidget._cursor_style`` for how - and sent to the terminal as the two
+    requests terminals widely understand. A terminal that does not understand
+    one ignores it, and the cursor keeps the shape it had.
+
+    Attributes:
+        shape: The DECSCUSR shape, ``ESC [ n SP q``: 1 a blinking block,
+            2 a steady block, 5 a blinking bar, 6 a steady bar. None leaves
+            the terminal's own shape alone.
+        colour: ``#rrggbb`` for OSC 12, or None to leave the terminal's.
+    """
+
+    shape: int | None = None
+    colour: str | None = None
+
+
+#: Asks nothing of the terminal: its own cursor, as the person set it up.
+TERMINALS_OWN = CursorStyle()
+
+
 class TerminalCursor:
     """The terminal's own cursor, put where typing goes, or hidden.
 
@@ -324,14 +349,34 @@ class TerminalCursor:
     wherever its virtual cursor is at that moment, so it is set last. The
     cursor is shown and hidden only on a change, not every frame.
 
+    **A program may ask for a shape and a colour** (TkCurses-gm66.2), through
+    Tk's ``-blockcursor``, ``-insertwidth``, ``-insertofftime`` and
+    ``-insertbackground``. ``style`` answers what the focused widget asks, and
+    the request is sent only when it changes. The person's own cursor comes
+    back when the focus moves to a widget that asks nothing, and at exit -
+    :meth:`restore`, which :meth:`CursesScreen.stop` runs - because a cursor
+    shape outlives the program that set it.
+
     Args:
         source: Answers the screen cell, ``(row, column)``, the cursor belongs
             in, or None when nothing focused takes typing.
+        style: Answers what the focused widget asks of the cursor's look.
+        write: Sends bytes straight to the terminal. Standard output, which
+            is where curses draws, unless a test says otherwise.
     """
 
-    def __init__(self, source: Callable[[], tuple[int, int] | None]) -> None:
+    def __init__(
+        self,
+        source: Callable[[], tuple[int, int] | None],
+        style: Callable[[], CursorStyle] | None = None,
+        write: Callable[[bytes], None] | None = None,
+    ) -> None:
         self._source = source
+        self._style = style
+        self._write = write or _write_to_terminal
         self._shown: bool | None = None
+        #: What the terminal has been asked for, so a frame sends nothing new.
+        self._applied = TERMINALS_OWN
 
     def place(self) -> None:
         """Move the cursor to where it belongs, or hide it. Curses thread only."""
@@ -346,12 +391,50 @@ class TerminalCursor:
                     curses.curs_set(0)
                 self._shown = False
             return
+        self._ask(self._wanted())
         with contextlib.suppress(curses.error):
             curses.setsyx(*cell)
         if self._shown is not True:
             with contextlib.suppress(curses.error):
                 curses.curs_set(1)
             self._shown = True
+
+    def restore(self) -> None:
+        """Give the person back the cursor they had, if anything was asked."""
+        self._ask(TERMINALS_OWN)
+
+    def _wanted(self) -> CursorStyle:
+        if self._style is None:
+            return TERMINALS_OWN
+        try:
+            return self._style()
+        except Exception:
+            # As for the cell: never lose a frame to a widget mid-teardown.
+            return TERMINALS_OWN
+
+    def _ask(self, style: CursorStyle) -> None:
+        """Send what differs from what the terminal was last asked for.
+
+        ``ESC [ 0 SP q`` and OSC 112 are the resets: the shape and the colour
+        the person's terminal is configured with, not a guess at them.
+        """
+        applied, self._applied = self._applied, style
+        sequences = b""
+        if style.shape != applied.shape:
+            sequences += b"\x1b[%d q" % (style.shape or 0)
+        if style.colour != applied.colour:
+            if style.colour is None:
+                sequences += b"\x1b]112\x07"
+            else:
+                sequences += b"\x1b]12;" + style.colour.encode("ascii") + b"\x07"
+        if sequences:
+            self._write(sequences)
+
+
+def _write_to_terminal(data: bytes) -> None:
+    """Write past curses to where it draws. Losing a cursor shape loses nothing."""
+    with contextlib.suppress(OSError, ValueError):
+        os.write(sys.stdout.fileno(), data)
 
 
 class CursesScreen:
@@ -439,6 +522,8 @@ class CursesScreen:
         self._buffer = None
         with contextlib.suppress(curses.error):
             stdscr.keypad(False)
+        if self.cursor is not None:
+            self.cursor.restore()
         with contextlib.suppress(curses.error):
             curses.curs_set(1)
         with contextlib.suppress(curses.error):
