@@ -3642,3 +3642,30 @@ def test_the_wheel_scrolls_the_tree(tall, button, modifiers, top, left):
     _wheel(tall, button, modifiers)
     assert (tall._top, tall._left) == (top, left)
     assert tall.selection() == ("i0",), "a wheel is not a click"
+
+
+# -------------------------- ttk.Panedwindow keeps a weight (TkCurses-z6pp)
+
+
+def test_inserting_a_pane_again_moves_it_and_keeps_its_weight(root):
+    """Measured on ttk 9.0.2; here the weight went back to 0."""
+    paned = Panedwindow(root, name="pw")
+    first, second = tkcurses.Frame(paned, name="a"), tkcurses.Frame(paned, name="b")
+    paned.add(first, weight=3)
+    paned.add(second)
+    paned.insert(0, second)
+    paned.insert(0, first)
+    assert paned.pane(first) == {"weight": 3}
+    assert paned.pane(second) == {"weight": 0}
+    paned.insert(0, first, weight=9)
+    assert paned.pane(first) == {"weight": 9}
+
+
+def test_adding_a_pane_again_is_refused(root):
+    """ttk, unlike the classic widget, refuses it - measured on 9.0.2."""
+    paned = Panedwindow(root, name="pw")
+    child = tkcurses.Frame(paned, name="a")
+    paned.add(child, weight=3)
+    with pytest.raises(TclError, match=r"\.pw\.a already added"):
+        paned.add(child)
+    assert paned.pane(child) == {"weight": 3}

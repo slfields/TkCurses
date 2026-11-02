@@ -13599,12 +13599,14 @@ class PanedWindow(_Drawable):
             child: The widget to put in it. Must be a child of this window.
             **kw: ``minsize``, ``sticky``, ``width`` or ``height``.
         """
-        self._paned.add(child, self._pane_options(kw))
+        self._paned.add(child, self._pane_options(kw, child))
         self._manage(child)
 
     def insert(self, index: Any, child: Widget, **kw: Any) -> None:
         """Add a pane at a position rather than at the end."""
-        self._paned.insert(self._pane_index(index), child, self._pane_options(kw))
+        self._paned.insert(
+            self._pane_index(index), child, self._pane_options(kw, child)
+        )
         self._manage(child)
 
     def _manage(self, child: Widget) -> None:
@@ -13645,8 +13647,15 @@ class PanedWindow(_Drawable):
         """The panes' widget paths, in order, as Tk reports them."""
         return [child._w for child in self._paned.slaves()]
 
-    def _pane_options(self, given: dict[str, Any]) -> PaneOptions:
-        """Turn the keywords one pane was given into its options.
+    def _pane_options(self, given: dict[str, Any], child: Widget) -> PaneOptions:
+        """``child``'s pane options with the keywords it was given applied.
+
+        **Only what is given changes.** Measured on Tk 9.0.2, a pane added with
+        ``minsize=10, sticky="n"`` keeps its minsize through
+        ``paneconfigure(child, sticky="s")``, and a second ``add`` of the same
+        child is the same as a ``paneconfigure``. These were built from the
+        keywords alone, so every option left out went back to its default -
+        TkCurses-z6pp.
 
         Raises:
             TclError: If an option is not one a pane takes.
@@ -13656,13 +13665,15 @@ class PanedWindow(_Drawable):
         unknown = set(given) - allowed
         if unknown:
             raise TclError(f'unknown option "-{sorted(unknown)[0]}"')
+        options = self._paned.options_for(child) or PaneOptions()
+        if "minsize" in given:
+            options = replace(options, minsize=int(given["minsize"]))
+        if "sticky" in given:
+            options = replace(options, sticky=str(given["sticky"]))
         along = "height" if self._paned.vertical else "width"
-        size = given.get(along)
-        return PaneOptions(
-            minsize=int(given.get("minsize", 0)),
-            sticky=str(given.get("sticky", "nsew")),
-            size=None if size is None else int(size),
-        )
+        if along in given:
+            options = replace(options, size=int(given[along]))
+        return options
 
     def _pane_index(self, index: Any) -> int:
         """Where a pane goes, taking a number, a widget or a widget path."""
@@ -13702,7 +13713,7 @@ class PanedWindow(_Drawable):
             raise TclError(f'not managed by this window: "{child}"')
         if kw and not _given(None, kw):
             return  # every option None, which tkinter drops
-        self._paned.add(child, self._pane_options(kw))
+        self._paned.add(child, self._pane_options(kw, child))
         self._invalidate_layout()
         self._redraw()
 

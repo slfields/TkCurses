@@ -4795,6 +4795,12 @@ against its default-theme `style.layout()`:
   (classic `(0, "sash")`). Ours answered the classic forms until this, and
   the method-surface check could not see it, because a method that exists
   passes it.
+- **A pane added twice: the classic widget updates it, ttk refuses it.**
+  Measured on Tk 9.0.2, a second classic `add` is a `paneconfigure`: it changes
+  the options given and keeps the rest, as `paneconfigure` itself does (ours
+  reset every option left out until `TkCurses-z6pp`). ttk's `add` raises
+  `<path> already added`, while its `insert` of a pane already there moves it
+  and keeps its weight unless one is given.
 - **Notebook answers element names too, not a tab index:** `tab`, `padding`
   or `label` over a tab, and `""` past the tabs and over the page. The tab
   index is `index("@x,y")`.

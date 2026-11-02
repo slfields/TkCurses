@@ -227,3 +227,35 @@ def test_sash_coord_reports_where_the_sash_is(paned):
 
 def test_a_paned_window_takes_the_focus(root):
     assert PanedWindow(root, name="p")._takefocus is True
+
+
+# --------------------------------- changing a pane keeps what is not changed
+#
+# TkCurses-z6pp. Measured on Tk 9.0.2: paneconfigure and a second add change
+# only the options they are given. Here every option left out went back to its
+# default, so setting a pane's sticky dropped its minsize to 0.
+
+
+def _pane(paned, child):
+    return {o: paned.panecget(child, o) for o in ("minsize", "sticky", "width")}
+
+
+def test_paneconfigure_changes_only_what_it_is_given(root):
+    paned = PanedWindow(root, name="q", orient="horizontal")
+    child = Frame(paned, name="f")
+    paned.add(child, minsize=10, sticky="n", width=50)
+    paned.paneconfigure(child, sticky="s")
+    assert _pane(paned, child) == {"minsize": 10, "sticky": "s", "width": 50}
+    paned.paneconfigure(child, minsize=3)
+    assert _pane(paned, child) == {"minsize": 3, "sticky": "s", "width": 50}
+    paned.paneconfigure(child, width=20)
+    assert _pane(paned, child) == {"minsize": 3, "sticky": "s", "width": 20}
+
+
+def test_adding_a_pane_again_is_a_paneconfigure(root):
+    paned = PanedWindow(root, name="q", orient="horizontal")
+    child = Frame(paned, name="f")
+    paned.add(child, minsize=10, sticky="n")
+    paned.add(child, minsize=7)
+    assert _pane(paned, child) == {"minsize": 7, "sticky": "n", "width": None}
+    assert paned.panes() == [".q.f"], "still one pane, not two"

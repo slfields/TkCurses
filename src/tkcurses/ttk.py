@@ -4614,7 +4614,7 @@ class Panedwindow(Widget, tkcurses.PanedWindow):
     #: What a pane's weight is when nobody sets one. ttk's default.
     DEFAULT_WEIGHT = 0
 
-    def _pane_options(self, given: dict[str, Any]) -> PaneOptions:
+    def _pane_options(self, given: dict[str, Any], child: Any) -> PaneOptions:
         """The classic pane options, plus ttk's ``weight``.
 
         The weight is carried by the layout's own PaneOptions rather than in a
@@ -4623,12 +4623,18 @@ class Panedwindow(Widget, tkcurses.PanedWindow):
         reports from. An earlier version kept a dict keyed by widget path and
         the layout could not see it, which is how the option came to be
         recorded and ignored (TkCurses-2v2).
+
+        A weight not given is kept, as the classic options are: measured, ttk
+        moves a pane ``insert`` names again and leaves its weight alone.
         """
+        given = dict(given)
         weight = given.pop("weight", None)
-        options = super()._pane_options(given)
-        return replace(
-            options, weight=self.DEFAULT_WEIGHT if weight is None else int(weight)
-        )
+        options = super()._pane_options(given, child)
+        if weight is not None:
+            return replace(options, weight=int(weight))
+        if options.weight is None:
+            return replace(options, weight=self.DEFAULT_WEIGHT)
+        return options
 
     def _pane_at(self, index: Any) -> Any:
         """The pane named by a position, a widget path, or a widget itself.
@@ -4653,7 +4659,14 @@ class Panedwindow(Widget, tkcurses.PanedWindow):
         Args:
             child: The widget to put in it.
             **kw: ``weight``, plus the pane options the classic widget takes.
+
+        Raises:
+            TclError: If ``child`` is a pane here already. Measured: ttk refuses
+                it with ``<path> already added``, where the classic widget
+                treats a second ``add`` as a ``paneconfigure``.
         """
+        if self._paned.options_for(child) is not None:
+            raise TclError(f"{child} already added")
         kw = tkcurses._given(None, kw)
         super().add(child, **kw)
 
