@@ -112,36 +112,39 @@ def test_the_cursor_is_only_shown_when_focused(terminal, tmp_path):
     ), "no cell is painted as a cursor any more"
 
 
-def _focus_program(state: str) -> str:
+def _focus_program(state: str, ring: int = 1) -> str:
     """Two entries, one of them in ``state``, with the focus on the second."""
     return (
         "a = tkcurses.Entry(root, width=10, name='a')\n"
         "a.place(x=1, y=1)\n"
         "b = tkcurses.Entry(root, width=10, name='b')\n"
         "b.place(x=1, y=5)\n"
-        f"for w in (a, b): w.configure(state={state!r})\n"
+        f"for w in (a, b): w.configure(state={state!r}, highlightthickness={ring})\n"
         "b.focus_set()"
     )
 
 
+@pytest.mark.parametrize("ring", [1, 0], ids=["ring", "no-ring"])
 @pytest.mark.parametrize("state", ["normal", "readonly", "disabled"])
 def test_an_entry_shows_the_focus_in_its_border_whatever_its_state(
-    terminal, tmp_path, state
+    terminal, tmp_path, state, ring
 ):
     """Tk shows the focus twice over, and only one of them is the cursor.
 
     The other is the focus highlight ring, drawn whatever the state - and for a
     readonly entry it is the ONLY signal, because Tk's manual says readonly
     draws "no insertion cursor ... even if the input focus is in the widget".
-    This library drops highlightthickness as an X11 option with no cell
-    equivalent and had nothing in its place, so a focused readonly entry looked
-    exactly like an unfocused one. Reported from UAT 41.
+    This library draws no ring, having no cell for it, and had nothing in its
+    place, so a focused readonly entry looked exactly like an unfocused one.
+    Reported from UAT 41.
 
     The border carries it now. Checked for all three states, because the
-    original fault was that the signal was tied to being editable.
+    original fault was that the signal was tied to being editable - and with
+    ``highlightthickness=0`` too, which is accepted and leaves the border alone
+    (TkCurses-gm66.1).
     """
     term = terminal(cols=40, rows=12)
-    term.run_source(program(_focus_program(state)), workdir=tmp_path)
+    term.run_source(program(_focus_program(state, ring)), workdir=tmp_path)
     term.wait_for_idle()
     # The top border of each field, at a column inside the box: the first
     # entry is placed at y=1 and the second at y=5, and the focus is on the

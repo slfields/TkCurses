@@ -3764,7 +3764,7 @@ and until `TkCurses-bfy` all three of ours did.
 | `exportselection` | puts the selection on PRIMARY | Same, against the in-process PRIMARY |
 | `placeholder` | ghost text in an empty field | Same |
 | `placeholderforeground` | its colour | Honoured; **dim** when unset (see below) |
-| `highlightthickness` | focus ring, pixels | No ring; a focused entry draws its **border** bold |
+| `highlightthickness` | focus ring, pixels | Accepted and answered, draws no ring; a focused entry draws its **border** bold, at any thickness |
 | `validate` | validation condition | Same: `none`, `key`, `focus`, `focusin`, `focusout`, `all` |
 | `validatecommand` | registered command | Callable given the proposed text |
 | `invalidcommand` | registered command | Callable given the refused text, or nothing |
@@ -3834,12 +3834,32 @@ focus on an entry two ways: the insertion cursor, and the
 `-highlightthickness` ring. Only the first depends on the state — Tk's manual
 says `readonly` draws "no insertion cursor ... even if the input focus is in the
 widget" — so in Tk a locked field is still visibly focused, by its ring. This
-library drops `highlightthickness` as an X11 option with no cell equivalent, and
-for a while had nothing in its place: copying Tk's cursor rule faithfully left a
+library draws no ring, and for a while had nothing in its place: copying Tk's cursor rule faithfully left a
 focused readonly entry indistinguishable from an unfocused one. `BorderStyle.attr`
 carries it now, and `relief="flat"` still draws nothing, which matches a Tk ring
 of zero thickness. Reported from UAT 41; the cursor half is pinned by its own
 test so the two cannot be confused again.
+
+**The ring's options are accepted, and draw nothing** (`TkCurses-gm66.1`).
+`-highlightthickness`, `-highlightcolor` and `-highlightbackground` were
+refused as X11 options with no cell equivalent, which stopped a tkinter program
+at the line — and they are among the options tkinter code passes most, usually
+`highlightthickness=0` on a Canvas, Frame or Button to hide X11's ring for
+looks. Every classic widget takes them now, as Tk 9.0.2 does, with Tk's
+default thickness (1 on Button, Canvas, Checkbutton, Entry, Listbox,
+Radiobutton, Scale, Spinbox and Text; 0 elsewhere and on the root) and `""` for
+the colours, as every colour here defaults. Menu and PanedWindow take them too,
+where Tk refuses them — the harmless direction, since no Tk program passes them.
+
+**None of them changes the focus cue.** Each widget that takes the focus shows
+it with a sign one cell wide: ▶ ◀ around a Button, an underline on a
+Checkbutton, Radiobutton, Menubutton or the active Listbox row, the bold border
+described above on an Entry or Spinbox, a reversed sash, `[` `]` at the ends of
+a Scale's trough. Following Tk literally — a thickness of 0 shows no focus —
+would let a program that removed X11's ring for looks remove the only sign in a
+terminal of where the keyboard is. Decided with the author;
+`tests/test_button_tty.py` and `tests/test_entry_tty.py` pin the cue at
+thickness 0.
 
 **Validation gates `insert` and `delete`, not only keystrokes.** `-validate`
 is a condition, and the two that name an edit - `key` and `all` - apply to a

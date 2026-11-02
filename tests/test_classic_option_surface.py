@@ -59,49 +59,41 @@ CLASSIC = (
 #: been closed is too: this list may shrink and must never silently grow.
 KNOWN_GAPS: dict[str, dict[str, str]] = {
     "Button": {
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
         "TkCurses-gm66.4": "activebackground activeforeground disabledforeground",
         "TkCurses-gm66.5": "overrelief",
         "TkCurses-gm66.6": "repeatdelay repeatinterval",
         "TkCurses-l26": "bitmap",
     },
     "Canvas": {
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
         "TkCurses-gm66.2": "insertbackground insertborderwidth insertofftime insertontime insertwidth",
         "TkCurses-gm66.3": "selectbackground selectborderwidth selectforeground",
         "TkCurses-gm66.10": "confine offset xscrollincrement yscrollincrement",
     },
     "Checkbutton": {
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
         "TkCurses-gm66.4": "activebackground activeforeground disabledforeground selectcolor",
         "TkCurses-gm66.5": "offrelief overrelief",
         "TkCurses-gm66.10": "selectimage tristateimage",
         "TkCurses-l26": "bitmap",
     },
     "Entry": {
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
         "TkCurses-gm66.2": "insertbackground insertborderwidth insertofftime insertontime insertwidth",
         "TkCurses-gm66.3": "selectbackground selectborderwidth selectforeground",
         "TkCurses-gm66.4": "disabledbackground disabledforeground readonlybackground",
     },
     "Frame": {
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
         "TkCurses-gm66.7": "class colormap container tile visual",
         "TkCurses-yi4": "backgroundimage bgimg",
     },
     "Label": {
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
         "TkCurses-gm66.4": "activebackground activeforeground disabledforeground",
         "TkCurses-l26": "bitmap",
     },
     "LabelFrame": {
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
         "TkCurses-gm66.7": "class colormap container visual",
         "TkCurses-gm66.10": "labelwidget",
     },
     "Listbox": {
         "TkCurses-9e8": "exportselection",
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
         "TkCurses-gm66.3": "selectbackground selectborderwidth selectforeground",
         "TkCurses-gm66.4": "disabledforeground",
         "TkCurses-gm66.7": "setgrid",
@@ -113,15 +105,11 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
         "TkCurses-gm66.10": "font tearoffcommand type",
     },
     "Menubutton": {
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
         "TkCurses-gm66.4": "activebackground activeforeground disabledforeground",
         "TkCurses-l26": "bitmap",
     },
-    "Message": {
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
-    },
+    "Message": {},
     "OptionMenu": {
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
         "TkCurses-gm66.4": "activebackground activeforeground disabledforeground",
         "TkCurses-l26": "bitmap",
     },
@@ -129,26 +117,22 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
         "TkCurses-gm66.9": "handlepad handlesize height opaqueresize proxybackground proxyborderwidth proxyrelief sashcursor sashpad sashrelief width",
     },
     "Radiobutton": {
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
         "TkCurses-gm66.4": "activebackground activeforeground disabledforeground selectcolor",
         "TkCurses-gm66.5": "offrelief overrelief",
         "TkCurses-gm66.10": "selectimage tristateimage tristatevalue",
         "TkCurses-l26": "bitmap",
     },
     "Scale": {
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
         "TkCurses-gm66.4": "activebackground troughcolor",
         "TkCurses-gm66.5": "sliderlength sliderrelief",
         "TkCurses-gm66.6": "repeatdelay repeatinterval",
     },
     "Scrollbar": {
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
         "TkCurses-gm66.4": "activebackground troughcolor",
         "TkCurses-gm66.5": "activerelief elementborderwidth",
         "TkCurses-gm66.6": "jump repeatdelay repeatinterval",
     },
     "Spinbox": {
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
         "TkCurses-gm66.2": "insertbackground insertborderwidth insertofftime insertontime insertwidth",
         "TkCurses-gm66.3": "selectbackground selectborderwidth selectforeground",
         "TkCurses-gm66.4": "activebackground buttonbackground disabledbackground disabledforeground readonlybackground",
@@ -156,19 +140,16 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
         "TkCurses-gm66.6": "repeatdelay repeatinterval",
     },
     "Text": {
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
         "TkCurses-gm66.2": "blockcursor insertbackground insertborderwidth insertofftime insertontime insertunfocussed insertwidth",
         "TkCurses-gm66.3": "inactiveselectbackground selectbackground selectborderwidth selectforeground",
         "TkCurses-gm66.7": "setgrid",
         "TkCurses-gm66.8": "endline maxundo spacing1 spacing2 spacing3 startline",
     },
     "Tk": {
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
         "TkCurses-gm66.7": "class colormap container height screen tile use visual width",
         "TkCurses-yi4": "backgroundimage bgimg",
     },
     "Toplevel": {
-        "TkCurses-gm66.1": "highlightbackground highlightcolor highlightthickness",
         "TkCurses-gm66.7": "class colormap container screen tile use visual",
         "TkCurses-yi4": "backgroundimage bgimg",
     },

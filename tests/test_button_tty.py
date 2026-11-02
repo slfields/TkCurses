@@ -123,6 +123,28 @@ def test_focus_is_visible(terminal, tmp_path):
     assert "◀" in "\n".join(term.display)
 
 
+def test_highlightthickness_0_does_not_hide_the_focus(terminal, tmp_path):
+    """Programs set it to hide X11's ring for looks, and that is all it does.
+
+    Tk's ring is accepted and draws nothing here (TkCurses-gm66.1): the markers
+    are this library's cell-sized focus sign, and a program that asked for no
+    ring did not ask for a keyboard nobody can follow.
+    """
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "b = tkcurses.Button(root, text='OK', highlightthickness=0)\n"
+            "b.place(x=2, y=2)\n"
+            "root.after(100, b.focus_set)"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(
+        lambda t: "▶" in "\n".join(t.display) and "◀" in "\n".join(t.display),
+        message="both focus markers",
+    )
+
+
 def test_an_unfocused_button_shows_no_markers(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(

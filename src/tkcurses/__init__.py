@@ -2364,14 +2364,29 @@ class BaseWidget(Misc):
     _option_synonyms: ClassVar[dict[str, str]] = _OPTION_ALIASES
 
     #: Options every widget accepts. The set is deliberately smaller than
-    #: tkinter's: X11 options with no cell equivalent (highlightthickness,
-    #: screen distances in pixels) are left out rather than accepted and
-    #: ignored, so that setting one fails loudly instead of quietly.
+    #: tkinter's: X11 options with no cell equivalent (screen distances in
+    #: pixels) are left out rather than accepted and ignored, so that setting
+    #: one fails loudly instead of quietly.
+    #:
+    #: **The focus highlight ring is the exception** (TkCurses-gm66.1). Its
+    #: three options are accepted, stored and answered, and draw nothing:
+    #: every widget that takes the focus already shows it with a cue sized to
+    #: a cell - brackets on a Button, an underline on a Checkbutton or a
+    #: Listbox row, a bold border on an Entry, a reversed sash - and that cue
+    #: stays whatever these say. Refusing them stopped programs at the line,
+    #: and they are among the most common options tkinter code sets: usually
+    #: ``highlightthickness=0``, to hide X11's ring for looks. Honouring that
+    #: by hiding the cue would leave a terminal user no sign of where the
+    #: keyboard is. The thickness defaults to Tk's, 1 on the widgets that take
+    #: the focus and 0 here; the colours to "", as every colour here does.
     _widget_options: ClassVar[dict[str, Any]] = {
         "background": "",
         "borderwidth": 0,
         "cursor": "",
         "foreground": "",
+        "highlightbackground": "",
+        "highlightcolor": "",
+        "highlightthickness": 0,
         "padx": 0,
         "pady": 0,
         "relief": FLAT,
@@ -6223,6 +6238,7 @@ class Button(_TextWidget):
     _MARKER_WIDTH = 2
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         "command": None,
         "default": "disabled",
         "relief": "raised",
@@ -6490,6 +6506,7 @@ class _ChoiceWidget(_TextWidget):
     _INDICATOR_WIDTH = 4
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         "command": None,
         "indicatoron": True,
         "takefocus": True,
@@ -6903,6 +6920,7 @@ class Entry(_Drawable, XView):
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         # tkinter reports 1, not True: the value is what cget answers.
         "exportselection": 1,
         # Tk 9.0's ghost text - TkCurses-xe9.3. On the CLASSIC entry as well as
@@ -7559,8 +7577,8 @@ class Entry(_Drawable, XView):
         has the keyboard, because Tk's manual is explicit that readonly draws
         "no insertion cursor ... even if the input focus is in the widget".
 
-        This library drops ``highlightthickness`` as an X11 option with no cell
-        equivalent, and until now put nothing in its place. So a focused
+        This library draws no ring, having no cell for it, and until now put
+        nothing in its place. So a focused
         readonly entry was indistinguishable from an unfocused one: Tk's cursor
         rule was copied faithfully and Tk's other half of the signal was not.
         Reported from UAT 41 - "though readonly is not modifiable, it should
@@ -7569,8 +7587,9 @@ class Entry(_Drawable, XView):
         The border is the cell equivalent: a focused entry draws its box bold
         and an unfocused one does not. ``BorderStyle.attr`` exists for exactly
         this, "used where line style alone is not enough to tell two reliefs
-        apart", and ``relief="flat"`` still draws nothing - which matches Tk,
-        where ``highlightthickness=0`` shows no ring either.
+        apart", and ``relief="flat"`` still draws nothing. ``highlightthickness``
+        is accepted and does not turn it off (TkCurses-gm66.1): programs set it
+        to 0 to hide X11's ring, not to hide the keyboard.
 
         A_DIM is dropped rather than combined: the default relief for an entry
         is ``sunken``, whose border is dim, and dim-and-bold on one cell is
@@ -9276,6 +9295,7 @@ class Text(_Drawable, XView, YView):
     """
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         "autoseparators": True,
         "exportselection": True,
         "font": "",
@@ -11172,6 +11192,7 @@ class Canvas(_Drawable, XView, YView):
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         # How far from an item's ink still counts as being on it. Tk's
         # default is 1, and a terminal needs it more than Tk does: a thin
         # outline is one pixel wide and a click only names a whole cell.
@@ -12977,6 +12998,7 @@ class Listbox(_Drawable, XView, YView):
     """
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         "activestyle": "underline",
         "font": "",
         "height": 10,
@@ -14270,6 +14292,7 @@ class Scale(_Drawable):
     _FOCUS_CAPS = ("[", "]")
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         "bigincrement": 0,
         "command": None,
         "digits": 0,
