@@ -3218,6 +3218,22 @@ Where the table above and the implementation need reading together.
   class's `configure`, so an override cannot forget it.
   `tests/test_configure_query.py` compares every shared option of every widget
   with the real toolkit when there is a display.
+
+  **An option given as None is ignored** (`TkCurses-bx5b`), as tkinter's
+  `Misc._options` ignores it: `configure(text=None)` leaves the text alone,
+  and a constructor treats it as not given. Measured on Tk 9.0.2 and true here
+  for constructors, `configure`, `w[key] = None`, canvas items, menu entries,
+  text tags, panes, tabs, the Treeview's methods, `Style` and the geometry
+  managers; it is `_given` in `tkcurses/__init__.py`. A call whose every
+  option is None returns None, not the listing an empty call answers — except
+  `grid_rowconfigure`/`grid_columnconfigure`, which do answer the listing in
+  tkinter. **One deliberate difference:** tkinter's ttk methods that go through
+  `_format_optdict` (`item`, `heading`, `column`, `tag_configure`, `tab`,
+  `pane`, `Style.configure`) turn a lone None into a *query* of that option, and
+  a None beside a real value into a garbled call (`item(i, text=None,
+  open=True)` raises `unknown option "1"`). That is an accident nothing can
+  rely on, so None is ignored there too. Not covered: `Font`, where tkinter
+  sends the string `"None"` to Tk, and `event_generate`, which stringifies it.
 - **`update()`** runs pending idle and timer callbacks but does not read input.
   Draining the keyboard from inside a callback is what makes tkinter's
   `update()` reentrant and hazardous; the loop in `Tk` is the only place that
@@ -4190,8 +4206,9 @@ name is **not checked when it is set** — `.nosuch`, or a Frame's path, is
 stored as given and shows no bar. Here `""` used to crash
 (`TkCurses-un8i`), and replacing or removing a bar left the old one drawn and
 live while the children got its row back. Now the old bar is unmapped and
-stops being a menubar. `menu=None` removes the bar too, where tkinter ignores
-an option given as `None` — that difference is library-wide (`TkCurses-bx5b`).
+stops being a menubar. `menu=None` changes nothing, as with every option
+given as `None` (see "An option given as None" under the deliberate
+differences).
 
 Tk's keyboard traversal ignores columns (`menu.tcl`, `MenuNextEntry`): Up and
 Down go by index and wrap, so Down from a column's foot is the next column's

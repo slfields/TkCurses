@@ -581,6 +581,22 @@ _MOUSE_EVENT_TYPES: dict[str, str] = {
 }
 
 
+def _given(cnf: dict[str, Any] | None, kw: dict[str, Any]) -> dict[str, Any]:
+    """Options as tkinter reads them: ``cnf``, then the keywords over it.
+
+    **An option given as None is left out**, as if it had not been given -
+    tkinter's ``Misc._options`` skips it, so ``configure(text=None)`` leaves
+    the text alone rather than clearing it. Measured on Tk 9.0.2 for
+    constructors, ``configure``, ``w[key] = None``, canvas items, menu
+    entries, text tags, panes, tabs, the Treeview's methods, ``Style`` and
+    all three geometry managers. Here None was stored, and ``cget`` answered
+    it back (TkCurses-bx5b).
+    """
+    return {
+        key: value for key, value in {**(cnf or {}), **kw}.items() if value is not None
+    }
+
+
 def _menubar_of(window: Any) -> Menu | None:
     """The Menu a window's ``menu`` option names, or None for no menubar.
 
@@ -613,6 +629,11 @@ def _answering_queries(method: Callable[..., Any]) -> Callable[..., Any]:
     def configure(self: Misc, cnf: Any = None, **kw: Any) -> Any:
         if isinstance(cnf, str):
             return self._configure_query(cnf)
+        if (cnf or kw) and not _given(cnf, kw):
+            # Options given, every one None: tkinter drops them all and sets
+            # nothing - it does not fall through to listing them, which is
+            # what an empty call means. Measured, configure(text=None) is None.
+            return None
         return method(self, cnf, **kw)
 
     configure._answers_queries = True  # type: ignore[attr-defined]
@@ -1595,13 +1616,13 @@ class Misc:
         return manager.anchor
 
     def grid_rowconfigure(
-        self, index: int, cnf: dict[str, Any] | None = None, **kw: Any
+        self, index: int, cnf: dict[str, Any] | str | None = None, **kw: Any
     ) -> Any:
         """Get or set how one row behaves: weight, minsize, pad, uniform."""
         return self._line_configure("row", index, cnf, kw)
 
     def grid_columnconfigure(
-        self, index: int, cnf: dict[str, Any] | None = None, **kw: Any
+        self, index: int, cnf: dict[str, Any] | str | None = None, **kw: Any
     ) -> Any:
         """Get or set how one column behaves."""
         return self._line_configure("column", index, cnf, kw)
@@ -1610,7 +1631,11 @@ class Misc:
     columnconfigure = grid_columnconfigure
 
     def _line_configure(
-        self, axis: str, index: int, cnf: dict[str, Any] | None, kw: dict[str, Any]
+        self,
+        axis: str,
+        index: int,
+        cnf: dict[str, Any] | str | None,
+        kw: dict[str, Any],
     ) -> Any:
         """Shared implementation of grid_rowconfigure and grid_columnconfigure.
 
@@ -1621,14 +1646,27 @@ class Misc:
         current = (
             manager.row_config(index) if axis == "row" else manager.column_config(index)
         )
-        given = {**(cnf or {}), **kw}
+        listing = {
+            "weight": current.weight,
+            "minsize": current.minsize,
+            "pad": current.pad,
+            "uniform": current.uniform,
+        }
+        if isinstance(cnf, str):
+            # grid_columnconfigure(0, "weight") asks for one value. It crashed
+            # here on "'str' object is not a mapping" - TkCurses-bx5b, found
+            # beside the None handling; TkCurses-kifn was the same for
+            # configure. Message measured on Tk 9.0.2.
+            if cnf not in listing:
+                raise TclError(
+                    f'bad option "-{cnf}": must be -minsize, -pad, -uniform, or -weight'
+                )
+            return listing[cnf]
+        # Measured: unlike configure, a call whose every option is None DOES
+        # answer the listing in tkinter, since it checks after dropping them.
+        given = _given(cnf, kw)
         if not given:
-            return {
-                "weight": current.weight,
-                "minsize": current.minsize,
-                "pad": current.pad,
-                "uniform": current.uniform,
-            }
+            return listing
         config = LineConfig(
             current.weight, current.minsize, current.pad, current.uniform
         )
@@ -2068,7 +2106,7 @@ class Misc:
         Asked for one option by name, it does answer the five-tuple: see
         :meth:`_configure_query`.
         """
-        options = {**(cnf or {}), **kw}
+        options = _given(cnf, kw)
         if not options:
             return dict(self._options)
         for key, value in options.items():
@@ -2369,7 +2407,7 @@ class BaseWidget(Misc):
         if master is None:
             master = _get_default_root(f"create a {type(self).__name__}")
         super().__init__(master, name)
-        given = {**(cnf or {}), **kw}
+        given = _given(cnf, kw)
         self._options = self._initial_options(given)
         self._takefocus = bool(self._options.get("takefocus", False))
         self._takefocus_given = "takefocus" in given
@@ -2431,7 +2469,7 @@ class BaseWidget(Misc):
         Raises:
             TclError: If an option is not one this widget accepts.
         """
-        given = {**(cnf or {}), **kw}
+        given = _given(cnf, kw)
         if not given:
             return dict(self._options)
         self._options.update(self._checked(given))
@@ -2895,7 +2933,7 @@ class Pack:
             TclError: If an option or its value is not one Tk accepts, or if
                 the container is already managed by a different manager.
         """
-        options = {**(cnf or {}), **kw}
+        options = _given(cnf, kw)
         container = options.pop("in_", None) or options.pop("in", None) or self.master
         if container is None:
             raise TclError("cannot pack the root window")
@@ -3107,7 +3145,7 @@ class Grid:
             TclError: If an option or its value is not one Tk accepts, or the
                 container is already managed by a different manager.
         """
-        options = {**(cnf or {}), **kw}
+        options = _given(cnf, kw)
         container = options.pop("in_", None) or options.pop("in", None) or self.master
         if container is None:
             raise TclError("cannot grid the root window")
@@ -3280,7 +3318,7 @@ class Place:
             TclError: If an option or its value is not one Tk accepts, or the
                 container is already managed by a different manager.
         """
-        options = {**(cnf or {}), **kw}
+        options = _given(cnf, kw)
         container = options.pop("in_", None) or options.pop("in", None) or self.master
         if container is None:
             raise TclError("cannot place the root window")
@@ -4881,7 +4919,7 @@ class Toplevel(BaseWidget, Wm):
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, resizing the window if its size options changed."""
-        given = {**(cnf or {}), **kw}
+        given = _given(cnf, kw)
         result = super().configure(cnf, **kw)
         if given and {"width", "height"} & set(given):
             self._allocate(self._default_rect())
@@ -5546,7 +5584,7 @@ class Frame(_Drawable):
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, repainting and resizing as the change requires."""
-        given = {**(cnf or {}), **kw}
+        given = _given(cnf, kw)
         result = super().configure(cnf, **kw)
         if not given:
             return result
@@ -5685,7 +5723,7 @@ class _TextWidget(_Drawable):
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, re-measuring and repainting as the change requires."""
-        given = {**(cnf or {}), **kw}
+        given = _given(cnf, kw)
         result = super().configure(cnf, **kw)
         if not given:
             return result
@@ -6510,7 +6548,7 @@ class _ChoiceWidget(_TextWidget):
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, following a new variable if one was named."""
-        given = {**(cnf or {}), **kw}
+        given = _given(cnf, kw)
         result = super().configure(cnf, **kw)
         if "variable" in given:
             self._follow_value()
@@ -6970,7 +7008,7 @@ class Entry(_Drawable, XView):
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, following a new variable and repainting as needed."""
-        given = {**(cnf or {}), **kw}
+        given = _given(cnf, kw)
         result = super().configure(cnf, **kw)
         if not given:
             return result
@@ -8709,7 +8747,7 @@ class LabelFrame(Frame):
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, following a new variable if one was named."""
-        given = {**(cnf or {}), **kw}
+        given = _given(cnf, kw)
         result = super().configure(cnf, **kw)
         if "textvariable" in given:
             self._follow_caption()
@@ -9384,7 +9422,7 @@ class Text(_Drawable, XView, YView):
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, re-measuring and repainting as the change requires."""
-        given = {**(cnf or {}), **kw}
+        given = _given(cnf, kw)
         result = super().configure(cnf, **kw)
         if not given:
             return result
@@ -9856,9 +9894,11 @@ class Text(_Drawable, XView, YView):
         """
         self._note_tag(name)
         options = self._tag_options[name]
-        given = {**(cnf or {}), **kw}
-        if not given:
+        given = _given(cnf, kw)
+        if not cnf and not kw:
             return dict(options)
+        if not given:  # every option None, which tkinter drops
+            return None
         for option, value in given.items():
             resolved = _OPTION_ALIASES.get(option, option)
             if resolved not in self._TAG_OPTIONS:
@@ -11194,7 +11234,7 @@ class Canvas(_Drawable, XView, YView):
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, re-measuring and repainting as the change requires."""
-        given = {**(cnf or {}), **kw}
+        given = _given(cnf, kw)
         result = super().configure(cnf, **kw)
         if not given:
             return result
@@ -11278,6 +11318,7 @@ class Canvas(_Drawable, XView, YView):
             TclError: If there are too few points, the wrong number of them,
                 or an option the item does not take.
         """
+        options = _given(None, options)
         coords = _canvas_coords(args)
         points = len(coords) // 2
         if points < least or (exactly is not None and points != exactly):
@@ -11416,9 +11457,11 @@ class Canvas(_Drawable, XView, YView):
             TclError: If an option is not one the item's type takes.
         """
         items = self._matching(spec)
-        given = {**(cnf or {}), **kw}
-        if not given:
+        given = _given(cnf, kw)
+        if not cnf and not kw:
             return dict(items[0].options) if items else {}
+        if not given:  # every option None, which tkinter drops
+            return None
         for item in items:
             spec_for_kind = {
                 **self._COMMON_ITEM_OPTIONS,
@@ -12055,7 +12098,7 @@ class Menu(_Drawable):
         """
         if kind not in self._ENTRY_OPTIONS:
             raise TclError(f'bad menu entry type "{kind}"')
-        entry = MenuEntry(kind, self._checked_entry(kind, {**(cnf or {}), **kw}))
+        entry = MenuEntry(kind, self._checked_entry(kind, _given(cnf, kw)))
         self._entries.insert(self._insert_at(index), entry)
         self._apply_requested_size()
         self._refresh()
@@ -12272,9 +12315,11 @@ class Menu(_Drawable):
         if at is None:
             raise TclError(f'bad menu entry index "{spec}"')
         entry = self._entries[at]
-        given = {**(cnf or {}), **kw}
-        if not given:
+        if not cnf and not kw:
             return dict(entry.options)
+        given = _given(cnf, kw)
+        if not given:  # every option None, which tkinter drops
+            return None
         spec_for_kind = {
             **self._COMMON_ENTRY_OPTIONS,
             **self._ENTRY_OPTIONS[entry.kind],
@@ -13005,7 +13050,7 @@ class Listbox(_Drawable, XView, YView):
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, re-measuring and repainting as the change requires."""
-        given = {**(cnf or {}), **kw}
+        given = _given(cnf, kw)
         result = super().configure(cnf, **kw)
         if not given:
             return result
@@ -13534,7 +13579,7 @@ class PanedWindow(_Drawable):
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, re-laying the panes out as the change requires."""
-        given = {**(cnf or {}), **kw}
+        given = _given(cnf, kw)
         result = super().configure(cnf, **kw)
         if "orient" in given:
             self._paned.orient = str(self._options["orient"])
@@ -13606,6 +13651,7 @@ class PanedWindow(_Drawable):
         Raises:
             TclError: If an option is not one a pane takes.
         """
+        given = _given(None, given)
         allowed = {"minsize", "sticky", "width", "height"}
         unknown = set(given) - allowed
         if unknown:
@@ -13654,6 +13700,8 @@ class PanedWindow(_Drawable):
         """
         if self._paned.options_for(child) is None:
             raise TclError(f'not managed by this window: "{child}"')
+        if kw and not _given(None, kw):
+            return  # every option None, which tkinter drops
         self._paned.add(child, self._pane_options(kw))
         self._invalidate_layout()
         self._redraw()
@@ -13939,7 +13987,7 @@ class Scrollbar(_Drawable):
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, re-measuring and repainting as the change requires."""
-        given = {**(cnf or {}), **kw}
+        given = _given(cnf, kw)
         result = super().configure(cnf, **kw)
         if not given:
             return result
@@ -14286,7 +14334,7 @@ class Scale(_Drawable):
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, re-measuring and repainting as the change requires."""
-        given = {**(cnf or {}), **kw}
+        given = _given(cnf, kw)
         result = super().configure(cnf, **kw)
         if not given:
             return result

@@ -652,14 +652,13 @@ def test_a_name_that_is_no_menu_is_kept_and_shows_no_bar(window, name):
     assert not window.bars[0].winfo_ismapped()
 
 
-def test_none_removes_the_bar_it_used_to_leave_drawn(window):
-    """Before, None gave the row back to the children with the bar still on it.
-
-    tkinter itself ignores an option given as None (TkCurses-bx5b); until this
-    library does too, None at least has to leave the window consistent.
-    """
+def test_none_leaves_the_menubar_where_it_is(window):
+    """tkinter ignores an option given as None, and so does this since
+    TkCurses-bx5b. Before that None gave the row back to the children with
+    the bar still drawn on it."""
     one = window.bars[0]
     window.configure(menu=one)
     window.configure(menu=None)
-    assert not _shows_bar(window)
-    assert not one.winfo_ismapped()
+    assert window.cget("menu") is one
+    assert _shows_bar(window)
+    assert one.winfo_ismapped()

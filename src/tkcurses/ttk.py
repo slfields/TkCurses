@@ -406,6 +406,9 @@ class Style:
         neither, returns everything this style sets itself - its own entries
         only, not what it inherits.
         """
+        if kw and not tkcurses._given(None, kw):
+            return None  # every option None, which tkinter drops
+        kw = tkcurses._given(None, kw)
         options = self._theme.settings.setdefault(style, {})
         if kw:
             options.update(kw)
@@ -423,6 +426,9 @@ class Style:
         ``[("disabled", "focus", "grey")]``. **Order decides**, first match
         winning, so put the specific entries first.
         """
+        if kw and not tkcurses._given(None, kw):
+            return None  # every option None, which tkinter drops
+        kw = tkcurses._given(None, kw)
         options = self._theme.states.setdefault(style, {})
         if kw:
             for option, entries in kw.items():
@@ -609,7 +615,7 @@ class Widget:
         the widget's bindings were installed under the name it had when it
         was built, and letting it move would leave them behind.
         """
-        given = {**(cnf or {}), **kw}
+        given = tkcurses._given(cnf, kw)
         current = getattr(self, "_options", {}).get("class", "")
         if "class" in given and given["class"] != current:
             raise TclError("attempt to change read-only option")
@@ -1000,7 +1006,7 @@ class Separator(Widget, tkcurses.Frame):
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, re-measuring and repainting as the change requires."""
-        given = {**(cnf or {}), **kw}
+        given = tkcurses._given(cnf, kw)
         result = super().configure(cnf, **kw)
         if given:
             if "orient" in given:
@@ -1268,7 +1274,7 @@ class Progressbar(Widget, tkcurses.Frame):
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, re-measuring and repainting as the change requires."""
-        given = {**(cnf or {}), **kw}
+        given = tkcurses._given(cnf, kw)
         result = super().configure(cnf, **kw)
         if given:
             if {"length", "orient"} & set(given):
@@ -1683,7 +1689,7 @@ class Combobox(Widget, _EntryCommands):
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, keeping the dropdown and the arrow in step."""
-        given = {**(cnf or {}), **kw}
+        given = tkcurses._given(cnf, kw)
         result = super().configure(cnf, **kw)
         if given and "values" in given and self._listbox is not None:
             self._fill_list()
@@ -2101,6 +2107,7 @@ class Notebook(Widget, tkcurses.Frame):
         Adding a child that is already a tab un-hides it in place rather than
         appending a second copy, which is what Tk does.
         """
+        kw = tkcurses._given(None, kw)
         existing = self._find(child)
         if existing is not None:
             existing.hidden = False
@@ -2113,6 +2120,7 @@ class Notebook(Widget, tkcurses.Frame):
 
     def insert(self, where: Any, child: tkcurses.Widget, **kw: Any) -> None:
         """Put a page at ``where`` rather than at the end."""
+        kw = tkcurses._given(None, kw)
         position = self._position(where, allow_end=True)
         existing = self._find(child)
         if existing is not None:
@@ -2164,6 +2172,9 @@ class Notebook(Widget, tkcurses.Frame):
             The option's value, or every option as a dict, or None when
             setting.
         """
+        if kw and not tkcurses._given(None, kw):
+            return None  # every option None, which tkinter drops
+        kw = tkcurses._given(None, kw)
         tab = self._tabs[self._position(where)]
         if kw:
             tab.options.update(self._checked_tab(kw))
@@ -2382,7 +2393,7 @@ class Notebook(Widget, tkcurses.Frame):
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, re-placing the pages as the size changes."""
-        given = {**(cnf or {}), **kw}
+        given = tkcurses._given(cnf, kw)
         result = super().configure(cnf, **kw)
         if given:
             self._settle()
@@ -2686,9 +2697,9 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         #: Cells the columns are scrolled left by. TkCurses-xe9.6.
         self._left = 0
         kw.setdefault("relief", "sunken")
-        self._check_striped({**(cnf or {}), **kw})
-        self._check_titles({**(cnf or {}), **kw})
-        self._check_display({**(cnf or {}), **kw})
+        self._check_striped(tkcurses._given(cnf, kw))
+        self._check_titles(tkcurses._given(cnf, kw))
+        self._check_display(tkcurses._given(cnf, kw))
         super().__init__(master, cnf, name=name, **kw)
         self._install_class_bindings()
 
@@ -2734,6 +2745,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         Raises:
             TclError: If ``iid`` is already in use, or ``parent`` is not.
         """
+        kw = tkcurses._given(None, kw)
         if parent and parent not in self._items:
             raise TclError(f"Item {parent} not found")
         if iid is None:
@@ -2876,6 +2888,9 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
 
     def item(self, item: str, option: str | None = None, **kw: Any) -> Any:
         """Read or set one row's options."""
+        if kw and not tkcurses._given(None, kw):
+            return None  # every option None, which tkinter drops
+        kw = tkcurses._given(None, kw)
         entry = self._items[item]
         if kw:
             entry.options.update(self._checked_item(kw))
@@ -2908,6 +2923,9 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
 
     def heading(self, column: str, option: str | None = None, **kw: Any) -> Any:
         """Read or set a column's heading."""
+        if kw and not tkcurses._given(None, kw):
+            return None  # every option None, which tkinter drops
+        kw = tkcurses._given(None, kw)
         name = self._column_for(column)
         heading = self._headings.setdefault(
             name, {"text": "", "image": "", "anchor": "center", "command": ""}
@@ -2926,6 +2944,9 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         ``width`` and ``minwidth`` are cells here rather than pixels, which
         is the only sense they have on a character grid.
         """
+        if kw and not tkcurses._given(None, kw):
+            return None  # every option None, which tkinter drops
+        kw = tkcurses._given(None, kw)
         name = self._column_for(column)
         entry = self._columns_entry(name)
         if kw:
@@ -3010,6 +3031,9 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         priority between tags by CREATION ORDER, so the order these calls
         happen in is what decides who wins. See :meth:`_tag_value`.
         """
+        if kw and not tkcurses._given(None, kw):
+            return None  # every option None, which tkinter drops
+        kw = tkcurses._given(None, kw)
         options = self._tags.setdefault(tagname, dict(self._tag_options))
         if kw:
             for key, value in kw.items():
@@ -4041,7 +4065,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         the next repaint - or never, on a widget nothing had mapped yet. The
         docstring claimed it raised; running it showed it did not.
         """
-        given = {**(cnf or {}), **kw}
+        given = tkcurses._given(cnf, kw)
         self._check_striped(given)
         self._check_titles(given)
         self._check_display(given)
@@ -4630,6 +4654,7 @@ class Panedwindow(Widget, tkcurses.PanedWindow):
             child: The widget to put in it.
             **kw: ``weight``, plus the pane options the classic widget takes.
         """
+        kw = tkcurses._given(None, kw)
         super().add(child, **kw)
 
     def insert(self, index: Any, child: tkcurses.Widget, **kw: Any) -> None:
@@ -4649,6 +4674,7 @@ class Panedwindow(Widget, tkcurses.PanedWindow):
             child: The widget to put in it.
             **kw: ``weight``, plus the pane options the classic widget takes.
         """
+        kw = tkcurses._given(None, kw)
         super().insert(index, child, **kw)
 
     def forget(self, child: tkcurses.Widget | None = None) -> None:
@@ -4666,6 +4692,9 @@ class Panedwindow(Widget, tkcurses.PanedWindow):
             Reading: a dict of the pane's ttk options. Measured against ttk
             9.0, that is ``{'weight': N}`` and nothing else.
         """
+        if kw and not tkcurses._given(None, kw):
+            return None  # every option None, which tkinter drops
+        kw = tkcurses._given(None, kw)
         child = self._pane_at(index)
         options = self._paned.options_for(child)
         if options is None:  # pragma: no cover - _pane_at already refused it
