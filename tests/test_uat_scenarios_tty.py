@@ -29,6 +29,7 @@ import collections
 import contextlib
 import io
 import os
+import re
 import sys
 
 import pytest
@@ -1772,4 +1773,99 @@ def test_scenario_47_a_click_names_the_cell_under_it(uat_terminal):
     row = next(i for i, line in enumerate(term.display) if "Item 0.0" in line)
     term.click(term.display[row].index("Item 0.0") + 1, row)
     term.wait_for_text("last clicked: Item 0.0 #0")
+    term.send(ESCAPE)
+
+
+# ---------------------------------------------------------------------------
+# How classic widgets look. The readout's "focus: plain" is written after the
+# widgets are built, and the plain field's text is drawn by the field itself,
+# so waiting for both is waiting for the scene. Colours are read on an
+# eight-colour terminal, where a colour name comes back as itself.
+# TkCurses-gm66.11.
+
+#: DECSCUSR, ``ESC [ n SP q``: a request for the cursor's shape.
+_CURSOR_SHAPE = re.compile(rb"\x1b\[(\d) q")
+
+
+def _scenario_48(uat_terminal):
+    term = uat_terminal(cols=80, rows=24, env={"TERM": "xterm", "COLORTERM": ""})
+    term.run([sys.executable, "-m", "uat.scenario_48_classic_looks"])
+    term.wait_for(
+        lambda t: (
+            "focus: plain" in t.row(2) and any("plain field" in r for r in t.display)
+        ),
+        message="the readout and the plain field",
+    )
+    term.wait_for_idle()
+    return term
+
+
+def _at(term, text):
+    row = next(i for i, line in enumerate(term.display) if text in line)
+    return row, term.display[row].index(text)
+
+
+def test_scenario_48_moving_the_focus_reshapes_the_cursor(uat_terminal):
+    term = _scenario_48(uat_terminal)
+    assert not _CURSOR_SHAPE.search(term.received), "the plain field asked for a shape"
+    term.send_keys("<F8>")
+    term.wait_for_text("focus: bar")
+    term.wait_for(
+        lambda t: b"\x1b[5 q" in t.received, message="a blinking bar for insertwidth=1"
+    )
+    term.send_keys("<F8>")
+    term.wait_for_text("focus: steady")
+    term.wait_for(lambda t: b"\x1b[6 q" in t.received, message="a steady bar")
+    term.send(ESCAPE)
+
+
+def test_scenario_48_a_disabled_field_takes_its_colours(uat_terminal):
+    term = _scenario_48(uat_terminal)
+    row, column = _at(term, "a thin bar")
+    column += 7  # the "b" of "bar", past the selection's five cells
+    term.send_keys("<F5>")
+    term.wait_for_text("fields: disabled")
+    term.wait_for_cell(
+        row,
+        column,
+        lambda cell: cell.data == "b" and (cell.fg, cell.bg) == ("brown", "blue"),
+        message="yellow on blue",
+    )
+    term.send_keys("<F5>")
+    term.wait_for_text("fields: readonly")
+    term.wait_for_cell(
+        row, column, lambda cell: cell.bg == "magenta", message="readonly magenta"
+    )
+    term.send(ESCAPE)
+
+
+def test_scenario_48_an_active_button_takes_its_colours(uat_terminal):
+    term = _scenario_48(uat_terminal)
+    row, column = _at(term, "Press me")
+    term.send_keys("<F6>")
+    term.wait_for_text("buttons: active")
+    term.wait_for_cell(
+        row,
+        column,
+        lambda cell: cell.data == "P" and (cell.fg, cell.bg) == ("brown", "red"),
+        message="yellow on red",
+    )
+    term.send(ESCAPE)
+
+
+def test_scenario_48_f7_hides_the_texts_unfocused_selection(uat_terminal):
+    term = _scenario_48(uat_terminal)
+    row, column = _at(term, "a block cursor")
+    selected = column + 2  # "block", 1.2 to 1.7
+    term.wait_for_cell(
+        row, selected, lambda cell: cell.bg == "green", message="green, unfocused"
+    )
+    term.send_keys("<F7>")
+    term.wait_for_text("selection: hidden")
+    term.wait_for_cell(
+        row,
+        selected,
+        lambda cell: cell.data == "b" and cell.bg != "green" and not cell.reverse,
+        message="the selection hidden",
+    )
     term.send(ESCAPE)
