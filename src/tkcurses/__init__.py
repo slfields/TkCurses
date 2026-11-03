@@ -1145,6 +1145,30 @@ def _answering_queries(method: Callable[..., Any]) -> Callable[..., Any]:
     return configure
 
 
+def _abandoning_on_failure(method: Callable[..., Any]) -> Callable[..., Any]:
+    """``method`` as an ``__init__`` that abandons the widget if it raises.
+
+    See :meth:`Misc.__init_subclass__`, which applies it, and
+    :meth:`Misc._abandon`, which is what abandoning means.
+    """
+
+    @functools.wraps(method)
+    def __init__(self: Misc, *args: Any, **kw: Any) -> None:
+        try:
+            method(self, *args, **kw)
+        except BaseException:
+            # Only once registered. Before that there is nothing to undo, and
+            # perhaps no self.tk to ask: "no default root" and a name with a
+            # "." are both refused first, and must arrive as they were raised.
+            state = vars(self)
+            if "tk" in state and state["tk"].widgets.get(state.get("_w", "")) is self:
+                self._abandon()
+            raise
+
+    __init__._abandons = True  # type: ignore[attr-defined]
+    return __init__
+
+
 class Misc:
     """Behaviour shared by every widget: bindings, focus, timers, queries.
 
@@ -1194,6 +1218,13 @@ class Misc:
             method = getattr(cls, name)
             if not getattr(method, "_answers_queries", False):
                 setattr(cls, name, _answering_queries(method))
+        # And every constructor leaves a widget it could not finish as tkinter
+        # does (TkCurses-lwoi). Wrapping the one class that checks options
+        # was not enough: about thirty refuse a value - width="abc", a
+        # textvariable that is no Variable - in their own __init__, after
+        # BaseWidget's has returned.
+        if not getattr(cls.__init__, "_abandons", False):
+            cls.__init__ = _abandoning_on_failure(cls.__init__)  # type: ignore[method-assign]
 
     def __init__(self, master: Misc | None = None, name: str | None = None) -> None:
         """
@@ -1241,9 +1272,31 @@ class Misc:
         self._takefocus_given = False
         self._destroyed = False
 
+        if master is not None and name in master.children:
+            # tkinter's BaseWidget._setup: a name already taken destroys the
+            # widget holding it, <Destroy> and descendants and all, and the new
+            # one takes its place. Tk itself would refuse ("window name already
+            # exists in parent"), but no tkinter program sees that. Measured on
+            # Python 3.14 over Tk 9.0.2. TkCurses-use6.
+            master.children[name].destroy()
         self.tk.widgets.add(self._w, self)
         if master is not None:
             master.children[name] = self
+
+    def _abandon(self) -> None:
+        """Leave a widget whose creation failed as tkinter leaves one.
+
+        tkinter puts the object in ``master.children`` before Tk refuses an
+        option, and nothing takes it out again: ``nametowidget`` still finds
+        it. But Tk made no window, so it does not exist - ``winfo_exists`` is
+        0 and ``winfo_children`` leaves it out - and destroying it only takes
+        it out of ``children``. Measured on Python 3.14 over Tk 9.0.2.
+        TkCurses-lwoi.
+        """
+        self._destroyed = True
+        self.tk.widgets.remove(self._w)
+        self.tk.bindings.unbind(self._w)
+        self.tk.timers.cancel_for(self._w)
 
     def __repr__(self) -> str:
         """Identify the widget by class and path, as tkinter does."""
@@ -1281,10 +1334,19 @@ class Misc:
         has already destroyed.
         """
         if self._destroyed:
+            # A widget whose creation failed is still in its master's
+            # children, as in tkinter; see _abandon.
+            if self.master is not None and self.master.children.get(self._name) is self:
+                del self.master.children[self._name]
             return
         for child in list(self.children.values()):
             child.destroy()
         self.event_generate("<Destroy>")
+        # Out of whatever lays it out, or its siblings keep its space and
+        # pack_slaves goes on listing it. TkCurses-41zl.
+        container = self._manager_container
+        if container is not None and self._manager:
+            self._leave_layout(container)
 
         self._destroyed = True
         self._mapped = False
@@ -2238,8 +2300,12 @@ class Misc:
     # ==================================================================
 
     def winfo_children(self) -> list[Misc]:
-        """This widget's children, in stacking order."""
-        return list(self.children.values())
+        """This widget's children, in stacking order.
+
+        Not one whose creation failed, which stays in :attr:`children` as in
+        tkinter but has no window; see :meth:`_abandon`.
+        """
+        return [child for child in self.children.values() if not child._destroyed]
 
     def winfo_class(self) -> str:
         """The widget's class name, as bindings and the option database use it."""
@@ -2729,10 +2795,26 @@ class Misc:
             path = self._build_path(self, path)
         widget = self.tk.widgets.get(path)
         if widget is None:
+            widget = self._child_at(path)
+        if widget is None:
             raise KeyError(f"no widget named {path!r}")
         return widget
 
     _nametowidget = nametowidget
+
+    def _child_at(self, path: str) -> Misc | None:
+        """The widget at a path found through ``children``, as tkinter finds
+        it - which reaches one whose creation failed, as tkinter's does. See
+        :meth:`_abandon`."""
+        widget: Misc = self
+        while widget.master is not None:
+            widget = widget.master
+        for part in path.split(".")[1:]:
+            found = widget.children.get(part)
+            if found is None:
+                return None
+            widget = found
+        return widget
 
     def getvar(self, name: str = "PY_VAR") -> Any:
         """Read an application variable."""
@@ -3551,10 +3633,12 @@ class BaseWidget(Misc):
         pointing at a destroyed parent, and this widget's own window is
         released last.
         """
-        if self._destroyed:
-            return
+        alive = not self._destroyed
+        # Always, so that one whose creation failed leaves its master's
+        # children; Misc.destroy is what knows how. See Misc._abandon.
         super().destroy()
-        self._destroy_window()
+        if alive:
+            self._destroy_window()
 
 
 # ======================================================================
@@ -10762,7 +10846,13 @@ class Text(_Drawable, XView, YView):
             option: self.cget(option)
             for option in ("startline", "endline", "undo", "maxundo", "autoseparators")
         }
-        Text(parent, {**inherited, **(cnf or {})}, name=leaf, _peer_of=self, **kw)
+        try:
+            Text(parent, {**inherited, **(cnf or {})}, name=leaf, _peer_of=self, **kw)
+        except BaseException:
+            # Not even the object a failed constructor leaves behind: tkinter
+            # makes none for a peer, so a refused one leaves nothing at all.
+            parent.children.pop(leaf, None)
+            raise
 
     def peer_names(self) -> tuple[str, ...]:
         """The paths of this widget's peers - not its own, as in Tk."""

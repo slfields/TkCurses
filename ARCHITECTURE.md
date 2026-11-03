@@ -3287,6 +3287,25 @@ Where the table above and the implementation need reading together.
   one is available, and PRIMARY never is. See "Copy, cut and paste".
 - **Multi-event sequences** (`<Control-x><Control-s>`, `"ab"`) bind and fire
   as Tk's do; see "Multi-event sequences" under Event Handling Flow.
+- **Making a widget follows tkinter, not Tk, where the two differ.** Tk
+  refuses a name already in use with `window name "b" already exists in
+  parent`, but no tkinter program sees that: `BaseWidget._setup` destroys the
+  widget holding the name first, with its `<Destroy>` and its descendants,
+  and the new one takes its place. Measured on Python 3.14 over Tk 9.0.2
+  (`TkCurses-use6`). The one path that does reach Tk's refusal is
+  `Text.peer_create`, which tkinter hands straight to Tcl.
+- **A widget whose option is refused is left as tkinter leaves it.** tkinter
+  has already put the object in `master.children` when Tk refuses, and never
+  takes it out: `nametowidget` finds it, `winfo_exists` is 0, `winfo_children`
+  leaves it out, destroying it only removes it from `children`, and its
+  generated name stays used (the next Button is `!button2`). Here every
+  widget class's `__init__` is wrapped by `Misc.__init_subclass__` to do the
+  same whenever it raises - in `BaseWidget`, or later in the class's own
+  `__init__`, where about thirty classes refuse a value such as `width="abc"`
+  (`TkCurses-lwoi`; the error type there is `TkCurses-vgkb`).
+- **`destroy` takes the widget out of its geometry manager** (`TkCurses-41zl`).
+  It did not: a destroyed packed widget kept its space and stayed in
+  `pack_slaves`, and the same in grid and place.
 
 ---
 

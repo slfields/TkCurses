@@ -112,6 +112,7 @@ def test_a_refused_peer_leaves_nothing_behind(root, text):
         text.peer_create(".p", bogus=5)
     assert text.peer_names() == ()
     assert text._buffer.peers() == []
+    assert "p" not in root.children
 
 
 def test_a_peer_takes_its_creators_lines_and_undo_settings(root):
