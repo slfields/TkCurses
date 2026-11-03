@@ -1872,3 +1872,96 @@ def test_scenario_48_f7_hides_the_texts_unfocused_selection(uat_terminal):
         message="the selection hidden",
     )
     term.send(ESCAPE)
+
+
+# ------------------------------------------------- 49: how classic widgets behave
+#
+# Each gesture is a press held down, or a key, and each is asserted by what the
+# readout or the widgets draw afterwards. TkCurses-gm66.12.
+
+
+def _scenario_49(uat_terminal):
+    term = uat_terminal(cols=80, rows=24, env={"TERM": "xterm", "COLORTERM": ""})
+    term.run([sys.executable, "-m", "uat.scenario_49_classic_behaviour"])
+    term.wait_for(
+        lambda t: "undo groups: 0 of 3" in t.row(2) and "Hold me" in t.row(12),
+        message="the readout and the widgets",
+    )
+    term.wait_for_idle()
+    return term
+
+
+def _readout_number(term, label):
+    match = re.search(rf"{label}: (\d+)", term.row(1))
+    return int(match.group(1)) if match else -1
+
+
+def test_scenario_49_holding_a_button_repeats_it(uat_terminal):
+    term = _scenario_49(uat_terminal)
+    row, column = _at(term, "Hold me")
+    term.send_mouse(column, row, action="press")
+    term.wait_for(
+        lambda t: _readout_number(t, "held button") >= 3,
+        message="the button to fire again and again while held",
+    )
+    term.send_mouse(column, row, action="release")
+    term.send(ESCAPE)
+
+
+def test_scenario_49_f6_takes_the_spacing_away(uat_terminal):
+    term = _scenario_49(uat_terminal)
+    term.wait_for(
+        lambda t: (
+            any("Blank rows" in line for line in t.display)
+            and "between" in t.display[_at(t, "Blank rows")[0] + 2]
+        ),
+        message="the second row of the first line, a blank row below it",
+    )
+    row, column = _at(term, "Blank rows")
+    term.send_keys("<F6>")
+    term.wait_for(
+        lambda t: (
+            "spacing: off" in t.row(2)
+            and t.display[row - 1][column:].startswith("Blank rows")
+            and t.display[row][column:].startswith("between")
+        ),
+        message="the lines closed up",
+    )
+    term.send(ESCAPE)
+
+
+def test_scenario_49_a_proxy_moves_until_the_release(uat_terminal):
+    term = _scenario_49(uat_terminal)
+    row, sash = _at(term, "┃")
+    _, right = _at(term, "right")
+    term.send_keys("<F7>")
+    term.wait_for_text("opaqueresize: off")
+    term.send_mouse(sash, row, action="press")
+    term._drain(0.08)
+    term.send_mouse(sash - 6, row, action="move", button=1)
+    term.wait_for(
+        lambda t: (
+            t.display[row - 1][sash - 6] == "│"
+            and t.display[row].index("right") == right
+        ),
+        message="a proxy, with the panes left where they were",
+    )
+    term.send_mouse(sash - 6, row, action="release")
+    term.wait_for(
+        lambda t: t.display[row].index("right") == right - 6,
+        message="the panes following on the release",
+    )
+    term.send(ESCAPE)
+
+
+def test_scenario_49_undo_keeps_three_groups(uat_terminal):
+    term = _scenario_49(uat_terminal)
+    for key in ("x", "<BackSpace>", "y", "<BackSpace>", "z"):
+        term.send_keys(key)
+        term._drain(0.05)
+    term.wait_for_text("undo groups: 3 of 3")
+    for _ in range(3):
+        term.send_keys("<F8>")
+        term._drain(0.05)
+    term.wait_for_text("undo groups: 0 of 3")
+    term.send(ESCAPE)
