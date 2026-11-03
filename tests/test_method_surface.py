@@ -299,8 +299,6 @@ GAPS: dict[str, dict[str, str]] = {
         "image_cget": "TkCurses-mzj",
         "image_configure": "TkCurses-mzj",
         "image_create": "TkCurses-mzj",
-        "peer_create": "TkCurses-mzj",
-        "peer_names": "TkCurses-mzj",
         "replace": "TkCurses-mzj",
         "scan_dragto": "TkCurses-6lh",
         "scan_mark": "TkCurses-6lh",

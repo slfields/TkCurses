@@ -56,6 +56,7 @@ import sys
 import time
 import traceback
 import weakref
+from collections.abc import MutableMapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
@@ -10512,6 +10513,37 @@ def _spaced(
     return out
 
 
+class _TagStyles(MutableMapping[str, dict[str, Any]]):
+    """A Text's tag styles: its peers', with ``sel`` its own.
+
+    Tk's manual: "the sel tag exists separately and independently in each
+    peer", while every other tag's configuration is shared.
+    """
+
+    def __init__(self, shared: dict[str, dict[str, Any]]) -> None:
+        self._shared = shared
+        self._own: dict[str, dict[str, Any]] = {}
+
+    def _table(self, name: str) -> dict[str, dict[str, Any]]:
+        return self._own if name == "sel" else self._shared
+
+    def __getitem__(self, name: str) -> dict[str, Any]:
+        return self._table(name)[name]
+
+    def __setitem__(self, name: str, value: dict[str, Any]) -> None:
+        self._table(name)[name] = value
+
+    def __delitem__(self, name: str) -> None:
+        del self._table(name)[name]
+
+    def __iter__(self) -> Iterator[str]:
+        yield from self._own
+        yield from (name for name in self._shared if name != "sel")
+
+    def __len__(self) -> int:
+        return len(self._own) + sum(1 for name in self._shared if name != "sel")
+
+
 class Text(_Drawable, XView, YView):
     """An editable block of text, with marks and tags.
 
@@ -10544,6 +10576,9 @@ class Text(_Drawable, XView, YView):
         "inactiveselectbackground": _TerminalsOwn(),
         "insertunfocussed": "none",
         "autoseparators": True,
+        # The store's lines this widget shows, from and up to; "" for no
+        # limit. See _text_line. TkCurses-gm66.13.
+        "endline": "",
         "exportselection": True,
         "font": "",
         "height": 24,
@@ -10557,6 +10592,7 @@ class Text(_Drawable, XView, YView):
         "spacing1": 0,
         "spacing2": 0,
         "spacing3": 0,
+        "startline": "",
         "state": "normal",
         "tabs": "",
         "tabstyle": "tabular",
@@ -10611,10 +10647,14 @@ class Text(_Drawable, XView, YView):
             name: Path component, generated when omitted.
             **kw: ``width``, ``height``, ``wrap``, ``state``, ``undo``,
                 ``autoseparators``, ``maxundo``, ``spacing1``, ``spacing2``,
-                ``spacing3``, ``xscrollcommand``, ``yscrollcommand``, and the
-                standard options.
+                ``spacing3``, ``startline``, ``endline``, ``xscrollcommand``,
+                ``yscrollcommand``, and the standard options.
         """
-        self._buffer = TextBuffer()
+        # A peer shares its creator's store; see peer_create.
+        creator: Text | None = kw.pop("_peer_of", None)
+        self._buffer: TextBuffer = (
+            TextBuffer() if creator is None else creator._buffer.peer()
+        )
         self._top = 0
         self._left = 0
         self._anchor: Index | None = None
@@ -10628,12 +10668,13 @@ class Text(_Drawable, XView, YView):
         self._autoscan: str | None = None
         # The screen cell the terminal's cursor goes in; see _draw_cursor.
         self._insert_at: tuple[int, int] | None = None
-        self._tag_options: dict[str, dict[str, Any]] = {}
-        self._tag_order: list[str] = []
-        #: Tk's "has this been changed since it was last saved" flag. It is
-        #: NOT the undo stack: it works with ``-undo false``, and clearing
-        #: it leaves the stack alone.
-        self._modified = False
+        # Peers share tag styles and their order, except sel's: Tk's manual,
+        # and measured on Tk 9.0.2 - a sel colour set in one is not the other's.
+        shared = self._buffer.shared
+        self._tag_options = _TagStyles(shared.setdefault("tag_options", {}))
+        self._tag_order: list[str] = shared.setdefault("tag_order", [])
+        shared.setdefault("modified", False)
+        shared.setdefault("margined", False)
         #: What the last recorded edit was, so autoseparators can break the
         #: group when the user switches between typing and deleting.
         self._last_edit: str | None = None
@@ -10643,8 +10684,13 @@ class Text(_Drawable, XView, YView):
         #: unconditionally took a Text repaint from under 25ms to 31.6ms and
         #: failed the redraw budget. This is the flag that keeps the common
         #: case free.
-        self._margined = False
-        super().__init__(master, cnf, name=name, **kw)
+        try:
+            super().__init__(master, cnf, name=name, **kw)
+        except BaseException:
+            # A refused option must not leave a view behind in the store.
+            self._buffer.detach()
+            raise
+        self._apply_window()
         self._buffer.undo_enabled = self.getboolean(self._options["undo"])
         self._buffer.max_undo = _as_int(self._options["maxundo"], 0)
         self._stops = parse_tabs(self._options["tabs"], self.winfo_fpixels)
@@ -10660,6 +10706,131 @@ class Text(_Drawable, XView, YView):
         )
         self._apply_requested_size()
         self._install_class_bindings()
+        self._buffer.owner = self
+
+    @property
+    def _modified(self) -> bool:
+        """Tk's "has this been changed since it was last saved" flag.
+
+        It is NOT the undo stack: it works with ``-undo false``, and clearing
+        it leaves the stack alone. Peers share it, as they share the stack.
+        """
+        return bool(self._buffer.shared["modified"])
+
+    @property
+    def _margined(self) -> bool:
+        """Whether ANY tag sets a margin; see __init__. Shared by peers, as
+        the tags are."""
+        return bool(self._buffer.shared["margined"])
+
+    @_margined.setter
+    def _margined(self, value: bool) -> None:
+        self._buffer.shared["margined"] = value
+
+    # ----------------------------------------------------------------- peers
+
+    def peer_create(
+        self, newPathName: str, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> None:
+        """Make another Text showing this one's contents, at ``newPathName``.
+
+        tkinter makes no Python object for the peer and neither does Tk -
+        the path is all a program has - so the widget made here is reachable
+        through :meth:`nametowidget`. Peers share the text, every tag but
+        ``sel`` with its style, every mark but ``insert`` and ``current``,
+        the undo stack and the modified flag; each has its own options.
+
+        Measured on Tk 9.0.2: a new peer takes ``-startline``, ``-endline``,
+        ``-undo``, ``-maxundo`` and ``-autoseparators`` from this widget, and
+        everything else from the defaults.
+
+        Raises:
+            TclError: If the path is not a new widget's, or an option is bad.
+        """
+        path = str(newPathName)
+        if not path.startswith("."):
+            raise TclError(f'bad window path name "{path}"')
+        parent_path, _, leaf = path.rpartition(".")
+        try:
+            parent = self.nametowidget(parent_path or ".")
+        except KeyError:
+            raise TclError(f'bad window path name "{parent_path}"') from None
+        # Tk's message for "." too, whose last name is the empty one.
+        if not leaf or leaf in parent.children:
+            raise TclError(f'window name "{leaf}" already exists in parent')
+        inherited = {
+            option: self.cget(option)
+            for option in ("startline", "endline", "undo", "maxundo", "autoseparators")
+        }
+        Text(parent, {**inherited, **(cnf or {})}, name=leaf, _peer_of=self, **kw)
+
+    def peer_names(self) -> tuple[str, ...]:
+        """The paths of this widget's peers - not its own, as in Tk."""
+        return tuple(
+            view.owner._w for view in self._buffer.peers() if view.owner is not None
+        )
+
+    def _peer_widgets(self) -> list[Text]:
+        return [view.owner for view in self._buffer.peers() if view.owner is not None]
+
+    def _text_line(self, value: Any) -> int | str:
+        """A ``-startline`` or ``-endline``, as Tk reads one.
+
+        Measured on Tk 9.0.2 over ten lines: 1 to 11 are kept, and anything
+        past them, 0 or negative is ``""``, no limit. 11 is the line ``end``
+        names, so ``-startline 11`` shows nothing at all.
+        """
+        if value in ("", None):
+            return ""
+        line = _tcl_integer(self, value)
+        return line if 1 <= line <= self._buffer.store_line_count() + 1 else ""
+
+    def _checked(self, given: dict[str, Any]) -> dict[str, Any]:
+        """As every widget's, with the line range read as Tk reads it.
+
+        Raises:
+            TclError: If ``startline`` would come after ``endline`` - with
+                Tk's message, and leaving both as they were.
+        """
+        resolved = super()._checked(given)
+        for option in ("startline", "endline"):
+            if option in resolved:
+                resolved[option] = self._text_line(resolved[option])
+        start = resolved.get("startline", self._window_option(0))
+        end = resolved.get("endline", self._window_option(1))
+        if start != "" and end != "" and start > end:
+            raise TclError("-startline must be less than or equal to -endline")
+        return resolved
+
+    def _window_option(self, which: int) -> int | str:
+        """``-startline`` or ``-endline`` as it is now.
+
+        From the buffer, not from the options: the range moves with edits,
+        and measured on Tk 9.0.2 the options read back where it has moved to.
+        """
+        line = self._buffer.window_lines()[which]
+        return "" if line is None else line
+
+    def _apply_window(self) -> None:
+        start, end = self._options["startline"], self._options["endline"]
+        self._buffer.set_window(start or None, end or None)
+
+    def cget(self, key: str) -> Any:
+        """As every widget's, with the line range read where it now is."""
+        if key in ("startline", "endline"):
+            return self._window_option(0 if key == "startline" else 1)
+        return super().cget(key)
+
+    def destroy(self) -> None:
+        """As every widget's, leaving the text to any peers.
+
+        Measured on Tk 9.0.2: destroying the widget a peer was made from
+        leaves the peer, its text and its marks as they were.
+        """
+        alive = not self._destroyed
+        super().destroy()
+        if alive:
+            self._buffer.detach()
 
     # ------------------------------------------------------------- bindings
 
@@ -10706,9 +10877,14 @@ class Text(_Drawable, XView, YView):
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, re-measuring and repainting as the change requires."""
         given = _given(cnf, kw)
+        if not given:
+            for option in ("startline", "endline"):
+                self._options[option] = self.cget(option)
         result = super().configure(cnf, **kw)
         if not given:
             return result
+        if {"startline", "endline"} & set(given):
+            self._apply_window()
         selection = self._tag_options["sel"]
         for widget_option, tag_option in _SELECTION_TAG_OPTIONS.items():
             selection[tag_option] = self._options[widget_option]
@@ -10827,8 +11003,10 @@ class Text(_Drawable, XView, YView):
         """
         if state == self._modified:
             return
-        self._modified = state
-        self.event_generate("<<Modified>>")
+        self._buffer.shared["modified"] = state
+        # Measured on Tk 9.0.2: every peer hears it, the one edited first.
+        for widget in (self, *self._peer_widgets()):
+            widget.event_generate("<<Modified>>")
 
     # -------------------------------------------------------------- geometry
 
@@ -11241,6 +11419,8 @@ class Text(_Drawable, XView, YView):
         """Record a tag's existence and its place in the priority order."""
         if name not in self._tag_options:
             self._tag_options[name] = dict(self._TAG_OPTIONS)
+        if name not in self._tag_order:
+            # A peer's sel is new to it and already in the shared order.
             self._tag_order.append(name)
 
     # ------------------------------------------------------------- selection
@@ -11789,6 +11969,15 @@ class Text(_Drawable, XView, YView):
         )
 
     def _redraw(self) -> None:
+        """Paint this widget, and any peer, since what changed here may be
+        theirs too: the text, a shared tag, a shared tag's style."""
+        self._paint()
+        for peer in self._peer_widgets():
+            peer._clamp_view()
+            peer._paint()
+            peer._report_view()
+
+    def _paint(self) -> None:
         """Paint the border, the visible rows, their tags, and the cursor."""
         window = self._window
         if window is None or self.tk.screen is None:

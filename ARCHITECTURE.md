@@ -4230,8 +4230,8 @@ Multi-line text editor.
 | `mark_unset(*markNames)` | ✓ | Delete marks |
 | `mark_next(index)` | ✓ | Next mark |
 | `mark_previous(index)` | ✓ | Previous mark |
-| `peer_create(newPathName, **kw)` | ☐ | Peer widget - not implemented; TkCurses-gm66.13 |
-| `peer_names()` | ☐ | List peers - not implemented; TkCurses-gm66.13 |
+| `peer_create(newPathName, cnf={}, **kw)` | ✓ | A Text at that path, sharing the contents; TkCurses-gm66.13 |
+| `peer_names()` | ✓ | The other peers' paths, oldest first |
 | `replace(index1, index2, chars)` | ☐ | Replace text - not implemented; TkCurses-mzj |
 | `scan_mark(x, y)` | ☐ | Scan start - not implemented; TkCurses-6lh |
 | `scan_dragto(x, y)` | ☐ | Scan drag - not implemented; TkCurses-6lh |
@@ -4293,10 +4293,59 @@ over four separated inserts undoes two and leaves `ab`; lowering it to 2 over
 five groups drops the oldest three at once; 0 and -1 both keep everything.
 A group counts once however many edits it holds.
 
-**`-startline` and `-endline` are not here** (`TkCurses-gm66.13`). They
-renumber the whole index space - with `-startline 3`, Tk's line 3 is `1.0` and
-nothing outside the range can be read, marked or tagged - and Tk built them
-for peers, which share one buffer between widgets. Both arrive together.
+**Peers share one store, and each Text is a view of it** (`TkCurses-gm66.13`).
+`_core/textbuffer.py` keeps the string, marks, tags and undo stack in a
+`_Store`; a `TextBuffer` is one widget's window onto it, renumbered so its
+first line is `1.0`. The manual lists what a peer keeps to itself - `sel`,
+`insert`, `current`, embedded windows, its configuration - and the view keeps
+the three marks and the tag in the store under names of its own, so every
+edit moves them with everything else. Tag *styles* and their order, the
+modified flag and the undo stack are shared; `sel`'s style is not. Measured on
+Tk 9.0.2, over a Text holding ten lines, with a peer over lines 3 to 6:
+
+- `peer create` returns nothing and makes no Python object, so the peer here
+  is an ordinary `Text` registered at the path, reachable by `nametowidget`.
+  It takes `-startline`, `-endline`, `-undo`, `-maxundo` and `-autoseparators`
+  from its creator and every other option from the defaults. `peer names`
+  leaves out the widget asked.
+- **Undo and `<<Modified>>`.** One stack: undo in either takes back an edit
+  made through the other. `-undo` reads back per widget, but whichever peer
+  set it last decides whether edits are recorded. `<<Modified>>` reaches
+  every peer, the edited one first.
+- **`-endline` is exclusive**, and both take 1 to one past the last line;
+  0, negatives and anything further read back `""`, no limit. A start after
+  the end is `-startline must be less than or equal to -endline` and changes
+  neither.
+- **The range moves with edits.** Both edges are marks with left gravity: a
+  line inserted at the start edge (3.0) is inside and moves `-endline` to 7,
+  one inserted at the end edge (6.0) is outside. An edge an edit leaves part
+  way along a line snaps to that line's start: deleting `2.2`-`3.0` gives
+  `-startline 2` and a first line `liline3`; deleting `5.2`-`6.0` gives
+  `-endline 5`, without the joined line.
+- Indices clamp to the window (`99.0`, `end+5l` and `2.0+20c` are all `4.0`),
+  `search` sees only it, and `tag ranges` cuts at its edges. A shared mark
+  outside it is listed by `mark names` but is `bad text index`. A peer's own
+  `insert` is never outside: when the window moves above it, it is *moved* to
+  the end of the window's last line, and below it, to `1.0` - moved, so a
+  window that moves back finds it there and not where it was.
+- `insert` set to `end` is held before the final newline, in any Text; this
+  used to leave it after it, at `3.0` for two lines where Tk says `2.3`.
+  `current` may sit at `end`.
+- A window of no lines - `-startline` equal to `-endline`, or every line
+  deleted through another peer - holds nothing: `end` is `1.0` and `get 1.0
+  end` is empty. Deleting everything *in* a peer leaves one empty line, since
+  it cannot remove the newline that ends its last.
+
+Two departures. **An empty shell takes no text here.** Tk inserts it into the
+store at the shell's position, where the shell itself cannot show it - a
+program typing into what it sees as an empty widget then edits a line in
+someone else's view. And **`tag.first`, `tag.last` and `tag nextrange` agree
+with `tag ranges`.** In Tk they do not for a tag that crosses the end edge.
+Over the peer above, a tag on store lines 5.1 to 8.0 has `tag ranges`,
+`nextrange` and `prevrange` all 3.1 to 4.0, while `w.last` is 3.1. A tag over
+the whole store has `tag ranges` 1.0 to 4.0, while `t.last` is 1.0 and there
+is no `nextrange` from 1.0 at all. A tag inside the window has no such
+disagreement. Tk's answers there contradict its own ranges, so the ranges win.
 
 ---
 

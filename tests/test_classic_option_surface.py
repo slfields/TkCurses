@@ -91,9 +91,7 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
     "Scale": {},
     "Scrollbar": {},
     "Spinbox": {},
-    "Text": {
-        "TkCurses-gm66.13": "endline startline",
-    },
+    "Text": {},
     "Tk": {
         "TkCurses-yi4": "backgroundimage bgimg",
     },

@@ -424,3 +424,32 @@ def test_shift_down_selects_a_whole_line(terminal, tmp_path):
     term.send_keys("<Shift-Down>")
     term.wait_for_text("insert=2.0")
     term.wait_for_text("sel=6")
+
+
+def test_typing_in_one_peer_shows_in_the_other(terminal, tmp_path):
+    """The peer is repainted by the edit, not by its own next event.
+    TkCurses-gm66.13."""
+    term = terminal(cols=50, rows=12)
+    term.run_source(
+        program(
+            "t = tkcurses.Text(root, width=15, height=4)\n"
+            "t.place(x=1, y=1)\n"
+            "t.insert('1.0', 'one\\ntwo\\nthree')\n"
+            "t.peer_create('.p', startline=2)\n"
+            "root.nametowidget('.p').configure(width=15, height=4)\n"
+            "root.nametowidget('.p').place(x=25, y=1)\n"
+            "t.mark_set('insert', '2.3')\n"
+            "t.focus_set()"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("one")
+    term.wait_for_idle()
+    term.send(b"XY")
+    # Both copies of the edited line: the second row of the first, under its
+    # border, and the first row of the peer, which starts at line 2.
+    term.wait_for(
+        lambda t: "twoXY" in t.display[3][:24] and "twoXY" in t.display[2][25:],
+        message="twoXY in both peers",
+    )
+    assert "one" not in term.display[2][25:]
