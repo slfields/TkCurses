@@ -4538,8 +4538,8 @@ class Labelframe(Widget, tkcurses.LabelFrame):
     class, not two implementations, so this is an assignment rather than a
     subclass and the two can never drift apart.
 
-    ``underline`` and ``labelwidget`` are ttk additions the classic widget
-    does not have; ``labelanchor`` and ``text`` it already had.
+    ``underline`` is a ttk addition the classic widget does not have;
+    ``labelanchor``, ``text`` and ``labelwidget`` come from the classic one.
 
     **``padding`` is accepted and does nothing yet.** It is declared because
     the option surface is compared against real ttk's and a missing option is
@@ -4562,7 +4562,6 @@ class Labelframe(Widget, tkcurses.LabelFrame):
     _widget_options: ClassVar[dict[str, Any]] = {
         "padding": "",
         "underline": "",
-        "labelwidget": "",
     }
 
 
@@ -4830,6 +4829,16 @@ class Radiobutton(Widget, tkcurses.Radiobutton):
     def _element_at(self, x: int, y: int) -> Any:
         """``Radiobutton.indicator`` over the button, else the ring model."""
         return _indicator_element(self, "Radiobutton", x, y)
+
+    @property
+    def _indicator_state(self) -> str:
+        """On or off, never the classic widget's third state.
+
+        Measured on Tk 9.0.2: a ttk radiobutton over an empty variable has
+        no ``alternate`` state, where the classic one draws its third.
+        """
+        state = super()._indicator_state
+        return "off" if state == "tristate" else state
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "padding": "",

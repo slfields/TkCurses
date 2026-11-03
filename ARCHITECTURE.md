@@ -3581,6 +3581,21 @@ Labeled container.
 | `labelanchor` | Title position (n/s/e/w) |
 | `labelwidget` | Widget as label |
 
+**`labelwidget`, measured on Tk 9.0.2** (`TkCurses-gm66.10`). The widget is
+managed by the frame (`winfo_manager()` is `labelframe`) and drawn on the
+border where the anchor puts a text caption, one cell in from the corner as a
+caption's text is; `text` is kept and not drawn. It may be the frame's child
+or a child of any ancestor - a sibling made *before* the frame is raised above
+it, as Tk raises it - and anything else, a toplevel included, is `can't use .x
+as label in this frame`. Choosing another lets the first go, unmapped and
+managed by nothing. Packing, gridding or placing the label anywhere, or
+destroying it, ends it: the option reads `""` and the caption is text again.
+
+A label taller than the border row pushes the children away from that edge
+(Tk put a 40-pixel label's first child at 40); here the border stays on the
+frame's edge with the label over it, since a terminal border is one row and
+cannot run through the middle of a widget.
+
 ---
 
 ### Label Class
@@ -3699,6 +3714,27 @@ Radio selection.
 Unselected: ( ) Option    Selected: (●) Option
 Focused:    (▶) Option              (●) Option ◀
 ```
+
+**The third state, `(-)`** (`TkCurses-gm66.10`). A radiobutton whose variable
+holds its `tristatevalue` is drawn as neither chosen nor not. That value
+defaults to `""`, so **an empty variable draws every button of its group as
+`(-)`** until one is chosen, and `deselect()`, which writes `""`, does the
+same. This needed eyes: no Tk call reports what is drawn, and a probe run on
+Tk 9.0.2 under GNOME showed an empty variable and a variable equal to
+`tristatevalue` both "greyed out and set". It is the well-known look of
+radiobuttons over a fresh `StringVar()`.
+
+One departure. Two buttons made with **no** variable share Tk's
+`selectedButton`; in Tk the first one showed plain and the second greyed and
+set, because the first computes its state before it creates the variable and
+is not redrawn when it does. Here the shared variable exists from the start
+and both show `(-)`.
+
+`ttk.Radiobutton` keeps two states: measured, real ttk's over an empty
+variable has no `alternate` state. `selectimage` and `tristateimage` replace
+`image` in those states, on both check and radio buttons; neither does
+anything without an `image`, and neither changes the size, which `image`
+alone decides - measured, a larger `selectimage` left the button 8x8.
 
 ---
 
@@ -4327,6 +4363,29 @@ truncating already matches.
 └─────────────────┘
 ```
 
+**`justify` and `listvariable`, measured on Tk 9.0.2** (`TkCurses-gm66.10`).
+`justify` aligns each item within the wider of the widest item and the
+window - with a 30-character item in a 20-character list, right-justified
+`ab` sat at the 30th, not the 20th - so the horizontal view moves every row
+together. It takes a prefix (`cent` is `center`); `C` is `bad justification`
+and `""` `ambiguous justification`. `justify` is checked on Listbox only so
+far (`TkCurses-a2sg`).
+
+`listvariable` holds the items as a Tcl list, read by `_tcl_list` with Tcl's
+braces, quotes and one-letter backslash sequences. A variable that exists
+gives the list its items; a name that does not is made, holding them. Every
+`insert` and `delete` writes it back as a tuple, so a `StringVar` over it
+reads as Python shows a tuple, `"('a', 'b')"`, exactly as tkinter's does.
+Writing it replaces the items: the selection past the new end goes for good,
+the active index stays, and a value that is not a list is refused with `can't
+set "PY_VAR0": invalid listvar value` and the variable put back.
+
+One departure: attaching a shorter variable drops the selection past the new
+end. Tk keeps those indices hidden instead - `curselection()` leaves them
+out - and appending items brings them back selected while inserting before
+them does not, which is how its selection table happens to move rather than
+a rule.
+
 ---
 
 ### Scrollbar Class
@@ -4532,6 +4591,13 @@ each entry's text, in its submenus too, and binds it:
   later do not move a shortcut onto another; a deleted entry's shortcut does
   nothing, and a disabled one's does nothing, as choosing it would.
 
+**`font`, `type` and `tearoffcommand`** (`TkCurses-gm66.10`). `font` styles
+the labels as every widget's font does here: bold, italic, underline. `type`
+is `menubar`, `normal` or `tearoff`, or a prefix (`m` is `menubar`), and
+`""` is `ambiguous type`; it is checked and kept, and changes nothing here.
+`tearoffcommand` is kept: no menu is torn off here, so there is nothing to
+call it for.
+
 ---
 
 ### Menubutton Class
@@ -4696,6 +4762,17 @@ coordinates are in pixels, `width` and `height` are in cells.
 | `tag_lower(tagOrId, belowThis)` | ✓ | Lower item |
 | `tag_raise(tagOrId, aboveThis)` | ✓ | Raise item |
 | `type(tagOrId)` | ✓ | Get item type |
+
+**Scrolling options, measured on Tk 9.0.2** (`TkCurses-gm66.10`).
+`xscrollincrement` and `yscrollincrement` are the unit `scroll N units` moves
+by, and the view only ever rests on a multiple of one: with 30, `moveto` 47
+pixels landed on 60. At 0, Tk's default, a unit is a cell - two pixels down,
+one across - as before; a vertical view still rests on a whole cell.
+`confine` (default on) keeps the view inside the scroll region; off, it went
+50 pixels above the top for 5 units and to twice the region's height for
+`moveto 2`, and turning it back on pulls the view inside at once. `offset`,
+the stipple origin, is checked (`x,y`, `#x,y` or an anchor) and kept: there
+are no stipples to align.
 
 ---
 

@@ -61,11 +61,8 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
     "Button": {
         "TkCurses-l26": "bitmap",
     },
-    "Canvas": {
-        "TkCurses-gm66.10": "confine offset xscrollincrement yscrollincrement",
-    },
+    "Canvas": {},
     "Checkbutton": {
-        "TkCurses-gm66.10": "selectimage tristateimage",
         "TkCurses-l26": "bitmap",
     },
     "Entry": {},
@@ -75,16 +72,11 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
     "Label": {
         "TkCurses-l26": "bitmap",
     },
-    "LabelFrame": {
-        "TkCurses-gm66.10": "labelwidget",
-    },
+    "LabelFrame": {},
     "Listbox": {
         "TkCurses-9e8": "exportselection",
-        "TkCurses-gm66.10": "justify listvariable",
     },
-    "Menu": {
-        "TkCurses-gm66.10": "font tearoffcommand type",
-    },
+    "Menu": {},
     "Menubutton": {
         "TkCurses-l26": "bitmap",
     },
@@ -94,7 +86,6 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
     },
     "PanedWindow": {},
     "Radiobutton": {
-        "TkCurses-gm66.10": "selectimage tristateimage tristatevalue",
         "TkCurses-l26": "bitmap",
     },
     "Scale": {},

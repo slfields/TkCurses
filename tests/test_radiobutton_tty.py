@@ -48,12 +48,14 @@ GROUP = (
 )
 
 
-def test_an_unchosen_group_shows_empty_indicators(terminal, tmp_path):
+def test_an_unchosen_group_shows_the_third_state(terminal, tmp_path):
+    """An empty variable is the default ``tristatevalue``: seen on Tk 9.0.2's
+    screen, every button greyed and set until one is chosen."""
     term = terminal(cols=40, rows=12)
     term.run_source(program(GROUP), workdir=tmp_path)
-    term.wait_for_text("( ) Small")
-    term.wait_for_text("( ) Medium")
-    term.wait_for_text("( ) Large")
+    term.wait_for_text("(-) Small")
+    term.wait_for_text("(-) Medium")
+    term.wait_for_text("(-) Large")
 
 
 def test_choosing_one_marks_only_that_one(terminal, tmp_path):
@@ -92,7 +94,7 @@ def test_a_label_over_the_group_variable_follows_the_choice(terminal, tmp_path):
         ),
         workdir=tmp_path,
     )
-    term.wait_for_text("( ) Small")
+    term.wait_for_text("(-) Small")
     term.click(3, 4)
     term.wait_for_text("medium")
 
@@ -102,7 +104,7 @@ def test_space_chooses_the_focused_button(terminal, tmp_path):
     term.run_source(
         program(GROUP + "root.after(100, group[0].focus_set)"), workdir=tmp_path
     )
-    term.wait_for_text("< > Small")
+    term.wait_for_text("<-> Small")
     term.send(b" ")
     term.wait_for_text("<•> Small")
 
@@ -113,11 +115,10 @@ def test_tab_walks_the_group(terminal, tmp_path):
     term.run_source(
         program(GROUP + "root.after(100, group[0].focus_set)"), workdir=tmp_path
     )
-    term.wait_for_text("< > Small")
+    term.wait_for_text("<-> Small")
     term.send_keys("<Tab>")
-    term.wait_for_text("< > Medium")
-    term.wait_for_idle()
-    assert "( ) Small" in "\n".join(term.display)
+    term.wait_for_text("<-> Medium")
+    term.wait_for_text("(-) Small")
 
 
 def test_clicking_the_chosen_one_leaves_it_chosen(terminal, tmp_path):
@@ -162,7 +163,10 @@ def test_buttons_without_a_variable_still_form_one_group(terminal, tmp_path):
         ),
         workdir=tmp_path,
     )
-    term.wait_for_text("( ) Yes")
+    # Both in the third state, where Tk shows the first one off: a departure,
+    # in ARCHITECTURE.md under Radiobutton.
+    term.wait_for_text("(-) Yes")
+    term.wait_for_text("(-) No")
     term.click(3, 2)
     term.wait_for_text("(•) Yes")
     term.click(3, 4)

@@ -820,6 +820,141 @@ _WINDOW_SYSTEM_OPTIONS: dict[str, Any] = {
 }
 
 
+#: The anchors a Canvas ``-offset`` may name instead of ``x,y``.
+_OFFSET_ANCHORS = ("n", "ne", "e", "se", "s", "sw", "w", "nw", "center")
+
+
+def _canvas_offset(widget: Any, value: Any) -> Any:
+    """A Canvas ``-offset``: ``x,y``, ``#x,y`` or an anchor. Tk aligns its
+    stipples with it, and there are no stipples here, so it is checked and
+    kept. Measured on Tk 9.0.2, with its message."""
+    del widget
+    text = str(value)
+    pair = text[1:] if text.startswith("#") else text
+    x, _, y = pair.partition(",")
+    if text in _OFFSET_ANCHORS or (_is_number(x) and _is_number(y)):
+        return value
+    raise TclError(
+        f'bad offset "{text}": expected "x,y", "#x,y", n, ne, e, se, s, sw, w, '
+        "nw, or center"
+    )
+
+
+#: Tcl's one-letter backslash sequences, as a list element reads them.
+_TCL_ESCAPES = {
+    "a": "\a",
+    "b": "\b",
+    "f": "\f",
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+    "v": "\v",
+}
+
+
+def _tcl_list(value: Any) -> list[str]:
+    r"""Split a Tcl list into its elements, as ``Tcl_SplitList`` does.
+
+    A tuple or list is taken as already split, as tkinter hands one to Tcl.
+    Otherwise elements are separated by whitespace and may be ``{braced}``,
+    taken literally with nested braces counted, or ``"quoted"``, with
+    backslash sequences read as in a bare word. A brace or quote that is not
+    closed, or a closing one followed by anything but space, is an error with
+    Tcl's message. Only the one-letter backslash sequences are read; Tcl's
+    octal, ``\x`` and ``\u`` forms are not.
+    """
+    if isinstance(value, (tuple, list)):
+        return [str(element) for element in value]
+    text = str(value)
+    elements: list[str] = []
+    at = 0
+    while True:
+        while at < len(text) and text[at].isspace():
+            at += 1
+        if at == len(text):
+            return elements
+        opener = text[at]
+        if opener == "{":
+            depth, start = 1, at + 1
+            at += 1
+            while at < len(text) and depth:
+                if text[at] == "\\":
+                    at += 1
+                elif text[at] in "{}":
+                    depth += 1 if text[at] == "{" else -1
+                at += 1
+            if depth:
+                raise TclError("unmatched open brace in list")
+            element, kind = text[start : at - 1], "braces"
+        else:
+            chars: list[str] = []
+            quoted = opener == '"'
+            at += quoted
+            while at < len(text) and (
+                text[at] != '"' if quoted else not text[at].isspace()
+            ):
+                if text[at] == "\\" and at + 1 < len(text):
+                    at += 1
+                    chars.append(_TCL_ESCAPES.get(text[at], text[at]))
+                else:
+                    chars.append(text[at])
+                at += 1
+            if quoted and at == len(text):
+                raise TclError("unmatched open quote in list")
+            at += quoted
+            element, kind = "".join(chars), "quotes"
+        if (opener in '{"') and at < len(text) and not text[at].isspace():
+            raise TclError(
+                f'list element in {kind} followed by "{text[at]}" instead of space'
+            )
+        elements.append(element)
+
+
+def _image_name(widget: Any, value: Any) -> str:
+    """An image's name, or ``""``. Measured on Tk 9.0.2, for ``selectimage``
+    and ``tristateimage``: ``image "nosuch" does not exist``."""
+    name = str(value)
+    if name and name not in widget.tk.images:
+        raise TclError(f'image "{name}" does not exist')
+    return name
+
+
+def _tcl_index(value: Any, table: tuple[str, ...], what: str) -> str:
+    """One of ``table``, or a unique prefix of one, returned whole - Tcl's
+    ``Tcl_GetIndexFromObj``. Case counts, and a prefix of several, the empty
+    one included, is ``ambiguous`` rather than ``bad``."""
+    text = str(value)
+    if text in table:
+        return text
+    matches = [name for name in table if name.startswith(text)]
+    if len(matches) == 1:
+        return matches[0]
+    listed = ", ".join(table[:-1])
+    kind = "ambiguous" if matches else "bad"
+    raise TclError(f'{kind} {what} "{text}": must be {listed}, or {table[-1]}')
+
+
+def _justification(widget: Any, value: Any) -> str:
+    """``left``, ``right`` or ``center``. Measured on Tk 9.0.2: ``cent``
+    reads back ``center``, ``C`` is bad and ``""`` ambiguous."""
+    del widget
+    return _tcl_index(value, ("left", "right", "center"), "justification")
+
+
+def _menu_type(widget: Any, value: Any) -> str:
+    """A Menu's ``-type``. Measured on Tk 9.0.2: ``m`` reads back ``menubar``."""
+    del widget
+    return _tcl_index(value, ("menubar", "normal", "tearoff"), "type")
+
+
+def _is_number(text: str) -> bool:
+    try:
+        float(text)
+    except ValueError:
+        return False
+    return True
+
+
 def _tcl_boolean(widget: Any, value: Any) -> int:
     """A boolean option, answered as Tk answers it: ``yes`` reads back 1."""
     try:
@@ -915,6 +1050,7 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "buttondownrelief": _relief,
     "buttonuprelief": _relief,
     "colormap": _colormap,
+    "confine": _tcl_boolean,
     "container": _tcl_boolean,
     "disabledbackground": _colour_or_terminals,
     "disabledforeground": _colour_or_terminals,
@@ -931,6 +1067,7 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "jump": _tcl_boolean,
     "maxundo": _tcl_integer,
     "offrelief": _relief,
+    "offset": _canvas_offset,
     "opaqueresize": _tcl_boolean,
     "overrelief": _relief_or_none,
     "proxybackground": _colour_or_terminals,
@@ -946,6 +1083,7 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "selectborderwidth": _screen_distance,
     "selectcolor": _colour_or_terminals,
     "selectforeground": _colour_or_terminals,
+    "selectimage": _image_name,
     "setgrid": _tcl_boolean,
     "sliderlength": _signed_distance,
     "spacing1": _screen_distance,
@@ -953,9 +1091,13 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "spacing3": _screen_distance,
     "sliderrelief": _relief,
     "tile": _tcl_boolean,
+    "tristateimage": _image_name,
+    "type": _menu_type,
     "troughcolor": _colour_or_terminals,
     "use": _use,
     "visual": _visual,
+    "xscrollincrement": _screen_distance,
+    "yscrollincrement": _screen_distance,
 }
 
 
@@ -1882,6 +2024,11 @@ class Misc:
         self._requested = requested
         if self.master is not None:
             self.tk.layout.invalidate(self.master)
+        if self._manager == "labelframe" and isinstance(
+            self._manager_container, LabelFrame
+        ):
+            # A LabelFrame's label is in no layout to be re-placed by.
+            self._manager_container._label_resized()
 
     def _invalidate_layout(self) -> None:
         """Ask for this container's children to be laid out again."""
@@ -2134,6 +2281,17 @@ class Misc:
                 return False
         return True
 
+    def _leave_for(self, container: Misc) -> None:
+        """Leave the container laying this widget out, before ``container``
+        takes it on - unless that is the same one, which is a reconfigure.
+
+        A LabelFrame's label packed into that same frame is not told here;
+        the frame sees its label's manager has changed when it next looks.
+        """
+        previous = self._manager_container
+        if previous is not None and previous is not container:
+            self._leave_layout(previous)
+
     def _leave_layout(self, container: Misc) -> None:
         """Take this widget out of one container's layout.
 
@@ -2142,6 +2300,9 @@ class Misc:
         a widget moved with ``in_`` is then managed twice over, and drawn
         wherever the first of the two decides.
         """
+        if isinstance(container, LabelFrame) and self._manager == "labelframe":
+            container._label_taken(self)
+            return
         layout = container._layout_manager
         if layout is None:
             return
@@ -3428,6 +3589,7 @@ class Pack:
         def _unmap(self) -> None: ...
         def _managed_layout(self, name: str) -> Layout | None: ...
         def _leave_layout(self, container: Misc) -> None: ...
+        def _leave_for(self, container: Misc) -> None: ...
 
     def pack_configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
         """Pack this widget into its container.
@@ -3457,9 +3619,7 @@ class Pack:
         )
         # A geometry call naming a different container is a move, and the
         # container being left has to stop laying this widget out.
-        previous = self._manager_container
-        if previous is not None and previous is not container:
-            self._leave_layout(previous)
+        self._leave_for(container)
         layout.add(self, _pack_options(options, remembered), before=before, after=after)
         self._manager = "pack"
         self._manager_container = container
@@ -3638,6 +3798,7 @@ class Grid:
         def _unmap(self) -> None: ...
         def _managed_layout(self, name: str) -> Layout | None: ...
         def _leave_layout(self, container: Misc) -> None: ...
+        def _leave_for(self, container: Misc) -> None: ...
 
     def grid_configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
         """Place this widget in its container's grid.
@@ -3668,9 +3829,7 @@ class Grid:
         remembered = held or layout.remembered(self)
         # A geometry call naming a different container is a move, and the
         # container being left has to stop laying this widget out.
-        previous = self._manager_container
-        if previous is not None and previous is not container:
-            self._leave_layout(previous)
+        self._leave_for(container)
         if not options and remembered is not None:
             layout.add(self, remembered)
         else:
@@ -3813,6 +3972,7 @@ class Place:
         def _unmap(self) -> None: ...
         def _managed_layout(self, name: str) -> Layout | None: ...
         def _leave_layout(self, container: Misc) -> None: ...
+        def _leave_for(self, container: Misc) -> None: ...
 
     def place_configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> None:
         """Place this widget in its container.
@@ -3839,9 +3999,7 @@ class Place:
         )
         # A geometry call naming a different container is a move, and the
         # container being left has to stop laying this widget out.
-        previous = self._manager_container
-        if previous is not None and previous is not container:
-            self._leave_layout(previous)
+        self._leave_for(container)
         layout.add(self, _place_options(options, remembered))
         self._manager = "place"
         self._manager_container = container
@@ -6377,6 +6535,11 @@ class _TextWidget(_Drawable):
             return None
         return self.tk.images.get(name)
 
+    def _drawn_image(self) -> Image | None:
+        """The image painted, which a check or radio button may swap for its
+        state's. The size is always measured from :meth:`_image`."""
+        return self._image()
+
     def _follow_variable(self) -> None:
         """Track the ``textvariable``, dropping any previous one.
 
@@ -6622,7 +6785,7 @@ class _TextWidget(_Drawable):
         background through it.
         """
         painter = getattr(self.tk, "painter", None)
-        image = self._image()
+        image = self._drawn_image()
         if image is None:
             return
         del layout
@@ -7225,7 +7388,11 @@ class _ChoiceWidget(_TextWidget):
         # the pointer is over it. TkCurses-gm66.5.
         "offrelief": "raised",
         "overrelief": "",
+        # Drawn in place of "image" while the button is on, or in its third
+        # state; nothing without an "image". TkCurses-gm66.10.
+        "selectimage": "",
         "takefocus": True,
+        "tristateimage": "",
         "variable": None,
     }
 
@@ -7312,6 +7479,21 @@ class _ChoiceWidget(_TextWidget):
             return
         handle = variable.trace_add("write", lambda *_: self._redraw())
         self._value_trace = (variable, handle)
+
+    def _drawn_image(self) -> Image | None:
+        """``selectimage`` while on, ``tristateimage`` in the third state.
+
+        Measured on Tk 9.0.2: neither does anything without an ``image``, and
+        neither changes the size, which ``image`` alone decides.
+        """
+        image = self._image()
+        if image is None:
+            return None
+        option = {"on": "selectimage", "tristate": "tristateimage"}.get(
+            self._indicator_state, ""
+        )
+        name = str(self._options[option]) if option else ""
+        return self.tk.images.get(name, image) if name else image
 
     @property
     def _indicator_on(self) -> bool:
@@ -7595,9 +7777,12 @@ class Radiobutton(_ChoiceWidget):
     _INDICATORS: ClassVar[dict[str, tuple[str, str]]] = {
         "on": ("(•)", "<•>"),
         "off": ("( )", "< >"),
+        "tristate": ("(-)", "<->"),
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        # The value that shows the third state. TkCurses-gm66.10.
+        "tristatevalue": "",
         "value": "",
     }
 
@@ -7620,9 +7805,19 @@ class Radiobutton(_ChoiceWidget):
 
     @property
     def _indicator_state(self) -> str:
-        """On when the variable holds this button's ``value``."""
-        if _same_value(self._value(), self._options["value"]):
+        """On when the variable holds this button's ``value``, in the third
+        state when it holds ``tristatevalue``, and off otherwise.
+
+        Tk's order, as a Checkbutton's. Seen on Tk 9.0.2's screen: an empty
+        variable, with the default ``tristatevalue`` of ``""``, draws every
+        button of the group greyed and set until one is chosen - the
+        well-known look of radiobuttons over a fresh ``StringVar()``.
+        """
+        value = self._value()
+        if _same_value(value, self._options["value"]):
             return "on"
+        if _same_value(value, self._options["tristatevalue"]):
+            return "tristate"
         return "off"
 
     def select(self) -> None:
@@ -9510,6 +9705,8 @@ class LabelFrame(Frame):
     _widget_options: ClassVar[dict[str, Any]] = {
         "font": "",
         "labelanchor": "nw",
+        # A widget drawn on the border in place of the text. TkCurses-gm66.10.
+        "labelwidget": "",
         "relief": GROOVE,
         "text": "",
         "textvariable": None,
@@ -9534,8 +9731,10 @@ class LabelFrame(Frame):
                 everything a Frame takes.
         """
         self._caption_trace: tuple[Variable, str] | None = None
+        self._label: BaseWidget | None = None
         super().__init__(master, cnf, name=name, class_=class_, **kw)
         self._follow_caption()
+        self._adopt_label()
         self._apply_requested_size()
 
     def winfo_class(self) -> str:
@@ -9554,13 +9753,170 @@ class LabelFrame(Frame):
         result = super().configure(cnf, **kw)
         if "textvariable" in given:
             self._follow_caption()
+        if "labelwidget" in given:
+            self._adopt_label()
         if given:
             self._apply_requested_size()
             self._invalidate_layout()
+            self._place_label()
             self._redraw()
         return result
 
     config = configure
+
+    def cget(self, key: str) -> Any:
+        """As every widget's, with a ``labelwidget`` that has gone answering
+        ``""``, as Tk's does."""
+        self._label_widget()
+        return super().cget(key)
+
+    def _checked(self, given: dict[str, Any]) -> dict[str, Any]:
+        """As every widget's, and a ``labelwidget`` must be one Tk would take.
+
+        Measured on Tk 9.0.2: a widget whose parent is this frame or one of
+        its ancestors, so that it can be drawn over it. Anything else - a
+        child of a sibling, the root - is ``can't use .x as label in this
+        frame``, and a path naming nothing is ``bad window path name``.
+        """
+        resolved = super()._checked(given)
+        if "labelwidget" not in resolved:
+            return resolved
+        value = resolved["labelwidget"]
+        if value in (None, ""):
+            return resolved
+        if isinstance(value, Misc):
+            widget = value
+        else:
+            try:
+                widget = self.nametowidget(str(value))
+            except KeyError:
+                raise TclError(f'bad window path name "{value}"') from None
+        holders = []
+        holder: Misc | None = self
+        while holder is not None:
+            holders.append(holder)
+            holder = holder.master
+        if (
+            not isinstance(widget, BaseWidget)
+            or widget._is_toplevel
+            or not any(widget.master is holder for holder in holders)
+        ):
+            raise TclError(f"can't use {widget} as label in this frame")
+        resolved["labelwidget"] = widget
+        return resolved
+
+    def _label_widget(self) -> BaseWidget | None:
+        """The ``labelwidget``, while it is still this frame's label.
+
+        Measured on Tk 9.0.2: destroyed, or packed somewhere else, and the
+        option reads ``""`` and the text caption comes back. Destroying tells
+        no manager here, so this checks rather than waits to be told.
+        """
+        label = self._label
+        if label is None:
+            return None
+        if label._destroyed or label._manager != "labelframe":
+            self._label = None
+            if self._options.get("labelwidget") is label:
+                self._options["labelwidget"] = ""
+            return None
+        return label
+
+    def _adopt_label(self) -> None:
+        """Take the ``labelwidget`` on, letting the previous one go.
+
+        Measured on Tk 9.0.2: the one let go is unmapped and managed by
+        nothing; the one taken is taken from whatever managed it, and raised
+        above this frame, so a sibling made before it is not hidden under it.
+        """
+        new = self._options["labelwidget"] or None
+        previous = self._label_widget()
+        if previous is not None and previous is not new:
+            previous._manager = ""
+            previous._manager_container = None
+            previous._unmap()
+        if new is not None and new is not previous:
+            new._leave_for(self)
+            new._manager = "labelframe"
+            new._manager_container = self
+            if new.master is not self:
+                new.tkraise(self)
+            new._map()
+        self._label = new
+
+    def _label_taken(self, label: Misc) -> None:
+        """Another manager has taken the label: the caption is text again."""
+        if label is self._label:
+            label._manager = ""
+            label._manager_container = None
+            self._label_widget()
+            self._apply_requested_size()
+            self._invalidate_layout()
+            self._redraw()
+
+    def _allocate(self, rect: Rect) -> None:
+        """As every widget's, and the label follows the border it sits on."""
+        super()._allocate(rect)
+        self._place_label()
+
+    def _label_size(self, label: BaseWidget) -> tuple[int, int]:
+        """What the label is given: what it asks for, kept inside the edge."""
+        inset = 2 * BORDER_WIDTH + 2 if self._border_drawn else 0
+        width = min(label.winfo_reqwidth(), max(0, self._rect.width - inset))
+        return (width, max(1, label.winfo_reqheight()))
+
+    def _place_label(self) -> None:
+        """Put the label on the border, where the anchor puts a caption.
+
+        A caption's text sits one cell in from the corner, after its space,
+        and so does a label widget. On the bottom edge its last row is the
+        border row. Coordinates are the label's master's, which need not be
+        this frame.
+        """
+        label = self._label_widget()
+        if label is None:
+            return
+        width, height = self._label_size(label)
+        edge, alignment = self._CAPTION_PLACES.get(
+            str(self._options["labelanchor"]).lower(), ("top", "left")
+        )
+        inset = BORDER_WIDTH + 1 if self._border_drawn else 0
+        if alignment == "centre":
+            column = (self._rect.width - width) // 2
+        elif alignment == "right":
+            column = self._rect.width - inset - width
+        else:
+            column = inset
+        row = 0 if edge == "top" else self._rect.height - height
+        holder = label.master
+        origin_x = holder.winfo_rootx() if holder is not None else 0
+        origin_y = holder.winfo_rooty() if holder is not None else 0
+        label._allocate(
+            Rect(
+                self.winfo_rootx() + column - origin_x,
+                self.winfo_rooty() + row - origin_y,
+                width,
+                height,
+            )
+        )
+
+    def _content_padding(self) -> Insets:
+        """As a Frame's, and more on the label's edge when it is taller than
+        the border row. Measured on Tk 9.0.2: a 40-pixel label put the first
+        child at 40, below it, rather than at the border's 2."""
+        padding = super()._content_padding()
+        label = self._label_widget()
+        if label is None:
+            return padding
+        extra = max(1, label.winfo_reqheight()) - (1 if self._border_drawn else 0)
+        if extra <= 0:
+            return padding
+        edge, _ = self._CAPTION_PLACES.get(
+            str(self._options["labelanchor"]).lower(), ("top", "left")
+        )
+        if edge == "top":
+            return replace(padding, top=padding.top + extra)
+        return replace(padding, bottom=padding.bottom + extra)
 
     def _follow_caption(self) -> None:
         """Track the ``textvariable``, dropping any previous one."""
@@ -9590,7 +9946,13 @@ class LabelFrame(Frame):
         self._redraw()
 
     def _caption(self) -> str:
-        """The caption as it is drawn, spaced away from the border corners."""
+        """The caption as it is drawn, spaced away from the border corners.
+
+        Empty while a ``labelwidget`` stands in for it, as in Tk, where the
+        ``text`` is kept and not drawn.
+        """
+        if self._label_widget() is not None:
+            return ""
         variable = self._options["textvariable"]
         text = (
             str(variable.get()) if variable is not None else str(self._options["text"])
@@ -9604,13 +9966,23 @@ class LabelFrame(Frame):
         half, which reads as a rendering fault rather than as a small frame.
         """
         super()._apply_requested_size()
-        caption = self._caption()
-        if not caption:
+        label = self._label_widget()
+        if label is not None:
+            width, height = label.winfo_reqwidth() + 2, max(1, label.winfo_reqheight())
+        else:
+            width, height = len(self._caption()), 1
+        if not width:
             return
         self._request_size(
-            max(self._requested.width, len(caption) + 2 * BORDER_WIDTH),
-            max(self._requested.height, 2),
+            max(self._requested.width, width + 2 * BORDER_WIDTH),
+            max(self._requested.height, height + 1),
         )
+
+    def _label_resized(self) -> None:
+        """The label asked for another size: move it, and make room."""
+        self._apply_requested_size()
+        self._invalidate_layout()
+        self._place_label()
 
     def _redraw(self) -> None:
         """Paint the frame, then write the caption over its border."""
@@ -12138,14 +12510,19 @@ class Canvas(_Drawable, XView, YView):
         # default is 1, and a terminal needs it more than Tk does: a thin
         # outline is one pixel wide and a click only names a whole cell.
         "closeenough": 1,
+        # Whether the view stays inside the scroll region. TkCurses-gm66.10.
+        "confine": 1,
         "height": 10,
+        "offset": "0,0",
         "relief": "sunken",
         "scrollregion": None,
         "state": "normal",
         "takefocus": False,
         "width": 40,
         "xscrollcommand": None,
+        "xscrollincrement": 0,
         "yscrollcommand": None,
+        "yscrollincrement": 0,
     }
 
     def __init__(
@@ -12203,6 +12580,11 @@ class Canvas(_Drawable, XView, YView):
         if {"width", "height"} & set(given):
             self._apply_requested_size()
             self._invalidate_layout()
+        if "confine" in given:
+            # Measured: turning it back on pulls a view that had wandered off
+            # the region back inside, at once.
+            self._top = self._confined(self._top, vertical=True)
+            self._left = self._confined(self._left, vertical=False)
         self._redraw()
         self._report_view()
         return result
@@ -12683,6 +13065,7 @@ class Canvas(_Drawable, XView, YView):
         span = height if vertical else width
         total = max(1, (bottom - top) if vertical else (right - left))
         origin = top if vertical else left
+        increment = self._increment(vertical=vertical)
         action = str(args[0])
         if action == "moveto":
             position = origin + int(float(args[1]) * total)
@@ -12692,18 +13075,43 @@ class Canvas(_Drawable, XView, YView):
             # A vertical unit is a cell, which is two pixels: scrolling by one
             # would swap which half of the cell each pixel row lands in, and
             # the whole picture would shimmer.
-            step = span if unit.startswith("page") else (2 if vertical else 1)
+            default = 2 if vertical else 1
+            step = span if unit.startswith("page") else (increment or default)
             position = (self._top if vertical else self._left) + count * step
         else:
             raise TclError(f'bad option "{action}": must be moveto or scroll')
-        limit = max(origin, origin + total - span)
-        position = max(origin, min(position, limit))
+        if increment:
+            # Measured on Tk 9.0.2: with an increment of 30, moveto 47 pixels
+            # lands on 60, the nearest multiple - the view is only ever on one.
+            position = increment * ((position + increment // 2) // increment)
+        position = self._confined(position, vertical=vertical)
         if vertical:
             self._top = position - position % 2
         else:
             self._left = position
         self._redraw()
         self._report_view()
+
+    def _increment(self, *, vertical: bool) -> int:
+        """``yscrollincrement`` or ``xscrollincrement``, 0 for Tk's default."""
+        name = "yscrollincrement" if vertical else "xscrollincrement"
+        return _as_int(self._options[name], 0)
+
+    def _confined(self, position: int, *, vertical: bool) -> int:
+        """A view origin kept inside the scroll region, while ``confine`` is on.
+
+        Measured on Tk 9.0.2: off, a view scrolls above the region's top, and
+        ``moveto 2`` goes twice its height down; on, neither moves past an
+        edge, and a region smaller than the window does not scroll at all.
+        """
+        if not self.getboolean(self._options["confine"]):
+            return position
+        left, top, right, bottom = self._scroll_region()
+        width, height = self._plane_size()
+        span = height if vertical else width
+        origin = top if vertical else left
+        total = max(1, (bottom - top) if vertical else (right - left))
+        return max(origin, min(position, origin + total - span))
 
     def _fractions(self, *, vertical: bool) -> tuple[float, float]:
         """Where one axis of the view is, as two fractions of the region."""
@@ -13004,11 +13412,17 @@ class Menu(_Drawable):
         # The tick or bullet of a chosen check or radio entry. "" here, Tk's
         # #000000: drawn as the label is. TkCurses-gm66.4.
         "selectcolor": "",
+        # The labels' styling, as every widget's font is here. TkCurses-gm66.10.
+        "font": "",
         "postcommand": None,
         "relief": "raised",
         "takefocus": False,
         "tearoff": False,
+        # Kept: a menu is never torn off here, so there is nothing to call,
+        # and "type" changes nothing.
+        "tearoffcommand": "",
         "title": "",
+        "type": "normal",
     }
 
     def __init__(
@@ -14004,6 +14418,10 @@ class Listbox(_Drawable, XView, YView):
         "activestyle": "underline",
         "font": "",
         "height": 10,
+        # Each item aligned within the wider of the widest item and the window,
+        # and a variable holding the items as a Tcl list. TkCurses-gm66.10.
+        "justify": "left",
+        "listvariable": "",
         "relief": "sunken",
         "selectmode": "browse",
         # Kept: a terminal is already a grid of characters. TkCurses-gm66.7.
@@ -14041,9 +14459,11 @@ class Listbox(_Drawable, XView, YView):
         self._top = 0
         # Characters scrolled off to the left, shared by every row as in Tk.
         self._left = 0
+        self._list_trace: tuple[Variable, str] | None = None
         super().__init__(master, cnf, name=name, **kw)
         self._apply_requested_size()
         self._install_class_bindings()
+        self._follow_list_variable()
 
     def _install_class_bindings(self) -> None:
         """Register the list keys for every Listbox in this application."""
@@ -14083,10 +14503,88 @@ class Listbox(_Drawable, XView, YView):
         if {"width", "height"} & set(given):
             self._apply_requested_size()
             self._invalidate_layout()
+        if "listvariable" in given:
+            self._follow_list_variable()
         self._redraw()
         return result
 
     config = configure
+
+    def _checked(self, given: dict[str, Any]) -> dict[str, Any]:
+        """As every widget's, and ``justify`` is checked as Tk checks it."""
+        resolved = super()._checked(given)
+        if "justify" in resolved:
+            resolved["justify"] = _justification(self, resolved["justify"])
+        return resolved
+
+    # ------------------------------------------------------- list variable
+
+    def _list_variable(self) -> tuple[Variable | None, bool]:
+        """The ``listvariable`` as a Variable, or None, and whether it held a
+        value already. A name is a variable of that name, as Tk's is; asked
+        before the Variable is made, because making one gives it a value."""
+        option = self._options["listvariable"]
+        if not option:
+            return None, False
+        existed = str(option) in self.tk.variables
+        if isinstance(option, Variable):
+            return option, existed
+        return Variable(self, name=str(option)), existed
+
+    def _follow_list_variable(self) -> None:
+        """Attach to the ``listvariable``, dropping any previous one.
+
+        Measured on Tk 9.0.2: a variable that already exists gives the list
+        its items, and one that does not is made from them; the old variable
+        is left alone and no longer followed.
+
+        The selection past the new end goes, as it does when the variable is
+        written. Tk keeps those indices hidden instead, and appending items
+        brings them back selected while inserting before them does not: an
+        accident of how it moves its selection table, not copied here.
+        """
+        if self._list_trace is not None:
+            previous, handle = self._list_trace
+            previous.trace_remove("write", handle)
+            self._list_trace = None
+        variable, existed = self._list_variable()
+        if variable is None:
+            return
+        name = str(variable)
+        if existed:
+            try:
+                self._items = _tcl_list(self.tk.variables[name])
+            except TclError as error:
+                raise TclError(f"{error}: invalid -listvariable value") from None
+            self._selection = {i for i in self._selection if i < len(self._items)}
+        else:
+            self.tk.variables[name] = tuple(self._items)
+        handle = variable.trace_add("write", lambda *_: self._list_written(variable))
+        self._list_trace = (variable, handle)
+
+    def _list_written(self, variable: Variable) -> None:
+        """The variable changed: it is the items now.
+
+        Measured on Tk 9.0.2: the selection past the new end goes for good,
+        the active index stays where it was, and a value that is not a list is
+        refused with the variable put back as it was. Also called for this
+        list's own writes, which read back as the items they already are.
+        """
+        name = str(variable)
+        try:
+            items = _tcl_list(self.tk.variables.get(name, ""))
+        except TclError:
+            self.tk.variables[name] = tuple(self._items)
+            raise TclError(f'can\'t set "{name}": invalid listvar value') from None
+        self._items = items
+        self._selection = {i for i in self._selection if i < len(items)}
+        self._clamp_view()
+        self._redraw()
+
+    def _publish_items(self) -> None:
+        """Write the items to the ``listvariable``, after they change here."""
+        if self._list_trace is not None:
+            self._list_trace[0].set(tuple(self._items))
 
     # ------------------------------------------------------------- contents
 
@@ -14095,6 +14593,7 @@ class Listbox(_Drawable, XView, YView):
         at = len(self._items) if index in ("end", END) else self.index(index)
         self._items[at:at] = [str(element) for element in elements]
         self._shift_state(at, len(elements))
+        self._publish_items()
         self._redraw()
 
     def delete(self, first: Any, last: Any = None) -> None:
@@ -14115,6 +14614,7 @@ class Listbox(_Drawable, XView, YView):
             if not start <= i <= stop
         }
         self._active = min(self._active, max(0, len(self._items) - 1))
+        self._publish_items()
         self._clamp_view()
         self._redraw()
 
@@ -14452,7 +14952,14 @@ class Listbox(_Drawable, XView, YView):
         if position == self._active and self.focus_get() is self and not selected:
             style |= _curses.A_UNDERLINE
         left, right = self._SELECTED_MARKERS if selected else (" ", " ")
-        body = clip_text(self._items[position][self._left :], max(0, area.width - 2))
+        item = self._items[position]
+        # Measured on Tk 9.0.2: aligned within the wider of the widest item and
+        # the window, so the horizontal view moves every row together.
+        room = max(self._widest(), self._body_width()) - len(item)
+        justify = str(self._options["justify"])
+        shift = {"right": room, "center": room // 2}.get(justify, 0)
+        item = " " * max(0, shift) + item
+        body = clip_text(item[self._left :], max(0, area.width - 2))
         line = f"{left}{body}".ljust(area.width - 1)[: area.width - 1] + right
         # One write, through the shared writer. The marker used to go on
         # separately with insstr, which INSERTS: it shifted the row one cell

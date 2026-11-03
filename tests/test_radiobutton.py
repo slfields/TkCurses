@@ -89,8 +89,10 @@ def test_selecting_one_turns_the_others_off(group):
 
 
 def test_a_group_can_start_with_nothing_chosen(group):
+    """In the third state, not off: an empty variable is the default
+    ``tristatevalue``. Seen on Tk 9.0.2's screen, greyed and set."""
     _, buttons = group
-    assert all(b._indicator_state == "off" for b in buttons)
+    assert all(b._indicator_state == "tristate" for b in buttons)
 
 
 def test_deselect_leaves_the_group_empty(group):
@@ -98,7 +100,7 @@ def test_deselect_leaves_the_group_empty(group):
     small.select()
     small.deselect()
     assert variable.get() == ""
-    assert small._indicator_state == "off"
+    assert small._indicator_state == "tristate"
 
 
 def test_an_integer_value_matches_an_integer_variable(root):
@@ -142,7 +144,7 @@ def test_the_default_group_is_one_variable_the_application_owns(root):
 def test_two_applications_keep_separate_default_groups():
     one, two = Misc(), Misc()
     Radiobutton(one, name="a", value="x").select()
-    assert Radiobutton(two, name="a", value="x")._indicator_state == "off"
+    assert Radiobutton(two, name="a", value="x")._indicator_state == "tristate"
 
 
 # ------------------------------------------------------------------ pressing
