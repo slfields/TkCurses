@@ -107,7 +107,7 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
     "Spinbox": {},
     "Text": {
         "TkCurses-gm66.7": "setgrid",
-        "TkCurses-gm66.8": "endline maxundo spacing1 spacing2 spacing3 startline",
+        "TkCurses-gm66.13": "endline startline",
     },
     "Tk": {
         "TkCurses-gm66.7": "class colormap container height screen tile use visual width",

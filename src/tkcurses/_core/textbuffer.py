@@ -143,6 +143,9 @@ class TextBuffer:
         self._separate = True
         #: Whether edits are recorded at all - the widget's ``-undo``.
         self.undo_enabled = False
+        #: How many groups the undo stack keeps, oldest dropped first - the
+        #: widget's ``-maxundo``. 0 or below keeps them all, as Tk's does.
+        self.max_undo = 0
 
     # --------------------------------------------------------------- shape
 
@@ -636,7 +639,18 @@ class TextBuffer:
         if self._separate or not self._done:
             self._done.append([])
             self._separate = False
+            self.trim_undo()
         self._done[-1].append(edit)
+
+    def trim_undo(self) -> None:
+        """Drop the oldest groups past :attr:`max_undo`.
+
+        Measured on Tk 9.0.2: with ``-maxundo 2``, four separated edits undo
+        two at a time and no more; and lowering it to 2 over five groups
+        leaves two to undo. A group counts once however many edits it holds.
+        """
+        if self.max_undo > 0 and len(self._done) > self.max_undo:
+            del self._done[: len(self._done) - self.max_undo]
 
     def edit_separator(self) -> None:
         """End the current group, so the next edit begins a new one."""

@@ -4169,8 +4169,8 @@ Multi-line text editor.
 | `mark_unset(*markNames)` | ✓ | Delete marks |
 | `mark_next(index)` | ✓ | Next mark |
 | `mark_previous(index)` | ✓ | Previous mark |
-| `peer_create(newPathName, **kw)` | ✗ | N/A |
-| `peer_names()` | ✗ | N/A |
+| `peer_create(newPathName, **kw)` | ☐ | Peer widget - not implemented; TkCurses-gm66.13 |
+| `peer_names()` | ☐ | List peers - not implemented; TkCurses-gm66.13 |
 | `replace(index1, index2, chars)` | ☐ | Replace text - not implemented; TkCurses-mzj |
 | `scan_mark(x, y)` | ☐ | Scan start - not implemented; TkCurses-6lh |
 | `scan_dragto(x, y)` | ☐ | Scan drag - not implemented; TkCurses-6lh |
@@ -4209,6 +4209,33 @@ history stops describing the text: re-enable and redo, and `hello world`
 became `hello world world`. Here a disabled undo or redo moves nothing, the
 stack included. An empty stack still raises `nothing to undo`, as Tk's does
 whatever the state.
+
+**Line spacing is whole blank rows** (`TkCurses-gm66.8`). Tk's `-spacing1`,
+`-spacing2` and `-spacing3` are pixels above each line, between the rows of a
+wrapped one, and below each; here each unit is a row, as every other distance
+here is a cell. Measured on Tk 9.0.2, with a 19-pixel font:
+
+- `-spacing2` is split, the larger half above each continuation row and the
+  rest below the row before it: 3 pixels gave line heights of 25 (5 + 19 + 1)
+  and 28 (2 + 19 + 7). So a `spacing2` of one row goes above the continuation,
+  none below.
+- A click in the spacing answers the line it belongs to: with `-spacing1` and
+  `-spacing3` of 16, every y from 2 to 40 gave `1.0`. Up and Down skip it.
+- `yview` counts it, since Tk's fractions are of pixels.
+
+Two departures. `dlineinfo` still answers a height of 1, the text row alone,
+where Tk's includes the spacing. And nothing is drawn on a spacing row, a
+tag's background included; the tag options `-spacing1/2/3` are still refused.
+
+**`-maxundo` counts groups, oldest dropped first.** Measured: `-maxundo 2`
+over four separated inserts undoes two and leaves `ab`; lowering it to 2 over
+five groups drops the oldest three at once; 0 and -1 both keep everything.
+A group counts once however many edits it holds.
+
+**`-startline` and `-endline` are not here** (`TkCurses-gm66.13`). They
+renumber the whole index space - with `-startline 3`, Tk's line 3 is `1.0` and
+nothing outside the range can be read, marked or tagged - and Tk built them
+for peers, which share one buffer between widgets. Both arrive together.
 
 ---
 

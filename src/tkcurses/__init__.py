@@ -815,6 +815,7 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "insertunfocussed": _insert_unfocussed,
     "insertwidth": _screen_distance,
     "jump": _tcl_boolean,
+    "maxundo": _tcl_integer,
     "offrelief": _relief,
     "overrelief": _relief_or_none,
     "readonlybackground": _colour_or_terminals,
@@ -825,6 +826,9 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "selectcolor": _colour_or_terminals,
     "selectforeground": _colour_or_terminals,
     "sliderlength": _signed_distance,
+    "spacing1": _screen_distance,
+    "spacing2": _screen_distance,
+    "spacing3": _screen_distance,
     "sliderrelief": _relief,
     "troughcolor": _colour_or_terminals,
 }
@@ -9926,6 +9930,29 @@ def _spinbox_triple(event: Event) -> None:
 _MARGIN_OPTIONS = frozenset({"lmargin1", "lmargin2", "rmargin"})
 
 
+def _spaced(
+    rows: list[tuple[int, int, int]], above: int, between: int, below: int
+) -> list[tuple[int, int, int]]:
+    """One line's display rows, with Tk's spacing as blank rows among them.
+
+    A blank row is its neighbour with the line number negated, so it holds
+    no index - nothing matches a negative line - and still says which row
+    a click on it means. ``spacing2`` is split as Tk splits it, the larger
+    half above each continuation row and the rest below the row before:
+    measured on Tk 9.0.2, spacing2 of 3 pixels put 1 under the first row
+    and 2 over the second.
+    """
+    out: list[tuple[int, int, int]] = []
+    last = len(rows) - 1
+    for n, (line, start, stop) in enumerate(rows):
+        gap = above if n == 0 else between - between // 2
+        out.extend([(-line, start, stop)] * gap)
+        out.append((line, start, stop))
+        gap = below if n == last else between // 2
+        out.extend([(-line, start, stop)] * gap)
+    return out
+
+
 class Text(_Drawable, XView, YView):
     """An editable block of text, with marks and tags.
 
@@ -9961,7 +9988,14 @@ class Text(_Drawable, XView, YView):
         "exportselection": True,
         "font": "",
         "height": 24,
+        # Undo groups kept, 0 for all; and blank rows above each line, between
+        # the rows of a wrapped one, and below each. Tk's are pixels, and
+        # these are rows. TkCurses-gm66.8.
+        "maxundo": 0,
         "relief": "sunken",
+        "spacing1": 0,
+        "spacing2": 0,
+        "spacing3": 0,
         "state": "normal",
         "tabs": "",
         "tabstyle": "tabular",
@@ -9984,8 +10018,9 @@ class Text(_Drawable, XView, YView):
     #: dropping these dropped indentation altogether - TkCurses-wy7.
     #:
     #: Still left out, and correctly: ``offset`` is a sub-cell baseline shift
-    #: for super- and subscripts, and ``spacing1/2/3`` are vertical and would
-    #: have to be whole rows. Borders and bitmaps have no cell equivalent.
+    #: for super- and subscripts. ``spacing1/2/3`` work in whole rows on the
+    #: widget (TkCurses-gm66.8) and are not yet taken per tag. Borders and
+    #: bitmaps have no cell equivalent.
     #: Setting one of those still fails loudly rather than quietly doing
     #: nothing.
     _TAG_OPTIONS: ClassVar[dict[str, Any]] = {
@@ -10014,8 +10049,9 @@ class Text(_Drawable, XView, YView):
             cnf: Options as a dictionary, merged with the keywords.
             name: Path component, generated when omitted.
             **kw: ``width``, ``height``, ``wrap``, ``state``, ``undo``,
-                ``autoseparators``, ``xscrollcommand``, ``yscrollcommand``,
-                and the standard options.
+                ``autoseparators``, ``maxundo``, ``spacing1``, ``spacing2``,
+                ``spacing3``, ``xscrollcommand``, ``yscrollcommand``, and the
+                standard options.
         """
         self._buffer = TextBuffer()
         self._top = 0
@@ -10049,6 +10085,7 @@ class Text(_Drawable, XView, YView):
         self._margined = False
         super().__init__(master, cnf, name=name, **kw)
         self._buffer.undo_enabled = self.getboolean(self._options["undo"])
+        self._buffer.max_undo = _as_int(self._options["maxundo"], 0)
         self._stops = parse_tabs(self._options["tabs"], self.winfo_fpixels)
         self._buffer.mark_set("insert", "1.0")
         self._buffer.mark_set("current", "1.0")
@@ -10121,6 +10158,9 @@ class Text(_Drawable, XView, YView):
             # Turning it off does NOT throw the stack away: Tk keeps it, so
             # switching undo off and on again leaves the history intact.
             self._buffer.undo_enabled = self.getboolean(self._options["undo"])
+        if "maxundo" in given:
+            self._buffer.max_undo = _as_int(self._options["maxundo"], 0)
+            self._buffer.trim_undo()
         if "tabs" in given:
             self._stops = parse_tabs(self._options["tabs"], self.winfo_fpixels)
         self._clamp_view()
@@ -10776,8 +10816,8 @@ class Text(_Drawable, XView, YView):
         of a wrapped paragraph has to go to the row above it on screen, which
         is what every editor does and what the buffer alone cannot answer.
         """
-        rows = self._display_lines()
-        row = self._row_of(index)
+        rows = self._text_rows()
+        row = self._row_of(index, rows)
         _, start, _ = rows[min(row, len(rows) - 1)]
         column = index.char - start
         target = min(max(row + distance, 0), len(rows) - 1)
@@ -10853,10 +10893,26 @@ class Text(_Drawable, XView, YView):
         """
         width = self._view_size()[0]
         mode = self._wrap_mode()
+        above, between, below = (
+            _as_int(self._options[name], 0)
+            for name in ("spacing1", "spacing2", "spacing3")
+        )
+        spaced = above > 0 or between > 0 or below > 0
         rows: list[tuple[int, int, int]] = []
         for number, line in enumerate(self._buffer.lines, start=1):
-            rows.extend(self._wrap_line(number, line, width, mode))
+            wrapped = self._wrap_line(number, line, width, mode)
+            if spaced:
+                wrapped = _spaced(wrapped, above, between, below)
+            rows.extend(wrapped)
         return rows or [(1, 0, 0)]
+
+    def _text_rows(self) -> list[tuple[int, int, int]]:
+        """The display rows that hold text, leaving out the spacing.
+
+        What Up and Down count in: a blank row of ``spacing1`` is somewhere
+        the view can be, not somewhere the cursor can.
+        """
+        return [row for row in self._display_lines() if row[0] > 0]
 
     def _wrap_line(
         self, number: int, line: str, width: int, mode: str
@@ -10965,6 +11021,8 @@ class Text(_Drawable, XView, YView):
         # the last one. Without this the cursor came back at column 0 and
         # blanked the first character of the bottom line.
         last = max(0, len(rows) - 1)
+        while last > 0 and rows[last][0] < 0:
+            last -= 1
         line, start, stop = rows[last]
         return last, self._column_in(line, start, stop, stop)
 
@@ -11034,6 +11092,9 @@ class Text(_Drawable, XView, YView):
         rows = self._display_lines()
         row = min(max(self._top + (y - area.y), 0), len(rows) - 1)
         line, start, stop = rows[row]
+        # Spacing belongs to the row beside it, measured: with spacing1 and
+        # spacing3 of 16 pixels, every y from 2 to 40 answers 1.0 in Tk.
+        line = abs(line)
         column = max(0, x - area.x) + self._left
         left, _ = self._row_margins(line, start)
         offset = char_at(
@@ -11208,6 +11269,8 @@ class Text(_Drawable, XView, YView):
     ) -> None:
         """Draw one display row, then whatever tags cover part of it."""
         line, start, stop = span
+        if line < 0:
+            return
         text = lines[line - 1][start:stop] if line <= len(lines) else ""
         left, _ = self._row_margins(line, start)
         # Built so that an index into this string IS a column: the margin as
