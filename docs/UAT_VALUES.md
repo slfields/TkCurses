@@ -56,13 +56,17 @@ returns the read-only box to its third state, `r` resets everything
 ## 21. Scales
 
 `python3 -m uat 21` · `Tab` · arrows, `Ctrl`-arrow, `PgUp`/`PgDn`, `Home`,
-`End` · click a trough, drag a handle
+`End` · click and hold a trough, middle-click it, drag a handle
 
 - [ ] Every scale reaches both of its ends and stops there
 - [ ] The arrows move the focused scale by one step
 - [ ] `Ctrl`-arrow moves it by a larger step
 - [ ] `Home` and `End` go to the two ends in one press
-- [ ] Clicking anywhere in a trough moves the handle there
+- [ ] Clicking in a trough steps the handle one step towards the click, as
+      Tk's does; holding the button down keeps it stepping, after a short
+      pause, until it is let go - **past the pointer** and on to the end if
+      held long enough. That is Tk's behaviour too, measured, and kept
+- [ ] Middle-clicking anywhere in a trough moves the handle there
 - [ ] Dragging the handle follows the pointer, and dragging past the end
       stops at the end rather than escaping
 - [ ] The focused scale shows `[` and `]` at the ends of its trough, and the

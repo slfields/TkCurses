@@ -3065,13 +3065,15 @@ def test_clicking_a_spinbox_arrow_still_steps_it(root, cls):
     classic question by name - or a click on ttk's arrows did nothing."""
     from types import SimpleNamespace
 
-    from tkcurses import _spinbox_click
+    from tkcurses import _spinbox_click, _spinbox_release
 
     spin = cls(root, name="s", from_=0, to=9)
     spin.place(x=0, y=0, width=12, height=3)
     root.update_layout()
     up, _down = spin._arrow_columns()
     _spinbox_click(SimpleNamespace(widget=spin, x=up, y=1))
+    # The classic one steps on the release, as tk::spinbox::ButtonUp does.
+    _spinbox_release(SimpleNamespace(widget=spin, x=up, y=1))
     assert spin.get() == "1"
 
 

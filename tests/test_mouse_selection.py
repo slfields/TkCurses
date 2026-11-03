@@ -403,12 +403,14 @@ def test_a_spinbox_triple_click_selects_everything_with_the_cursor_at_0(spin):
 
 
 def test_a_double_click_on_a_spinbox_arrow_still_steps(root):
-    """Tk's double-click binding presses the arrow again: a second step."""
+    """Tk's double-click binding presses the arrow again: a second step,
+    taken when that press is released, as the first was."""
     widget = placed(Spinbox(root, name="st", width=10, from_=0, to=10))
     up, _down = widget._arrow_columns()
     mouse(widget, "pressed", up)
     mouse(widget, "released", up)
     mouse(widget, "double", up)
+    mouse(widget, "released", up)
     assert widget.get() == "2"
     assert widget._field.selection is None
 

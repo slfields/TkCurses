@@ -814,9 +814,12 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "insertontime": _tcl_integer,
     "insertunfocussed": _insert_unfocussed,
     "insertwidth": _screen_distance,
+    "jump": _tcl_boolean,
     "offrelief": _relief,
     "overrelief": _relief_or_none,
     "readonlybackground": _colour_or_terminals,
+    "repeatdelay": _tcl_integer,
+    "repeatinterval": _tcl_integer,
     "selectbackground": _colour_or_terminals,
     "selectborderwidth": _screen_distance,
     "selectcolor": _colour_or_terminals,
@@ -4878,11 +4881,29 @@ class Tk(BaseWidget, Wm):
             self._handle_resize()
             return
         if isinstance(event, MouseEvent):
+            if event.state in _PRESSES and self.tk.repeat is not None:
+                self._release_lost()
             target = self._mouse_target(event)
         else:
             target = self.tk.focus or self
         target = self._through_grab(target)
         target._handle(event)
+
+    def _release_lost(self) -> None:
+        """Stop an auto-repeat whose release never arrived.
+
+        A press is held for as long as no release is reported, and ncurses
+        drops reports it is not drained fast enough for (see
+        ``_arm_press_recovery``), so a repeating Button or Scale could repeat
+        for ever. A second press cannot happen with the first button still
+        down: it is the proof that the release was lost. The held widget is
+        put back up, as its release would have done.
+        """
+        _cancel_repeat(self)
+        owner: Any = self._mouse_owner
+        if owner is not None and getattr(owner, "_pressed", False):
+            owner._pressed = False
+            owner._redraw()
 
     def _mouse_target(self, event: MouseEvent) -> Misc:
         """The widget a mouse event belongs to, honouring the implicit grab.
@@ -4900,7 +4921,7 @@ class Tk(BaseWidget, Wm):
         # one: without it, the drag after a double-click - which extends the
         # selection a word at a time - went to whatever was under the pointer
         # instead of to the widget pressed. TkCurses-svtr.
-        if event.state in ("pressed", "clicked", "double", "triple"):
+        if event.state in _PRESSES:
             self._mouse_owner = self._widget_at(event.x, event.y)
             return self._mouse_owner
         owner = self._mouse_owner
@@ -6633,6 +6654,10 @@ class Button(_TextWidget):
         # place by the <Enter> binding, as Tk's is. TkCurses-gm66.5.
         "overrelief": "",
         "relief": "raised",
+        # How long a press waits before invoking again, and how often after
+        # that; 0 for never, Tk's default. TkCurses-gm66.6.
+        "repeatdelay": 0,
+        "repeatinterval": 0,
         "takefocus": True,
     }
 
@@ -6653,6 +6678,8 @@ class Button(_TextWidget):
         """
         self._pressed = False
         self._entered_relief: tuple[str, str] | None = None
+        self._repeated = 0
+        self._pointer_inside = False
         super().__init__(master, cnf, name=name, **kw)
         self._install_class_bindings()
 
@@ -6687,6 +6714,8 @@ class Button(_TextWidget):
         if not _is_ttk(self):
             self.bind_class(name, "<Enter>", _button_enter)
             self.bind_class(name, "<Leave>", _button_leave)
+            # Where a held press is, for auto-repeat: Tk's Priv(window).
+            self.bind_class(name, "<Motion>", _button_motion)
 
     # ------------------------------------------------------------ behaviour
 
@@ -6779,8 +6808,42 @@ def _button_press(event: Event) -> None:
         return
     button._pressed = True
     button._redraw()
-    _arm_press_recovery(button)
+    # tk::ButtonDown: a repeatdelay starts the auto-repeat. A repeating press
+    # is held on purpose for longer than the recovery allows, so it is not
+    # armed for one; Tk._release_lost stands in for it.
+    button._repeated = 0
+    button._pointer_inside = True
+    delay = _repeat_option(button, "repeatdelay")
+    if delay > 0:
+        _repeat_after(button, delay, _button_auto_invoke, button)
+    else:
+        _arm_press_recovery(button)
 
+
+def _button_auto_invoke(button: Any) -> None:
+    """Invoke a held button again: Tk's ``tk::ButtonAutoInvoke``.
+
+    Only while the pointer is still over it, as Tk's ``Priv(window)`` says;
+    the repeat itself goes on, so coming back over it carries on invoking.
+    """
+    if button._pointer_inside:
+        button._repeated += 1
+        button.invoke()
+    interval = _repeat_option(button, "repeatinterval")
+    if interval > 0:
+        _repeat_after(button, interval, _button_auto_invoke, button)
+
+
+def _button_motion(event: Event) -> None:
+    """Note whether a held press is still over the button."""
+    button = event.widget
+    if button._pressed:
+        button._pointer_inside = _within(button, event)
+
+
+#: The mouse states that put a button down: a double or triple click is a
+#: press as well.
+_PRESSES = ("pressed", "clicked", "double", "triple")
 
 #: How long a button may stay drawn pressed with no release in sight.
 #: Longer than any click, and shorter than a person will spend looking at a
@@ -6831,6 +6894,38 @@ def _disarm_press_recovery(button: Any) -> None:
             button.after_cancel(handle)
 
 
+def _cancel_repeat(widget: Misc) -> None:
+    """Stop whatever is auto-repeating: Tk's ``tk::CancelRepeat``."""
+    handle = widget.tk.repeat
+    if handle is not None:
+        widget.tk.repeat = None
+        with contextlib.suppress(Exception):
+            widget.after_cancel(handle)
+
+
+def _repeat_after(widget: Misc, ms: int, func: Callable[..., Any], *args: Any) -> None:
+    """Schedule the next step of an auto-repeat, in place of any pending one."""
+    _cancel_repeat(widget)
+
+    def step() -> None:
+        widget.tk.repeat = None
+        if widget.winfo_exists():
+            func(*args)
+
+    widget.tk.repeat = widget.after(ms, step)
+
+
+def _repeat_option(widget: Any, name: str) -> int:
+    """``repeatdelay`` or ``repeatinterval``, as milliseconds; 0 for none.
+
+    A ttk widget has neither, in Tk: its repeat is ``ttk::Repeatedly``, with
+    its own timing, and is not taken here.
+    """
+    if _is_ttk(widget) or name not in widget._options:
+        return 0
+    return _as_int(widget._options[name], 0)
+
+
 def _button_release(event: Event) -> None:
     """Invoke the button, unless the pointer left it first.
 
@@ -6841,11 +6936,13 @@ def _button_release(event: Event) -> None:
     """
     button = event.widget
     _disarm_press_recovery(button)
+    _cancel_repeat(button)
     if not button._pressed:
         return
     button._pressed = False
     button._redraw()
-    if not button._disabled and _within(button, event):
+    # tk::ButtonUp: a press that has auto-repeated has invoked already.
+    if not button._disabled and _within(button, event) and not button._repeated:
         button.invoke()
 
 
@@ -6969,6 +7066,8 @@ class _ChoiceWidget(_TextWidget):
         """
         self._pressed = False
         self._entered_relief: tuple[str, str] | None = None
+        self._repeated = 0
+        self._pointer_inside = False
         self._value_trace: tuple[Variable, str] | None = None
         super().__init__(master, cnf, name=name, **kw)
         if self._options["variable"] is None:
@@ -9414,6 +9513,10 @@ class Spinbox(Entry):
         "format": "",
         "from": 0.0,
         "increment": 1.0,
+        # An arrow held down steps again after repeatdelay, then every
+        # repeatinterval; Tk's defaults. TkCurses-gm66.6.
+        "repeatdelay": 400,
+        "repeatinterval": 100,
         "to": 0.0,
         "values": None,
         "wrap": False,
@@ -9435,6 +9538,8 @@ class Spinbox(Entry):
             **kw: ``values``, ``from_``, ``to``, ``increment``, ``wrap``,
                 ``format``, ``command``, plus everything an Entry takes.
         """
+        self._held_arrow: str | None = None
+        self._repeated = 0
         super().__init__(master, cnf, name=name, **kw)
         if not self._field.text:
             # Straight into the field, not through _replace: that refuses a
@@ -9463,7 +9568,7 @@ class Spinbox(Entry):
         bind(name, "<Any-Key>", _spinbox_key)
         bind(name, "<Button-1>", _spinbox_click)
         bind(name, "<Motion>", _entry_drag)
-        bind(name, "<ButtonRelease-1>", _entry_release)
+        bind(name, "<ButtonRelease-1>", _spinbox_release)
         bind(name, "<Double-Button-1>", _spinbox_double)
         if not _is_ttk(self):
             # ttk binds no triple-click: there a third click matches the
@@ -9717,19 +9822,52 @@ def _spinbox_key(event: Event) -> str | None:
 
 
 def _spinbox_click(event: Event) -> None:
-    """Step when an arrow is clicked, and place the cursor otherwise."""
+    """Press an arrow, or place the cursor in the text.
+
+    A classic arrow steps when it is released, or repeatedly while it is
+    held, as ``tk::spinbox::ArrowPress`` arranges. ttk's steps on the press
+    (``ttk::spinbox::Press``), and repeats with timing of its own that is
+    not taken here.
+    """
     spinbox = event.widget
     # The classic method, by name: a ttk subclass's own identify answers
     # ttk's element names, which this binding cannot act on. TkCurses-d5u.
     part = Spinbox.identify(spinbox, event.x, event.y)
-    if part == "buttonup":
-        spinbox.focus_set()
-        spinbox._step(1)
-    elif part == "buttondown":
-        spinbox.focus_set()
-        spinbox._step(-1)
-    else:
+    if part not in ("buttonup", "buttondown"):
         _entry_click(event)
+        return
+    spinbox.focus_set()
+    if _is_ttk(spinbox):
+        spinbox._step(1 if part == "buttonup" else -1)
+        return
+    spinbox._held_arrow = part
+    spinbox._repeated = 0
+    delay = _repeat_option(spinbox, "repeatdelay")
+    if delay > 0:
+        _repeat_after(spinbox, delay, _spinbox_invoke, spinbox, part)
+
+
+def _spinbox_invoke(spinbox: Any, part: str) -> None:
+    """Step for a held arrow and go on doing so: ``tk::spinbox::Invoke``."""
+    spinbox._step(1 if part == "buttonup" else -1)
+    spinbox._repeated += 1
+    interval = _repeat_option(spinbox, "repeatinterval")
+    if interval > 0:
+        _repeat_after(spinbox, interval, _spinbox_invoke, spinbox, part)
+
+
+def _spinbox_release(event: Event) -> None:
+    """Step for an arrow that was pressed and not held: ``tk::spinbox::ButtonUp``.
+
+    Wherever the pointer is now: Tk steps on a release away from the arrow,
+    which a press that changes its mind cannot take back.
+    """
+    spinbox = event.widget
+    _cancel_repeat(spinbox)
+    part, spinbox._held_arrow = spinbox._held_arrow, None
+    if part is not None and not spinbox._repeated:
+        spinbox._step(1 if part == "buttonup" else -1)
+    _entry_release(event)
 
 
 def _spinbox_arrow(spinbox: Any, event: Event) -> bool:
@@ -14568,8 +14706,14 @@ class Scrollbar(_Drawable):
         "activerelief": "raised",
         "elementborderwidth": "",
         "command": None,
+        # A drag that scrolls only when released, and an arrow or the trough
+        # held down scrolling again after repeatdelay, then every
+        # repeatinterval; Tk's defaults. TkCurses-gm66.6.
+        "jump": 0,
         "orient": "vertical",
         "relief": "sunken",
+        "repeatdelay": 300,
+        "repeatinterval": 100,
         "takefocus": False,
         "width": 1,
     }
@@ -14600,6 +14744,7 @@ class Scrollbar(_Drawable):
         self._first = 0.0
         self._last = 1.0
         self._drag_from: tuple[int, int] | None = None
+        self._drag_view = (0.0, 1.0)
         self._active_relief: str | None = None
         self._drag_origin = 0.0
         #: The element :meth:`activate` named, or "" for none.
@@ -14870,14 +15015,39 @@ def _scrollbar_press(event: Event) -> None:
     if part == "slider":
         bar._drag_from = (event.x, event.y)
         bar._drag_origin = bar._first
-    elif part == "arrow1":
-        command("scroll", -1, "units")
-    elif part == "arrow2":
-        command("scroll", 1, "units")
-    elif part == "trough1":
-        command("scroll", -1, "pages")
-    elif part == "trough2":
-        command("scroll", 1, "pages")
+        bar._drag_view = (bar._first, bar._last)
+        return
+    _scrollbar_select(bar, part, "initial")
+
+
+#: What each part of a scrollbar scrolls by, as ``tk::ScrollSelect`` has it.
+_SCROLLBAR_STEPS = {
+    "arrow1": (-1, "units"),
+    "arrow2": (1, "units"),
+    "trough1": (-1, "pages"),
+    "trough2": (1, "pages"),
+}
+
+
+def _scrollbar_select(bar: Any, part: str, repeat: str) -> None:
+    """Scroll for a pressed part, and keep on while it is held.
+
+    Tk's ``tk::ScrollSelect``: the first step at once, the second after
+    ``repeatdelay``, the rest every ``repeatinterval``. The part is the one
+    first pressed, so a trough held down goes on paging after the thumb has
+    passed the pointer, as Tk's does. An interval of 0 stops the repeat
+    rather than scheduling it at once for ever, which Tk would.
+    """
+    step = _SCROLLBAR_STEPS.get(part)
+    command = bar._options["command"]
+    if step is None or command is None:
+        return
+    command("scroll", *step)
+    wait = _repeat_option(
+        bar, "repeatdelay" if repeat == "initial" else "repeatinterval"
+    )
+    if wait > 0:
+        _repeat_after(bar, wait, _scrollbar_select, bar, part, "again")
 
 
 def _scrollbar_drag(event: Event) -> None:
@@ -14893,16 +15063,38 @@ def _scrollbar_drag(event: Event) -> None:
     if origin is None or command is None:
         return
     moved = bar.delta(event.x - origin[0], event.y - origin[1])
+    if _jumps(bar):
+        # tk::ScrollDrag with -jump: the thumb moves and the view waits.
+        first, last = bar._drag_view
+        bar.set(first + moved, last + moved)
+        return
     command("moveto", min(max(bar._drag_origin + moved, 0.0), 1.0))
 
 
-def _scrollbar_release(event: Event) -> None:
-    """Forget the drag. Tk scrolls nothing further here unless -jump is set.
+def _jumps(bar: Any) -> bool:
+    """True if a classic scrollbar's ``jump`` holds the scroll for the release."""
+    if _is_ttk(bar):
+        return False
+    try:
+        return bool(bar.getboolean(bar._options["jump"]))
+    except TclError:
+        return False
 
-    The relief the press sank goes back, as ``tk::ScrollButtonUp`` puts it.
+
+def _scrollbar_release(event: Event) -> None:
+    """End a press: the repeat stops, and a jump drag scrolls at last.
+
+    ``tk::ScrollButtonUp``, which puts back the relief the press sank, and
+    ``tk::ScrollEndDrag``, which scrolls to where a ``jump`` drag ended.
+    Without ``jump`` the drag has scrolled already and nothing more is done.
     """
     bar = event.widget
-    bar._drag_from = None
+    _cancel_repeat(bar)
+    origin, bar._drag_from = bar._drag_from, None
+    command = bar._options["command"]
+    if origin is not None and command is not None and _jumps(bar):
+        moved = bar.delta(event.x - origin[0], event.y - origin[1])
+        command("moveto", min(max(bar._drag_origin + moved, 0.0), 1.0))
     relief = bar._active_relief
     if relief is not None:
         bar._active_relief = None
@@ -14964,6 +15156,10 @@ class Scale(_Drawable):
         # pixels; one cell is the handle as it was. TkCurses-gm66.5.
         "sliderlength": 1,
         "sliderrelief": "raised",
+        # A trough held down steps again after repeatdelay, then every
+        # repeatinterval; Tk's defaults. TkCurses-gm66.6.
+        "repeatdelay": 300,
+        "repeatinterval": 100,
         "state": "normal",
         "takefocus": True,
         "tickinterval": 0,
@@ -14991,6 +15187,9 @@ class Scale(_Drawable):
                 ``state``, and the standard options.
         """
         self._dragging = False
+        #: Cells from the handle's middle to where it was taken hold of:
+        #: Tk's Priv(deltaX), so a drag does not jump the handle.
+        self._drag_lead = 0
         self._slider_relief: str | None = None
         self._syncing = False
         self._variable_trace: tuple[Variable, str] | None = None
@@ -15016,6 +15215,8 @@ class Scale(_Drawable):
         self.tk.bound_classes.add(name)
         bind = self.bind_class
         bind(name, "<Button-1>", _scale_press)
+        bind(name, "<Button-2>", _scale_jump)
+        bind(name, "<ButtonRelease-2>", _scale_release)
         # A drag arrives as Motion: curses reports motion-with-a-button, and
         # there is no Button1 modifier to match a <B1-Motion> against. The
         # press holds the implicit grab, so every one of these belongs to
@@ -15503,7 +15704,13 @@ class Scale(_Drawable):
 
 
 def _scale_press(event: Event) -> None:
-    """Jump the handle to where the trough was clicked.
+    """Take hold of the handle, or step towards a click on the trough.
+
+    Tk's ``tk::ScaleButtonDown``: the trough steps one ``resolution`` at a
+    time, and again while it is held (``tk::ScaleIncrement``); only the
+    handle drags, from where it was taken hold of. Button 2 jumps the handle
+    to the pointer instead (``_scale_jump``). A ttk scale jumps on button 1,
+    as it always has here.
 
     The focus stays where it was, as it does in Tk: the arrows move a scale
     that has the focus, and a click is already a way of setting the value.
@@ -15511,17 +15718,61 @@ def _scale_press(event: Event) -> None:
     scale = event.widget
     if scale._disabled:
         return
+    if _is_ttk(scale):
+        _scale_jump(event)
+        return
+    x = event.x_root - scale.winfo_rootx()
+    y = event.y_root - scale.winfo_rooty()
+    part = Scale.identify(scale, x, y)
+    if part == "slider":
+        scale._dragging = True
+        scale._drag_lead = _scale_offset(scale, event) - scale._offset_for(scale._value)
+        _scale_sink(scale)
+    elif part == "trough1":
+        _scale_increment(scale, "up", "initial")
+    elif part == "trough2":
+        _scale_increment(scale, "down", "initial")
+
+
+def _scale_jump(event: Event) -> None:
+    """Put the handle under the pointer and drag it from there.
+
+    Tk's ``tk::ScaleButton2Down``, on button 2, which is how a classic scale
+    is set by a click in Tk; ttk's ``ttk::scale::Jump`` does the same.
+    """
+    scale = event.widget
+    if scale._disabled:
+        return
     scale._dragging = True
-    _scale_sink(scale)
+    scale._drag_lead = 0
     _scale_move_to(scale, event)
+
+
+def _scale_increment(scale: Scale, direction: str, repeat: str) -> None:
+    """Step the value one ``resolution``, and keep stepping while held.
+
+    Tk's ``tk::ScaleIncrement``, with ``little`` steps: ``up`` is towards
+    ``from_``, whichever end that is. The second step comes after
+    ``repeatdelay`` and the rest every ``repeatinterval``; an interval of 0
+    stops the repeat rather than spinning, which Tk's would. Tk's catching up
+    after a slow ``command`` is not done: the after-queue here waits for the
+    command to finish before it counts.
+    """
+    step = abs(float(scale._options["resolution"]))
+    backwards = float(scale._options["from"]) > float(scale._options["to"])
+    if backwards != (direction == "up"):
+        step = -step
+    scale.set(scale.get() + step)
+    wait = _repeat_option(
+        scale, "repeatdelay" if repeat == "initial" else "repeatinterval"
+    )
+    if wait > 0:
+        _repeat_after(scale, wait, _scale_increment, scale, direction, "again")
 
 
 def _scale_sink(scale: Scale) -> None:
     """Sink the handle while it is held, as Tk's ``tk::ScaleButtonDown`` does:
-    raised becomes sunken and ridge groove, the rest stay as they are. Here
-    every press drags, since one jumps the handle to where it landed."""
-    if _is_ttk(scale):
-        return
+    raised becomes sunken and ridge groove, the rest stay as they are."""
     relief = str(scale.cget("sliderrelief"))
     scale._slider_relief = relief
     held = {RAISED: SUNKEN, RIDGE: GROOVE}.get(relief)
@@ -15530,16 +15781,17 @@ def _scale_sink(scale: Scale) -> None:
 
 
 def _scale_motion(event: Event) -> None:
-    """Follow the pointer while the handle is being dragged."""
+    """Follow the pointer while the handle is being dragged: ``tk::ScaleDrag``."""
     scale = event.widget
     if scale._dragging and not scale._disabled:
-        _scale_move_to(scale, event)
+        scale.set(scale._value_at(_scale_offset(scale, event) - scale._drag_lead))
 
 
 def _scale_release(event: Event) -> None:
-    """Stop dragging, wherever the pointer ended up, and put the relief back
-    as ``tk::ScaleEndDrag`` does."""
+    """Stop repeating and dragging, wherever the pointer ended up, and put the
+    relief back as ``tk::CancelRepeat`` and ``tk::ScaleEndDrag`` do."""
     scale = event.widget
+    _cancel_repeat(scale)
     scale._dragging = False
     relief = scale._slider_relief
     if relief is not None:
@@ -15549,12 +15801,15 @@ def _scale_release(event: Event) -> None:
 
 def _scale_move_to(scale: Scale, event: Event) -> None:
     """Set the value from a pointer position on the trough."""
+    scale.set(scale._value_at(_scale_offset(scale, event)))
+
+
+def _scale_offset(scale: Scale, event: Event) -> int:
+    """Which trough cell the pointer is level with."""
     origin_x, origin_y = scale._trough_origin()
     if scale._vertical:
-        offset = event.y_root - scale.winfo_rooty() - origin_y
-    else:
-        offset = event.x_root - scale.winfo_rootx() - origin_x
-    scale.set(scale._value_at(offset))
+        return event.y_root - scale.winfo_rooty() - origin_y
+    return event.x_root - scale.winfo_rootx() - origin_x
 
 
 def _scale_key(event: Event) -> str | None:

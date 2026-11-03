@@ -22,12 +22,12 @@ it. The scripts, as installed with Tcl 9.0.2 and Tk 9.0.2:
 |---|---|---|
 | Tk `entry.tcl` | `tk::EntryButton1`, `tk::EntryMouseSelect`, `tk::EntryAutoScan`, `tk::EntryKeySelect` | Entry's mouse and keyboard selection (`__init__.py`, `_core/editing.py`) |
 | Tk `text.tcl` | `tk::TextButton1`, `tk::TextSelectTo`, `tk::TextResetAnchor`, `tk::TextAutoScan`, `tk::TextPrevPos`, `tk::TextNextPos`, `tk_textPaste` | Text's mouse selection, autoscroll and clipboard (`__init__.py`) |
-| Tk `spinbox.tcl` | `tk::spinbox::MouseSelect` | Spinbox's selection (`__init__.py`) |
+| Tk `spinbox.tcl` | `tk::spinbox::MouseSelect`, `tk::spinbox::ArrowPress`, `tk::spinbox::Invoke`, `tk::spinbox::ButtonUp` | Spinbox's selection, and its arrows' step and auto-repeat (`__init__.py`) |
 | Tk `ttk/entry.tcl`, `ttk/spinbox.tcl`, `ttk/combobox.tcl` | `ttk::entry::Select`, `DragTo`, `ExtendTo`, `CharSelect`, `WordSelect`, `AutoScroll`, `PendingDelete`; `ttk::spinbox::DoubleClick`; `ttk::combobox::Press` | the ttk entries' selection and paste (`__init__.py`); the combobox's clicks (`ttk.py`) |
-| Tk `tk.tcl` | `tk::wordBreakBefore`, `tk::wordBreakAfter`, `tk::SetFocusGrab`, `tk::RestoreFocusGrab`; the clipboard virtual events | word boundaries (`_core/editing.py`), dialog grabs (`commondialog.py`), `_core/application.py` |
+| Tk `tk.tcl` | `tk::wordBreakBefore`, `tk::wordBreakAfter`, `tk::SetFocusGrab`, `tk::RestoreFocusGrab`, `tk::CancelRepeat`; the clipboard virtual events | word boundaries (`_core/editing.py`), dialog grabs (`commondialog.py`), `_core/application.py` |
 | Tk `focus.tcl` | `tk::FocusOK` | focus traversal (`__init__.py`) |
 | Tk `scrlbar.tcl` | the Scrollbar bindings | Scrollbar's mouse behaviour (`__init__.py`) |
-| Tk `button.tcl`, `scale.tcl` | `tk::ButtonInvoke`, `tk::ButtonEnter`, `tk::ButtonLeave`, `tk::CheckEnter`; `tk::ScaleActivate`, `tk::ScaleButtonDown`, `tk::ScaleEndDrag` | when a button or a scale is drawn active, and the reliefs they take under the pointer and while held (`__init__.py`) |
+| Tk `button.tcl`, `scale.tcl` | `tk::ButtonInvoke`, `tk::ButtonEnter`, `tk::ButtonLeave`, `tk::CheckEnter`, `tk::ButtonDown`, `tk::ButtonUp`, `tk::ButtonAutoInvoke`; `tk::ScaleActivate`, `tk::ScaleButtonDown`, `tk::ScaleButton2Down`, `tk::ScaleDrag`, `tk::ScaleEndDrag`, `tk::ScaleIncrement` | when a button or a scale is drawn active, the reliefs they take under the pointer and while held, and auto-repeat (`__init__.py`) |
 | Tk `msgbox.tcl`, `dialog.tcl`, `clrpick.tcl` | the message box's button sets, `tk_dialog`, the colour chooser's layout | `messagebox.py` (its button table is taken from `msgbox.tcl`), `dialog.py`, `colorchooser.py` |
 | Tcl `word.tcl` | `tcl_wordBreakBefore`, `tcl_wordBreakAfter` | word boundaries (`_core/editing.py`) |
 | Tk `unix/tkUnixButton.c` (C) | `TkpDisplayButton` | the relief an indicatorless checkbutton or radiobutton is drawn in (`__init__.py`) |

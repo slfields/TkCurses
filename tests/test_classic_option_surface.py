@@ -59,7 +59,6 @@ CLASSIC = (
 #: been closed is too: this list may shrink and must never silently grow.
 KNOWN_GAPS: dict[str, dict[str, str]] = {
     "Button": {
-        "TkCurses-gm66.6": "repeatdelay repeatinterval",
         "TkCurses-l26": "bitmap",
     },
     "Canvas": {
@@ -103,15 +102,9 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
         "TkCurses-gm66.10": "selectimage tristateimage tristatevalue",
         "TkCurses-l26": "bitmap",
     },
-    "Scale": {
-        "TkCurses-gm66.6": "repeatdelay repeatinterval",
-    },
-    "Scrollbar": {
-        "TkCurses-gm66.6": "jump repeatdelay repeatinterval",
-    },
-    "Spinbox": {
-        "TkCurses-gm66.6": "repeatdelay repeatinterval",
-    },
+    "Scale": {},
+    "Scrollbar": {},
+    "Spinbox": {},
     "Text": {
         "TkCurses-gm66.7": "setgrid",
         "TkCurses-gm66.8": "endline maxundo spacing1 spacing2 spacing3 startline",

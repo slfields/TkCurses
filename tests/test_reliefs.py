@@ -396,9 +396,9 @@ def test_a_held_slider_sinks_as_tk_sinks_it(root, relief, held):
     """``tk::ScaleButtonDown`` and ``tk::ScaleEndDrag``."""
     widget = scale(root, sliderrelief=relief)
     shown(widget, 14)
-    press(widget, 3)
+    press(widget, 1)  # the handle: a press on the trough steps instead
     assert widget.cget("sliderrelief") == held
-    release(widget, 3)
+    release(widget, 1)
     assert widget.cget("sliderrelief") == relief
 
 

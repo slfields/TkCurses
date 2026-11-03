@@ -79,7 +79,7 @@ def test_the_handle_moves_when_the_value_is_set(terminal, tmp_path):
     term.wait_for_text("░░░░░█░░░░")
 
 
-def test_a_click_on_the_trough_moves_the_handle(terminal, tmp_path):
+def test_a_click_on_the_trough_steps_towards_it(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(
         program(
@@ -96,7 +96,7 @@ def test_a_click_on_the_trough_moves_the_handle(terminal, tmp_path):
     row = next(i for i, line in enumerate(term.display) if "█" in line)
     column = term.display[row].index("█")
     term.click(column + 10, row)
-    term.wait_for_text("value=5")
+    term.wait_for_text("value=1")
 
 
 def test_a_drag_follows_the_pointer(terminal, tmp_path):
@@ -266,7 +266,8 @@ def test_a_label_over_the_variable_follows_the_scale(terminal, tmp_path):
     term.wait_for_text("█░░░░")
     row = next(i for i, line in enumerate(term.display) if "█" in line)
     column = term.display[row].index("█")
-    term.click(column + 20, row)
+    # Button 2 sets a classic scale where it is clicked, as in Tk.
+    term.click(column + 20, row, button=2)
     term.wait_for_text("10")
 
 

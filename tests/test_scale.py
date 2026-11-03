@@ -270,10 +270,19 @@ def test_ticks_make_room_for_themselves(root):
 # -------------------------------------------------------------------- mouse
 
 
-def test_a_click_on_the_trough_moves_the_handle(root):
+def test_a_click_on_the_trough_steps_towards_it(root):
+    """``tk::ScaleButtonDown``: one resolution, not all the way there."""
     scale = horizontal(root)
     target = scale.coords(10)[0]
     scale._handle(MouseEvent(button=1, state="pressed", x=target, y=0))
+    assert scale.get() == 1
+
+
+def test_button_two_jumps_the_handle_to_the_click(root):
+    """``tk::ScaleButton2Down``: how a click sets a classic scale in Tk."""
+    scale = horizontal(root)
+    target = scale.coords(10)[0]
+    scale._handle(MouseEvent(button=2, state="pressed", x=target, y=0))
     assert scale.get() == 10
 
 
@@ -316,6 +325,7 @@ def test_a_drag_stops_at_the_release(root):
 
 def test_a_drag_past_the_end_clamps_rather_than_escaping(root):
     scale = horizontal(root)
+    scale.set(5)
     scale._handle(MouseEvent(button=1, state="pressed", x=scale.coords(5)[0], y=0))
     scale._handle(MouseEvent(button=0, state="drag", x=500, y=0))
     assert scale.get() == 10

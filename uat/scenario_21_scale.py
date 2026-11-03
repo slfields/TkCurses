@@ -18,8 +18,9 @@
 """Scales: reaching both ends by keyboard and by mouse.
 
 What to do: Tab between the scales. Move the focused one with the arrows,
-Control-arrow, Page Up/Down, Home and End. Click anywhere in a trough, and
-drag the handle. Resize the terminal while you are here.
+Control-arrow, Page Up/Down, Home and End. Click in a trough, and hold the
+button down there; middle-click in a trough; drag the handle. Resize the
+terminal while you are here.
 What to look for: every scale reaches both of its ends and stops there. The
 second row is the same variable as the first, so moving either moves the
 other and the number at the top. The reversed scale counts down from 10 to

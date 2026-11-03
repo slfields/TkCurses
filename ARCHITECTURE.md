@@ -3974,7 +3974,7 @@ the part as it was.
 | `overrelief` (Button, Checkbutton, Radiobutton) | copied into `relief` by `<Enter>` and back by `<Leave>`, as `tk::ButtonEnter` / `tk::ButtonLeave` do on X11, along with `state` `active` / `normal`; the box changes with it |
 | `offrelief` (Checkbutton, Radiobutton) | with `indicatoron` off, the box while off; `sunken` while on (`TkpDisplayButton`) |
 | `sliderlength` (Scale) | the handle's length in cells |
-| `sliderrelief` (Scale) | the handle, dim while sunken; a press sinks it, `raised` to `sunken` and `ridge` to `groove` (`tk::ScaleButtonDown`), and the release restores it |
+| `sliderrelief` (Scale) | the handle, dim while sunken; a press on the handle sinks it, `raised` to `sunken` and `ridge` to `groove` (`tk::ScaleButtonDown`), and the release restores it |
 | `activerelief` (Scrollbar) | the active element, dim while sunken; a press sinks it and the release restores it (`tk::ScrollButtonDown` / `ScrollButtonUp`) |
 | `buttonuprelief`, `buttondownrelief` (Spinbox) | each arrow, dim while sunken |
 | `activerelief` (Menu) | the active entry, dim while sunken |
@@ -4017,6 +4017,62 @@ keeps its relief, and `<Enter>` while held does not sink it either. Tk's
 pointer; that is not done. And nothing reports the pointer entering or leaving
 a widget yet, so `overrelief` is reached by `event_generate("<Enter>")` (`TkCurses-70gx`). The
 ttk widgets built on these keep ttk's bindings, which have no overrelief.
+
+**A held mouse button repeats, as Tk's bindings repeat it** (`TkCurses-gm66.6`).
+A terminal reports a press and, much later, a release, with nothing between;
+the repeat is the application's own timer, one for the whole application as
+Tk's `Priv(afterId)` is, stopped by the release (`tk::CancelRepeat`).
+
+| Widget | Held down | Defaults |
+|--------|-----------|----------|
+| Button | invokes again after `repeatdelay`, then every `repeatinterval`, while the pointer is over it; the release does not invoke a press that has repeated (`tk::ButtonAutoInvoke`, `tk::ButtonUp`) | 0, 0: no repeat |
+| Scale | a trough steps one `resolution` towards the click, and again (`tk::ScaleIncrement`) | 300, 100 |
+| Scrollbar | an arrow scrolls a unit and the trough a page, and again; the trough goes on paging after the thumb passes the pointer, as Tk's does (`tk::ScrollSelect`) | 300, 100 |
+| Spinbox | an arrow steps, and again; a press that is not held steps when it is **released** (`tk::spinbox::ButtonUp`) | 400, 100 |
+
+Measured on Tk 9.0.2: the timings are integers, `" 7 "` read as 7 and `2.5`
+or `""` refused, and a negative one is kept; `-jump` is a boolean. Tk's
+Scrollbar reads all three back as strings (`'300'`, `'0'`); here they are
+numbers, as every other widget's are.
+
+**Two gestures changed to Tk's.** A classic Scale's trough used to jump the
+handle to the click. In Tk it steps, and steps again while held - which is the
+only thing `repeatdelay` and `repeatinterval` mean on a Scale - so it does that
+here now, and only the handle drags, from where it was taken hold of rather
+than jumping its middle to the pointer (`Priv(deltaX)`). The jump is on
+button 2, as `tk::ScaleButton2Down` has it. And a classic Spinbox's arrow used
+to step on the press; Tk steps on the release, or not at all if the press has
+already repeated, so a click still steps once and a hold does not step one
+extra time. Decided with the author.
+
+**A held trough steps past the pointer, as Tk's does.** `tk::ScaleIncrement`
+and `tk::ScrollSelect` never ask where the pointer is: they repeat the
+direction of the first press until the release. Measured on Tk 9.0.2, a
+Scale from 0 to 100 held over the value 20 had stepped to 56 after six
+seconds. Most toolkits stop when the handle reaches the pointer; a person
+expected that in UAT 21, and the author chose to keep Tk's behaviour.
+
+**`-jump`** holds a Scrollbar's drag: the thumb follows the pointer and the
+command is called once, with `moveto`, at the release (`tk::ScrollDrag`,
+`tk::ScrollEndDrag`). Without it the drag scrolls as it goes, as before.
+
+**A release that never arrives cannot repeat for ever.** ncurses drops mouse
+reports it is not drained fast enough for (`_arm_press_recovery`), and a held
+press is indistinguishable from one whose release was lost. A Button that
+repeats is not given the 700 ms recovery, which would put it back up in the
+middle of a hold; instead a second press anywhere, which cannot happen while
+the first is still down, stops the repeat and puts the held button up
+(`Tk._release_lost`).
+
+**Where this stops short of Tk.** A repeat interval of 0 ends the repeat:
+Tk's Scale and Scrollbar schedule the next step at 0 ms for ever. Tk's Scale
+skips a step to catch up after a slow `command`; here the after-queue starts
+counting once the command has returned. Tk cancels a Spinbox's repeat when a
+held pointer comes back over it (`<B1-Enter>`), and nothing reports the
+pointer crossing a widget yet (`TkCurses-70gx`). And the ttk widgets keep
+their own procedures, which repeat with fixed timing (`ttk::Repeatedly`) and
+are not taken here: a ttk Scale still jumps on button 1, and a ttk Spinbox
+steps on the press without repeating (`TkCurses-1wos`).
 
 **Validation gates `insert` and `delete`, not only keystrokes.** `-validate`
 is a condition, and the two that name an edit - `key` and `all` - apply to a

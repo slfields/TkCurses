@@ -285,6 +285,7 @@ def test_clicking_the_up_arrow_steps_up(root):
     spin = laid_out(Spinbox(root, name="s", values=SIZES, width=10))
     column = spin._arrow_columns()[0]
     spin._handle(MouseEvent(button=1, state="pressed", x=column, y=0))
+    spin._handle(MouseEvent(button=1, state="released", x=column, y=0))
     assert spin.get() == "medium"
 
 
@@ -292,6 +293,7 @@ def test_clicking_the_down_arrow_steps_down(root):
     spin = laid_out(Spinbox(root, name="s", values=SIZES, width=10, wrap=True))
     column = spin._arrow_columns()[1]
     spin._handle(MouseEvent(button=1, state="pressed", x=column, y=0))
+    spin._handle(MouseEvent(button=1, state="released", x=column, y=0))
     assert spin.get() == "large"
 
 

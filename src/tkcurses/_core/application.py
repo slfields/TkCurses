@@ -357,6 +357,12 @@ class Application:
         #: every instance would stack up one copy per widget.
         self.bound_classes: set[str] = set()
 
+        #: The pending step of whatever is auto-repeating while a mouse button
+        #: is held - a Button, a Scale's trough, a Scrollbar's arrow or a
+        #: Spinbox's - as an ``after`` handle. One for the application, as
+        #: Tk's ``Priv(afterId)`` is: only one thing can be held at a time.
+        self.repeat: str | None = None
+
         #: Counters behind automatic widget names (!button, !button2).
         self.name_counts: dict[str, int] = {}
 
