@@ -114,9 +114,8 @@ def test_a_refused_option_leaves_the_object_in_children_without_a_window(root):
 def test_a_value_refused_after_the_options_are_read_leaves_no_window(
     root, make, options
 ):
-    """Refused in the class's own ``__init__``, after ``BaseWidget``'s. The
-    error type is wrong as well, which is TkCurses-vgkb."""
-    with pytest.raises(Exception):  # noqa: B017 - see TkCurses-vgkb
+    """Refused in the class's own ``__init__``, after ``BaseWidget``'s."""
+    with pytest.raises(TclError):
         make(root, name="x", **options)
     assert root.children["x"].winfo_exists() == 0
     assert root.winfo_children() == []

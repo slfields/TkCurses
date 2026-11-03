@@ -1206,6 +1206,10 @@ class Progressbar(Widget, tkcurses.Frame):
     not a pause.
     """
 
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "length": tkcurses._signed_distance
+    }
+
     _ttk_class = "TProgressbar"
 
     def _element_at(self, x: int, y: int) -> Any:
@@ -1580,6 +1584,10 @@ class Combobox(Widget, _EntryCommands):
     describes: no decoration, so the widget places it rather than handing it
     to anything else.
     """
+
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "width": tkcurses._tcl_integer
+    }
 
     _ttk_class = "TCombobox"
 
@@ -2600,6 +2608,10 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
     and are accepted and ignored.
     """
 
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "height": tkcurses._signed_distance
+    }
+
     _ttk_class = "Treeview"
 
     _widget_options: ClassVar[dict[str, Any]] = {
@@ -2702,7 +2714,6 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         #: Cells the columns are scrolled left by. TkCurses-xe9.6.
         self._left = 0
         kw.setdefault("relief", "sunken")
-        self._check_striped(tkcurses._given(cnf, kw))
         self._check_titles(tkcurses._given(cnf, kw))
         self._check_display(tkcurses._given(cnf, kw))
         super().__init__(master, cnf, name=name, **kw)
@@ -3904,19 +3915,6 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
                 )
                 row += 1
 
-    def _check_striped(self, given: dict[str, Any]) -> None:
-        """Refuse a ``striped`` that is not a boolean, as Tk does.
-
-        Called from ``__init__`` AND from :meth:`configure`, because Tk rejects
-        it on both paths and the construction path does not go through
-        ``configure``. Running it is what showed that: with the check in
-        ``configure`` alone, ``Treeview(striped="rubbish")`` was accepted while
-        ``configure(striped="rubbish")`` raised - a difference no caller could
-        have predicted.
-        """
-        if "striped" in given:
-            self.getboolean(given["striped"])
-
     def _check_titles(self, given: dict[str, Any]) -> None:
         """Refuse a ``titleitems`` or ``titlecolumns`` Tk would refuse.
 
@@ -4071,7 +4069,6 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         docstring claimed it raised; running it showed it did not.
         """
         given = tkcurses._given(cnf, kw)
-        self._check_striped(given)
         self._check_titles(given)
         self._check_display(given)
         result = super().configure(cnf, **kw)
@@ -4436,6 +4433,13 @@ class Label(Widget, tkcurses.Label):
     interactive widgets does not arise here.
     """
 
+    #: ttk's label family keeps ``width`` unchecked - ``width="abc"`` reads
+    #: back ``abc`` on Tk 9.0.2 - so drawing reads it with a fallback.
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "width": tkcurses._unchecked,
+        "wraplength": tkcurses._distance_or_empty,
+    }
+
     _ttk_class = "TLabel"
 
     _widget_options: ClassVar[dict[str, Any]] = {
@@ -4598,6 +4602,11 @@ class Panedwindow(Widget, tkcurses.PanedWindow):
     ``TkCurses-2v2``. Until then ``pane(index)`` answers what was set, so
     code that round-trips a weight sees what it wrote.
     """
+
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "height": tkcurses._tcl_integer,
+        "width": tkcurses._tcl_integer,
+    }
 
     _ttk_class = "TPanedwindow"
 
@@ -4779,6 +4788,10 @@ class Button(Widget, tkcurses.Button):
     commit that stopped it hardcoding the name.
     """
 
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "width": tkcurses._unchecked
+    }
+
     _ttk_class = "TButton"
 
     _widget_options: ClassVar[dict[str, Any]] = {
@@ -4797,6 +4810,10 @@ class Checkbutton(Widget, tkcurses.Checkbutton):
     ``winfo_class()``: the space bar and not Return, so that Return still
     reaches a dialog's default button from wherever the focus is.
     """
+
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "width": tkcurses._unchecked
+    }
 
     _ttk_class = "TCheckbutton"
 
@@ -4821,6 +4838,10 @@ class Radiobutton(Widget, tkcurses.Radiobutton):
     classic one as ``selectedButton``, which is the same global under Tcl's
     namespace rules rather than a difference.
     """
+
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "width": tkcurses._unchecked
+    }
 
     _ttk_class = "TRadiobutton"
 
@@ -4851,6 +4872,10 @@ class Menubutton(Widget, tkcurses.Menubutton):
     ``direction`` defaults to ``below``, as ttk's does.
     """
 
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "width": tkcurses._unchecked
+    }
+
     _ttk_class = "TMenubutton"
 
     def _element_at(self, x: int, y: int) -> Any:
@@ -4877,6 +4902,10 @@ class Entry(Widget, _EntryCommands):
     purpose.
     """
 
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "width": tkcurses._tcl_integer
+    }
+
     _ttk_class = "TEntry"
 
     _outer_element = "field"
@@ -4899,6 +4928,10 @@ class Spinbox(Widget, _EntryCommands, tkcurses.Spinbox):
     relationship holds underneath and ``show`` comes with it. The two
     hierarchies agree; only the painting options differ, and those we keep.
     """
+
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "width": tkcurses._tcl_integer
+    }
 
     _ttk_class = "TSpinbox"
 

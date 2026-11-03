@@ -149,7 +149,7 @@ def test_an_at_index_takes_modifiers(text):
 
 
 def test_a_bad_index_is_refused(text):
-    with pytest.raises(ValueError):
+    with pytest.raises(TclError, match=r'^bad text index "rubbish"$'):
         text.index("rubbish")
 
 
@@ -1299,7 +1299,9 @@ def test_a_screen_distance_is_converted_like_every_other(tabbed):
 
 
 def test_tab_stops_must_increase(tabbed):
-    with pytest.raises(TclError, match="increase"):
+    with pytest.raises(
+        TclError, match=r'^tabs must be monotonically increasing, but "4"'
+    ):
         tabbed.configure(tabs=(10, 4))
 
 

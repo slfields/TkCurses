@@ -187,21 +187,31 @@ def parse_tabs(spec: Any, to_cells: Callable[[Any], float]) -> TabStops:
     else:
         items = [spec]
 
+    # Each message is Tk 9.0.2's, measured. After a stop, a word that is no
+    # distance is taken as an alignment; before any, it is a bad distance -
+    # so ``left`` on its own is "expected screen distance".
     columns: list[int] = []
     alignments: list[str] = []
     for item in items:
         word = str(item).strip().lower()
-        if word in ALIGNMENTS:
-            if not columns:
-                raise TclError(f"tab alignment {word!r} with no stop before it")
+        if word in ALIGNMENTS and columns:
             alignments[-1] = word
             continue
-        cells = round(to_cells(item))
+        try:
+            cells = round(to_cells(item))
+        except TclError:
+            if columns:
+                raise TclError(
+                    f'bad tab alignment "{item}": must be left, right, center,'
+                    " or numeric"
+                ) from None
+            raise TclError(f'expected screen distance but got "{item}"') from None
         if cells <= 0:
-            raise TclError(f"tab stop {item!r} is not positive")
+            raise TclError(f'tab stop "{item}" is not at a positive distance')
         if columns and cells <= columns[-1]:
             raise TclError(
-                f"tab stops must increase: {item!r} does not follow {columns[-1]}"
+                f'tabs must be monotonically increasing, but "{item}" is smaller'
+                " than or equal to the previous tab"
             )
         columns.append(cells)
         alignments.append("left")

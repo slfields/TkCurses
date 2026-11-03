@@ -730,6 +730,7 @@ _NOT_A_TABLE = frozenset(
         "Curses Compatibility Module",
         "Panel Module Overview",
         "The pixel",
+        "What an option value is",
         "Image files",
         "Image colour and the pair ceiling",
         "compound",

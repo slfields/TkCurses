@@ -64,6 +64,8 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from tkcurses._core.errors import TclError
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -97,8 +99,17 @@ class _Edit:
     inserted: bool
 
 
-class TextIndexError(ValueError):
-    """An index string that means nothing."""
+class TextIndexError(TclError):
+    """An index string that means nothing.
+
+    A ``TclError``, as tkinter's is: a program catching that around an index
+    used to crash on a ValueError instead. TkCurses-g7nf.
+    """
+
+
+class _NoTaggedCharacters(TextIndexError):
+    """``tag.first`` for a tag that exists and covers nothing - the one bad
+    index Tk names for what it is rather than quoting."""
 
 
 @dataclass(frozen=True, order=True)
@@ -605,12 +616,20 @@ class TextBuffer:
         if isinstance(spec, Index):
             return self.clamp(spec)
         text = str(spec).strip()
-        if not text:
-            raise TextIndexError('bad text index ""')
-        base, modifiers = self._split_modifiers(text)
-        index = self._resolve_base(base)
-        for modifier in modifiers:
-            index = self._apply_modifier(index, modifier)
+        try:
+            if not text:
+                raise TextIndexError(text)
+            base, modifiers = self._split_modifiers(text)
+            index = self._resolve_base(base)
+            for modifier in modifiers:
+                index = self._apply_modifier(index, modifier)
+        except _NoTaggedCharacters:
+            raise
+        except TextIndexError:
+            # Measured on Tk 9.0.2: whatever part is wrong - the mark, a
+            # modifier's count or its unit - the message quotes the index
+            # whole, as it was given.
+            raise TextIndexError(f'bad text index "{spec}"') from None
         return self.clamp(index)
 
     @staticmethod
@@ -655,7 +674,9 @@ class TextBuffer:
             if which in ("first", "last") and self._tag_key(name) in self._store.tags:
                 ranges = self._local_ranges(name)
                 if not ranges:
-                    raise TextIndexError(f"text doesn't contain any {name} tag")
+                    raise _NoTaggedCharacters(
+                        f'text doesn\'t contain any characters tagged with "{name}"'
+                    )
                 edge = ranges[0][0] if which == "first" else ranges[-1][1]
                 return self.index_of(edge)
         raise TextIndexError(f'bad text index "{base}"')
@@ -720,7 +741,9 @@ class TextBuffer:
             return a > b
         if op == ">=":
             return a >= b
-        raise TextIndexError(f'bad comparison operator "{op}"')
+        raise TextIndexError(
+            f'bad comparison operator "{op}": must be <, <=, ==, >=, >, or !='
+        )
 
     # -------------------------------------------------------------- contents
 
@@ -1064,7 +1087,7 @@ class TextBuffer:
         if gravity is None:
             return current
         if gravity not in _GRAVITIES:
-            raise TextIndexError(f'bad mark gravity "{gravity}"')
+            raise TextIndexError(f'bad mark gravity "{gravity}": must be left or right')
         self._store.marks[key] = (offset, gravity)
         return gravity
 

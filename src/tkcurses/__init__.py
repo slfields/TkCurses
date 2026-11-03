@@ -664,17 +664,74 @@ _STATE_COLOUR_OPTIONS: dict[str, Any] = {
     "disabledforeground": "",
 }
 
-_TCL_INTEGER = re.compile(r"\s*[+-]?\d+\s*")
+#: Digits as Tcl 9 writes them: ASCII only, with underscores allowed BETWEEN
+#: digits - ``1__0`` is 10, ``_1`` and ``1_`` are not numbers. Python's own
+#: \d, int() and float() each disagree somewhere: \d matches the Arabic-Indic
+#: one (U+0661), int() refuses ``0x10`` without a base, and float() refuses
+#: ``1__0`` and ``0x10``.
+_DIGITS = {16: "[0-9a-f]", 8: "[0-7]", 2: "[01]", 10: "[0-9]"}
+_RUN = {base: f"{digit}+(?:_+{digit}+)*" for base, digit in _DIGITS.items()}
+_TCL_INTEGER = re.compile(
+    rf"\s*([+-]?)(?:0x({_RUN[16]})|0o({_RUN[8]})|0b({_RUN[2]})|({_RUN[10]}))\s*",
+    re.IGNORECASE,
+)
+_TCL_DOUBLE = re.compile(
+    rf"\s*[+-]?(?:{_RUN[10]}(?:\.(?:{_RUN[10]})?)?|\.{_RUN[10]})"
+    rf"(?:e[+-]?{_RUN[10]})?\s*",
+    re.IGNORECASE,
+)
+_TCL_INFINITY = re.compile(r"\s*[+-]?inf(?:inity)?\s*", re.IGNORECASE)
+_TCL_NAN = re.compile(r"\s*[+-]?nan\s*", re.IGNORECASE)
+
+
+def _tcl_number(value: Any) -> int | float | None:
+    """A value read as Tcl 9 reads a number, or None if it is not one.
+
+    An int for the integer forms - decimal, ``0x``, ``0o``, ``0b`` - and a
+    float for the rest, ``nan`` included: each caller has its own word for
+    that. Measured on Tk 9.0.2 through integer, double, boolean and screen
+    distance options alike. TkCurses-vgkb.
+    """
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return value
+    text = str(value)
+    whole = _TCL_INTEGER.fullmatch(text)
+    if whole:
+        sign, *digits = whole.groups()
+        base, run = next(
+            (base, run)
+            for base, run in zip((16, 8, 2, 10), digits, strict=True)
+            if run is not None
+        )
+        number = int(run.replace("_", ""), base)
+        return -number if sign == "-" else number
+    if _TCL_DOUBLE.fullmatch(text) or _TCL_INFINITY.fullmatch(text):
+        return float(text.replace("_", ""))
+    if _TCL_NAN.fullmatch(text):
+        return math.nan
+    return None
 
 
 def _tcl_integer(widget: Any, value: Any) -> int:
     """An integer option, refused as Tk refuses it. Measured on Tk 9.0.2."""
     del widget
-    if isinstance(value, int):
-        return int(value)
-    if isinstance(value, str) and _TCL_INTEGER.fullmatch(value):
-        return int(value)
-    raise TclError(f'expected integer but got "{value}"')
+    number = _tcl_number(value)
+    if not isinstance(number, int):
+        raise TclError(f'expected integer but got "{value}"')
+    return number
+
+
+def _tcl_float(widget: Any, value: Any) -> float:
+    """A number Tk reads as a double: ``from_="0x10"`` reads back 16.0."""
+    del widget
+    number = _tcl_number(value)
+    if number is None:
+        raise TclError(f'expected floating-point number but got "{value}"')
+    if math.isnan(number):
+        raise TclError("floating point value is Not a Number")
+    return float(number)
 
 
 def _as_int(value: Any, otherwise: int) -> int:
@@ -691,12 +748,7 @@ def _screen_distance(widget: Any, value: Any) -> int:
     Suffixed distances - ``2p``, ``1c`` - are refused, as everywhere here
     (TkCurses-2qo).
     """
-    del widget
-    try:
-        number = round(float(value))
-    except (TypeError, ValueError):
-        raise TclError(f'expected screen distance but got "{value}"') from None
-    return max(0, number)
+    return max(0, _signed_distance(widget, value))
 
 
 def _colour_or_terminals(widget: Any, value: Any) -> Any:
@@ -712,14 +764,15 @@ def _colour_or_terminals(widget: Any, value: Any) -> Any:
 
 
 def _distance_or_empty(widget: Any, value: Any) -> Any:
-    """A size, or "" for none given: a PanedWindow's ``width`` and ``height``.
-    Measured on Tk 9.0.2: -3 reads back -3, and "x" is refused naming both."""
-    del widget
+    """A size, or "" for none given: a PanedWindow's ``width`` and ``height``,
+    Message's ``padx`` and ``pady``, ttk.Label's ``wraplength`` and the
+    scrollbar's ``elementborderwidth``. Measured on Tk 9.0.2: -3 reads back
+    -3, and "x" is refused naming both."""
     if value == "":
         return value
     try:
-        return round(float(value))
-    except (TypeError, ValueError):
+        return _signed_distance(widget, value)
+    except TclError:
         raise TclError(f'expected screen distance or "" but got "{value}"') from None
 
 
@@ -957,11 +1010,22 @@ def _is_number(text: str) -> bool:
 
 
 def _tcl_boolean(widget: Any, value: Any) -> int:
-    """A boolean option, answered as Tk answers it: ``yes`` reads back 1."""
+    """A boolean option, answered as Tk answers it: ``yes`` reads back 1.
+
+    Any number is a boolean in Tcl, not only 0 and 1: measured on Tk 9.0.2,
+    ``-undo 2.5`` and ``-undo 0x10`` read back 1. tkinter's own
+    ``getboolean`` refuses all of those, so this cannot go through it alone.
+    """
     try:
         return int(widget.getboolean(value))
     except TclError:
-        raise TclError(f'expected boolean value but got "{value}"') from None
+        pass
+    number = _tcl_number(value)
+    if number is None:
+        raise TclError(f'expected boolean value but got "{value}"')
+    if math.isnan(number):
+        raise TclError("floating point value is Not a Number")
+    return int(number != 0)
 
 
 def _insert_unfocussed(widget: Any, value: Any) -> str:
@@ -1013,19 +1077,44 @@ def _signed_distance(widget: Any, value: Any) -> int:
     ``activeborderwidth`` read back -5 after -5, measured. What is drawn
     treats one as its smallest instead."""
     del widget
-    try:
-        return round(float(value))
-    except (TypeError, ValueError):
-        raise TclError(f'expected screen distance but got "{value}"') from None
+    number = _tcl_number(value)
+    if number is None or math.isnan(number):
+        raise TclError(f'expected screen distance but got "{value}"')
+    # Measured: Tk reads an infinite distance back as 0.
+    return 0 if math.isinf(number) else round(number)
 
 
 def _element_borderwidth(widget: Any, value: Any) -> Any:
     """A size, or "" for the scrollbar's own ``borderwidth``. Tk reads any
     negative width back as "", measured."""
-    if value == "":
-        return ""
-    distance = _signed_distance(widget, value)
-    return "" if distance < 0 else distance
+    distance = _distance_or_empty(widget, value)
+    return "" if distance == "" or distance < 0 else distance
+
+
+def _variable(widget: Any, value: Any) -> Any:
+    """A ``Variable``, or nothing - ``""`` read as None.
+
+    Tk also takes a NAME and binds to the global variable called that, but
+    traces here belong to each Variable object rather than to the name, so a
+    widget bound by name would not hear writes made through any other: a
+    TclError now, rather than the AttributeError it crashed with
+    (TkCurses-vgkb), until TkCurses-4v9f.
+    """
+    del widget
+    if value is None or value == "":
+        return None
+    if isinstance(value, Variable):
+        return value
+    raise TclError(
+        f'variable "{value}" is a name, not a Variable: binding a widget to a'
+        " global variable by name is TkCurses-4v9f"
+    )
+
+
+def _unchecked(widget: Any, value: Any) -> Any:
+    """Kept as given, as Tk keeps it: what reads it must cope."""
+    del widget
+    return value
 
 
 def _part_relief(relief: Any) -> int:
@@ -1094,6 +1183,13 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "tile": _tcl_boolean,
     "tristateimage": _image_name,
     "type": _menu_type,
+    "undo": _tcl_boolean,
+    "textvariable": _variable,
+    # Not listvariable: Listbox takes a name, but only one way - it writes
+    # its items there and hears no write made elsewhere. Kept, as partial,
+    # while TkCurses-4v9f decides how names should bind.
+    "variable": _variable,
+    "striped": _tcl_boolean,
     "troughcolor": _colour_or_terminals,
     "use": _use,
     "visual": _visual,
@@ -2561,7 +2657,9 @@ class Misc:
         try:
             value = float(text[:-1] if factor is not None else text)
         except ValueError:
-            raise TclError(f"bad screen distance {number!r}") from None
+            raise TclError(
+                f'expected screen distance or "" but got "{number}"'
+            ) from None
         return value if factor is None else value * factor * _CELLS_PER_INCH
 
     def winfo_pointerx(self) -> int:
@@ -2953,6 +3051,7 @@ def _keyword_option(
 #: ``configure`` call would be wasted work; the spec cannot change once the
 #: class exists.
 _SPEC_CACHE: dict[type, dict[str, Any]] = {}
+_CHECKS_CACHE: dict[type, dict[str, Callable[[Any, Any], Any]]] = {}
 
 
 class BaseWidget(Misc):
@@ -3099,9 +3198,27 @@ class BaseWidget(Misc):
             option = _keyword_option(name, spec, self._option_synonyms)
             if option not in spec:
                 raise TclError(f'unknown option "-{name}"')
-            check = _OPTION_VALUES.get(option)
+            check = self._value_checks_of().get(option) or _OPTION_VALUES.get(option)
             resolved[option] = value if check is None else check(self, value)
         return resolved
+
+    #: How this class reads an option whose meaning depends on the widget,
+    #: over :data:`_OPTION_VALUES`, merged down the MRO as ``_widget_options``
+    #: is. ``width`` is the case that needs it: a count of characters on a
+    #: Button, a screen distance on a Frame, and not checked at all on a
+    #: ttk.Label - three answers to ``width="abc"``, measured on Tk 9.0.2.
+    #: TkCurses-vgkb.
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {}
+
+    @classmethod
+    def _value_checks_of(cls) -> dict[str, Callable[[Any, Any], Any]]:
+        cached = _CHECKS_CACHE.get(cls)
+        if cached is None:
+            checks: dict[str, Callable[[Any, Any], Any]] = {}
+            for klass in reversed(cls.__mro__):
+                checks.update(vars(klass).get("_value_checks", {}))
+            cached = _CHECKS_CACHE[cls] = checks
+        return cached
 
     def _cursor_style(self) -> CursorStyle:
         """What this widget asks of the terminal's cursor while it has the focus.
@@ -5629,6 +5746,11 @@ class Toplevel(BaseWidget, Wm):
     #: which is what sends the window to its default size. borderwidth is 1
     #: rather than tkinter's 0: there is no window manager to draw a frame,
     #: so without one a toplevel is indistinguishable from what is behind it.
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "height": _signed_distance,
+        "width": _signed_distance,
+    }
+
     _widget_options: ClassVar[dict[str, Any]] = {
         **_WINDOW_SYSTEM_OPTIONS,
         "borderwidth": 1,
@@ -6356,6 +6478,11 @@ class Frame(_Drawable):
     """
 
     #: ``width`` and ``height`` are cells; zero means "ask the children".
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "height": _signed_distance,
+        "width": _signed_distance,
+    }
+
     _widget_options: ClassVar[dict[str, Any]] = {
         **_WINDOW_SYSTEM_OPTIONS,
         "height": 0,
@@ -6483,6 +6610,16 @@ class _TextWidget(_Drawable):
     shows no difference between them: justify aligns the lines against each
     other, anchor puts the resulting block within the widget.
     """
+
+    #: Measured on Tk 9.0.2 by making each widget with a bad value: a
+    #: label's size is in characters and its padding in screen distance.
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "height": _tcl_integer,
+        "padx": _signed_distance,
+        "pady": _signed_distance,
+        "width": _tcl_integer,
+        "wraplength": _signed_distance,
+    }
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "anchor": "center",
@@ -6681,7 +6818,7 @@ class _TextWidget(_Drawable):
 
     def _lines(self) -> list[str]:
         """The text as display lines, wrapped if ``wraplength`` says so."""
-        return wrap(self._text(), int(self._options["wraplength"]))
+        return wrap(self._text(), _as_int(self._options["wraplength"], 0))
 
     def _content_size(self) -> tuple[int, int]:
         """How big the image and text together are, in cells."""
@@ -6775,12 +6912,14 @@ class _TextWidget(_Drawable):
         draw, not for what is left after the frame around it.
         """
         text_width, text_height = self._content_size()
-        width = int(self._options["width"]) or text_width
-        height = int(self._options["height"]) or text_height
+        # _as_int throughout: a ttk label keeps a width Tk does not check,
+        # "abc" too, and Message takes "" for its padding. TkCurses-vgkb.
+        width = _as_int(self._options["width"], 0) or text_width
+        height = _as_int(self._options["height"], 0) or text_height
         edge = 2 * BORDER_WIDTH if self._bordered else 0
         self._request_size(
-            width + 2 * int(self._options["padx"]) + edge,
-            height + 2 * int(self._options["pady"]) + edge,
+            width + 2 * _as_int(self._options["padx"], 0) + edge,
+            height + 2 * _as_int(self._options["pady"], 0) + edge,
         )
 
     # ------------------------------------------------------------- painting
@@ -6945,7 +7084,8 @@ class _TextWidget(_Drawable):
     def _text_area(self) -> Rect:
         """Where the text may go, in cells relative to this widget's window."""
         edge = BORDER_WIDTH if self._border_drawn else 0
-        padx, pady = int(self._options["padx"]), int(self._options["pady"])
+        padx = _as_int(self._options["padx"], 0)
+        pady = _as_int(self._options["pady"], 0)
         return Rect(
             edge + padx,
             edge + pady,
@@ -7963,6 +8103,10 @@ class Entry(_Drawable, XView):
     _STATE_COLOURS: ClassVar[dict[str, tuple[str | None, str | None]]] = {
         "disabled": ("disabledforeground", "disabledbackground"),
         "readonly": (None, "readonlybackground"),
+    }
+
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "width": _tcl_integer
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
@@ -9684,6 +9828,12 @@ class Message(_TextWidget):
     thing.
     """
 
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "padx": _distance_or_empty,
+        "pady": _distance_or_empty,
+        "width": _signed_distance,
+    }
+
     _widget_options: ClassVar[dict[str, Any]] = {
         "aspect": 150,
         # Tk's Message justifies left rather than centre, which is what makes
@@ -10146,6 +10296,12 @@ class Spinbox(Entry):
     #: the widget, so a Spinbox and an Entry of the same ``width`` are the
     #: same size on screen - which is what makes a column of them line up.
     _ARROW_WIDTH = 2
+
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "from": _tcl_float,
+        "increment": _tcl_float,
+        "to": _tcl_float,
+    }
 
     _widget_options: ClassVar[dict[str, Any]] = {
         # The arrows: activebackground is stored only, since an arrow is not
@@ -10652,6 +10808,13 @@ class Text(_Drawable, XView, YView):
     beginning of the real line.
     """
 
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "height": _signed_distance,
+        "padx": _signed_distance,
+        "pady": _signed_distance,
+        "width": _tcl_integer,
+    }
+
     _widget_options: ClassVar[dict[str, Any]] = {
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         **_INSERT_CURSOR_OPTIONS,
@@ -11032,9 +11195,13 @@ class Text(_Drawable, XView, YView):
         if text.startswith("@"):
             position, _, rest = text[1:].partition(",")
             column, _, modifiers = rest.partition(" ")
-            index = self._index_at_cell(int(position), int(column))
-            if modifiers.strip():
-                return self._buffer.index(f"{index} {modifiers.strip()}")
+            try:
+                index = self._index_at_cell(int(position), int(column))
+                if modifiers.strip():
+                    return self._buffer.index(f"{index} {modifiers.strip()}")
+            except (ValueError, TclError):
+                # Quoted whole, as every other bad index is.
+                raise TclError(f'bad text index "{spec}"') from None
             return index
         return self._buffer.index(text)
 
@@ -11509,6 +11676,9 @@ class Text(_Drawable, XView, YView):
         """Record a tag's existence and its place in the priority order."""
         if name not in self._tag_options:
             self._tag_options[name] = dict(self._TAG_OPTIONS)
+            # Known to the buffer too, ranges or none: a tag that exists and
+            # covers nothing has a ``.first`` error of its own in Tk.
+            self._buffer.tag_add(name, "1.0", "1.0")
         if name not in self._tag_order:
             # A peer's sel is new to it and already in the shared order.
             self._tag_order.append(name)
@@ -12778,6 +12948,11 @@ class Canvas(_Drawable, XView, YView):
             "justify": "left",
             "text": "",
         },
+    }
+
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "height": _signed_distance,
+        "width": _signed_distance,
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
@@ -14690,6 +14865,11 @@ class Listbox(_Drawable, XView, YView):
         "disabled": ("disabledforeground", None),
     }
 
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "height": _tcl_integer,
+        "width": _tcl_integer,
+    }
+
     _widget_options: ClassVar[dict[str, Any]] = {
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         **_SELECTION_OPTIONS,
@@ -15907,6 +16087,10 @@ class Scrollbar(_Drawable):
     arrow or the trough is clicked.
     """
 
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "width": _signed_distance
+    }
+
     _widget_options: ClassVar[dict[str, Any]] = {
         # Tk's are real colours; "" draws the scrollbar as it was. See
         # _part_attribute. TkCurses-gm66.4.
@@ -16346,6 +16530,16 @@ class Scale(_Drawable):
 
     #: Drawn at the ends of the trough while the scale has the focus.
     _FOCUS_CAPS = ("[", "]")
+
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "digits": _tcl_integer,
+        "from": _tcl_float,
+        "length": _signed_distance,
+        "resolution": _tcl_float,
+        "tickinterval": _tcl_float,
+        "to": _tcl_float,
+        "width": _signed_distance,
+    }
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options

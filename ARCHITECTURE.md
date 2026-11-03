@@ -4366,6 +4366,21 @@ the whole store has `tag ranges` 1.0 to 4.0, while `t.last` is 1.0 and there
 is no `nextrange` from 1.0 at all. A tag inside the window has no such
 disagreement. Tk's answers there contradict its own ranges, so the ranges win.
 
+#### A bad index
+
+Every one is a `TclError`, as tkinter's is; it used to be a `ValueError`,
+which a program catching `TclError` crashed on (`TkCurses-g7nf`). Measured
+through tkinter over Tk 9.0.2, the message quotes **the whole index as
+given**, whichever part is wrong: `nomark+1c`, `1.0 +3 bogus`, `5.x`,
+`end-1c+`, `@a,b`, `@3`, `@0,0 +zc` are each `bad text index "<that>"`, never
+a message about the modifier or the mark alone. One case is named instead:
+`t.first` for a tag that exists and covers nothing is `text doesn't contain
+any characters tagged with "t"`, and for a tag never made it is `bad text
+index "t.first"` - so a tag made by `tag_configure` alone is known to the
+buffer from then on. The others: `bad comparison operator "<>": must be <,
+<=, ==, >=, >, or !=`, `bad mark gravity "up": must be left or right`, `there
+is no mark named "nomark"`.
+
 ---
 
 ### Listbox Class
@@ -4916,6 +4931,85 @@ Multi-line text display.
 | tkinter Method | TkCurses | Notes |
 |----------------|----------|-------|
 | `__init__(master=None, cnf={}, **kw)` | ○ | Word-wrapped text |
+
+---
+
+## What an option value is
+
+Tk checks an option's value against a *kind*, and every refusal is a
+`TclError` with Tk's words - not the `ValueError` from an `int()` deep in a
+widget's sizing that it used to be (`TkCurses-vgkb`). The kinds are
+`_OPTION_VALUES` for options that mean the same in every widget, and each
+class's `_value_checks` for those that do not, merged down the class's MRO.
+
+**The same name is a different kind in different widgets**, and nothing in
+the manuals says which; each row was measured through tkinter over Tk 9.0.2.
+
+| Kind | Refusal | Where |
+|------|---------|-------|
+| integer | `expected integer but got "2.5"` | `width` of Button, Label, Checkbutton, Radiobutton, Menubutton, Entry, Spinbox, Listbox, Text, ttk Entry/Combobox/Spinbox; `height` of the classic labels, Listbox, ttk Panedwindow (and its `width`); Scale `digits` |
+| screen distance | `expected screen distance but got "abc"` | `width` of Canvas, Frame, LabelFrame, Toplevel, Scale, Scrollbar, Message, ttk Frame/Labelframe/Notebook; Text `height`/`padx`/`pady`; ttk Treeview `height`; `length` of Scale, ttk Scale, ttk Progressbar |
+| distance or `""` | `expected screen distance or "" but got "abc"` | Message `padx`/`pady`, ttk Label `wraplength`, Scrollbar `elementborderwidth`, `winfo_fpixels` |
+| floating point | `expected floating-point number but got "abc"` | `from`/`to`/`resolution`/`tickinterval` of Scale, `from`/`to`/`increment` of Spinbox, their ttk forms |
+| not checked | - | `width` of ttk Button, Checkbutton, Label, Menubutton, Radiobutton: `"abc"` is kept and read back, and the label is sized by its text |
+
+So `Button(width=2.5)` is refused while `Frame(width=2.5)` is taken, and
+`ttk.Label(width="abc")` is taken while `ttk.Entry(width="abc")` is not.
+
+**A number is whatever Tcl 9 reads as one**, and Python's own parsers each
+disagree with it somewhere, so `_tcl_number` reads it the way Tcl does.
+Measured across all four kinds alike:
+
+- `0x10`, `0o17`, `0b11` are 16, 15, 3, in any case (`0X10`); a width takes
+  them.
+- An underscore may stand **between** digits, any number of them: `1_0` and
+  `1__0` are 10, `0x1_0` is 16; `_1` and `1_` are not numbers.
+- Surrounding spaces are fine (`" 7 "`); only ASCII digits count, so the
+  Arabic-Indic `١` is not one.
+- `1e2`, `3.` and `.5` are doubles: a distance or a float takes them, an
+  integer refuses them. `inf` and `Infinity` are doubles too; a distance reads
+  one back as 0.
+- `nan` is refused by each kind in its own words: a distance says `expected
+  screen distance`, while a float and a boolean say `floating point value is
+  Not a Number`.
+- `True` reads back `1`, not `True`.
+
+**A boolean option takes any number**, nonzero true: `undo=2.5`,
+`undo=0x10`, `undo="1_0"` are all 1 and `undo="0.0"` is 0. tkinter's own
+`getboolean()` refuses every one of those, so an option's check
+(`_tcl_boolean`) is not `getboolean`, which stays as tkinter has it.
+
+**`-tabs`** is refused in four sentences: a stop that is no distance is
+`expected screen distance but got "abc"` - and so is an alignment word with no
+stop before it, `left` alone - while after a stop a non-distance is `bad tab
+alignment "bogus": must be left, right, center, or numeric`. Then `tab stop
+"-3" is not at a positive distance` and `tabs must be monotonically
+increasing, but "3" is smaller than or equal to the previous tab`.
+
+**A variable option given a name** (`textvariable=5`) is taken by Tk, which
+binds the widget to the global variable of that name. Here traces belong to
+each `Variable` object rather than to the name, so a widget bound that way
+would miss every write made through another; it is refused instead, as a
+`TclError` that names `TkCurses-4v9f`, rather than the `AttributeError` it
+crashed with.
+
+Listbox's `listvariable` takes a name and is kept, but it binds **one way**:
+the Listbox writes its items into the shared value, and `getvar` and any
+`Variable` of that name read them, but a write made elsewhere never reaches
+it. Measured: after `setvar("items", ("a", "b"))` Tk's Listbox shows `a b`
+and ours still shows nothing, and the same for `Variable(name="items").set`.
+It stays because a program relying on the direction that works keeps
+working; `test_a_listbox_bound_by_name_does_not_hear_writes_made_elsewhere`
+is a strict xfail that will pass when it is fixed.
+
+**How names should bind is an open design question** (`TkCurses-4v9f`), and
+both of the above are holding positions until it is answered, not the
+design.
+
+Not done: of the same sweep, 571 values Tk refuses are still stored
+(`TkCurses-m595`), and the options Tk has that we do not are `TkCurses-zkks`.
+`tests/test_option_values_against_tk.py` re-runs the comparison against real
+tkinter, where there is a display.
 
 ---
 

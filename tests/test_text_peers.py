@@ -122,9 +122,9 @@ def test_a_peer_takes_its_creators_lines_and_undo_settings(root):
     other = peer(made)
     assert other.cget("startline") == 2
     assert other.cget("endline") == 5
-    assert other.cget("undo") is True
+    assert other.cget("undo") == 1
     assert other.cget("maxundo") == 4
-    assert other.cget("autoseparators") is False
+    assert other.cget("autoseparators") == 0
     # And nothing else: the rest are the defaults.
     assert other.cget("width") == 80
 
@@ -235,7 +235,7 @@ def test_whichever_peer_set_undo_last_decides(root):
     other = peer(made, undo=False)
     made.insert("end", "A")
     other.insert("end", "P")
-    assert made.cget("undo") is True
+    assert made.cget("undo") == 1
     made.configure(undo=True)
     with pytest.raises(TclError, match="nothing to undo"):
         made.edit_undo()
@@ -442,8 +442,7 @@ def test_a_shared_mark_outside_the_window_is_listed_but_not_an_index(text):
     made = peer(text, startline=3, endline=6)
     text.mark_set("m", "1.2")
     assert "m" in made.mark_names()
-    # ValueError, where tkinter's is a TclError: TkCurses-g7nf.
-    with pytest.raises(ValueError, match='bad text index "m"'):
+    with pytest.raises(TclError, match=r'^bad text index "m"$'):
         made.index("m")
 
 
