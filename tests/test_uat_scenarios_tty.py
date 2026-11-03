@@ -596,11 +596,14 @@ def test_scenario_40_the_paned_sash_can_be_dragged(uat_terminal):
     term = _scenario_40(uat_terminal)
 
     def sash_columns():
+        # By the handle or the line: the handle sits handlepad rows down, on
+        # the labels' row, and a label wider than its pane covers it there
+        # (TkCurses-wbov). Rows 11-16, right of the classic Entry's box.
         return [
             x
             for y, row in enumerate(term.display)
             for x, cell in enumerate(row)
-            if cell == "┃" and x > 45
+            if cell in "┃│" and 52 < x < 95 and 11 <= y <= 16
         ]
 
     before = sash_columns()
@@ -609,7 +612,7 @@ def test_scenario_40_the_paned_sash_can_be_dragged(uat_terminal):
     row = next(
         y
         for y, line in enumerate(term.display)
-        if len(line) > column and line[column] == "┃"
+        if len(line) > column and line[column] in "┃│" and 11 <= y <= 16
     )
 
     term.send_mouse(column, row, action="press")

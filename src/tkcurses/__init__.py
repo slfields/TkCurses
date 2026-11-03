@@ -710,6 +710,18 @@ def _colour_or_terminals(widget: Any, value: Any) -> Any:
     return value
 
 
+def _distance_or_empty(widget: Any, value: Any) -> Any:
+    """A size, or "" for none given: a PanedWindow's ``width`` and ``height``.
+    Measured on Tk 9.0.2: -3 reads back -3, and "x" is refused naming both."""
+    del widget
+    if value == "":
+        return value
+    try:
+        return round(float(value))
+    except (TypeError, ValueError):
+        raise TclError(f'expected screen distance or "" but got "{value}"') from None
+
+
 def _tcl_boolean(widget: Any, value: Any) -> int:
     """A boolean option, answered as Tk answers it: ``yes`` reads back 1."""
     try:
@@ -807,6 +819,8 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "disabledbackground": _colour_or_terminals,
     "disabledforeground": _colour_or_terminals,
     "elementborderwidth": _element_borderwidth,
+    "handlepad": _signed_distance,
+    "handlesize": _signed_distance,
     "inactiveselectbackground": _colour_or_terminals,
     "insertbackground": _colour_or_terminals,
     "insertborderwidth": _screen_distance,
@@ -817,10 +831,17 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "jump": _tcl_boolean,
     "maxundo": _tcl_integer,
     "offrelief": _relief,
+    "opaqueresize": _tcl_boolean,
     "overrelief": _relief_or_none,
+    "proxybackground": _colour_or_terminals,
+    "proxyborderwidth": _signed_distance,
+    "proxyrelief": _relief_or_none,
     "readonlybackground": _colour_or_terminals,
     "repeatdelay": _tcl_integer,
     "repeatinterval": _tcl_integer,
+    "sashpad": _signed_distance,
+    "sashrelief": _relief,
+    "sashwidth": _signed_distance,
     "selectbackground": _colour_or_terminals,
     "selectborderwidth": _screen_distance,
     "selectcolor": _colour_or_terminals,
@@ -14363,11 +14384,24 @@ class PanedWindow(_Drawable):
     _HANDLE: ClassVar[dict[str, str]] = {"horizontal": "┃", "vertical": "━"}
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        # Tk's are 6 points, about a cell. TkCurses-gm66.9.
+        "handlepad": 1,
+        "handlesize": 1,
+        "height": "",
+        "opaqueresize": True,
         "orient": "horizontal",
+        "proxybackground": "",
+        "proxyborderwidth": 2,
+        "proxyrelief": "flat",
         "relief": "flat",
+        # A terminal shows no pointer shape; kept for the program to read.
+        "sashcursor": "",
+        "sashpad": 0,
+        "sashrelief": "flat",
         "sashwidth": 1,
         "showhandle": True,
         "takefocus": True,
+        "width": "",
     }
 
     def __init__(
@@ -14383,11 +14417,18 @@ class PanedWindow(_Drawable):
             master: Parent widget; the implicit root when omitted.
             cnf: Options as a dictionary, merged with the keywords.
             name: Path component, generated when omitted.
-            **kw: ``orient``, ``showhandle``, and the standard options.
+            **kw: ``orient``, ``showhandle``, the sash, handle and proxy
+                options, ``opaqueresize``, ``width``, ``height``, and the
+                standard options.
         """
         self._active_sash: int | None = None
+        #: Where a drag with ``opaqueresize`` off would put the sash, and the
+        #: panel the proxy is drawn on, over the panes. Tk's ``Priv(sash)``.
+        self._proxy_at: int | None = None
+        self._proxy_panel: Any = None
         super().__init__(master, cnf, name=name, **kw)
         self._paned = PanedLayout(str(self._options["orient"]))
+        self._paned.sash = self._sash_span()
         self._layout_manager = self._paned
         self._install_class_bindings()
 
@@ -14419,9 +14460,62 @@ class PanedWindow(_Drawable):
         if "orient" in given:
             self._paned.orient = str(self._options["orient"])
         if given:
+            self._paned.sash = self._sash_span()
             self._invalidate_layout()
             self._redraw()
         return result
+
+    def _checked(self, given: dict[str, Any]) -> dict[str, Any]:
+        """The shared checks, and Tk's ``""`` for an unset width or height."""
+        resolved = super()._checked(given)
+        for option in ("width", "height"):
+            if option in resolved and isinstance(resolved[option], str):
+                resolved[option] = _distance_or_empty(self, resolved[option])
+        return resolved
+
+    def _outer_size(self, content: Size) -> Size:
+        """What the panes need, unless ``width`` or ``height`` says otherwise.
+
+        Measured on Tk 9.0.2: ``width 300`` over two 100-pixel panes asked for
+        300, and ``""`` gave the panes' 218 back. Either axis alone.
+        """
+        size = super()._outer_size(content)
+        width = _as_int(self._options["width"], 0)
+        height = _as_int(self._options["height"], 0)
+        return Size(
+            width if width > 0 else size.width, height if height > 0 else size.height
+        )
+
+    # ---------------------------------------------------------------- sashes
+
+    def _sash_parts(self) -> tuple[int, int, int]:
+        """A sash's ``(pad, core, width)``: the padding either side of it, the
+        cells between the paddings, and the drawn line within those.
+
+        Measured on Tk 9.0.2, a sash is as wide as ``sashwidth`` or, with a
+        handle shown, ``handlesize`` if that is wider, with ``sashpad`` either
+        side: sashwidth 4 and handlesize 8 put the second pane 8 past the
+        first with no padding and 18 past with 5. Here a line under one cell
+        cannot be drawn or dragged, so one is the least of each.
+        """
+        width = max(1, _as_int(self._options["sashwidth"], 1))
+        core = width
+        if self._showhandle:
+            core = max(core, _as_int(self._options["handlesize"], 1))
+        return max(0, _as_int(self._options["sashpad"], 0)), core, width
+
+    def _sash_span(self) -> int:
+        """Cells a sash takes between two panes, its padding included."""
+        pad, core, _ = self._sash_parts()
+        return core + 2 * pad
+
+    def _sash_inset(self) -> int:
+        """How far into its span the drawn line starts. ``sash_coord`` names
+        the line, not the span: measured, a 4-pixel sash under an 8-pixel
+        handle is at 102 after a 100-pixel pane, and ``sash_place`` at 150
+        reads back 150."""
+        pad, core, width = self._sash_parts()
+        return pad + (core - width) // 2
 
     config = configure
 
@@ -14559,7 +14653,7 @@ class PanedWindow(_Drawable):
     def sash_coord(self, index: int) -> tuple[int, int]:
         """Where a sash begins, in cells relative to this widget."""
         area = self._content_area()
-        offset = self._paned.sash_position(index)
+        offset = self._paned.sash_position(index) + self._sash_inset()
         if self._paned.vertical:
             return (area.x, area.y + offset)
         return (area.x + offset, area.y)
@@ -14568,6 +14662,7 @@ class PanedWindow(_Drawable):
         """Put a sash at a position, in cells relative to this widget."""
         area = self._content_area()
         position = (y - area.y) if self._paned.vertical else (x - area.x)
+        position -= self._sash_inset()
         self._paned.move_sash(index, position, self._screen_area())
         self._apply_panes()
 
@@ -14581,7 +14676,9 @@ class PanedWindow(_Drawable):
         offset = (y - area.y) if self._paned.vertical else (x - area.x)
         for index in range(max(0, len(self._paned.slaves()) - 1)):
             at = self._paned.sash_position(index)
-            if at <= offset < at + SASH_WIDTH:
+            # The padding too, measured: with sashpad 5 every pixel from the
+            # first pane's edge to the second's answered (0, "sash").
+            if at <= offset < at + self._paned.sash:
                 return (index, "sash")
         return ()
 
@@ -14645,39 +14742,117 @@ class PanedWindow(_Drawable):
     def _draw_sashes(
         self, dispatcher: CursesDispatcher, window: Any, area: Rect, attribute: int
     ) -> None:
-        """Draw a line down each division, with a handle in the middle of it."""
+        """Draw a line down each division, with its handle.
+
+        The line fills ``sashwidth`` cells in the middle of the sash's span.
+        The handle starts ``handlepad`` cells along it and is ``handlesize``
+        cells long and wide, as Tk draws its square handle, centred across
+        the sash. ``sashrelief`` shows as :func:`_part_relief` shows one.
+        """
         if area.is_empty:
             return
         kind = "vertical" if self._paned.vertical else "horizontal"
         line, handle = self._SASH[kind], self._HANDLE[kind]
         show = self._showhandle
+        pad, core, width = self._sash_parts()
+        inset = self._sash_inset()
+        size = max(1, _as_int(self._options["handlesize"], 1))
+        across = min(size, core)
+        handle_at = pad + (core - across) // 2
+        along_from = max(0, _as_int(self._options["handlepad"], 0))
+        relief = _part_relief(self._options["sashrelief"])
+        length = area.width if self._paned.vertical else area.height
+        span = area.height if self._paned.vertical else area.width
         for index in range(max(0, len(self._paned.slaves()) - 1)):
-            offset = self._paned.sash_position(index)
+            start = self._paned.sash_position(index)
             focused = self.focus_get() is self and index == (self._active_sash or 0)
-            style = attribute | (_curses.A_REVERSE if focused else 0)
-            if self._paned.vertical:
-                if not 0 <= offset < area.height:
+            style = attribute | relief | (_curses.A_REVERSE if focused else 0)
+            for step in range(self._paned.sash):
+                offset = start + step
+                if not 0 <= offset < span:
                     continue
-                middle = area.x + area.width // 2
-                for column in range(area.width):
-                    glyph = handle if show and column == middle else line
-                    self._write_line(
-                        dispatcher,
-                        window,
-                        area.y + offset,
-                        area.x + column,
-                        glyph,
-                        style,
-                    )
-            else:
-                if not 0 <= offset < area.width:
-                    continue
-                middle = area.y + area.height // 2
-                for row in range(area.height):
-                    glyph = handle if show and row == middle else line
-                    self._write_line(
-                        dispatcher, window, area.y + row, area.x + offset, glyph, style
-                    )
+                drawn = inset <= step < inset + width
+                in_handle = show and handle_at <= step < handle_at + across
+                for along in range(length):
+                    glyph = line if drawn else " "
+                    if in_handle and along_from <= along < along_from + size:
+                        glyph = handle
+                    if self._paned.vertical:
+                        row, column = area.y + offset, area.x + along
+                    else:
+                        row, column = area.y + along, area.x + offset
+                    self._write_line(dispatcher, window, row, column, glyph, style)
+
+    # ----------------------------------------------------------------- proxy
+
+    @property
+    def _opaque(self) -> bool:
+        """True while a drag moves the panes with the pointer."""
+        try:
+            return self.getboolean(self._options["opaqueresize"])
+        except TclError:
+            return True
+
+    def _place_proxy(self, x: int, y: int) -> None:
+        """Show where the sash being dragged will go, without moving it.
+
+        Tk raises a separate window for this, its proxy, over the panes. The
+        panes here are panels above this widget's own, so the proxy is one
+        too: a line of the sash's own glyph, the length of the division, in
+        ``proxybackground``, with ``proxyrelief`` shown as a sunken part is.
+        Its ``proxyborderwidth`` has no edges to draw in a cell.
+        """
+        area = self._content_area()
+        vertical = self._paned.vertical
+        _, _, width = self._sash_parts()
+        position = (y - area.y) if vertical else (x - area.x)
+        span = area.height if vertical else area.width
+        position = max(0, min(position, max(0, span - width)))
+        self._proxy_at = position
+        stack = self.tk.panels
+        if stack is None or area.is_empty:
+            return
+        origin = self._screen_rect()
+        if vertical:
+            rect = Rect(
+                origin.x + area.x, origin.y + area.y + position, area.width, width
+            )
+        else:
+            rect = Rect(
+                origin.x + area.x + position, origin.y + area.y, width, area.height
+            )
+        if self._proxy_panel is None or self._proxy_panel.destroyed:
+            self._proxy_panel = stack.new_panel(rect, userptr=self)
+        else:
+            stack.move(self._proxy_panel, rect.x, rect.y)
+        self._draw_proxy(rect)
+
+    def _draw_proxy(self, rect: Rect) -> None:
+        window = getattr(self._proxy_panel, "window", None)
+        if window is None or self.tk.screen is None:
+            return
+        dispatcher = CursesDispatcher.get()
+        attribute = self._coloured(
+            self._background_attribute(), "", self._options["proxybackground"]
+        ) | _part_relief(self._options["proxyrelief"])
+        glyph = self._SASH["vertical" if self._paned.vertical else "horizontal"]
+        with contextlib.suppress(_curses.error):
+            dispatcher.call(window.bkgd, " ", attribute)
+            dispatcher.call(window.erase)
+            for row in range(rect.height):
+                for column in range(rect.width):
+                    self._write_line(dispatcher, window, row, column, glyph, attribute)
+
+    def _forget_proxy(self) -> None:
+        """Take the proxy down. Safe when there is none."""
+        self._proxy_at = None
+        panel, self._proxy_panel = self._proxy_panel, None
+        if panel is not None and self.tk.panels is not None:
+            self.tk.panels.destroy(panel)
+
+    def _destroy_window(self) -> None:
+        self._forget_proxy()
+        super()._destroy_window()
 
     @property
     def _showhandle(self) -> bool:
@@ -14714,16 +14889,34 @@ def _paned_press(event: Event) -> None:
 
 
 def _paned_motion(event: Event) -> None:
-    """Move the sash being dragged to the pointer."""
+    """Move the sash being dragged to the pointer, or its proxy there.
+
+    With ``opaqueresize`` off the panes stay put and a proxy follows the
+    pointer, as ``tk::panedwindow::DragSash`` places Tk's.
+    """
     paned = event.widget
     if paned._active_sash is None:
         return
-    paned.sash_place(paned._active_sash, event.x, event.y)
+    if paned._opaque:
+        paned.sash_place(paned._active_sash, event.x, event.y)
+    else:
+        paned._place_proxy(event.x, event.y)
 
 
 def _paned_release(event: Event) -> None:
-    """Stop dragging, leaving the sash where it was let go."""
-    event.widget._redraw()
+    """Stop dragging, leaving the sash where it was let go.
+
+    A proxy is taken down and the sash moved to it, as
+    ``tk::panedwindow::ReleaseSash`` does in Tk's panedwindow.tcl.
+    """
+    paned = event.widget
+    at = paned._proxy_at
+    if at is not None and paned._active_sash is not None:
+        paned._forget_proxy()
+        area = paned._content_area()
+        paned.sash_place(paned._active_sash, area.x + at, area.y + at)
+    paned._forget_proxy()
+    paned._redraw()
 
 
 def _paned_key(event: Event) -> str | None:

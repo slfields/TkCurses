@@ -27,6 +27,7 @@ it. The scripts, as installed with Tcl 9.0.2 and Tk 9.0.2:
 | Tk `tk.tcl` | `tk::wordBreakBefore`, `tk::wordBreakAfter`, `tk::SetFocusGrab`, `tk::RestoreFocusGrab`, `tk::CancelRepeat`; the clipboard virtual events | word boundaries (`_core/editing.py`), dialog grabs (`commondialog.py`), `_core/application.py` |
 | Tk `focus.tcl` | `tk::FocusOK` | focus traversal (`__init__.py`) |
 | Tk `scrlbar.tcl` | the Scrollbar bindings | Scrollbar's mouse behaviour (`__init__.py`) |
+| Tk `panedwindow.tcl` | `tk::panedwindow::DragSash`, `tk::panedwindow::ReleaseSash` | the PanedWindow's proxy while a sash is dragged with `-opaqueresize` off (`__init__.py`) |
 | Tk `button.tcl`, `scale.tcl` | `tk::ButtonInvoke`, `tk::ButtonEnter`, `tk::ButtonLeave`, `tk::CheckEnter`, `tk::ButtonDown`, `tk::ButtonUp`, `tk::ButtonAutoInvoke`; `tk::ScaleActivate`, `tk::ScaleButtonDown`, `tk::ScaleButton2Down`, `tk::ScaleDrag`, `tk::ScaleEndDrag`, `tk::ScaleIncrement` | when a button or a scale is drawn active, the reliefs they take under the pointer and while held, and auto-repeat (`__init__.py`) |
 | Tk `msgbox.tcl`, `dialog.tcl`, `clrpick.tcl` | the message box's button sets, `tk_dialog`, the colour chooser's layout | `messagebox.py` (its button table is taken from `msgbox.tcl`), `dialog.py`, `colorchooser.py` |
 | Tcl `word.tcl` | `tcl_wordBreakBefore`, `tcl_wordBreakAfter` | word boundaries (`_core/editing.py`) |

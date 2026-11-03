@@ -229,7 +229,11 @@ def _shrink(
 
 
 def place_sash(
-    sizes: Sequence[int], sash: int, position: int, minimums: Sequence[int]
+    sizes: Sequence[int],
+    sash: int,
+    position: int,
+    minimums: Sequence[int],
+    gap: int = SASH_WIDTH,
 ) -> list[int]:
     """Move one sash, taking the cells from one side and giving them to the other.
 
@@ -239,6 +243,7 @@ def place_sash(
         position: Where the sash should now start, measured from the first
             pane's edge.
         minimums: The floor for each pane.
+        gap: Cells each sash takes, its padding included.
 
     Returns:
         New sizes. The total never changes: a sash moves the boundary between
@@ -248,7 +253,7 @@ def place_sash(
     sizes = list(sizes)
     if not 0 <= sash < len(sizes) - 1:
         return sizes
-    before = sum(sizes[:sash]) + sash * SASH_WIDTH
+    before = sum(sizes[:sash]) + sash * gap
     pair = sizes[sash] + sizes[sash + 1]
     wanted = position - before
     low = max(1, minimums[sash])
@@ -271,6 +276,9 @@ class PanedLayout:
         #: Sizes as they currently are, remembered across relayouts so that a
         #: sash a person dragged stays where they put it.
         self._sizes: list[int] = []
+        #: Cells each sash takes between two panes: the sash, any handle
+        #: wider than it, and ``sashpad`` either side. The window sets it.
+        self.sash = SASH_WIDTH
 
     @property
     def vertical(self) -> bool:
@@ -322,7 +330,7 @@ class PanedLayout:
             wanted = self._wanted(widget, options)
             along += wanted
             across = max(across, self._across_of(widget))
-        along += SASH_WIDTH * (len(self._order) - 1)
+        along += self.sash * (len(self._order) - 1)
         return Size(across, along) if self.vertical else Size(along, across)
 
     def _wanted(self, widget: Pane, options: PaneOptions) -> int:
@@ -348,7 +356,7 @@ class PanedLayout:
         available = max(
             0,
             (area.height if self.vertical else area.width)
-            - SASH_WIDTH * (len(self._order) - 1),
+            - self.sash * (len(self._order) - 1),
         )
         minimums = [self._options[id(w)].minsize for w in self._order]
         if len(self._sizes) == len(self._order):
@@ -366,13 +374,13 @@ class PanedLayout:
         """Put one sash at a position, in cells from the window's edge."""
         sizes = self.sizes(area)
         minimums = [self._options[id(w)].minsize for w in self._order]
-        self._sizes = place_sash(sizes, sash, position, minimums)
+        self._sizes = place_sash(sizes, sash, position, minimums, self.sash)
 
     def sash_position(self, sash: int) -> int:
         """Where one sash starts, in cells from the window's edge."""
         if not 0 <= sash < len(self._sizes) - 1:
             return 0
-        return sum(self._sizes[: sash + 1]) + sash * SASH_WIDTH
+        return sum(self._sizes[: sash + 1]) + sash * self.sash
 
     def apply(self, container: object, area: Rect) -> None:
         """Give each pane its strip of the window, then redraw the sashes.
@@ -391,7 +399,7 @@ class PanedLayout:
             else:
                 rect = Rect(area.x + offset, area.y, size, area.height)
             self._assign(widget, rect)
-            offset += size + SASH_WIDTH
+            offset += size + self.sash
         redraw = getattr(container, "_redraw", None)
         if callable(redraw):
             redraw()

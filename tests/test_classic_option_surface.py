@@ -95,9 +95,7 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
     "OptionMenu": {
         "TkCurses-l26": "bitmap",
     },
-    "PanedWindow": {
-        "TkCurses-gm66.9": "handlepad handlesize height opaqueresize proxybackground proxyborderwidth proxyrelief sashcursor sashpad sashrelief width",
-    },
+    "PanedWindow": {},
     "Radiobutton": {
         "TkCurses-gm66.10": "selectimage tristateimage tristatevalue",
         "TkCurses-l26": "bitmap",

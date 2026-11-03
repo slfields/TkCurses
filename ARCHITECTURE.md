@@ -4706,6 +4706,37 @@ Horizontal:          Vertical:
          ║ (sash)            ═ (sash)
 ```
 
+**The sash, its handle and its proxy, as Tk's** (`TkCurses-gm66.9`). Measured
+on Tk 9.0.2, with each pixel a cell here:
+
+- **A sash's span** is `sashwidth`, or `handlesize` when a handle is shown and
+  that is wider, with `sashpad` either side. Sashwidth 4 under handlesize 8
+  put the second pane 8 past the first, and 18 with sashpad 5. Every cell of
+  the span, padding included, answers `identify` as the sash.
+- **`sash_coord` names the drawn line**, not the span: a 4-pixel sash under an
+  8-pixel handle after a 100-pixel pane is at 102, and `sash_place` at 150
+  reads back 150.
+- **The handle is `handlepad` from the sash's start**, `handlesize` long and
+  wide, centred across. It used to be drawn in the middle of the sash; the
+  author chose Tk's placement, so every handle moved to one cell from the top
+  or left. A label on that row of a pane narrower than the label covers it,
+  because a child is not yet clipped to its container (`TkCurses-wbov`).
+- **`width` and `height`** replace what the panes ask for, either alone; `""`
+  hands the question back. 300 over two 100-pixel panes asked for 300.
+- **`opaqueresize` off** leaves the panes alone during a drag and moves a proxy
+  line instead, placing the sash there on the release, as
+  `tk::panedwindow::DragSash` and `ReleaseSash` do. Tk raises a window for its
+  proxy; the panes here are panels above the paned window's own, so the proxy
+  is a panel too, drawn as the sash in `proxybackground`.
+
+Where cells cannot follow. A sash, and so a span, is never less than one
+cell: Tk takes `sashwidth 0` and a negative `sashpad`, which would leave
+nothing here to see or grab. `sashrelief` and `proxyrelief` show only
+`sunken`, dim, as every one-cell part's relief does (`_part_relief`);
+`proxyborderwidth` has no edge to draw in. `sashcursor` is kept and read back:
+a terminal shows no pointer shape. The proxy *methods* - `proxy_place`,
+`proxy_coord`, `proxy_forget`, `sash_mark` - are still `TkCurses-xy2`.
+
 ---
 
 ### Message Class
