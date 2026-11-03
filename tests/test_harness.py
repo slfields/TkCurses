@@ -24,6 +24,7 @@ against plain curses programs before any TkCurses code depends on it.
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import pytest
 
@@ -88,6 +89,33 @@ def test_child_sees_the_requested_terminal_size(terminal, tmp_path):
     )
     term.wait_for_text("size=")
     assert term.row(0) == "size=40x12"
+
+
+def test_a_program_imports_this_checkouts_library(terminal, tmp_path):
+    """Not the editable install's, which is the main checkout's: from a
+    worktree, every tty test used to exercise the main checkout's library.
+    TkCurses-czmh."""
+    expected = Path(__file__).resolve().parents[1] / "src"
+    term = terminal(cols=40, rows=6)
+    term.run_source(
+        f"""
+        import curses
+        from pathlib import Path
+
+        import tkcurses
+
+        def main(stdscr):
+            here = Path(tkcurses.__file__).resolve().is_relative_to({str(expected)!r})
+            stdscr.addstr(0, 0, "here" if here else "elsewhere")
+            stdscr.refresh()
+            stdscr.getch()
+
+        curses.wrapper(main)
+        """,
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda t: "here" in t.row(0), message="where tkcurses came from")
+    assert term.row(0) == "here"
 
 
 def test_borders_render_as_utf8_box_glyphs(terminal, tmp_path):

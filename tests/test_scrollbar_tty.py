@@ -72,10 +72,11 @@ def test_scrolling_the_list_moves_the_thumb(terminal, tmp_path):
     before = thumb_rows()
     assert before, "the thumb should be drawn to begin with"
     term.click(4, 2)
-    # End rather than a run of Downs: a few rows of twenty move the thumb by
-    # less than a cell, so the assertion would depend on the arithmetic
-    # rounding the right way.
-    term.send_keys("<End>")
+    # Control-End rather than a run of Downs: a few rows of twenty move the
+    # thumb by less than a cell, so the assertion would depend on the
+    # arithmetic rounding the right way. Not End, which scrolls a listbox
+    # sideways in Tk.
+    term.send_keys("<Control-End>")
     term.wait_for(lambda t: thumb_rows() != before, message="the thumb to move")
 
 

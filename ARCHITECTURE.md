@@ -4390,17 +4390,17 @@ Scrollable selection list.
 | tkinter Method | TkCurses | Notes |
 |----------------|----------|-------|
 | `__init__(master=None, cnf={}, **kw)` | ○ | Text list with box |
-| `activate(index)` | ○ | Highlight item |
+| `activate(index)` | ✓ | Highlight item; does not scroll, as in Tk |
 | `bbox(index)` | ○ | Cell bounding box |
 | `curselection()` | ✓ | Selected indices |
 | `delete(first, last=None)` | ✓ | Delete items |
 | `get(first, last=None)` | ✓ | Get items |
 | `index(index)` | ✓ | Parse index |
 | `insert(index, *elements)` | ✓ | Insert items |
-| `nearest(y)` | ○ | Nearest cell row |
+| `nearest(y)` | ✓ | Nearest visible item |
 | `scan_mark(x, y)` | ☐ | Scan start - not implemented; TkCurses-6lh |
 | `scan_dragto(x, y)` | ☐ | Scan drag - not implemented; TkCurses-6lh |
-| `see(index)` | ○ | Scroll to item |
+| `see(index)` | ✓ | Scroll to item: to the edge if near, else centred |
 | `selection_anchor(index)` | ✓ | Set anchor |
 | `selection_clear(first, last=None)` | ✓ | Clear selection |
 | `selection_includes(index)` | ✓ | Check selection |
@@ -4502,16 +4502,112 @@ one list, a click in another, then Shift-click back in the first, with
 `exportselection` off - the result was the same as without the other click,
 `(1, 3, 4, 5)`. With `exportselection` on, Tk's default, the click in the
 other list clears the first one's selection outright, which this library
-does not do yet (`TkCurses-9e8`). `tests/support/record_listbox_gestures.py` records 405
-gesture sequences from real Tk - random ones plus the `tk::ListboxMotion`
-branches random ones miss - and `tests/test_listbox.py` replays them,
-selection and event count after every step.
+does not do yet (`TkCurses-9e8`).
 
-Not done: Prior, Next, Home and End select in browse mode here and only
-scroll in Tk, and drag, Shift-arrows, Escape and select-all are absent
-(`TkCurses-cpk9`); a disabled Listbox still takes `insert` and
-`selection_set` (`TkCurses-46ap`); the anchor and active item do not follow
-an insert or delete as Tk's do (`TkCurses-ofko`).
+**The rest of `listbox.tcl`** (`TkCurses-cpk9`), each key, button and
+virtual event bound as Tk binds it and named beside the code:
+
+| Key | Tk does |
+|-----|---------|
+| Up, Down | `tk::ListboxUpDown`: move active, `see` it, take the selection along in browse and extended |
+| Shift-Up, Shift-Down | `tk::ListboxExtendUpDown`: extended only, run the range to the new active item |
+| Left, Right | `xview scroll ∓1 units` |
+| Control-Left, -Right, -Prior, -Next | `xview scroll ∓1 pages` |
+| Prior, Next | `yview scroll ∓1 pages`, then activate the top row; **select nothing**, in any mode |
+| Home, End | `xview moveto 0` / `1` - sideways only |
+| Control-Home, -End | activate, `see`, and select the first / last item, whatever the mode |
+| Control-Shift-Home, -End | `tk::ListboxDataExtend`: extended runs the range, multiple only moves |
+| space, Select, `<<Invoke>>` | `tk::ListboxBeginSelect` on the active item |
+| Control-Shift-space, Shift-Select | `tk::ListboxBeginExtend` on the active item |
+| Escape | `tk::ListboxCancel`: extended only, put back what the range replaced |
+| `<<SelectAll>>` | everything; in single and browse, the active item alone |
+| `<<SelectNone>>` | clear, except in browse |
+
+A key is matched as Tk matches it, measured on Tk 9.0.2: the binding used is
+the one with the most modifiers that are all held, so Control-Up is Up's,
+Shift-Home is Home's and Shift-space is space's. Nothing
+breaks: a handled key still reaches the toplevel's bindings and `all`'s, as
+it does in Tk. Ours used to stop the keys it handled, which would have taken
+Escape from a dialog whose list had the focus.
+
+`<<SelectNone>>` is bound but has no key. Tk gives it Control-backslash,
+which a tty turns into SIGQUIT, and binding it here would take the quit key
+from every program with a Listbox; a program may `event_add` it.
+
+listbox.tcl binds most of the keys above through virtual events -
+`<<PrevLine>>` for Up, `<<LineStart>>` for Home, `<<PrevWord>>` for
+Control-Left - which `tk.tcl` maps to those same keys on X11. Here the keys
+are bound themselves, so they behave alike, but the navigation events are not
+defined anywhere in this library: a program cannot `event_generate` them, nor
+`event_add` another key to them. `<<Invoke>>` is bound; listbox.tcl's
+`<<Copy>>`, which copies the selection when the list owns it, waits on
+`exportselection` (`TkCurses-9e8`). Both are `TkCurses-yu5l`.
+
+The mouse: a press is `tk::ListboxBeginSelect`, the release activates the
+item under the pointer, and a drag is `tk::ListboxMotion` - the selection
+follows in browse, the range is re-run in extended, nothing happens in the
+other two. A double-click is listbox.tcl's empty script: the second click
+does nothing. Held outside the list, `tk::ListboxAutoScan` scrolls at once
+and then every 50ms, a row above or below, else two columns beside. A
+click below the last item selects the last item, as `index @x,y` is the
+nearest one; ours used to select nothing.
+
+`nearest` and `@x,y` clamp to the **visible** rows before the items:
+measured on Tk 9.0.2, a pointer below a four-row list scrolled to 2 is item
+5, not the last. That is what a drag held past the edge selects to.
+
+**`activate` does not scroll; `see` centres** - measured on Tk 9.0.2 over
+every top row and index on 20 items at heights 1 to 9, 3360 cases. The
+bindings call `see` after `activate`; a program that calls `activate` alone
+keeps its view, where ours used to scroll to it. `see` brings an item no
+more than a third of the height out of view to the nearest edge and centres
+one further away: on four rows from the top, `see(5)` puts 4 at the top,
+not 2. Ours used to scroll as little as possible. A vertical page is the
+height less two, never under one, as the horizontal page is; ours was the
+whole height.
+
+**A disabled Listbox** (`TkCurses-46ap`), measured on Tk 9.0.2: `insert`,
+`delete`, `selection set`, `selection clear`, `selection anchor` and
+`activate` are refused, silently. `curselection`, `selection includes`,
+`get`, `see` and `yview` still work, and writing the `listvariable` still
+replaces the items. The bindings still run - the view scrolls - but nothing
+they would change can be, and no `<<ListboxSelect>>` is sent. A click does
+not take the focus. The selection is kept and **not drawn**: `listbox(n)`
+says so, and a screen capture confirmed it - a red `selectbackground` covered
+3040 pixels of the selected row, and none once the list was disabled.
+
+**Inserting and deleting move the anchor, the active item and the view**
+(`TkCurses-ofko`). The anchor and active rules were measured on Tk 9.0.2
+over every position, anchor and active item on lists of 0, 1 and 5 - 756
+inserts and 769 deletes, all matching; the top-row rule was fitted to the
+recorded sequences below, which it matches:
+
+- insert `k` at `i`: the anchor moves on by `k` if `i <= anchor`; the active
+  item likewise, then is kept on an item. So eight items inserted into a new
+  list leave the active item at 7 and the anchor at **8**, past the end - Tk
+  keeps the one on an item and not the other.
+- delete `f..l` (with `l` cut to the last item; nothing if `f > l`): an
+  anchor at or past `f` moves back by the count, never before `f`; an active
+  item past `l` moves back, and one inside the range goes to `f`, kept on an
+  item.
+- the top row follows the same way: items inserted strictly above it push it
+  down, and a delete at or above it pulls it back, never before `f`.
+- `selection anchor` and `activate` clamp to an item: `anchor 10` on three
+  items is 2.
+
+Ours left the anchor alone on both and moved the active item only on insert.
+
+`tests/support/record_listbox_gestures.py` records 613 sequences from real
+Tk - clicks, double-clicks, drags, keys with every modifier listbox.tcl
+binds and a few it does not, virtual events, the widget commands, insert,
+delete and the state - with the selection, the event count, the active and
+anchor indices, the top row, the columns scrolled off and the size after
+every step. `tests/test_listbox.py` replays them. Two notes for whoever
+re-records: the X keymap here has no keycode for `Select`, so Tk receives a
+synthesised one as `??` and it cannot be measured; and Tk reads a second
+press as a double only within 5 pixels of the first with no key event
+between, so a "double-click" on another row is a plain click - the replay
+follows that rule.
 
 ---
 

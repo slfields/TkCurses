@@ -14920,6 +14920,12 @@ class Listbox(_Drawable, XView, YView):
         # began, which shrinking the range gives back. None is "unset".
         self._extend_prev = -1
         self._extend_saved: tuple[int, ...] | None = None
+        # A press in progress, where the pointer last was, and the repeat
+        # that scrolls a drag held past an edge - tk::ListboxAutoScan.
+        self._dragging = False
+        self._drag_x = 0
+        self._drag_y = 0
+        self._autoscan: str | None = None
         self._top = 0
         # Characters scrolled off to the left, shared by every row as in Tk.
         self._left = 0
@@ -14947,6 +14953,17 @@ class Listbox(_Drawable, XView, YView):
         # 9.0.2 and here. This comment used to say the opposite.
         bind(name, "<Shift-Button-1>", _listbox_click)
         bind(name, "<Control-Button-1>", _listbox_click)
+        # listbox.tcl's empty script: a double-click is left to the program,
+        # and the second click of one selects nothing.
+        bind(name, "<Double-Button-1>", _listbox_ignore)
+        bind(name, "<Motion>", _listbox_drag)
+        bind(name, "<ButtonRelease-1>", _listbox_release)
+        bind(name, "<<SelectAll>>", _listbox_select_all)
+        bind(name, "<<Invoke>>", _listbox_invoke)
+        # No sequence of its own here: Tk's is Control-backslash, which a
+        # tty turns into SIGQUIT, and binding it would take the quit key from
+        # every program with a Listbox. A program may event_add one.
+        bind(name, "<<SelectNone>>", _listbox_select_none)
         bind(name, "<Button-4>", _listbox_wheel)
         bind(name, "<Button-5>", _listbox_wheel)
         bind(name, "<FocusIn>", _listbox_refresh)
@@ -15055,7 +15072,16 @@ class Listbox(_Drawable, XView, YView):
     # ------------------------------------------------------------- contents
 
     def insert(self, index: Any, *elements: str) -> None:
-        """Insert items before ``index``; ``end`` appends."""
+        """Insert items before ``index``; ``end`` appends.
+
+        Ignored while disabled, as Tk ignores it - measured on Tk 9.0.2, and
+        what ``listbox(n)`` says: *"items may not be inserted or deleted"*.
+        So are ``delete``, the ``selection`` commands and ``activate``; the
+        view still moves, and the ``listvariable`` still sets the items.
+        TkCurses-46ap.
+        """
+        if self._disabled:
+            return
         at = len(self._items) if index in ("end", END) else self.index(index)
         self._items[at:at] = [str(element) for element in elements]
         self._shift_state(at, len(elements))
@@ -15068,18 +15094,33 @@ class Listbox(_Drawable, XView, YView):
         Tk's range is inclusive here, unlike Entry's - a difference in Tk
         itself rather than one introduced here.
         """
+        if self._disabled:
+            return
         start = self.index(first)
-        stop = start if last is None else self.index(last)
+        stop = min(start if last is None else self.index(last), len(self._items) - 1)
         if stop < start:
             return
-        removed = self._items[start : stop + 1]
+        count = stop - start + 1
         del self._items[start : stop + 1]
         self._selection = {
-            i if i < start else i - len(removed)
+            i if i < start else i - count
             for i in self._selection
             if not start <= i <= stop
         }
-        self._active = min(self._active, max(0, len(self._items) - 1))
+        # Measured on Tk 9.0.2 over every anchor, active item and range on
+        # lists of 0, 1 and 5: an anchor at or past the range moves back by
+        # its length but never before its start; an active item past it
+        # moves back, and one inside it goes to its start, kept on an item.
+        # TkCurses-ofko.
+        if start <= self._anchor:
+            self._anchor = max(start, self._anchor - count)
+        # The view keeps its items too, as far as they last.
+        if start <= self._top:
+            self._top = max(start, self._top - count)
+        if self._active > stop:
+            self._active -= count
+        elif self._active >= start:
+            self._active = min(start, max(0, len(self._items) - 1))
         self._publish_items()
         self._clamp_view()
         self._redraw()
@@ -15096,10 +15137,24 @@ class Listbox(_Drawable, XView, YView):
         return len(self._items)
 
     def _shift_state(self, at: int, count: int) -> None:
-        """Move the selection and active item along after an insertion."""
+        """Move the selection, anchor and active item along after an insert.
+
+        Measured on Tk 9.0.2 over every position on lists of 0, 1 and 5: an
+        insertion at or before either moves it along, so items added to an
+        empty list leave the anchor one past the last of them - six inserted
+        at ``end`` give anchor 6 - while the active item is kept on an item,
+        5. The anchor used to stay where it was. TkCurses-ofko.
+        """
         self._selection = {i + count if i >= at else i for i in self._selection}
-        if self._active >= at:
-            self._active += count
+        if at <= self._anchor:
+            self._anchor += count
+        if at <= self._active:
+            self._active = min(self._active + count, len(self._items) - 1)
+        # Items inserted above the view push it down, so what was in view
+        # stays there: only strictly above - an insertion at the top row
+        # shows the new items.
+        if at < self._top:
+            self._top += count
         self._clamp_view()
 
     # -------------------------------------------------------------- indices
@@ -15142,9 +15197,15 @@ class Listbox(_Drawable, XView, YView):
         item for every click, since the widget-relative y came out negative
         and clamped. Nothing internal depended on it: the click handler works
         the row out itself. TkCurses-9hr.
+
+        Outside the rows it is the nearest visible one - measured on Tk
+        9.0.2, a pointer below a four-row list scrolled to 2 gives 5, not
+        the last item - which is what a drag held past the edge selects to.
+        This used to give the last item. TkCurses-cpk9.
         """
-        row = y - self._text_area().y
-        return max(0, min(max(0, len(self._items) - 1), self._top + max(0, row)))
+        area = self._text_area()
+        row = max(0, min(y - area.y, area.height - 1))
+        return max(0, min(max(0, len(self._items) - 1), self._top + row))
 
     # ------------------------------------------------------------ selection
 
@@ -15161,6 +15222,8 @@ class Listbox(_Drawable, XView, YView):
         (``listbox.tcl``), not to the widget command - TkCurses-xk41. Nor does
         the command fire ``<<ListboxSelect>>``; a gesture does.
         """
+        if self._disabled:
+            return
         self._selection |= set(self._index_range(first, last))
         self._redraw()
 
@@ -15178,6 +15241,8 @@ class Listbox(_Drawable, XView, YView):
         """
         # selection_clear(0) is item 0 alone, as in Tk; this used to clear
         # every item when ``first`` was 0 and ``last`` was not given.
+        if self._disabled:
+            return
         self._selection -= set(self._index_range(first, last))
         self._redraw()
 
@@ -15197,40 +15262,61 @@ class Listbox(_Drawable, XView, YView):
     select_includes = selection_includes
 
     def selection_anchor(self, index: Any) -> None:
-        """Set the anchor a shifted range extends from."""
-        self._anchor = self.index(index)
+        """Set the anchor a shifted range extends from, on an item: Tk
+        clamps ``anchor 10`` on three items to 2, not to 3."""
+        if self._disabled:
+            return
+        self._anchor = max(0, min(self.index(index), len(self._items) - 1))
 
     select_anchor = selection_anchor
 
     def activate(self, index: Any) -> None:
-        """Make ``index`` the active item - where the keyboard is."""
+        """Make ``index`` the active item - where the keyboard is.
+
+        It does not scroll: in Tk the bindings that move the active item
+        call ``see`` themselves, and a program that calls ``activate`` keeps
+        its view. This used to scroll to it. TkCurses-cpk9.
+        """
+        if self._disabled:
+            return
         self._active = max(0, min(max(0, len(self._items) - 1), self.index(index)))
-        self.see(self._active)
         self._redraw()
 
     def _fire_select(self) -> None:
         """``<<ListboxSelect>>``, once per gesture, as
         ``tk::FireListboxSelectEvent`` sends it: only from the bindings. It
         is sent whether or not the gesture changed anything - a click on the
-        one item already selected sends it too, measured on Tk 9.0.2. Tk's
-        check for a normal state is made earlier here: the bindings return
-        at once for a disabled list.
+        one item already selected sends it too, measured on Tk 9.0.2. Not
+        while disabled, where the bindings still run - they scroll - but
+        every command that would change the selection is refused.
         """
-        self.event_generate("<<ListboxSelect>>")
+        if not self._disabled:
+            self.event_generate("<<ListboxSelect>>")
 
     # ----------------------------------------------------------- scrolling
 
     def see(self, index: Any) -> None:
-        """Scroll so ``index`` is visible, moving as little as possible."""
+        """Scroll so ``index`` is visible.
+
+        Measured on Tk 9.0.2 over every top row and index on 20 items at
+        heights 1 to 9: an item no more than a third of the height out of
+        view is brought to the nearest edge, and one further away is
+        centred - ``see(5)`` on four rows from the top puts 4 at the top,
+        where the nearest edge would have put 2. This used to scroll as little as possible. TkCurses-cpk9.
+        """
         position = self.index(index)
         height = self._text_area().height
         if height <= 0:
             return
+        centred = position - (height - 1) // 2
         if position < self._top:
-            self._top = position
+            near = self._top - position <= height // 3
+            self._top = position if near else centred
         elif position > self._top + height - 1:
-            self._top = position - height + 1
+            beyond = position - (self._top + height - 1)
+            self._top = self._top + beyond if beyond <= height // 3 else centred
         self._clamp_view()
+        self._redraw()
 
     def yview(self, *args: Any) -> Any:
         """Get or set the visible window.
@@ -15250,7 +15336,11 @@ class Listbox(_Drawable, XView, YView):
             self._top = math.floor(float(args[1]) * len(self._items) + 0.5)
         elif args[0] == "scroll":
             count = int(args[1])
-            step = max(1, self._text_area().height) if args[2] == "pages" else 1
+            # A page is the height less two, never under one, as it is
+            # sideways: measured on Tk 9.0.2 at heights 1 to 8. It used to
+            # be the whole height. TkCurses-cpk9.
+            height = self._text_area().height
+            step = max(1, height - 2) if args[2] == "pages" else 1
             self._top += count * step
         self._clamp_view()
         self._redraw()
@@ -15414,8 +15504,14 @@ class Listbox(_Drawable, XView, YView):
         position: int,
         attribute: int,
     ) -> None:
-        """Draw one row: its markers if selected, then its text."""
-        selected = position in self._selection
+        """Draw one row: its markers if selected, then its text.
+
+        A disabled list keeps its selection and does not show it, as
+        ``listbox(n)`` says and Tk 9.0.2 draws it: captured, a red
+        ``selectbackground`` covered the selected row and none of it once
+        the list was disabled. TkCurses-46ap.
+        """
+        selected = position in self._selection and not self._disabled
         style = self._selection_attribute(attribute) if selected else attribute
         if position == self._active and self.focus_get() is self and not selected:
             style |= _curses.A_UNDERLINE
@@ -15438,59 +15534,187 @@ class Listbox(_Drawable, XView, YView):
         self._write_line(dispatcher, window, area.y + row, area.x, line, style)
 
 
-def _listbox_key(event: Event) -> str | None:
-    """Move the active item, or select with the space bar."""
-    listbox = event.widget
-    if str(listbox._options["state"]) == "disabled":
-        return None
-    keysym = event.keysym
-    if keysym in ("Up", "Down"):
-        _listbox_up_down(listbox, -1 if keysym == "Up" else 1)
-        return "break"
-    height = max(1, listbox._text_area().height)
-    moves = {
-        "Prior": -height,
-        "Next": height,
-        "Home": -len(listbox._items),
-        "End": len(listbox._items),
-    }
-    if keysym in moves:
-        # Not yet Tk's: there these scroll the view and select nothing -
-        # TkCurses-cpk9.
-        listbox.activate(listbox._active + moves[keysym])
-        if str(listbox._options["selectmode"]) == "browse":
-            listbox.selection_clear(0, "end")
-            listbox.selection_set(listbox._active)
-            listbox._fire_select()
-        return "break"
-    if keysym == "space":
-        _listbox_begin_select(listbox, listbox._active)
-        return "break"
-    return None
+# ----------------------------------------------- Listbox, after listbox.tcl
+#
+# Each function names the Tk procedure or binding it follows. They run on a
+# disabled Listbox too, as Tk's do: the commands that would change it refuse
+# for themselves, and the view still scrolls.
+
+
+def _listbox_key(event: Event) -> None:
+    """The keys ``listbox.tcl`` binds, matched as Tk matches them.
+
+    Each key has bindings under some modifiers, and the one used is the one
+    whose modifiers are all held and are the most: Control-Shift-Home has its
+    own, Shift-Home falls back to Home's, Control-Up to Up's - measured on
+    Tk 9.0.2.
+
+    Every key goes on to the toplevel's bindings and ``all``'s, handled or
+    not: listbox.tcl never breaks. This used to stop the keys it handled,
+    which took Escape from a dialog whose list had the focus once Escape
+    was bound here. TkCurses-cpk9.
+    """
+    bound = _LISTBOX_KEYS.get(event.keysym)
+    if bound is None:
+        return
+    held = event.state & (MOD_SHIFT | MOD_CTRL)
+    usable = [mods for mods in bound if mods & held == mods]
+    if usable:
+        bound[max(usable, key=lambda mods: bin(mods).count("1"))](event.widget)
+
+
+def _listbox_page(listbox: Listbox, amount: int) -> None:
+    """``<Prior>``/``<Next>``: scroll a page and make the top row active.
+    They select nothing, in any mode; this used to move the selection in
+    browse mode."""
+    listbox.yview("scroll", amount, "pages")
+    listbox.activate(listbox._top)
+
+
+def _listbox_select_edge(listbox: Listbox, index: int) -> None:
+    """``<Control-Home>``/``<Control-End>``: activate, show and select the
+    first or last item, whatever the mode."""
+    listbox.activate(index)
+    listbox.see(index)
+    listbox.selection_clear(0, "end")
+    listbox.selection_set(index)
+    listbox._fire_select()
+
+
+def _listbox_xview(*args: Any) -> Callable[[Listbox], None]:
+    """A key bound to one ``xview`` call."""
+    return lambda listbox: listbox.xview(*args)
+
+
+#: keysym -> {modifiers held: what listbox.tcl binds there}. Tk binds most
+#: of these through virtual events - <<PrevLine>> for Up, <<LineStart>> for
+#: Home - which tk.tcl maps to these same keys on X11. Those events are not
+#: defined here, so a program cannot generate them or add a key to them:
+#: TkCurses-yu5l.
+_LISTBOX_KEYS: dict[str, dict[int, Callable[[Listbox], None]]] = {
+    "Up": {
+        0: lambda lb: _listbox_up_down(lb, -1),
+        MOD_SHIFT: lambda lb: _listbox_extend_up_down(lb, -1),
+    },
+    "Down": {
+        0: lambda lb: _listbox_up_down(lb, 1),
+        MOD_SHIFT: lambda lb: _listbox_extend_up_down(lb, 1),
+    },
+    "Left": {
+        0: _listbox_xview("scroll", -1, "units"),
+        MOD_CTRL: _listbox_xview("scroll", -1, "pages"),
+    },
+    "Right": {
+        0: _listbox_xview("scroll", 1, "units"),
+        MOD_CTRL: _listbox_xview("scroll", 1, "pages"),
+    },
+    "Prior": {
+        0: lambda lb: _listbox_page(lb, -1),
+        MOD_CTRL: _listbox_xview("scroll", -1, "pages"),
+    },
+    "Next": {
+        0: lambda lb: _listbox_page(lb, 1),
+        MOD_CTRL: _listbox_xview("scroll", 1, "pages"),
+    },
+    "Home": {
+        0: _listbox_xview("moveto", 0),
+        MOD_CTRL: lambda lb: _listbox_select_edge(lb, 0),
+        MOD_CTRL | MOD_SHIFT: lambda lb: _listbox_data_extend(lb, 0),
+    },
+    "End": {
+        0: _listbox_xview("moveto", 1),
+        MOD_CTRL: lambda lb: _listbox_select_edge(lb, max(0, lb.size() - 1)),
+        MOD_CTRL | MOD_SHIFT: lambda lb: _listbox_data_extend(lb, lb.size()),
+    },
+    "space": {
+        0: lambda lb: _listbox_begin_select(lb, lb._active),
+        MOD_CTRL | MOD_SHIFT: lambda lb: _listbox_begin_extend(lb, lb._active),
+    },
+    "Select": {
+        0: lambda lb: _listbox_begin_select(lb, lb._active),
+        MOD_SHIFT: lambda lb: _listbox_begin_extend(lb, lb._active),
+    },
+    "Escape": {0: lambda lb: _listbox_cancel(lb)},
+}
 
 
 def _listbox_click(event: Event) -> None:
-    """Take the focus and select the row clicked, as ``<Button-1>``,
-    ``<Shift-Button-1>`` and ``<Control-Button-1>`` do in ``listbox.tcl``."""
+    """``<Button-1>``, ``<Shift-Button-1>`` and ``<Control-Button-1>``, on
+    the item nearest the pointer - the last one, for a click below it."""
     listbox = event.widget
-    if str(listbox._options["state"]) == "disabled":
-        return
-    listbox.focus_set()
-    row = listbox._top + max(0, event.y - listbox._text_area().y)
-    if row >= len(listbox._items):
-        return
-    listbox.activate(row)
+    index = listbox.nearest(event.y)
+    listbox._dragging = True
+    listbox._drag_y = event.y
     if event.state & MOD_SHIFT:
-        _listbox_begin_extend(listbox, row)
+        _listbox_begin_extend(listbox, index)
     elif event.state & MOD_CTRL:
-        _listbox_begin_toggle(listbox, row)
+        _listbox_begin_toggle(listbox, index)
     else:
-        _listbox_begin_select(listbox, row)
+        _listbox_begin_select(listbox, index, focus=True)
 
 
-def _listbox_begin_select(listbox: Listbox, index: int) -> None:
+def _listbox_ignore(event: Event) -> None:
+    """listbox.tcl's empty ``<Double-Button-1>``."""
+    del event
+
+
+def _listbox_drag(event: Event) -> None:
+    """``<B1-Motion>``: ``tk::ListboxMotion`` to the item under the
+    pointer; and ``<B1-Leave>``/``<B1-Enter>`` - ``tk::ListboxAutoScan`` at
+    once as the pointer leaves the widget, ``tk::CancelRepeat`` as it comes
+    back.
+
+    A drag arrives as ``<Motion>`` while the press is held, as Entry's does.
+    """
+    listbox = event.widget
+    if not listbox._dragging:
+        return
+    listbox._drag_x, listbox._drag_y = event.x, event.y
+    _listbox_motion(listbox, listbox.nearest(event.y))
+    inside = 0 <= event.x < listbox.winfo_width() and (
+        0 <= event.y < listbox.winfo_height()
+    )
+    if inside:
+        _cancel_autoscan(listbox)
+    elif listbox._autoscan is None:
+        _listbox_autoscan(listbox)
+
+
+def _listbox_autoscan(listbox: Listbox) -> None:
+    """``tk::ListboxAutoScan``: while the button is held outside, a row
+    towards the pointer above or below, else two columns beside, every 50ms,
+    and the selection run to the item nearest it."""
+    listbox._autoscan = None
+    if not listbox.winfo_exists():
+        return
+    x, y = listbox._drag_x, listbox._drag_y
+    if y >= listbox.winfo_height():
+        listbox.yview("scroll", 1, "units")
+    elif y < 0:
+        listbox.yview("scroll", -1, "units")
+    elif x >= listbox.winfo_width():
+        listbox.xview("scroll", 2, "units")
+    elif x < 0:
+        listbox.xview("scroll", -2, "units")
+    else:
+        return
+    _listbox_motion(listbox, listbox.nearest(y))
+    listbox._autoscan = listbox.after(50, lambda: _listbox_autoscan(listbox))
+
+
+def _listbox_release(event: Event) -> None:
+    """``<ButtonRelease-1>``: stop any repeat, and activate the item under
+    the pointer - where a drag ended, not where it began."""
+    listbox = event.widget
+    listbox._dragging = False
+    _cancel_autoscan(listbox)
+    listbox.activate(listbox.nearest(event.y))
+
+
+def _listbox_begin_select(listbox: Listbox, index: int, *, focus: bool = False) -> None:
     """``tk::ListboxBeginSelect``: toggle in multiple mode, otherwise make
-    ``index`` the whole selection and the anchor."""
+    ``index`` the whole selection and the anchor; then take the focus, for a
+    click, unless disabled."""
     if str(listbox._options["selectmode"]) == "multiple":
         if index in listbox._selection:
             listbox.selection_clear(index)
@@ -15503,6 +15727,8 @@ def _listbox_begin_select(listbox: Listbox, index: int) -> None:
         listbox._extend_saved = ()
         listbox._extend_prev = index
     listbox._fire_select()
+    if focus and listbox.winfo_exists() and not listbox._disabled:
+        listbox.focus_set()
 
 
 def _listbox_begin_toggle(listbox: Listbox, index: int) -> None:
@@ -15526,23 +15752,30 @@ def _listbox_begin_extend(listbox: Listbox, index: int) -> None:
     if str(listbox._options["selectmode"]) != "extended":
         return
     if listbox._anchor in listbox._selection:
-        _listbox_extend_to(listbox, index)
+        _listbox_motion(listbox, index)
     else:
         _listbox_begin_select(listbox, index)
 
 
-def _listbox_extend_to(listbox: Listbox, index: int) -> None:
-    """The extended branch of ``tk::ListboxMotion``, for a selected anchor.
+def _listbox_motion(listbox: Listbox, index: int) -> None:
+    """``tk::ListboxMotion``: in browse mode the selection follows; in
+    extended mode the range from the anchor is replaced, not added to.
 
-    The range from the anchor is replaced, not added to: moving its end back
-    towards the anchor deselects what it gives up, except for items that
-    were selected before the range began, which it gives back.
-
-    Tk's other branch, for an anchor that is not selected, deselects the
-    range instead; only a drag reaches it, since Shift-click begins afresh
-    from such an anchor, and drag is TkCurses-cpk9.
+    Moving a range's end back towards the anchor deselects what it gives up,
+    except for items selected before it began, which it gives back. From an
+    anchor that is not selected - a Control-click took it out - the range
+    deselects instead.
     """
     if index == listbox._extend_prev:
+        return
+    mode = str(listbox._options["selectmode"])
+    if mode == "browse":
+        listbox.selection_clear(0, "end")
+        listbox.selection_set(index)
+        listbox._extend_prev = index
+        listbox._fire_select()
+        return
+    if mode != "extended":
         return
     anchor = listbox._anchor
     prev = listbox._extend_prev
@@ -15552,8 +15785,13 @@ def _listbox_extend_to(listbox: Listbox, index: int) -> None:
         # higher anchor would go.
         prev = index
         listbox.selection_set(index)
+    # Asked before the clear, which may take the anchor out.
+    keep = anchor in listbox._selection
     listbox.selection_clear(prev, index)
-    listbox.selection_set(anchor, index)
+    if keep:
+        listbox.selection_set(anchor, index)
+    else:
+        listbox.selection_clear(anchor, index)
     if listbox._extend_saved is None:
         listbox._extend_saved = listbox.curselection()
     saved = listbox._extend_saved
@@ -15570,9 +15808,10 @@ def _listbox_extend_to(listbox: Listbox, index: int) -> None:
 
 
 def _listbox_up_down(listbox: Listbox, amount: int) -> None:
-    """``tk::ListboxUpDown``: move the active item, and in browse and
-    extended mode take the selection with it."""
+    """``tk::ListboxUpDown``: move the active item and show it, and in
+    browse and extended mode take the selection with it."""
     listbox.activate(listbox._active + amount)
+    listbox.see(listbox._active)
     mode = str(listbox._options["selectmode"])
     if mode in ("browse", "extended"):
         listbox.selection_clear(0, "end")
@@ -15581,6 +15820,75 @@ def _listbox_up_down(listbox: Listbox, amount: int) -> None:
             listbox.selection_anchor(listbox._active)
             listbox._extend_prev = listbox._active
             listbox._extend_saved = ()
+        listbox._fire_select()
+
+
+def _listbox_extend_up_down(listbox: Listbox, amount: int) -> None:
+    """``tk::ListboxExtendUpDown``: in extended mode only, move the active
+    item and run the range to it."""
+    if str(listbox._options["selectmode"]) != "extended":
+        return
+    active = listbox._active
+    if listbox._extend_saved is None:
+        listbox.selection_set(active)
+        listbox._extend_saved = listbox.curselection()
+    listbox.activate(active + amount)
+    listbox.see(listbox._active)
+    _listbox_motion(listbox, listbox._active)
+
+
+def _listbox_data_extend(listbox: Listbox, index: int) -> None:
+    """``tk::ListboxDataExtend``: Control-Shift-Home and -End. Extended
+    mode moves there and runs the range; multiple mode only moves."""
+    mode = str(listbox._options["selectmode"])
+    if mode not in ("extended", "multiple"):
+        return
+    listbox.activate(index)
+    listbox.see(index)
+    if mode == "extended" and listbox._anchor in listbox._selection:
+        _listbox_motion(listbox, listbox._active)
+
+
+def _listbox_cancel(listbox: Listbox) -> None:
+    """``tk::ListboxCancel``: Escape puts back what the range since the
+    anchor replaced, in extended mode."""
+    if str(listbox._options["selectmode"]) != "extended":
+        return
+    first, last = listbox._anchor, listbox._extend_prev
+    if last < 0:
+        return
+    first, last = sorted((first, last))
+    listbox.selection_clear(first, last)
+    saved = listbox._extend_saved or ()
+    for index in range(first, last + 1):
+        if index in saved:
+            listbox.selection_set(index)
+    listbox._fire_select()
+
+
+def _listbox_select_all(event: Event) -> None:
+    """``tk::ListboxSelectAll``: everything, or in single and browse mode
+    the active item alone."""
+    listbox = event.widget
+    if str(listbox._options["selectmode"]) in ("single", "browse"):
+        listbox.selection_clear(0, "end")
+        listbox.selection_set(listbox._active)
+    else:
+        listbox.selection_set(0, "end")
+    listbox._fire_select()
+
+
+def _listbox_invoke(event: Event) -> None:
+    """listbox.tcl's ``<<Invoke>>``: as space, ``tk::ListboxBeginSelect``
+    on the active item."""
+    _listbox_begin_select(event.widget, event.widget._active)
+
+
+def _listbox_select_none(event: Event) -> None:
+    """listbox.tcl's ``<<SelectNone>>``: clear, except in browse mode."""
+    listbox = event.widget
+    if str(listbox._options["selectmode"]) != "browse":
+        listbox.selection_clear(0, "end")
         listbox._fire_select()
 
 

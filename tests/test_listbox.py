@@ -257,20 +257,44 @@ def test_space_toggles_in_multiple_mode(listbox):
     assert listbox.curselection() == ()
 
 
-def test_home_and_end_jump(listbox):
+def test_control_home_and_end_select_the_ends(listbox):
     listbox.activate(3)
-    press(listbox, "Home")
-    assert listbox.index("active") == 0
+    press(listbox, "Home", MOD_CTRL)
+    assert (listbox.index("active"), listbox.curselection()) == (0, (0,))
+    press(listbox, "End", MOD_CTRL)
+    assert (listbox.index("active"), listbox.curselection()) == (7, (7,))
+    assert listbox._top == 4
+
+
+def test_home_and_end_scroll_sideways_and_select_nothing(listbox):
+    listbox.insert("end", "x" * 40)
+    listbox.activate(3)
     press(listbox, "End")
-    assert listbox.index("active") == 7
+    assert listbox._left > 0
+    press(listbox, "Home")
+    assert (listbox._left, listbox.index("active")) == (0, 3)
+    assert listbox.curselection() == ()
+
+
+def test_a_key_falls_back_to_the_binding_with_fewer_modifiers(listbox):
+    """Control-Up is Up's binding, as Tk matches it; Shift-Home is Home's."""
+    listbox.activate(3)
+    press(listbox, "Up", MOD_CTRL)
+    assert listbox.index("active") == 2
 
 
 def test_an_unhandled_key_is_left_alone(listbox):
     assert listbox._handle(KeyEvent(keysym="F1", char="")) is False
 
 
-def test_a_handled_key_stops_there(listbox):
-    assert listbox._handle(KeyEvent(keysym="Down", char="")) is True
+def test_a_handled_key_goes_on_to_the_toplevel(listbox, root):
+    """listbox.tcl never breaks: a dialog's Escape still reaches it."""
+    heard = []
+    root.bind("<Escape>", lambda event: heard.append(event.keysym))
+    listbox.configure(selectmode="extended")
+    assert listbox._handle(KeyEvent(keysym="Down", char="")) is False
+    listbox._handle(KeyEvent(keysym="Escape", char=""))
+    assert heard == ["Escape"]
 
 
 # --------------------------------------------------------------------- mouse
@@ -286,11 +310,12 @@ def test_clicking_takes_the_focus(listbox):
     assert listbox.focus_get() is listbox
 
 
-def test_clicking_past_the_last_item_selects_nothing(listbox):
+def test_clicking_past_the_last_item_selects_the_last(listbox):
+    """Tk's ``index @x,y`` is the nearest item; this used to select none."""
     listbox.delete(0, "end")
-    listbox.insert("end", "only")
+    listbox.insert("end", "only", "two")
     listbox._handle(MouseEvent(button=1, state="pressed", x=2, y=4))
-    assert listbox.curselection() == ()
+    assert listbox.curselection() == (1,)
 
 
 def test_shift_clicking_extends_in_extended_mode(listbox):
@@ -303,9 +328,11 @@ def test_shift_clicking_extends_in_extended_mode(listbox):
 
 
 def click(listbox, row, state=0):
-    listbox._handle(
-        MouseEvent(button=1, state="pressed", x=2, y=1 + row, modifiers=state)
-    )
+    """Press and release on ``row``: the release is what activates it."""
+    for edge in ("pressed", "released"):
+        listbox._handle(
+            MouseEvent(button=1, state=edge, x=2, y=1 + row, modifiers=state)
+        )
 
 
 def gestures(listbox, mode, steps):
@@ -392,39 +419,108 @@ def test_an_extended_range_runs_as_tk_listbox_motion_runs_it(listbox, steps, exp
     assert [count for _, count in after] == list(range(1, len(steps) + 1))
 
 
-GESTURES = json.loads(
+GESTURE_DATA = json.loads(
     (Path(__file__).parent / "support" / "listbox_gestures.json").read_text()
-)["cases"]
+)
+GESTURES = GESTURE_DATA["cases"]
+
+
+MODIFIERS = {"": 0, "S": MOD_SHIFT, "C": MOD_CTRL, "CS": MOD_CTRL | MOD_SHIFT}
+
+
+def replay(box, steps):
+    """Run recorded ``steps`` on ``box`` and read its state after each.
+
+    A click is the press and release a terminal reports for one. A ``d`` is
+    the second click of a double only where Tk 9.0.2 makes it one: within
+    five pixels of the previous press - on the same row - with no key
+    between. The recorder presses an empty list at one fixed point.
+    """
+    seen = []
+    box.bind("<<ListboxSelect>>", lambda event: seen.append(1))
+    top = box._text_area().y
+
+    def mouse(state, row, modifiers=0, button=1):
+        box._handle(
+            MouseEvent(
+                button=button, state=state, x=2, y=top + row, modifiers=modifiers
+            )
+        )
+
+    commands = {
+        "p": box.selection_set,
+        "a": box.selection_anchor,
+        "g": box.activate,
+        "e": box.see,
+        "x": box.delete,
+        "i": lambda at, count: box.insert(at, *(f"new{n}" for n in range(count))),
+        "D": lambda: box.configure(state="disabled"),
+        "N": lambda: box.configure(state="normal"),
+    }
+    clicks = {"c": 0, "s": MOD_SHIFT, "t": MOD_CTRL}
+    previous = None
+    after = []
+    for kind, *args in steps:
+        where = args[0] if box.size() and args else "empty"
+        if kind in clicks:
+            mouse("pressed", args[0], clicks[kind])
+            mouse("released", args[0], clicks[kind])
+        elif kind == "d":
+            mouse("double" if where == previous else "pressed", args[0])
+            mouse("released", args[0])
+        elif kind == "m":
+            mouse("pressed", args[0])
+            mouse("drag", args[1], button=0)
+            mouse("released", args[1])
+        elif kind == "k":
+            char = " " if args[0] == "space" else ""
+            box._handle(
+                KeyEvent(keysym=args[0], char=char, modifiers=MODIFIERS[args[1]])
+            )
+        elif kind == "v":
+            box.event_generate(f"<<{args[0]}>>")
+        else:
+            commands[kind](*args)
+        if kind in "cstdm":
+            previous = where
+        elif kind == "k":
+            previous = None
+        after.append(
+            [
+                list(box.curselection()),
+                len(seen),
+                box.index("active"),
+                box.index("anchor"),
+                box._top,
+                box._left,
+                box.size(),
+            ]
+        )
+    return after
 
 
 @pytest.mark.parametrize(
     "case", GESTURES, ids=[f"{n}-{c['mode']}" for n, c in enumerate(GESTURES)]
 )
 def test_random_gestures_end_where_tk_ends(root, case):
-    """400 sequences recorded from real Tk by
-    ``tests/support/record_listbox_gestures.py``: the selection and the
-    number of ``<<ListboxSelect>>`` events after every step."""
-    box = Listbox(root, name="g", height=7, width=16)
-    box._allocate(Rect(0, 0, 18, 9))
+    """Sequences of clicks, drags, keys, virtual events, commands and state
+    changes, recorded from real Tk by
+    ``tests/support/record_listbox_gestures.py``. After every step: the
+    selection, the ``<<ListboxSelect>>`` count, the active and anchor
+    indices, the top row, the columns scrolled off and the size.
+
+    Four columns wider than the recorded width: the border, and the two
+    selection markers, so that as many characters show as did in Tk.
+    """
+    data = GESTURE_DATA
+    height = case["height"]
+    box = Listbox(root, name="g", height=height, selectmode=case["mode"])
+    box._allocate(Rect(0, 0, data["width"] + 4, height + 2))
     box._map()
-    box.insert("end", *"abcdefg")
+    box.insert("end", *data["items"])
     box.selection_anchor(0)
     box.activate(0)
-    commands = {"p": box.selection_set, "a": box.selection_anchor}
-    replayed = []
-    seen = []
-    box.configure(selectmode=case["mode"])
-    box.bind("<<ListboxSelect>>", lambda event: seen.append(1))
-    states = {"c": 0, "s": MOD_SHIFT, "t": MOD_CTRL}
-    for kind, what in case["steps"]:
-        if kind == "k":
-            press(box, what)
-        elif kind in commands:
-            commands[kind](what)
-        else:
-            click(box, what, states[kind])
-        replayed.append([list(box.curselection()), len(seen)])
-    assert replayed == case["after"], case["steps"]
+    assert replay(box, case["steps"]) == case["after"], case["steps"]
 
 
 def test_a_disabled_listbox_sends_no_event_for_a_click(listbox):
@@ -463,9 +559,37 @@ def test_see_only_moves_as_far_as_it_must(listbox):
     assert listbox._top == before
 
 
-def test_activating_scrolls_into_view(listbox):
+def test_activating_does_not_scroll(listbox):
+    """Tk's ``activate`` leaves the view alone; the bindings call ``see``."""
     listbox.activate(7)
-    assert listbox._top > 0
+    assert (listbox.index("active"), listbox._top) == (7, 0)
+
+
+# Measured on Tk 9.0.2 over every top row and index, heights 1 to 9.
+@pytest.mark.parametrize(
+    ("height", "top", "index", "expected"),
+    [
+        (4, 0, 3, 0),  # in view: nothing moves
+        (4, 0, 4, 1),  # one below, within a third: to the bottom edge
+        (4, 0, 5, 4),  # two below: centred, not to the edge (2)
+        (4, 0, 7, 6),
+        (4, 5, 4, 4),  # one above: to the top edge
+        (4, 5, 1, 0),  # further above: centred, then clamped
+        (6, 0, 7, 2),  # two below at six rows is a third: to the edge
+        (6, 0, 8, 6),  # three below: centred
+        (1, 0, 1, 1),  # one row tall: everything centres on itself
+    ],
+)
+def test_see_brings_a_near_item_to_the_edge_and_centres_a_far_one(
+    root, height, top, index, expected
+):
+    box = Listbox(root, name="lb", height=height, width=8)
+    box._allocate(Rect(0, 0, 10, height + 2))
+    box._map()
+    box.insert("end", *map(str, range(20)))
+    box.yview(top)
+    box.see(index)
+    assert box._top == expected
 
 
 def test_the_view_is_clamped_to_the_list(listbox):
@@ -492,10 +616,40 @@ def test_nearest_finds_the_row_under_a_position_in_the_widget(listbox):
 
 
 def test_a_disabled_listbox_ignores_keys(listbox):
-    listbox.configure(state="disabled")
     listbox.activate(0)
+    listbox.configure(state="disabled")
     press(listbox, "Down")
     assert listbox.index("active") == 0
+
+
+def test_a_disabled_listbox_refuses_the_commands_that_would_change_it(listbox):
+    """Measured on Tk 9.0.2: silently, with no error. The view and the
+    reading commands still work."""
+    listbox.selection_set(1)
+    listbox.selection_anchor(1)
+    listbox.activate(1)
+    listbox.configure(state="disabled")
+    listbox.insert(0, "new")
+    listbox.delete(0)
+    listbox.selection_set(2)
+    listbox.selection_clear(1)
+    listbox.selection_anchor(3)
+    listbox.activate(3)
+    listbox.see(7)
+    assert listbox.get(0, "end") == tuple(f"item {n}" for n in range(8))
+    assert listbox.curselection() == (1,)
+    assert listbox.selection_includes(1)
+    assert (listbox.index("anchor"), listbox.index("active")) == (1, 1)
+    assert listbox._top == 4
+
+
+def test_a_disabled_listbox_still_takes_its_list_variable(root):
+    from tkcurses import StringVar
+
+    items = StringVar(root, value="a b")
+    box = Listbox(root, name="lb", listvariable=items, state="disabled")
+    items.set("c d e")
+    assert box.get(0, "end") == ("c", "d", "e")
 
 
 def test_a_disabled_listbox_ignores_clicks(listbox):
@@ -543,8 +697,9 @@ def test_yview_scroll_by_units(listbox):
 
 
 def test_yview_scroll_by_pages(listbox):
+    """A page is the height less two, never under one: Tk 9.0.2."""
     listbox.yview("scroll", 1, "pages")
-    assert listbox._top == 4
+    assert listbox._top == 2
 
 
 def test_the_scroll_command_is_told_where_the_view_is(listbox):
@@ -696,3 +851,125 @@ def test_yview_scroll_and_moveto_are_the_named_forms(listbox):
     assert listbox._top == 2
     listbox.yview_moveto(0.0)
     assert listbox._top == 0
+
+
+def advance(root, ms):
+    """Run the ``after`` callbacks due ``ms`` from now."""
+    timers = root.tk.timers
+    real = timers._clock
+    timers._clock = lambda: real() + ms / 1000
+    try:
+        timers.run_due()
+    finally:
+        timers._clock = real
+
+
+def test_a_drag_held_below_the_list_scrolls_it_and_selects_along(listbox, root):
+    """``tk::ListboxAutoScan``: a row at once as the pointer leaves, then one
+    every 50ms, the selection run to the item nearest the pointer, until the
+    button comes up."""
+    listbox._handle(MouseEvent(button=1, state="pressed", x=2, y=1))
+    listbox._handle(MouseEvent(button=0, state="drag", x=2, y=9))
+    assert (listbox._top, listbox.curselection()) == (1, (4,))
+    advance(root, 60)
+    assert (listbox._top, listbox.curselection()) == (2, (5,))
+    advance(root, 120)
+    assert (listbox._top, listbox.curselection()) == (3, (6,))
+    listbox._handle(MouseEvent(button=1, state="released", x=2, y=9))
+    assert listbox.index("active") == 6
+    advance(root, 500)
+    assert listbox._top == 3
+
+
+def test_a_drag_held_beside_the_list_scrolls_it_sideways(listbox, root):
+    """Two columns at a time, as ``tk::ListboxAutoScan`` moves it."""
+    listbox.insert("end", "x" * 60)
+    listbox._handle(MouseEvent(button=1, state="pressed", x=2, y=1))
+    listbox._handle(MouseEvent(button=0, state="drag", x=30, y=1))
+    assert listbox._left == 2
+    advance(root, 60)
+    assert listbox._left == 4
+    listbox._handle(MouseEvent(button=0, state="drag", x=-3, y=1))
+    advance(root, 120)
+    assert listbox._left == 2
+
+
+def test_a_drag_back_inside_stops_the_scrolling(listbox, root):
+    listbox._handle(MouseEvent(button=1, state="pressed", x=2, y=1))
+    listbox._handle(MouseEvent(button=0, state="drag", x=2, y=9))
+    listbox._handle(MouseEvent(button=0, state="drag", x=2, y=2))
+    assert listbox._top == 1
+    advance(root, 500)
+    assert listbox._top == 1
+
+
+def test_leaving_again_scrolls_again_at_once(listbox):
+    """``<B1-Enter>`` cancels the repeat, so the next ``<B1-Leave>`` starts
+    one - scrolling there and then - rather than waiting on the old one."""
+    listbox._handle(MouseEvent(button=1, state="pressed", x=2, y=1))
+    listbox._handle(MouseEvent(button=0, state="drag", x=2, y=9))
+    listbox._handle(MouseEvent(button=0, state="drag", x=2, y=2))
+    listbox._handle(MouseEvent(button=0, state="drag", x=2, y=9))
+    assert listbox._top == 2
+
+
+def test_nearest_outside_the_rows_is_the_nearest_visible_item(listbox):
+    """Measured on Tk 9.0.2 with four rows of eight items."""
+    assert (listbox.nearest(500), listbox.nearest(-50)) == (3, 0)
+    listbox.yview(2)
+    assert (listbox.nearest(500), listbox.nearest(-50)) == (5, 2)
+    assert listbox.index("@3,500") == 5
+
+
+def test_moving_the_pointer_with_no_button_held_selects_nothing(listbox):
+    """Measured on Tk 9.0.2: only ``<B1-Motion>`` is bound."""
+    click(listbox, 1)
+    listbox._handle(MouseEvent(button=0, state="drag", x=2, y=4))
+    assert listbox.curselection() == (1,)
+
+
+def test_a_browse_drag_sends_an_event_only_when_the_item_changes(listbox):
+    """Measured on Tk 9.0.2: a press on 1 and motion over 2, 2, 3, 3 send
+    three events, not five - ``tk::ListboxMotion`` returns at once for the
+    item it last went to."""
+    seen = []
+    listbox.bind("<<ListboxSelect>>", lambda event: seen.append(1))
+    listbox._handle(MouseEvent(button=1, state="pressed", x=2, y=2))
+    for row in (2, 2, 3, 3):
+        listbox._handle(MouseEvent(button=0, state="drag", x=2, y=1 + row))
+    assert (len(seen), listbox.curselection()) == (3, (3,))
+
+
+def test_escape_gives_back_what_a_range_replaced(listbox):
+    """Measured on Tk 9.0.2, extended mode: click 1, Control-click 4,
+    Shift-click 0 selects 0 to 4, and Escape leaves 1, which was selected
+    before the range began."""
+    listbox.configure(selectmode="extended", height=8)
+    listbox._allocate(Rect(0, 0, 18, 10))
+    click(listbox, 1)
+    click(listbox, 4, MOD_CTRL)
+    click(listbox, 0, MOD_SHIFT)
+    assert listbox.curselection() == (0, 1, 2, 3, 4)
+    press(listbox, "Escape")
+    assert listbox.curselection() == (1,)
+
+
+def test_a_click_on_a_disabled_listbox_leaves_the_focus_alone(listbox, root):
+    """Measured on Tk 9.0.2."""
+    listbox.configure(state="disabled")
+    click(listbox, 2)
+    assert listbox.focus_get() is not listbox
+
+
+def test_items_inserted_into_an_empty_list_leave_active_on_the_last(root):
+    """Measured on Tk 9.0.2: eight inserted give active 7 and anchor 8 -
+    the anchor is not kept on an item, the active index is."""
+    box = Listbox(root, name="fresh")
+    box.insert("end", *map(str, range(8)))
+    assert (box.index("active"), box.index("anchor")) == (7, 8)
+
+
+def test_invoke_selects_the_active_item_as_space_does(listbox):
+    listbox.activate(2)
+    listbox.event_generate("<<Invoke>>")
+    assert listbox.curselection() == (2,)

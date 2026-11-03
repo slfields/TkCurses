@@ -189,9 +189,11 @@ STATE_CASES = [
     ),
     (
         "Listbox",
-        "lb = tkcurses.Listbox(root, width=12, height=3, state='disabled')\n"
+        # Filled first: a disabled Listbox refuses insert, as Tk's does.
+        "lb = tkcurses.Listbox(root, width=12, height=3)\n"
         "lb.place(x=2, y=2)\n"
-        "lb.insert('end', 'MARKER')",
+        "lb.insert('end', 'MARKER')\n"
+        "lb.configure(state='disabled')",
     ),
     (
         "Scale",

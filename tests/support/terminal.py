@@ -122,6 +122,9 @@ UTF8_LOCALE = _utf8_locale()
 #: only exists so a pathological case cannot spin: it is a bound, not a budget.
 _DRAIN_PASSES = 64
 
+#: This checkout's ``src``, which the programs the harness runs import from.
+_SOURCE_ROOT = Path(__file__).resolve().parents[2] / "src"
+
 _CHILD_ENV = {
     "TERM": "xterm-256color",
     "LANG": UTF8_LOCALE,
@@ -472,12 +475,18 @@ class TerminalHarness:
         happens between the fork and the exec. See the note in :meth:`run`.
         """
         env = {**os.environ, **_CHILD_ENV, **self._extra_env}
+        # This checkout's library ahead of the editable install's .pth, which
+        # points at the main checkout: without it a program run from a
+        # worktree imported the main checkout's tkcurses, and the worktree
+        # gate tested the working copy for every tty test. conftest.py does
+        # the same for this process only. TkCurses-czmh, after TkCurses-6dw.
+        paths = [str(_SOURCE_ROOT)]
         shim = self._install_quit_timer_shim()
         if shim is not None:
-            existing = env.get("PYTHONPATH", "")
-            env["PYTHONPATH"] = (
-                f"{shim}{os.pathsep}{existing}" if existing else str(shim)
-            )
+            paths.insert(0, str(shim))
+        if env.get("PYTHONPATH"):
+            paths.append(env["PYTHONPATH"])
+        env["PYTHONPATH"] = os.pathsep.join(paths)
         env["COLUMNS"] = str(self.cols)
         env["LINES"] = str(self.rows)
         return env

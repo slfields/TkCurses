@@ -76,6 +76,21 @@ def test_the_selected_item_is_marked(terminal, tmp_path):
     assert "◀" in term.display[row]
 
 
+def test_a_disabled_listbox_keeps_its_selection_out_of_sight(terminal, tmp_path):
+    """``listbox(n)``: the selection *"is not shown (though selection
+    information is retained)"*, and Tk 9.0.2 draws it so. The row and its
+    markers go out in one write, so the row holding "beta" is the whole
+    answer - TkCurses-txk."""
+    term = terminal(cols=40, rows=12)
+    source = LIST + "lb.selection_set(1)\nlb.configure(state='disabled')"
+    term.run_source(program(source), workdir=tmp_path)
+    term.wait_for_text("beta")
+    term.wait_for_idle()
+    row = next(i for i, line in enumerate(term.display) if "beta" in line)
+    assert "▶" not in term.display[row]
+    assert "◀" not in term.display[row]
+
+
 def test_the_arrows_move_the_selection(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(

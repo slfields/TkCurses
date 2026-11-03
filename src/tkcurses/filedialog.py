@@ -134,6 +134,13 @@ class _Browser:
         self.filesbar = tkcurses.Scrollbar(middle, command=self.files.yview)
         self.filesbar.pack(side="left", fill="y")
         self.files.configure(yscrollcommand=self.filesbar.set)
+        # The class bindings first, as tkinter's FileDialog puts them: a
+        # click's release activates the item there, and the dialogs' own
+        # release bindings read the active item. In the default order they
+        # would read the one clicked before.
+        for listbox in (self.dirs, self.files):
+            tags = listbox.bindtags()
+            listbox.bindtags(tags[1:] + tags[:1])
 
         self.selection = tkcurses.Entry(master, name="selection")
         self.selection.pack(side="bottom", fill="x")
