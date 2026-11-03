@@ -19,12 +19,14 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from tkcurses import Listbox, Misc, TclError
-from tkcurses._core.events import MOD_SHIFT, KeyEvent, MouseEvent
+from tkcurses._core.events import MOD_CTRL, MOD_SHIFT, KeyEvent, MouseEvent
 from tkcurses._core.geometry import Rect
 from tkcurses._core.panels import PanelStack
 
@@ -138,10 +140,38 @@ def test_clearing_the_selection(listbox):
     assert listbox.curselection() == ()
 
 
-def test_browse_mode_keeps_one_selection(listbox):
-    listbox.selection_set(1)
-    listbox.selection_set(3)
-    assert listbox.curselection() == (3,)
+@pytest.mark.parametrize("mode", ["browse", "single", "extended", "multiple"])
+def test_selection_set_adds_whatever_the_mode(listbox, mode):
+    """Measured on Tk 9.0.2: the mode belongs to the bindings, not to the
+    widget command. TkCurses-xk41."""
+    listbox.configure(selectmode=mode)
+    listbox.selection_set(1, 4)
+    listbox.selection_set(0)
+    assert listbox.curselection() == (0, 1, 2, 3, 4)
+
+
+@pytest.mark.parametrize(
+    ("first", "last", "left"),
+    [
+        (0, None, (1, 2, 3, 4, 5, 6, 7)),
+        (2, None, (0, 1, 3, 4, 5, 6, 7)),
+        (4, 1, (0, 5, 6, 7)),
+        (0, "end", ()),
+    ],
+)
+def test_selection_clear_clears_only_what_it_names(listbox, first, last, left):
+    """``selection_clear(0)`` used to clear every item."""
+    listbox.selection_set(0, "end")
+    listbox.selection_clear(first, last)
+    assert listbox.curselection() == left
+
+
+def test_a_range_may_run_backwards_or_past_the_ends(listbox):
+    listbox.selection_set(4, 1)
+    assert listbox.curselection() == (1, 2, 3, 4)
+    listbox.selection_clear(0, "end")
+    listbox.selection_set(-3, 20)
+    assert listbox.curselection() == tuple(range(8))
 
 
 def test_multiple_mode_keeps_several(listbox):
@@ -157,11 +187,14 @@ def test_extended_mode_selects_a_range(listbox):
     assert listbox.curselection() == (1, 2, 3)
 
 
-def test_selecting_fires_the_virtual_event(listbox):
+def test_the_widget_commands_fire_no_virtual_event(listbox):
+    """Measured on Tk 9.0.2: only the bindings send ``<<ListboxSelect>>``,
+    through ``tk::FireListboxSelectEvent``."""
     seen = []
     listbox.bind("<<ListboxSelect>>", lambda event: seen.append(1))
     listbox.selection_set(1)
-    assert seen == [1]
+    listbox.selection_clear(0, "end")
+    assert seen == []
 
 
 def test_the_selection_follows_deleted_items(listbox):
@@ -267,6 +300,139 @@ def test_shift_clicking_extends_in_extended_mode(listbox):
         MouseEvent(button=1, state="pressed", x=2, y=3, modifiers=MOD_SHIFT)
     )
     assert listbox.curselection() == (0, 1, 2)
+
+
+def click(listbox, row, state=0):
+    listbox._handle(
+        MouseEvent(button=1, state="pressed", x=2, y=1 + row, modifiers=state)
+    )
+
+
+def gestures(listbox, mode, steps):
+    """Run ``steps`` and return the selection and the event count after each.
+
+    ``c``/``s``/``t`` click a row plain, with Shift, with Control; ``k``
+    presses a key.
+    """
+    # Tall enough for every row: the fixture shows four, and a click on
+    # row 4 there lands on the border.
+    listbox.configure(selectmode=mode, height=8)
+    listbox._allocate(Rect(0, 0, 18, 10))
+    seen = []
+    listbox.bind("<<ListboxSelect>>", lambda event: seen.append(1))
+    states = {"c": 0, "s": MOD_SHIFT, "t": MOD_CTRL}
+    after = []
+    for kind, what in steps:
+        if kind == "k":
+            press(listbox, what)
+        else:
+            click(listbox, what, states[kind])
+        after.append((listbox.curselection(), len(seen)))
+    return after
+
+
+# Each table was measured through tkinter on Python 3.14 over Tk 9.0.2, with
+# a timestamp on every generated click so that none read as a double-click.
+@pytest.mark.parametrize(
+    ("mode", "steps", "expected"),
+    [
+        (
+            "browse",
+            [("c", 1), ("c", 1), ("k", "Down"), ("k", "space"), ("k", "Up")],
+            [((1,), 1), ((1,), 2), ((2,), 3), ((2,), 4), ((1,), 5)],
+        ),
+        (
+            "single",
+            [("c", 1), ("c", 1), ("k", "Down"), ("k", "space")],
+            [((1,), 1), ((1,), 2), ((1,), 2), ((2,), 3)],
+        ),
+        (
+            "multiple",
+            [("c", 1), ("c", 1), ("c", 3), ("k", "Down"), ("k", "space")],
+            [((1,), 1), ((), 2), ((3,), 3), ((3,), 3), ((3, 4), 4)],
+        ),
+        (
+            "extended",
+            [("c", 1), ("c", 1), ("t", 1), ("k", "Down"), ("k", "space")],
+            [((1,), 1), ((1,), 2), ((), 3), ((2,), 4), ((2,), 5)],
+        ),
+        # Shift and Control do nothing outside extended mode.
+        ("browse", [("c", 1), ("s", 3), ("t", 3)], [((1,), 1)] * 3),
+        ("multiple", [("c", 1), ("s", 3), ("t", 3)], [((1,), 1)] * 3),
+    ],
+)
+def test_each_mode_answers_a_gesture_as_listbox_tcl_does(
+    listbox, mode, steps, expected
+):
+    assert gestures(listbox, mode, steps) == expected
+
+
+@pytest.mark.parametrize(
+    ("steps", "expected"),
+    [
+        ([("c", 1), ("s", 3)], [(1,), (1, 2, 3)]),
+        ([("c", 1), ("s", 4), ("s", 2)], [(1,), (1, 2, 3, 4), (1, 2)]),
+        ([("c", 3), ("s", 1), ("s", 5)], [(3,), (1, 2, 3), (3, 4, 5)]),
+        ([("c", 0), ("t", 4), ("s", 2)], [(0,), (0, 4), (0, 2, 3, 4)]),
+        (
+            [("c", 1), ("t", 3), ("t", 4), ("s", 1)],
+            [(1,), (1, 3), (1, 3, 4), (1, 2, 3, 4)],
+        ),
+        ([("t", 2), ("s", 4)], [(2,), (2, 3, 4)]),
+        ([("s", 3)], [(3,)]),
+        ([("c", 2), ("t", 2), ("s", 4)], [(2,), (), (4,)]),
+    ],
+)
+def test_an_extended_range_runs_as_tk_listbox_motion_runs_it(listbox, steps, expected):
+    """Shrinking the range gives back what was selected before it began,
+    and a range from a deselected anchor deselects. Each click also sent
+    exactly one event."""
+    after = gestures(listbox, "extended", steps)
+    assert [selection for selection, _ in after] == expected
+    assert [count for _, count in after] == list(range(1, len(steps) + 1))
+
+
+GESTURES = json.loads(
+    (Path(__file__).parent / "support" / "listbox_gestures.json").read_text()
+)["cases"]
+
+
+@pytest.mark.parametrize(
+    "case", GESTURES, ids=[f"{n}-{c['mode']}" for n, c in enumerate(GESTURES)]
+)
+def test_random_gestures_end_where_tk_ends(root, case):
+    """400 sequences recorded from real Tk by
+    ``tests/support/record_listbox_gestures.py``: the selection and the
+    number of ``<<ListboxSelect>>`` events after every step."""
+    box = Listbox(root, name="g", height=7, width=16)
+    box._allocate(Rect(0, 0, 18, 9))
+    box._map()
+    box.insert("end", *"abcdefg")
+    box.selection_anchor(0)
+    box.activate(0)
+    commands = {"p": box.selection_set, "a": box.selection_anchor}
+    replayed = []
+    seen = []
+    box.configure(selectmode=case["mode"])
+    box.bind("<<ListboxSelect>>", lambda event: seen.append(1))
+    states = {"c": 0, "s": MOD_SHIFT, "t": MOD_CTRL}
+    for kind, what in case["steps"]:
+        if kind == "k":
+            press(box, what)
+        elif kind in commands:
+            commands[kind](what)
+        else:
+            click(box, what, states[kind])
+        replayed.append([list(box.curselection()), len(seen)])
+    assert replayed == case["after"], case["steps"]
+
+
+def test_a_disabled_listbox_sends_no_event_for_a_click(listbox):
+    listbox.configure(state="disabled")
+    assert gestures(listbox, "browse", [("c", 1), ("k", "Down")]) == [
+        ((), 0),
+        ((), 0),
+    ]
 
 
 def test_the_wheel_scrolls_without_selecting(listbox):

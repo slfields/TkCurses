@@ -4469,6 +4469,50 @@ out - and appending items brings them back selected while inserting before
 them does not, which is how its selection table happens to move rather than
 a rule.
 
+**`-selectmode` belongs to the bindings, not to the widget command**
+(`TkCurses-xk41`). The manual says what each mode allows a *user* to do and
+is silent on the commands; measured on Tk 9.0.2:
+
+- `selection_set` only ever adds, in every mode: `selection_set(1, 4)` then
+  `selection_set(0)` is `(0, 1, 2, 3, 4)` in browse and single too. Ours
+  used to replace the selection in those two.
+- `selection_clear(first)` clears `first` alone; ours used to clear every
+  item when `first` was 0. Either command takes a range backwards
+  (`4, 1`) or past the ends.
+- Neither command sends `<<ListboxSelect>>`. Only a gesture does - once per
+  gesture, through `tk::FireListboxSelectEvent`, whether or not it changed
+  anything: a second click on the one selected item sends it again. Ours
+  used to send one from each command, so a browse-mode click sent two.
+
+What a gesture does is `listbox.tcl`'s, transcribed procedure by procedure:
+a click or space is `tk::ListboxBeginSelect` (toggle in multiple, otherwise
+make it the whole selection and the anchor); Control-click is
+`tk::ListboxBeginToggle` and Shift-click `tk::ListboxBeginExtend`, both
+doing nothing outside extended mode; Up and Down are `tk::ListboxUpDown`,
+which takes the selection along in browse **and extended** (ours used to in
+browse only). Shift-click runs the extended branch of `tk::ListboxMotion`:
+the range from the anchor is replaced rather than added to, and moving its
+end back over items a Control-click had kept gives them back. Ours used to
+toggle on a plain click in extended mode and had no Control-click at all.
+
+The state Tk keeps for that in the global `Priv(listboxPrev)` and
+`Priv(listboxSelection)` is kept per Listbox here. Tk's is shared by every
+listbox, but in the one interleaving measured - click and Control-click in
+one list, a click in another, then Shift-click back in the first, with
+`exportselection` off - the result was the same as without the other click,
+`(1, 3, 4, 5)`. With `exportselection` on, Tk's default, the click in the
+other list clears the first one's selection outright, which this library
+does not do yet (`TkCurses-9e8`). `tests/support/record_listbox_gestures.py` records 405
+gesture sequences from real Tk - random ones plus the `tk::ListboxMotion`
+branches random ones miss - and `tests/test_listbox.py` replays them,
+selection and event count after every step.
+
+Not done: Prior, Next, Home and End select in browse mode here and only
+scroll in Tk, and drag, Shift-arrows, Escape and select-all are absent
+(`TkCurses-cpk9`); a disabled Listbox still takes `insert` and
+`selection_set` (`TkCurses-46ap`); the anchor and active item do not follow
+an insert or delete as Tk's do (`TkCurses-ofko`).
+
 ---
 
 ### Scrollbar Class

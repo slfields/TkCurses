@@ -14915,6 +14915,11 @@ class Listbox(_Drawable, XView, YView):
         self._selection: set[int] = set()
         self._active = 0
         self._anchor = 0
+        # Tk's Priv(listboxPrev) and Priv(listboxSelection), kept per widget:
+        # where a shifted range last reached, and the selection before it
+        # began, which shrinking the range gives back. None is "unset".
+        self._extend_prev = -1
+        self._extend_saved: tuple[int, ...] | None = None
         self._top = 0
         # Characters scrolled off to the left, shared by every row as in Tk.
         self._left = 0
@@ -14936,10 +14941,12 @@ class Listbox(_Drawable, XView, YView):
         bind = self.bind_class
         bind(name, "<Any-Key>", _listbox_key)
         bind(name, "<Button-1>", _listbox_click)
-        # A separate binding, because modifiers match exactly: <Button-1>
-        # does not fire for a shifted click, in Tk or here. Binding the plain
-        # one and expecting both is a mistake this rule makes easy.
+        # Bound as listbox.tcl binds them, so bind_class lists what Tk's
+        # does - not because <Button-1> would miss them: a modifier the
+        # pattern does not mention does not stop a match, measured in Tk
+        # 9.0.2 and here. This comment used to say the opposite.
         bind(name, "<Shift-Button-1>", _listbox_click)
+        bind(name, "<Control-Button-1>", _listbox_click)
         bind(name, "<Button-4>", _listbox_wheel)
         bind(name, "<Button-5>", _listbox_wheel)
         bind(name, "<FocusIn>", _listbox_refresh)
@@ -15146,18 +15153,16 @@ class Listbox(_Drawable, XView, YView):
         return tuple(sorted(self._selection))
 
     def selection_set(self, first: Any, last: Any = None) -> None:
-        """Select from ``first`` to ``last`` inclusive."""
-        start = self.index(first)
-        stop = start if last is None else self.index(last)
-        if str(self._options["selectmode"]) in ("browse", "single"):
-            self._selection = {start}
-        else:
-            self._selection |= {
-                i
-                for i in range(min(start, stop), max(start, stop) + 1)
-                if 0 <= i < len(self._items)
-            }
-        self._notify()
+        """Select from ``first`` to ``last`` inclusive, adding to what is.
+
+        Whatever ``selectmode`` says: measured on Tk 9.0.2,
+        ``selection_set(1, 4)`` then ``selection_set(0)`` is ``(0, 1, 2, 3,
+        4)`` in browse and single too. The mode belongs to the class bindings
+        (``listbox.tcl``), not to the widget command - TkCurses-xk41. Nor does
+        the command fire ``<<ListboxSelect>>``; a gesture does.
+        """
+        self._selection |= set(self._index_range(first, last))
+        self._redraw()
 
     select_set = selection_set
 
@@ -15171,14 +15176,17 @@ class Listbox(_Drawable, XView, YView):
         clash for the same reason - a list's selection and the display's
         selection are different things that ended up with one name.
         """
+        # selection_clear(0) is item 0 alone, as in Tk; this used to clear
+        # every item when ``first`` was 0 and ``last`` was not given.
+        self._selection -= set(self._index_range(first, last))
+        self._redraw()
+
+    def _index_range(self, first: Any, last: Any) -> range:
+        """The items from ``first`` to ``last``, either way round, that exist."""
         start = self.index(first)
-        stop = (
-            len(self._items)
-            if last is None and first == 0
-            else (start if last is None else self.index(last))
-        )
-        self._selection -= set(range(min(start, stop), max(start, stop) + 1))
-        self._notify()
+        stop = start if last is None else self.index(last)
+        low, high = sorted((start, stop))
+        return range(low, min(high, len(self._items) - 1) + 1)
 
     select_clear = selection_clear
 
@@ -15200,13 +15208,14 @@ class Listbox(_Drawable, XView, YView):
         self.see(self._active)
         self._redraw()
 
-    def _notify(self) -> None:
-        """Tell the application the selection changed, and repaint.
-
-        ``<<ListboxSelect>>`` is how tkinter code hears about it, and what a
-        form uses to enable its buttons.
+    def _fire_select(self) -> None:
+        """``<<ListboxSelect>>``, once per gesture, as
+        ``tk::FireListboxSelectEvent`` sends it: only from the bindings. It
+        is sent whether or not the gesture changed anything - a click on the
+        one item already selected sends it too, measured on Tk 9.0.2. Tk's
+        check for a normal state is made earlier here: the bindings return
+        at once for a disabled list.
         """
-        self._redraw()
         self.event_generate("<<ListboxSelect>>")
 
     # ----------------------------------------------------------- scrolling
@@ -15435,31 +15444,34 @@ def _listbox_key(event: Event) -> str | None:
     if str(listbox._options["state"]) == "disabled":
         return None
     keysym = event.keysym
+    if keysym in ("Up", "Down"):
+        _listbox_up_down(listbox, -1 if keysym == "Up" else 1)
+        return "break"
     height = max(1, listbox._text_area().height)
     moves = {
-        "Up": -1,
-        "Down": 1,
         "Prior": -height,
         "Next": height,
         "Home": -len(listbox._items),
         "End": len(listbox._items),
     }
     if keysym in moves:
+        # Not yet Tk's: there these scroll the view and select nothing -
+        # TkCurses-cpk9.
         listbox.activate(listbox._active + moves[keysym])
         if str(listbox._options["selectmode"]) == "browse":
-            # browse drags the selection along with the active item, which is
-            # what makes a plain list usable with the arrows alone.
             listbox.selection_clear(0, "end")
             listbox.selection_set(listbox._active)
+            listbox._fire_select()
         return "break"
     if keysym == "space":
-        _listbox_toggle(listbox, listbox._active, extend=False)
+        _listbox_begin_select(listbox, listbox._active)
         return "break"
     return None
 
 
 def _listbox_click(event: Event) -> None:
-    """Take the focus and select the row that was clicked."""
+    """Take the focus and select the row clicked, as ``<Button-1>``,
+    ``<Shift-Button-1>`` and ``<Control-Button-1>`` do in ``listbox.tcl``."""
     listbox = event.widget
     if str(listbox._options["state"]) == "disabled":
         return
@@ -15468,22 +15480,108 @@ def _listbox_click(event: Event) -> None:
     if row >= len(listbox._items):
         return
     listbox.activate(row)
-    _listbox_toggle(listbox, row, extend=bool(event.state & MOD_SHIFT))
+    if event.state & MOD_SHIFT:
+        _listbox_begin_extend(listbox, row)
+    elif event.state & MOD_CTRL:
+        _listbox_begin_toggle(listbox, row)
+    else:
+        _listbox_begin_select(listbox, row)
 
 
-def _listbox_toggle(listbox: Listbox, index: int, *, extend: bool) -> None:
-    """Apply a selection gesture according to the selection mode."""
-    mode = str(listbox._options["selectmode"])
-    if mode in ("browse", "single"):
+def _listbox_begin_select(listbox: Listbox, index: int) -> None:
+    """``tk::ListboxBeginSelect``: toggle in multiple mode, otherwise make
+    ``index`` the whole selection and the anchor."""
+    if str(listbox._options["selectmode"]) == "multiple":
+        if index in listbox._selection:
+            listbox.selection_clear(index)
+        else:
+            listbox.selection_set(index)
+    else:
         listbox.selection_clear(0, "end")
         listbox.selection_set(index)
-    elif mode == "extended" and extend:
-        listbox.selection_set(listbox._anchor, index)
-    elif index in listbox._selection:
+        listbox.selection_anchor(index)
+        listbox._extend_saved = ()
+        listbox._extend_prev = index
+    listbox._fire_select()
+
+
+def _listbox_begin_toggle(listbox: Listbox, index: int) -> None:
+    """``tk::ListboxBeginToggle``: in extended mode only, toggle ``index``
+    and leave the rest of the selection alone."""
+    if str(listbox._options["selectmode"]) != "extended":
+        return
+    listbox._extend_saved = listbox.curselection()
+    listbox._extend_prev = index
+    listbox.selection_anchor(index)
+    if index in listbox._selection:
         listbox.selection_clear(index)
     else:
         listbox.selection_set(index)
-        listbox.selection_anchor(index)
+    listbox._fire_select()
+
+
+def _listbox_begin_extend(listbox: Listbox, index: int) -> None:
+    """``tk::ListboxBeginExtend``: in extended mode only, run the range from
+    the anchor to ``index`` - or begin one, if the anchor is not selected."""
+    if str(listbox._options["selectmode"]) != "extended":
+        return
+    if listbox._anchor in listbox._selection:
+        _listbox_extend_to(listbox, index)
+    else:
+        _listbox_begin_select(listbox, index)
+
+
+def _listbox_extend_to(listbox: Listbox, index: int) -> None:
+    """The extended branch of ``tk::ListboxMotion``, for a selected anchor.
+
+    The range from the anchor is replaced, not added to: moving its end back
+    towards the anchor deselects what it gives up, except for items that
+    were selected before the range began, which it gives back.
+
+    Tk's other branch, for an anchor that is not selected, deselects the
+    range instead; only a drag reaches it, since Shift-click begins afresh
+    from such an anchor, and drag is TkCurses-cpk9.
+    """
+    if index == listbox._extend_prev:
+        return
+    anchor = listbox._anchor
+    prev = listbox._extend_prev
+    if prev < 0:
+        # Tk's Priv(listboxPrev) starts as "", which compares below 0. Not
+        # the same as clearing from 0: items a program selected below a
+        # higher anchor would go.
+        prev = index
+        listbox.selection_set(index)
+    listbox.selection_clear(prev, index)
+    listbox.selection_set(anchor, index)
+    if listbox._extend_saved is None:
+        listbox._extend_saved = listbox.curselection()
+    saved = listbox._extend_saved
+    while prev < index and prev < anchor:
+        if prev in saved:
+            listbox.selection_set(prev)
+        prev += 1
+    while prev > index and prev > anchor:
+        if prev in saved:
+            listbox.selection_set(prev)
+        prev -= 1
+    listbox._extend_prev = index
+    listbox._fire_select()
+
+
+def _listbox_up_down(listbox: Listbox, amount: int) -> None:
+    """``tk::ListboxUpDown``: move the active item, and in browse and
+    extended mode take the selection with it."""
+    listbox.activate(listbox._active + amount)
+    mode = str(listbox._options["selectmode"])
+    if mode in ("browse", "extended"):
+        listbox.selection_clear(0, "end")
+        listbox.selection_set(listbox._active)
+        if mode == "extended":
+            listbox.selection_anchor(listbox._active)
+            listbox._extend_prev = listbox._active
+            listbox._extend_saved = ()
+        listbox._fire_select()
 
 
 def _listbox_wheel(event: Event) -> None:

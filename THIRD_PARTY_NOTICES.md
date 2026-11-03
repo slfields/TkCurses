@@ -25,6 +25,7 @@ it. The scripts, as installed with Tcl 9.0.2 and Tk 9.0.2:
 | Tk `spinbox.tcl` | `tk::spinbox::MouseSelect`, `tk::spinbox::ArrowPress`, `tk::spinbox::Invoke`, `tk::spinbox::ButtonUp` | Spinbox's selection, and its arrows' step and auto-repeat (`__init__.py`) |
 | Tk `ttk/entry.tcl`, `ttk/spinbox.tcl`, `ttk/combobox.tcl` | `ttk::entry::Select`, `DragTo`, `ExtendTo`, `CharSelect`, `WordSelect`, `AutoScroll`, `PendingDelete`; `ttk::spinbox::DoubleClick`; `ttk::combobox::Press` | the ttk entries' selection and paste (`__init__.py`); the combobox's clicks (`ttk.py`) |
 | Tk `tk.tcl` | `tk::wordBreakBefore`, `tk::wordBreakAfter`, `tk::SetFocusGrab`, `tk::RestoreFocusGrab`, `tk::CancelRepeat`; the clipboard virtual events | word boundaries (`_core/editing.py`), dialog grabs (`commondialog.py`), `_core/application.py` |
+| Tk `listbox.tcl` | `tk::ListboxBeginSelect`, `tk::ListboxBeginToggle`, `tk::ListboxBeginExtend`, `tk::ListboxMotion`, `tk::ListboxUpDown`, `tk::FireListboxSelectEvent` | Listbox's selection by mouse and keyboard, per `-selectmode` (`__init__.py`) |
 | Tk `focus.tcl` | `tk::FocusOK` | focus traversal (`__init__.py`) |
 | Tk `scrlbar.tcl` | the Scrollbar bindings | Scrollbar's mouse behaviour (`__init__.py`) |
 | Tk `panedwindow.tcl` | `tk::panedwindow::DragSash`, `tk::panedwindow::ReleaseSash` | the PanedWindow's proxy while a sash is dragged with `-opaqueresize` off (`__init__.py`) |
