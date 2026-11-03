@@ -59,7 +59,6 @@ CLASSIC = (
 #: been closed is too: this list may shrink and must never silently grow.
 KNOWN_GAPS: dict[str, dict[str, str]] = {
     "Button": {
-        "TkCurses-gm66.5": "overrelief",
         "TkCurses-gm66.6": "repeatdelay repeatinterval",
         "TkCurses-l26": "bitmap",
     },
@@ -67,7 +66,6 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
         "TkCurses-gm66.10": "confine offset xscrollincrement yscrollincrement",
     },
     "Checkbutton": {
-        "TkCurses-gm66.5": "offrelief overrelief",
         "TkCurses-gm66.10": "selectimage tristateimage",
         "TkCurses-l26": "bitmap",
     },
@@ -89,7 +87,6 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
         "TkCurses-gm66.10": "justify listvariable",
     },
     "Menu": {
-        "TkCurses-gm66.5": "activeborderwidth activerelief",
         "TkCurses-gm66.10": "font tearoffcommand type",
     },
     "Menubutton": {
@@ -103,20 +100,16 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
         "TkCurses-gm66.9": "handlepad handlesize height opaqueresize proxybackground proxyborderwidth proxyrelief sashcursor sashpad sashrelief width",
     },
     "Radiobutton": {
-        "TkCurses-gm66.5": "offrelief overrelief",
         "TkCurses-gm66.10": "selectimage tristateimage tristatevalue",
         "TkCurses-l26": "bitmap",
     },
     "Scale": {
-        "TkCurses-gm66.5": "sliderlength sliderrelief",
         "TkCurses-gm66.6": "repeatdelay repeatinterval",
     },
     "Scrollbar": {
-        "TkCurses-gm66.5": "activerelief elementborderwidth",
         "TkCurses-gm66.6": "jump repeatdelay repeatinterval",
     },
     "Spinbox": {
-        "TkCurses-gm66.5": "buttoncursor buttondownrelief buttonuprelief",
         "TkCurses-gm66.6": "repeatdelay repeatinterval",
     },
     "Text": {

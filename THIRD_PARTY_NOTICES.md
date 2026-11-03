@@ -27,9 +27,10 @@ it. The scripts, as installed with Tcl 9.0.2 and Tk 9.0.2:
 | Tk `tk.tcl` | `tk::wordBreakBefore`, `tk::wordBreakAfter`, `tk::SetFocusGrab`, `tk::RestoreFocusGrab`; the clipboard virtual events | word boundaries (`_core/editing.py`), dialog grabs (`commondialog.py`), `_core/application.py` |
 | Tk `focus.tcl` | `tk::FocusOK` | focus traversal (`__init__.py`) |
 | Tk `scrlbar.tcl` | the Scrollbar bindings | Scrollbar's mouse behaviour (`__init__.py`) |
-| Tk `button.tcl`, `scale.tcl` | `tk::ButtonInvoke`; `tk::ScaleActivate` | when a button or a scale is drawn active (`__init__.py`) |
+| Tk `button.tcl`, `scale.tcl` | `tk::ButtonInvoke`, `tk::ButtonEnter`, `tk::ButtonLeave`, `tk::CheckEnter`; `tk::ScaleActivate`, `tk::ScaleButtonDown`, `tk::ScaleEndDrag` | when a button or a scale is drawn active, and the reliefs they take under the pointer and while held (`__init__.py`) |
 | Tk `msgbox.tcl`, `dialog.tcl`, `clrpick.tcl` | the message box's button sets, `tk_dialog`, the colour chooser's layout | `messagebox.py` (its button table is taken from `msgbox.tcl`), `dialog.py`, `colorchooser.py` |
 | Tcl `word.tcl` | `tcl_wordBreakBefore`, `tcl_wordBreakAfter` | word boundaries (`_core/editing.py`) |
+| Tk `unix/tkUnixButton.c` (C) | `TkpDisplayButton` | the relief an indicatorless checkbutton or radiobutton is drawn in (`__init__.py`) |
 | Tk `generic/tkBind.c` (C) | `Tk_BindEvent`, `MatchPatterns`, the promotion lists, `IsBetterMatch`, `CountSpecialized` | multi-event binding sequences and how matches are ranked (`_core/bindings.py`) |
 
 The project documentation (`ARCHITECTURE.md`, `docs/`) also quotes Tk's

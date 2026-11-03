@@ -729,16 +729,84 @@ def _insert_unfocussed(widget: Any, value: Any) -> str:
     return matches[0]
 
 
+_RELIEFS = ("flat", "groove", "raised", "ridge", "solid", "sunken")
+
+
+def _choose_relief(value: Any, choices: str) -> str:
+    """A relief by its name or any unique prefix, as ``Tk_GetRelief`` takes it.
+
+    Case matters and spaces are not stripped: Tk refuses ``RAISED`` and
+    `` raised``, measured on 9.0.2.
+    """
+    text = str(value)
+    if text in _RELIEFS:
+        return text
+    matches = [relief for relief in _RELIEFS if relief.startswith(text)]
+    if len(matches) == 1 and text:
+        return matches[0]
+    problem = "bad" if not matches else "ambiguous"
+    raise TclError(f'{problem} relief "{text}": must be {choices}')
+
+
+def _relief(widget: Any, value: Any) -> str:
+    """A relief, which may not be empty."""
+    del widget
+    return _choose_relief(value, "flat, groove, raised, ridge, solid, or sunken")
+
+
+def _relief_or_none(widget: Any, value: Any) -> str:
+    """A relief, or "" for none: ``overrelief``, whose "" means no change."""
+    del widget
+    if value == "":
+        return ""
+    return _choose_relief(value, 'flat, groove, raised, ridge, solid, sunken, or ""')
+
+
+def _signed_distance(widget: Any, value: Any) -> int:
+    """A size Tk keeps below zero as given: ``sliderlength`` and
+    ``activeborderwidth`` read back -5 after -5, measured. What is drawn
+    treats one as its smallest instead."""
+    del widget
+    try:
+        return round(float(value))
+    except (TypeError, ValueError):
+        raise TclError(f'expected screen distance but got "{value}"') from None
+
+
+def _element_borderwidth(widget: Any, value: Any) -> Any:
+    """A size, or "" for the scrollbar's own ``borderwidth``. Tk reads any
+    negative width back as "", measured."""
+    if value == "":
+        return ""
+    distance = _signed_distance(widget, value)
+    return "" if distance < 0 else distance
+
+
+def _part_relief(relief: Any) -> int:
+    """How a relief shows on a part one cell deep: a slider, an arrow, an entry.
+
+    There are no edges to draw it with, so only the relief Tk's bindings put
+    on a part while it is held, ``sunken``, is shown, and it is dim, as a
+    sunken border is. The rest draw the part as it was. TkCurses-gm66.5.
+    """
+    return _curses.A_DIM if str(relief) == SUNKEN else _curses.A_NORMAL
+
+
 #: Options whose values are checked, and stored as Tk would store them. Most
 #: options here are not: a colour or a relief is taken as given and resolved
 #: when drawn. These are checked because they reach the terminal itself.
 _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "activebackground": _colour_or_terminals,
+    "activeborderwidth": _signed_distance,
     "activeforeground": _colour_or_terminals,
+    "activerelief": _relief,
     "blockcursor": _tcl_boolean,
     "buttonbackground": _colour_or_terminals,
+    "buttondownrelief": _relief,
+    "buttonuprelief": _relief,
     "disabledbackground": _colour_or_terminals,
     "disabledforeground": _colour_or_terminals,
+    "elementborderwidth": _element_borderwidth,
     "inactiveselectbackground": _colour_or_terminals,
     "insertbackground": _colour_or_terminals,
     "insertborderwidth": _screen_distance,
@@ -746,11 +814,15 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "insertontime": _tcl_integer,
     "insertunfocussed": _insert_unfocussed,
     "insertwidth": _screen_distance,
+    "offrelief": _relief,
+    "overrelief": _relief_or_none,
     "readonlybackground": _colour_or_terminals,
     "selectbackground": _colour_or_terminals,
     "selectborderwidth": _screen_distance,
     "selectcolor": _colour_or_terminals,
     "selectforeground": _colour_or_terminals,
+    "sliderlength": _signed_distance,
+    "sliderrelief": _relief,
     "troughcolor": _colour_or_terminals,
 }
 
@@ -6557,6 +6629,9 @@ class Button(_TextWidget):
         **_STATE_COLOUR_OPTIONS,
         "command": None,
         "default": "disabled",
+        # The relief while the pointer is over it; "" for no change. Put in
+        # place by the <Enter> binding, as Tk's is. TkCurses-gm66.5.
+        "overrelief": "",
         "relief": "raised",
         "takefocus": True,
     }
@@ -6577,6 +6652,7 @@ class Button(_TextWidget):
             **kw: ``command``, ``state``, plus everything a Label takes.
         """
         self._pressed = False
+        self._entered_relief: tuple[str, str] | None = None
         super().__init__(master, cnf, name=name, **kw)
         self._install_class_bindings()
 
@@ -6608,6 +6684,9 @@ class Button(_TextWidget):
         self.bind_class(name, "<Key-space>", _button_key)
         self.bind_class(name, "<FocusIn>", _button_refresh)
         self.bind_class(name, "<FocusOut>", _button_refresh)
+        if not _is_ttk(self):
+            self.bind_class(name, "<Enter>", _button_enter)
+            self.bind_class(name, "<Leave>", _button_leave)
 
     # ------------------------------------------------------------ behaviour
 
@@ -6800,6 +6879,41 @@ def _button_refresh(event: Event) -> None:
     event.widget._redraw()
 
 
+def _button_enter(event: Event) -> None:
+    """The pointer arrives: the button goes active, in its ``overrelief``.
+
+    Tk's ``tk::ButtonEnter`` and ``tk::CheckEnter``, their X11 versions, in
+    ``button.tcl``. ``configure`` rather than a flag, as there, so ``cget``
+    reads the relief that is showing. Tk sinks a button re-entered while held;
+    a press here is drawn by markers and not by a relief, so a held one keeps
+    the relief it has. Nothing reports the pointer crossing a widget yet, so
+    this is reached by ``event_generate``. TkCurses-gm66.5.
+    """
+    button = event.widget
+    if button._disabled:
+        return
+    button.configure(state=ACTIVE)
+    over = str(button.cget("overrelief"))
+    if over and not button._pressed:
+        button._entered_relief = (str(button.cget("relief")), over)
+        button.configure(relief=over)
+
+
+def _button_leave(event: Event) -> None:
+    """The pointer goes: back to normal, and the relief it entered with.
+
+    Tk's ``tk::ButtonLeave``: the relief goes back only if it is still the
+    one the entry put there, so a program that changed it meanwhile keeps
+    its change.
+    """
+    button = event.widget
+    if not button._disabled:
+        button.configure(state=NORMAL)
+    saved, button._entered_relief = button._entered_relief, None
+    if saved is not None and saved[1] == str(button.cget("relief")):
+        button.configure(relief=saved[0])
+
+
 class _ChoiceWidget(_TextWidget):
     """Shared by the two widgets whose state lives in a variable.
 
@@ -6829,6 +6943,10 @@ class _ChoiceWidget(_TextWidget):
         "selectcolor": "",
         "command": None,
         "indicatoron": True,
+        # An indicatorless button's relief while off, and any button's while
+        # the pointer is over it. TkCurses-gm66.5.
+        "offrelief": "raised",
+        "overrelief": "",
         "takefocus": True,
         "variable": None,
     }
@@ -6850,6 +6968,7 @@ class _ChoiceWidget(_TextWidget):
                 the subclass declares, plus everything a Label takes.
         """
         self._pressed = False
+        self._entered_relief: tuple[str, str] | None = None
         self._value_trace: tuple[Variable, str] | None = None
         super().__init__(master, cnf, name=name, **kw)
         if self._options["variable"] is None:
@@ -6880,6 +6999,9 @@ class _ChoiceWidget(_TextWidget):
         bind(name, "<Key-space>", _button_key)
         bind(name, "<FocusIn>", _button_refresh)
         bind(name, "<FocusOut>", _button_refresh)
+        if not _is_ttk(self):
+            bind(name, "<Enter>", _button_enter)
+            bind(name, "<Leave>", _button_leave)
 
     # --------------------------------------------------------------- options
 
@@ -7032,6 +7154,23 @@ class _ChoiceWidget(_TextWidget):
         active = self._state_colours(self._shown_state())
         foreground = active[0] if active is not None else ""
         return self._coloured(attribute, foreground, self._options["selectcolor"])
+
+    def _border_style(self) -> BorderStyle:
+        """The relief an indicatorless button is drawn in, which is not its own.
+
+        Tk's ``TkpDisplayButton``, in ``unix/tkUnixButton.c``: sunken while
+        on; otherwise ``offrelief``, unless the relief is the ``overrelief``,
+        which is how it tells that the pointer is over it - the ``<Enter>``
+        binding has copied one into the other. With an indicator, the relief
+        is the widget's own. TkCurses-gm66.5.
+        """
+        relief = str(self._options["relief"]) or FLAT
+        if not self._indicator_on and not _is_ttk(self):
+            if self._indicator_state == "on":
+                relief = SUNKEN
+            elif relief != str(self._options["overrelief"]):
+                relief = str(self._options["offrelief"])
+        return style_for_relief(relief)
 
     def _redraw(self) -> None:
         """Paint the widget, then the indicator to the left of the text."""
@@ -9266,6 +9405,11 @@ class Spinbox(Entry):
         # drawn held down; buttonbackground is theirs. TkCurses-gm66.4.
         "activebackground": "",
         "buttonbackground": "",
+        # The pointer over the arrows, which a terminal has none of, and their
+        # reliefs: sunken is drawn dim. TkCurses-gm66.5.
+        "buttoncursor": "",
+        "buttondownrelief": "raised",
+        "buttonuprelief": "raised",
         "command": None,
         "format": "",
         "from": 0.0,
@@ -9540,16 +9684,24 @@ class Spinbox(Entry):
                 self._options["buttonbackground"],
             )
         dispatcher = CursesDispatcher.get()
-        # Both arrows in one write, through the shared writer, for the reason
-        # the listbox does the same: the second used to go on with insstr,
-        # which shifted the row along and pushed a bordered spinbox's right
-        # border off the end. Unbordered, the arrows really do reach the last
-        # cell and insstr really is needed - _write_line is what tells the
-        # two cases apart.
-        del down_column
-        self._write_line(
-            dispatcher, window, area.y, up_column, "".join(self._ARROWS), attribute
-        )
+        # Through the shared writer, for the reason the listbox uses it: the
+        # second arrow used to go on with insstr, which shifted the row along
+        # and pushed a bordered spinbox's right border off the end.
+        # Unbordered, the arrows really do reach the last cell and insstr
+        # really is needed - _write_line is what tells the two cases apart.
+        up, down = self._ARROWS
+        for column, arrow, relief in (
+            (up_column, up, self._options["buttonuprelief"]),
+            (down_column, down, self._options["buttondownrelief"]),
+        ):
+            self._write_line(
+                dispatcher,
+                window,
+                area.y,
+                column,
+                arrow,
+                attribute | _part_relief(relief),
+            )
 
 
 def _spinbox_key(event: Event) -> str | None:
@@ -12455,6 +12607,10 @@ class Menu(_Drawable):
 
     _widget_options: ClassVar[dict[str, Any]] = {
         **_STATE_COLOUR_OPTIONS,
+        # The active entry's border, which a row-high entry has no room for,
+        # and its relief: sunken is drawn dim. TkCurses-gm66.5.
+        "activeborderwidth": 1,
+        "activerelief": "raised",
         # The tick or bullet of a chosen check or radio entry. "" here, Tk's
         # #000000: drawn as the label is. TkCurses-gm66.4.
         "selectcolor": "",
@@ -13106,6 +13262,7 @@ class Menu(_Drawable):
             style = attribute
             if number == self._active:
                 style = self._in_state(style, "active")
+                style |= _part_relief(self._options["activerelief"])
             if str(entry.options.get("state")) == "disabled":
                 style = self._in_state(style, "disabled")
             self._write_line(
@@ -13146,6 +13303,7 @@ class Menu(_Drawable):
                 style = self._in_state(style, "disabled")
             if number == self._active:
                 style = self._in_state(style, "active")
+                style |= _part_relief(self._options["activerelief"])
             if entry.kind == "separator":
                 self._write_line(
                     dispatcher,
@@ -14404,6 +14562,11 @@ class Scrollbar(_Drawable):
         # _part_attribute. TkCurses-gm66.4.
         "activebackground": "",
         "troughcolor": "",
+        # The active element's relief, which a press sinks, and the width of
+        # the arrows' and slider's borders - "" for borderwidth's. A part is
+        # one cell, with no edge to draw one on. TkCurses-gm66.5.
+        "activerelief": "raised",
+        "elementborderwidth": "",
         "command": None,
         "orient": "vertical",
         "relief": "sunken",
@@ -14437,6 +14600,7 @@ class Scrollbar(_Drawable):
         self._first = 0.0
         self._last = 1.0
         self._drag_from: tuple[int, int] | None = None
+        self._active_relief: str | None = None
         self._drag_origin = 0.0
         #: The element :meth:`activate` named, or "" for none.
         self._active_element = ""
@@ -14516,9 +14680,10 @@ class Scrollbar(_Drawable):
         raising, and asking with none active answers None.
 
         The active element is drawn on ``activebackground``, when a program
-        gives one (TkCurses-gm66.4); ``activerelief`` is not taken. Tk's
-        ``scrlbar.tcl`` also activates the element under the pointer on
-        ``<Enter>`` and ``<Motion>``, which is not bound here.
+        gives one (TkCurses-gm66.4), and dim while ``activerelief`` is sunken,
+        which a press makes it (TkCurses-gm66.5). Tk's ``scrlbar.tcl`` also
+        activates the element under the pointer on ``<Enter>`` and
+        ``<Motion>``, which is not bound here.
 
         Args:
             index: The element to make active. Omitted, nothing changes.
@@ -14529,6 +14694,7 @@ class Scrollbar(_Drawable):
         if index is None:
             return self._active_element or None
         self._active_element = index if index in ("arrow1", "slider", "arrow2") else ""
+        self._redraw()
         return None
 
     def fraction(self, x: int, y: int) -> float:
@@ -14676,7 +14842,8 @@ class Scrollbar(_Drawable):
         if part == "trough":
             return self._coloured(attribute, "", self._options["troughcolor"])
         if part == self._active_element:
-            return self._coloured(attribute, "", self._options["activebackground"])
+            attribute = self._coloured(attribute, "", self._options["activebackground"])
+            return attribute | _part_relief(self._options["activerelief"])
         return attribute
 
 
@@ -14690,6 +14857,10 @@ def _scrollbar_press(event: Event) -> None:
     calls the command not at all.
     """
     bar = event.widget
+    if not _is_ttk(bar):
+        # tk::ScrollButtonDown: the active element sinks until the release.
+        bar._active_relief = str(bar.cget("activerelief"))
+        bar.configure(activerelief=SUNKEN)
     command = bar._options["command"]
     if command is None:
         return
@@ -14726,8 +14897,16 @@ def _scrollbar_drag(event: Event) -> None:
 
 
 def _scrollbar_release(event: Event) -> None:
-    """Forget the drag. Tk scrolls nothing further here unless -jump is set."""
-    event.widget._drag_from = None
+    """Forget the drag. Tk scrolls nothing further here unless -jump is set.
+
+    The relief the press sank goes back, as ``tk::ScrollButtonUp`` puts it.
+    """
+    bar = event.widget
+    bar._drag_from = None
+    relief = bar._active_relief
+    if relief is not None:
+        bar._active_relief = None
+        bar.configure(activerelief=relief)
 
 
 class Scale(_Drawable):
@@ -14780,6 +14959,11 @@ class Scale(_Drawable):
         "orient": "vertical",
         "resolution": 1.0,
         "showvalue": True,
+        # The handle's length in cells, along the trough, and its relief,
+        # which the press sinks while it is dragged. Tk's length is 30
+        # pixels; one cell is the handle as it was. TkCurses-gm66.5.
+        "sliderlength": 1,
+        "sliderrelief": "raised",
         "state": "normal",
         "takefocus": True,
         "tickinterval": 0,
@@ -14807,6 +14991,7 @@ class Scale(_Drawable):
                 ``state``, and the standard options.
         """
         self._dragging = False
+        self._slider_relief: str | None = None
         self._syncing = False
         self._variable_trace: tuple[Variable, str] | None = None
         super().__init__(master, cnf, name=name, **kw)
@@ -15053,25 +15238,51 @@ class Scale(_Drawable):
             return (area.x + across, area.y + self._head_rows() + 1)
         return (area.x + 1, area.y + self._head_rows())
 
+    def _slider_cells(self) -> int:
+        """How many cells the handle covers: ``sliderlength``, within the trough.
+
+        Never less than one, which Tk also keeps a negative length from going
+        below, and never more than the trough has.
+        """
+        length = _as_int(self._options["sliderlength"], 1)
+        return max(1, min(length, self._trough_span()))
+
+    def _slider_lead(self) -> int:
+        """Cells of handle before its middle one, the cell a value is at."""
+        return (self._slider_cells() - 1) // 2
+
+    def _positions(self) -> int:
+        """How many places the handle can stand: the trough less its length.
+
+        Tk's arithmetic, in cells: the slider's middle travels the trough's
+        length less the slider's, so a long handle still reaches both ends.
+        """
+        return max(1, self._trough_span() - self._slider_cells() + 1)
+
     def _offset_for(self, value: float) -> int:
-        """Which trough cell a value falls on."""
-        span = self._trough_span()
-        if span <= 1:
-            return 0
+        """Which trough cell a value falls on: the handle's middle cell there."""
+        positions = self._positions()
         low, high = self._range()
-        if high == low:
-            return 0
+        if positions <= 1 or high == low:
+            return self._slider_lead()
         fraction = (value - low) / (high - low)
-        return min(max(round(fraction * (span - 1)), 0), span - 1)
+        start = min(max(round(fraction * (positions - 1)), 0), positions - 1)
+        return start + self._slider_lead()
 
     def _value_at(self, offset: int) -> float:
-        """The value a trough cell stands for."""
-        span = self._trough_span()
+        """The value whose handle has its middle at a trough cell."""
+        positions = self._positions()
         low, high = self._range()
-        if span <= 1:
+        if positions <= 1:
             return self._snap(low)
-        fraction = min(max(offset, 0), span - 1) / (span - 1)
+        start = offset - self._slider_lead()
+        fraction = min(max(start, 0), positions - 1) / (positions - 1)
         return self._snap(low + fraction * (high - low))
+
+    def _on_slider(self, offset: int) -> bool:
+        """True if a trough cell is one the handle covers."""
+        start = self._offset_for(self._value) - self._slider_lead()
+        return start <= offset < start + self._slider_cells()
 
     def coords(self, value: float | None = None) -> tuple[int, int]:
         """Where the handle for a value sits, relative to this widget.
@@ -15102,10 +15313,9 @@ class Scale(_Drawable):
         offset = (y - origin_y) if self._vertical else (x - origin_x)
         if not 0 <= offset < self._trough_span():
             return ""
-        handle = self._offset_for(self._value)
-        if offset == handle:
+        if self._on_slider(offset):
             return "slider"
-        return "trough1" if offset < handle else "trough2"
+        return "trough1" if offset < self._offset_for(self._value) else "trough2"
 
     # -------------------------------------------------------------- painting
 
@@ -15181,13 +15391,13 @@ class Scale(_Drawable):
         if span <= 0:
             return
         origin_x, origin_y = self._trough_origin()
-        handle = self._offset_for(self._value)
         empty = self._coloured(attribute, "", self._options["troughcolor"])
         held = attribute
         if self._active_handle() and self._handle_coloured():
             held = self._coloured(attribute, "", self._options["activebackground"])
+        held |= _part_relief(self._options["sliderrelief"])
         cells = [
-            (self._SLIDER, held) if offset == handle else (self._TROUGH, empty)
+            (self._SLIDER, held) if self._on_slider(offset) else (self._TROUGH, empty)
             for offset in range(span)
         ]
         focused = self.focus_get() is self
@@ -15302,7 +15512,21 @@ def _scale_press(event: Event) -> None:
     if scale._disabled:
         return
     scale._dragging = True
+    _scale_sink(scale)
     _scale_move_to(scale, event)
+
+
+def _scale_sink(scale: Scale) -> None:
+    """Sink the handle while it is held, as Tk's ``tk::ScaleButtonDown`` does:
+    raised becomes sunken and ridge groove, the rest stay as they are. Here
+    every press drags, since one jumps the handle to where it landed."""
+    if _is_ttk(scale):
+        return
+    relief = str(scale.cget("sliderrelief"))
+    scale._slider_relief = relief
+    held = {RAISED: SUNKEN, RIDGE: GROOVE}.get(relief)
+    if held is not None:
+        scale.configure(sliderrelief=held)
 
 
 def _scale_motion(event: Event) -> None:
@@ -15313,8 +15537,14 @@ def _scale_motion(event: Event) -> None:
 
 
 def _scale_release(event: Event) -> None:
-    """Stop dragging, wherever the pointer ended up."""
-    event.widget._dragging = False
+    """Stop dragging, wherever the pointer ended up, and put the relief back
+    as ``tk::ScaleEndDrag`` does."""
+    scale = event.widget
+    scale._dragging = False
+    relief = scale._slider_relief
+    if relief is not None:
+        scale._slider_relief = None
+        scale.configure(sliderrelief=relief)
 
 
 def _scale_move_to(scale: Scale, event: Event) -> None:

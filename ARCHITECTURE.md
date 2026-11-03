@@ -3950,14 +3950,73 @@ stands in for the other.
 **Active is what Tk would have made active, so far as a terminal sees it.** A
 button held down is active: Tk only presses an active button, the pointer
 being over it, and `tk::ButtonInvoke` sets `active` for its flash when Space
-presses one. Tk's `<Enter>` and `<Motion>` activation is not bound here, so
-hovering activates nothing; a program's `state="active"` and a Scrollbar's
+presses one. Nothing here reports the pointer crossing a widget, so hovering
+activates nothing - the buttons' `<Enter>` binding (gm66.5, below) is reached
+only by `event_generate`, `TkCurses-70gx` - and a program's `state="active"` and a Scrollbar's
 `activate()` are honoured as given.
 
 As everywhere here, `""` is accepted for each, where Tk refuses it for
 `activebackground`, `troughcolor`, `buttonbackground` and, on a Menu, for
 `activeforeground` and `selectcolor`. A menu *entry's* own colours are a
 separate surface, still refused: `TkCurses-g373`.
+
+**Tk's extra reliefs are taken; a whole widget's is a box, a part's shows only
+when sunken** (`TkCurses-gm66.5`). Fourteen options on seven widgets. A relief
+here is a box style (`style_for_relief`), and a box costs a cell on every
+side, so only a whole widget can wear one. A slider, an arrow, a scrollbar
+element or a menu entry is one cell deep, with no edge to draw a relief on.
+Those show the one relief Tk's own bindings put on a part while it is held,
+`sunken`, dim, as a sunken border is (`_part_relief`); any other relief draws
+the part as it was.
+
+| Option | Here |
+|--------|------|
+| `overrelief` (Button, Checkbutton, Radiobutton) | copied into `relief` by `<Enter>` and back by `<Leave>`, as `tk::ButtonEnter` / `tk::ButtonLeave` do on X11, along with `state` `active` / `normal`; the box changes with it |
+| `offrelief` (Checkbutton, Radiobutton) | with `indicatoron` off, the box while off; `sunken` while on (`TkpDisplayButton`) |
+| `sliderlength` (Scale) | the handle's length in cells |
+| `sliderrelief` (Scale) | the handle, dim while sunken; a press sinks it, `raised` to `sunken` and `ridge` to `groove` (`tk::ScaleButtonDown`), and the release restores it |
+| `activerelief` (Scrollbar) | the active element, dim while sunken; a press sinks it and the release restores it (`tk::ScrollButtonDown` / `ScrollButtonUp`) |
+| `buttonuprelief`, `buttondownrelief` (Spinbox) | each arrow, dim while sunken |
+| `activerelief` (Menu) | the active entry, dim while sunken |
+| `activeborderwidth` (Menu), `elementborderwidth` (Scrollbar) | stored only: an entry or an element is one row |
+| `buttoncursor` (Spinbox) | stored only, as `cursor` is: a terminal has no pointer shapes |
+
+Measured on Tk 9.0.2, where the manual is silent:
+
+| What | Tk 9.0.2 | Here |
+|------|----------|------|
+| A relief's spelling | a unique prefix (`fl`, `gr`), case-sensitive, no spaces: `bad relief "RAISED"`, `ambiguous relief "s"` | the same, and the same messages |
+| `""` for a relief | refused as `ambiguous`, except `overrelief`, whose `""` means none and whose message adds `or ""` | the same |
+| `sliderlength -5`, `activeborderwidth -2` | kept, read back negative | the same; drawn as one cell |
+| `elementborderwidth` | default `""`; any negative reads back `""` | the same |
+| `sliderlength` default | 30 pixels, against a `length` of 100 | 1 cell, the handle as it was, against a `length` of 20 |
+| `offrelief` default; Checkbutton `relief` and `borderwidth` | `raised`; `flat` and 1 | `raised`; `flat` and 0 |
+
+**The relief Tk draws on an indicatorless button is not its `relief`.**
+`TkpDisplayButton` (`unix/tkUnixButton.c`) draws one that is on sunken, and
+one that is off in `offrelief` - unless `relief` equals `overrelief`, which is
+how it knows the pointer is over it, since the `<Enter>` binding copied one
+into the other. The manual describes the result (a toolbar button: flat,
+raised under the pointer, sunken while on) and not the comparison. Here that
+decides the box's *style* only: whether there is a box at all is still
+`relief` and `borderwidth`, so turning a button on or off never changes its
+size. Tk's default border of 1 is 0 here, so the box appears only when a
+program gives one.
+
+**A long handle travels the trough less its own length.** Its middle cell is
+where the value is - what `coords` reports and where ticks and the shown value
+go - and both ends of the scale are reached with the handle still whole. A
+handle longer than the trough is cut to it; one below 1 is 1. With more
+places than values, or fewer, a drag sets the value nearest its place, as it
+always has.
+
+**What is not done.** Tk sinks a Button's `relief` while it is held
+(`tk::ButtonDown`); a press here is drawn by its ▌ ▐ markers, so a held button
+keeps its relief, and `<Enter>` while held does not sink it either. Tk's
+`tk::CheckEnter` also blends `selectcolor` with `activebackground` under the
+pointer; that is not done. And nothing reports the pointer entering or leaving
+a widget yet, so `overrelief` is reached by `event_generate("<Enter>")` (`TkCurses-70gx`). The
+ttk widgets built on these keep ttk's bindings, which have no overrelief.
 
 **Validation gates `insert` and `delete`, not only keystrokes.** `-validate`
 is a condition, and the two that name an edit - `key` and `all` - apply to a
