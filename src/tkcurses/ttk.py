@@ -592,6 +592,11 @@ class Widget:
     #: themed MRO. TkCurses-oe5.
     _option_synonyms: ClassVar[dict[str, str]] = {}
 
+    #: ttk keeps ``-class`` read-only its own way, below, and a themed widget
+    #: has no window-system options to fix: the classic widgets' rule,
+    #: TkCurses-gm66.7, does not reach one.
+    _creation_only: ClassVar[frozenset[str]] = frozenset()
+
     def winfo_class(self) -> str:
         """The themed class name - ``TButton``, not ``Button``.
 

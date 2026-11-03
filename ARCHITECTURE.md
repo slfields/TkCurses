@@ -3538,6 +3538,31 @@ Container widget.
 | `padx` | pixels | Cells |
 | `pady` | pixels | Cells |
 
+**The window-system options are kept, and the ones Tk fixes stay fixed**
+(`TkCurses-gm66.7`). Frame, LabelFrame, Toplevel and the root take `class`,
+`colormap`, `container` and `visual`; Toplevel and the root also take `screen`
+and `use`; Frame, Toplevel and the root take `tile`; Listbox and Text take
+`setgrid`. Each is about an X window and changes nothing in a terminal. Each
+is checked as Tk 9.0.2 checks it, kept and read back:
+
+| Option | Tk 9.0.2, measured | Here |
+|--------|--------------------|------|
+| `class` | names the class for bindings and the option database; `cget` answers it; a LabelFrame's is `Labelframe` | the same. `class_=` and `{"class": ...}` both name it, the keyword winning, and a subclass still answers its own name |
+| `visual` | a class or a unique prefix (`tru`, `b`; `gray` and `grey` count as one), or a window, then an optional depth; `TrueColor`, `s`, a leading space and `default 24` are `unknown or ambiguous`, `truecolor x` wants an integer | the same checks and messages. Tk then asks the display, and fails with `couldn't find an appropriate visual` if it has none; there is no display here to ask |
+| `colormap` | `""`, `new`, or an existing window; `NEW` is `bad window path name` | the same |
+| `use` | a window id to embed in; one that does not exist is `couldn't create child of window` | only `""`: a terminal has no window to embed in |
+| `screen` | a display; one that cannot be reached is `couldn't connect to display` | kept as given: there is one terminal |
+| `container`, `tile`, `setgrid` | booleans | kept. A terminal is already gridded in characters, so `setgrid` has nothing to change |
+| the root's `width`, `height` | a screen distance, -5 reading back 0 | kept: the root is the terminal, whose size is the person's |
+
+**Six cannot change after creation**: `class`, `colormap`, `container`,
+`visual`, and on Toplevel and the root `screen` and `use`. Measured,
+`configure` refuses each, even with the value it already has: `can't modify
+-class option after widget is created`. That is enforced here, through each
+class's `_creation_only`. ttk widgets are outside it: ttk's `-class` is `""`
+by default and refuses only a *different* value, with `attempt to change
+read-only option`.
+
 ---
 
 ### LabelFrame Class

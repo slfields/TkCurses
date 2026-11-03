@@ -70,19 +70,16 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
     },
     "Entry": {},
     "Frame": {
-        "TkCurses-gm66.7": "class colormap container tile visual",
         "TkCurses-yi4": "backgroundimage bgimg",
     },
     "Label": {
         "TkCurses-l26": "bitmap",
     },
     "LabelFrame": {
-        "TkCurses-gm66.7": "class colormap container visual",
         "TkCurses-gm66.10": "labelwidget",
     },
     "Listbox": {
         "TkCurses-9e8": "exportselection",
-        "TkCurses-gm66.7": "setgrid",
         "TkCurses-gm66.10": "justify listvariable",
     },
     "Menu": {
@@ -104,15 +101,12 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
     "Scrollbar": {},
     "Spinbox": {},
     "Text": {
-        "TkCurses-gm66.7": "setgrid",
         "TkCurses-gm66.13": "endline startline",
     },
     "Tk": {
-        "TkCurses-gm66.7": "class colormap container height screen tile use visual width",
         "TkCurses-yi4": "backgroundimage bgimg",
     },
     "Toplevel": {
-        "TkCurses-gm66.7": "class colormap container screen tile use visual",
         "TkCurses-yi4": "backgroundimage bgimg",
     },
 }

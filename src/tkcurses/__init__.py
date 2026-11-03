@@ -722,6 +722,104 @@ def _distance_or_empty(widget: Any, value: Any) -> Any:
         raise TclError(f'expected screen distance or "" but got "{value}"') from None
 
 
+#: The visual classes Tk names, in the order its message lists them.
+_VISUALS = (
+    "best",
+    "directcolor",
+    "grayscale",
+    "greyscale",
+    "pseudocolor",
+    "staticcolor",
+    "staticgray",
+    "staticgrey",
+    "truecolor",
+    "default",
+)
+
+
+def _visual(widget: Any, value: Any) -> Any:
+    """A ``-visual``: a class or a unique prefix of one, or a window, with an
+    optional depth after one space. Checked and kept: there is no visual to
+    choose here, so it changes nothing.
+
+    Measured on Tk 9.0.2: ``truecolor 24``, ``tru``, ``b``, ``best -1`` and
+    ``.`` are taken as given; ``s`` and ``d`` are ambiguous, but ``staticg``
+    is not, ``gray`` and ``grey`` being one class; ``TrueColor``, a leading
+    space and ``default 24`` are refused, and ``truecolor x`` wants an
+    integer. Tk then asks the display for the visual, and fails with
+    ``couldn't find an appropriate visual`` when it has none; a terminal has
+    no visuals to ask.
+    """
+    text = str(value)
+    if not text or text.startswith("."):
+        return value
+    name, _, depth = text.partition(" ")
+    classes = {
+        visual.replace("grey", "gray") for visual in _VISUALS if visual.startswith(name)
+    }
+    if len(classes) != 1 or (depth and "default" in classes):
+        listed = ", ".join(_VISUALS[:-1])
+        raise TclError(
+            f'unknown or ambiguous visual name "{text}": class must be '
+            f"{listed}, or {_VISUALS[-1]}"
+        )
+    if depth:
+        _tcl_integer(widget, depth)
+    return value
+
+
+def _colormap(widget: Any, value: Any) -> Any:
+    """A ``-colormap``: ``""``, ``new``, or a window to share one with.
+    Measured: ``NEW`` is taken for a path and refused as one."""
+    text = str(value)
+    if text in ("", "new"):
+        return value
+    try:
+        widget.nametowidget(text)
+    except (KeyError, TclError):
+        raise TclError(f'bad window path name "{text}"') from None
+    return value
+
+
+def _use(widget: Any, value: Any) -> Any:
+    """A ``-use``: the window to embed in, which a terminal never has. Only
+    ``""`` is taken; anything else fails as Tk fails on a window that does
+    not exist."""
+    del widget
+    if str(value):
+        raise TclError(f'couldn\'t create child of window "{value}"')
+    return value
+
+
+def _class_from(
+    class_: str | None, cnf: dict[str, Any] | None, kw: dict[str, Any]
+) -> tuple[str | None, dict[str, Any] | None, dict[str, Any]]:
+    """Take ``-class`` out of the options, however it was spelt.
+
+    ``class_=`` is the keyword; ``{"class": ...}`` in ``cnf`` or ``**kw`` is
+    how the option itself arrives, and is what tkinter's own Frame looks for
+    too. Either way it names the class, rather than being an option to store
+    as given.
+    """
+    kw = dict(kw)
+    named = kw.pop("class", None)
+    if cnf is not None and "class" in cnf:
+        cnf = dict(cnf)
+        named = cnf.pop("class") if named is None else named
+    return (class_ if class_ is not None else named), cnf, kw
+
+
+#: The window-system options a Frame, a LabelFrame, a Toplevel and the root
+#: all take, with Tk's defaults. None has a meaning in a terminal: they are
+#: checked as Tk checks them, kept, and answered. TkCurses-gm66.7.
+_WINDOW_SYSTEM_OPTIONS: dict[str, Any] = {
+    "class": "",
+    "colormap": "",
+    "container": 0,
+    "visual": "",
+}
+
+
 def _tcl_boolean(widget: Any, value: Any) -> int:
     """A boolean option, answered as Tk answers it: ``yes`` reads back 1."""
     try:
@@ -816,6 +914,8 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "buttonbackground": _colour_or_terminals,
     "buttondownrelief": _relief,
     "buttonuprelief": _relief,
+    "colormap": _colormap,
+    "container": _tcl_boolean,
     "disabledbackground": _colour_or_terminals,
     "disabledforeground": _colour_or_terminals,
     "elementborderwidth": _element_borderwidth,
@@ -846,12 +946,16 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "selectborderwidth": _screen_distance,
     "selectcolor": _colour_or_terminals,
     "selectforeground": _colour_or_terminals,
+    "setgrid": _tcl_boolean,
     "sliderlength": _signed_distance,
     "spacing1": _screen_distance,
     "spacing2": _screen_distance,
     "spacing3": _screen_distance,
     "sliderrelief": _relief,
+    "tile": _tcl_boolean,
     "troughcolor": _colour_or_terminals,
+    "use": _use,
+    "visual": _visual,
 }
 
 
@@ -2630,6 +2734,15 @@ class BaseWidget(Misc):
     #: declaration wins, so ttk's mixin empties it. TkCurses-oe5.
     _option_synonyms: ClassVar[dict[str, str]] = _OPTION_ALIASES
 
+    #: Options Tk takes only when the widget is made. Measured on Tk 9.0.2,
+    #: ``configure`` refuses each afterwards, even with the value it already
+    #: has: ``can't modify -class option after widget is created``. The
+    #: window-system ones among them - colormap, visual, container, screen,
+    #: use - are fixed when the X window is, and ``-class`` is what the
+    #: bindings and the option database were resolved against.
+    #: TkCurses-gm66.7.
+    _creation_only: ClassVar[frozenset[str]] = frozenset()
+
     #: Options every widget accepts. The set is deliberately smaller than
     #: tkinter's: X11 options with no cell equivalent (screen distances in
     #: pixels) are left out rather than accepted and ignored, so that setting
@@ -2865,7 +2978,11 @@ class BaseWidget(Misc):
         given = _given(cnf, kw)
         if not given:
             return dict(self._options)
-        self._options.update(self._checked(given))
+        checked = self._checked(given)
+        for option in checked:
+            if option in self._creation_only:
+                raise TclError(f"can't modify -{option} option after widget is created")
+        self._options.update(checked)
         if "takefocus" in given:
             self._takefocus = bool(self._options["takefocus"])
             self._takefocus_given = True
@@ -4493,7 +4610,21 @@ class Tk(BaseWidget, Wm):
     #: is window manager business.
     #: The menubar this window shows, if any. Declared here as well as on
     #: Toplevel because a menubar on the root window is the common case.
-    _widget_options: ClassVar[dict[str, Any]] = {"menu": None}
+    #:
+    #: The window-system options are taken, checked and kept, as on a
+    #: Toplevel. ``width`` and ``height`` are kept and change nothing: the
+    #: root is the terminal, whose size is the person's to set. TkCurses-gm66.7.
+    _widget_options: ClassVar[dict[str, Any]] = {
+        **_WINDOW_SYSTEM_OPTIONS,
+        "height": 0,
+        "menu": None,
+        "screen": "",
+        "tile": 0,
+        "use": "",
+        "width": 0,
+    }
+
+    _creation_only = frozenset({*_WINDOW_SYSTEM_OPTIONS, "screen", "use"})
 
     def __init__(
         self,
@@ -4530,6 +4661,7 @@ class Tk(BaseWidget, Wm):
         self._setup_wm()
         self.className = className
         self._options = dict(self._option_spec())
+        self._options["class"] = className
         self._takefocus = True
         self._takefocus_given = False
 
@@ -4550,6 +4682,15 @@ class Tk(BaseWidget, Wm):
         _active_root = self
         if _default_root is None and _support_default_root:
             _default_root = self
+
+    def _checked(self, given: dict[str, Any]) -> dict[str, Any]:
+        """The shared checks, and Tk's for the root's ``width`` and
+        ``height``: measured, -5 reads back 0 and "x" is refused."""
+        resolved = super()._checked(given)
+        for option in ("width", "height"):
+            if option in resolved:
+                resolved[option] = _screen_distance(self, resolved[option])
+        return resolved
 
     # ------------------------------------------------------------- startup
 
@@ -5246,11 +5387,17 @@ class Toplevel(BaseWidget, Wm):
     #: rather than tkinter's 0: there is no window manager to draw a frame,
     #: so without one a toplevel is indistinguishable from what is behind it.
     _widget_options: ClassVar[dict[str, Any]] = {
+        **_WINDOW_SYSTEM_OPTIONS,
         "borderwidth": 1,
         "height": 0,
         "menu": None,
+        "screen": "",
+        "tile": 0,
+        "use": "",
         "width": 0,
     }
+
+    _creation_only = frozenset({*_WINDOW_SYSTEM_OPTIONS, "screen", "use"})
 
     def __init__(
         self,
@@ -5271,9 +5418,11 @@ class Toplevel(BaseWidget, Wm):
                 bindings and option lookups are resolved against it.
             **kw: Options as keywords.
         """
+        class_, cnf, kw = _class_from(class_, cnf, kw)
         self._class_name = class_
         self._drag_origin: tuple[int, int, int, int] | None = None
         super().__init__(master, cnf, name=name, **kw)
+        self._options["class"] = self.winfo_class()
         self._setup_wm()
         self._allocate(self._default_rect())
         self._map()
@@ -5965,9 +6114,13 @@ class Frame(_Drawable):
 
     #: ``width`` and ``height`` are cells; zero means "ask the children".
     _widget_options: ClassVar[dict[str, Any]] = {
+        **_WINDOW_SYSTEM_OPTIONS,
         "height": 0,
+        "tile": 0,
         "width": 0,
     }
+
+    _creation_only = frozenset(_WINDOW_SYSTEM_OPTIONS)
 
     def __init__(
         self,
@@ -5987,8 +6140,11 @@ class Frame(_Drawable):
                 tkinter's ``class_`` does. Construction-time only.
             **kw: Options as keywords.
         """
+        class_, cnf, kw = _class_from(class_, cnf, kw)
         self._class_name = class_
         super().__init__(master, cnf, name=name, **kw)
+        if not _is_ttk(self):
+            self._options["class"] = self.winfo_class()
         self._apply_requested_size()
 
     def winfo_class(self) -> str:
@@ -9382,6 +9538,16 @@ class LabelFrame(Frame):
         self._follow_caption()
         self._apply_requested_size()
 
+    def winfo_class(self) -> str:
+        """``Labelframe``, as Tk spells the class, measured on Tk 9.0.2.
+
+        So ``option_add("*Labelframe.foreground", ...)`` reaches it. A
+        subclass answers its own name, as every subclass here does.
+        """
+        if self._class_name:
+            return self._class_name
+        return "Labelframe" if type(self) is LabelFrame else type(self).__name__
+
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, following a new variable if one was named."""
         given = _given(cnf, kw)
@@ -10014,6 +10180,8 @@ class Text(_Drawable, XView, YView):
         # these are rows. TkCurses-gm66.8.
         "maxundo": 0,
         "relief": "sunken",
+        # Kept: a terminal is already a grid of characters. TkCurses-gm66.7.
+        "setgrid": 0,
         "spacing1": 0,
         "spacing2": 0,
         "spacing3": 0,
@@ -13838,6 +14006,8 @@ class Listbox(_Drawable, XView, YView):
         "height": 10,
         "relief": "sunken",
         "selectmode": "browse",
+        # Kept: a terminal is already a grid of characters. TkCurses-gm66.7.
+        "setgrid": 0,
         "state": "normal",
         "takefocus": True,
         "width": 20,
