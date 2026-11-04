@@ -1647,16 +1647,24 @@ class Misc:
         """Run the bindings matching ``patterns`` over this widget's tags.
 
         A physical event also raises whatever virtual events it is registered
-        for, matching Tk: a widget with both ``<Control-v>`` and ``<<Paste>>``
-        bound runs both.
+        for, and within each tag they compete with its own bindings: one
+        runs, as in Tk 9.0.2 - with ``<Control-v>`` and ``<<Paste>>`` both
+        bound on one widget, only ``<Control-v>``; with ``<<Paste>>`` on the
+        class instead, both. This used to run both on one tag.
+        TkCurses-hkul.
         """
         if self._destroyed:
             return False
         all_patterns = list(patterns)
+        raised: dict[str, Any] = {}
         for pattern in patterns:
             if not pattern.is_virtual:
-                all_patterns.extend(self.tk.virtual_events.raised_by(pattern))
-        return self.tk.bindings.dispatch(self._binding_tags(), event, all_patterns)
+                for name, rank in self.tk.virtual_events.raised_ranks(pattern).items():
+                    raised[name] = rank
+                    all_patterns.append(EventPattern(type="Virtual", detail=name))
+        return self.tk.bindings.dispatch(
+            self._binding_tags(), event, all_patterns, raised
+        )
 
     # ==================================================================
     # Focus
@@ -14875,6 +14883,8 @@ class Listbox(_Drawable, XView, YView):
         **_SELECTION_OPTIONS,
         "disabledforeground": "",  # dimmed, as before; see _in_state
         "activestyle": "underline",
+        # The selected items go to PRIMARY. TkCurses-9e8.
+        "exportselection": 1,
         "font": "",
         "height": 10,
         # Each item aligned within the wider of the widest item and the window,
@@ -14945,7 +14955,11 @@ class Listbox(_Drawable, XView, YView):
             return
         self.tk.bound_classes.add(name)
         bind = self.bind_class
-        bind(name, "<Any-Key>", _listbox_key)
+        # Each sequence listbox.tcl binds, virtual events and all, so the
+        # matcher chooses between them as Tk's does: Control-Home is its own,
+        # Shift-Home falls to <<LineStart>>, Control-Up to <<PrevLine>>.
+        for sequence, action in _LISTBOX_KEYS.items():
+            bind(name, sequence, _listbox_key_binding(action))
         bind(name, "<Button-1>", _listbox_click)
         # Bound as listbox.tcl binds them, so bind_class lists what Tk's
         # does - not because <Button-1> would miss them: a modifier the
@@ -14958,12 +14972,6 @@ class Listbox(_Drawable, XView, YView):
         bind(name, "<Double-Button-1>", _listbox_ignore)
         bind(name, "<Motion>", _listbox_drag)
         bind(name, "<ButtonRelease-1>", _listbox_release)
-        bind(name, "<<SelectAll>>", _listbox_select_all)
-        bind(name, "<<Invoke>>", _listbox_invoke)
-        # No sequence of its own here: Tk's is Control-backslash, which a
-        # tty turns into SIGQUIT, and binding it would take the quit key from
-        # every program with a Listbox. A program may event_add one.
-        bind(name, "<<SelectNone>>", _listbox_select_none)
         bind(name, "<Button-4>", _listbox_wheel)
         bind(name, "<Button-5>", _listbox_wheel)
         bind(name, "<FocusIn>", _listbox_refresh)
@@ -14988,6 +14996,11 @@ class Listbox(_Drawable, XView, YView):
             self._invalidate_layout()
         if "listvariable" in given:
             self._follow_list_variable()
+        if "exportselection" in given and self._selection:
+            # Turning it on exports what is selected at once; turning it off
+            # keeps PRIMARY, which then reads as nothing. Measured on Tk
+            # 9.0.2 - unlike Entry, which gives PRIMARY up.
+            self._claim_primary()
         self._redraw()
         return result
 
@@ -15225,6 +15238,8 @@ class Listbox(_Drawable, XView, YView):
         if self._disabled:
             return
         self._selection |= set(self._index_range(first, last))
+        if self._selection:
+            self._claim_primary()
         self._redraw()
 
     select_set = selection_set
@@ -15281,6 +15296,37 @@ class Listbox(_Drawable, XView, YView):
             return
         self._active = max(0, min(max(0, len(self._items) - 1), self.index(index)))
         self._redraw()
+
+    # ------------------------------------------------------------ PRIMARY
+    #
+    # TkCurses-9e8, measured on Tk 9.0.2: selecting takes PRIMARY, and it
+    # reads as the selected items, one per line; clearing keeps it, and then
+    # it reads as nothing. Losing it to another widget clears the selection
+    # and sends <<ListboxSelect>> - with nothing selected, and while
+    # disabled, too. With exportselection off, nothing is taken, and a loss
+    # leaves the selection alone.
+
+    def _claim_primary(self) -> None:
+        """Take PRIMARY for the selection, if ``exportselection`` says so."""
+        if not self.getboolean(self._options["exportselection"]):
+            return
+        selections = self.tk.selections
+        selections.own(self, PRIMARY, lost=self._lost_primary)
+        selections.handle(self, self._primary_selection, PRIMARY)
+
+    def _lost_primary(self) -> None:
+        """Another widget took PRIMARY: clear, and say so."""
+        if not self.getboolean(self._options["exportselection"]):
+            return
+        self._selection.clear()
+        self._redraw()
+        self.event_generate("<<ListboxSelect>>")
+
+    def _primary_selection(self, *_args: Any) -> str:
+        """The selected items, one per line, for whoever reads PRIMARY."""
+        if not self._selection or not self.getboolean(self._options["exportselection"]):
+            raise TclError(f"{PRIMARY} selection doesn't exist or form unknown")
+        return "\n".join(self._items[i] for i in sorted(self._selection))
 
     def _fire_select(self) -> None:
         """``<<ListboxSelect>>``, once per gesture, as
@@ -15541,26 +15587,15 @@ class Listbox(_Drawable, XView, YView):
 # for themselves, and the view still scrolls.
 
 
-def _listbox_key(event: Event) -> None:
-    """The keys ``listbox.tcl`` binds, matched as Tk matches them.
+def _listbox_key_binding(action: Callable[[Listbox], None]) -> Callable[[Event], None]:
+    """A binding that runs ``action`` on the widget the event reached.
 
-    Each key has bindings under some modifiers, and the one used is the one
-    whose modifiers are all held and are the most: Control-Shift-Home has its
-    own, Shift-Home falls back to Home's, Control-Up to Up's - measured on
-    Tk 9.0.2.
-
-    Every key goes on to the toplevel's bindings and ``all``'s, handled or
-    not: listbox.tcl never breaks. This used to stop the keys it handled,
-    which took Escape from a dialog whose list had the focus once Escape
-    was bound here. TkCurses-cpk9.
+    None of them breaks: a key goes on to the toplevel's bindings and
+    ``all``'s, handled or not, as listbox.tcl's do. This used to stop the
+    keys it handled, which took Escape from a dialog whose list had the
+    focus once Escape was bound here. TkCurses-cpk9.
     """
-    bound = _LISTBOX_KEYS.get(event.keysym)
-    if bound is None:
-        return
-    held = event.state & (MOD_SHIFT | MOD_CTRL)
-    usable = [mods for mods in bound if mods & held == mods]
-    if usable:
-        bound[max(usable, key=lambda mods: bin(mods).count("1"))](event.widget)
+    return lambda event: action(event.widget)
 
 
 def _listbox_page(listbox: Listbox, amount: int) -> None:
@@ -15586,56 +15621,51 @@ def _listbox_xview(*args: Any) -> Callable[[Listbox], None]:
     return lambda listbox: listbox.xview(*args)
 
 
-#: keysym -> {modifiers held: what listbox.tcl binds there}. Tk binds most
-#: of these through virtual events - <<PrevLine>> for Up, <<LineStart>> for
-#: Home - which tk.tcl maps to these same keys on X11. Those events are not
-#: defined here, so a program cannot generate them or add a key to them:
-#: TkCurses-yu5l.
-_LISTBOX_KEYS: dict[str, dict[int, Callable[[Listbox], None]]] = {
-    "Up": {
-        0: lambda lb: _listbox_up_down(lb, -1),
-        MOD_SHIFT: lambda lb: _listbox_extend_up_down(lb, -1),
-    },
-    "Down": {
-        0: lambda lb: _listbox_up_down(lb, 1),
-        MOD_SHIFT: lambda lb: _listbox_extend_up_down(lb, 1),
-    },
-    "Left": {
-        0: _listbox_xview("scroll", -1, "units"),
-        MOD_CTRL: _listbox_xview("scroll", -1, "pages"),
-    },
-    "Right": {
-        0: _listbox_xview("scroll", 1, "units"),
-        MOD_CTRL: _listbox_xview("scroll", 1, "pages"),
-    },
-    "Prior": {
-        0: lambda lb: _listbox_page(lb, -1),
-        MOD_CTRL: _listbox_xview("scroll", -1, "pages"),
-    },
-    "Next": {
-        0: lambda lb: _listbox_page(lb, 1),
-        MOD_CTRL: _listbox_xview("scroll", 1, "pages"),
-    },
-    "Home": {
-        0: _listbox_xview("moveto", 0),
-        MOD_CTRL: lambda lb: _listbox_select_edge(lb, 0),
-        MOD_CTRL | MOD_SHIFT: lambda lb: _listbox_data_extend(lb, 0),
-    },
-    "End": {
-        0: _listbox_xview("moveto", 1),
-        MOD_CTRL: lambda lb: _listbox_select_edge(lb, max(0, lb.size() - 1)),
-        MOD_CTRL | MOD_SHIFT: lambda lb: _listbox_data_extend(lb, lb.size()),
-    },
-    "space": {
-        0: lambda lb: _listbox_begin_select(lb, lb._active),
-        MOD_CTRL | MOD_SHIFT: lambda lb: _listbox_begin_extend(lb, lb._active),
-    },
-    "Select": {
-        0: lambda lb: _listbox_begin_select(lb, lb._active),
-        MOD_SHIFT: lambda lb: _listbox_begin_extend(lb, lb._active),
-    },
-    "Escape": {0: lambda lb: _listbox_cancel(lb)},
+#: Sequence -> what listbox.tcl binds to it, in its order. Most are virtual
+#: events, which tk.tcl maps to the arrows, Home and End on X11; a program
+#: can event_add another key to one and the list follows. TkCurses-yu5l.
+_LISTBOX_KEYS: dict[str, Callable[[Listbox], None]] = {
+    "<<PrevLine>>": lambda lb: _listbox_up_down(lb, -1),
+    "<<SelectPrevLine>>": lambda lb: _listbox_extend_up_down(lb, -1),
+    "<<NextLine>>": lambda lb: _listbox_up_down(lb, 1),
+    "<<SelectNextLine>>": lambda lb: _listbox_extend_up_down(lb, 1),
+    "<<PrevChar>>": _listbox_xview("scroll", -1, "units"),
+    "<<PrevWord>>": _listbox_xview("scroll", -1, "pages"),
+    "<<NextChar>>": _listbox_xview("scroll", 1, "units"),
+    "<<NextWord>>": _listbox_xview("scroll", 1, "pages"),
+    "<Key-Prior>": lambda lb: _listbox_page(lb, -1),
+    "<Key-Next>": lambda lb: _listbox_page(lb, 1),
+    "<Control-Key-Prior>": _listbox_xview("scroll", -1, "pages"),
+    "<Control-Key-Next>": _listbox_xview("scroll", 1, "pages"),
+    "<<LineStart>>": _listbox_xview("moveto", 0),
+    "<<LineEnd>>": _listbox_xview("moveto", 1),
+    "<Control-Key-Home>": lambda lb: _listbox_select_edge(lb, 0),
+    "<Control-Shift-Key-Home>": lambda lb: _listbox_data_extend(lb, 0),
+    "<Control-Key-End>": lambda lb: _listbox_select_edge(lb, max(0, lb.size() - 1)),
+    "<Control-Shift-Key-End>": lambda lb: _listbox_data_extend(lb, lb.size()),
+    "<<Copy>>": lambda lb: _listbox_copy(lb),
+    "<Key-space>": lambda lb: _listbox_begin_select(lb, lb._active),
+    "<<Invoke>>": lambda lb: _listbox_begin_select(lb, lb._active),
+    "<Key-Select>": lambda lb: _listbox_begin_select(lb, lb._active),
+    "<Control-Shift-Key-space>": lambda lb: _listbox_begin_extend(lb, lb._active),
+    "<Shift-Key-Select>": lambda lb: _listbox_begin_extend(lb, lb._active),
+    "<Key-Escape>": lambda lb: _listbox_cancel(lb),
+    "<<SelectAll>>": lambda lb: _listbox_select_all(lb),
+    # No sequence of its own here: Tk's is Control-backslash, which a tty
+    # turns into SIGQUIT, and binding it would take the quit key from every
+    # program with a Listbox. A program may event_add one.
+    "<<SelectNone>>": lambda lb: _listbox_select_none(lb),
 }
+
+
+def _listbox_copy(listbox: Listbox) -> None:
+    """listbox.tcl's ``<<Copy>>``: the exported selection to the clipboard,
+    if this list owns PRIMARY. Reading it raises, as Tk's binding does, when
+    the list owns it with nothing selected."""
+    if listbox.tk.selections.owner(PRIMARY) is listbox:
+        text = listbox.selection_get()
+        listbox.clipboard_clear()
+        listbox.clipboard_append(text)
 
 
 def _listbox_click(event: Event) -> None:
@@ -15866,10 +15896,9 @@ def _listbox_cancel(listbox: Listbox) -> None:
     listbox._fire_select()
 
 
-def _listbox_select_all(event: Event) -> None:
+def _listbox_select_all(listbox: Listbox) -> None:
     """``tk::ListboxSelectAll``: everything, or in single and browse mode
     the active item alone."""
-    listbox = event.widget
     if str(listbox._options["selectmode"]) in ("single", "browse"):
         listbox.selection_clear(0, "end")
         listbox.selection_set(listbox._active)
@@ -15878,15 +15907,8 @@ def _listbox_select_all(event: Event) -> None:
     listbox._fire_select()
 
 
-def _listbox_invoke(event: Event) -> None:
-    """listbox.tcl's ``<<Invoke>>``: as space, ``tk::ListboxBeginSelect``
-    on the active item."""
-    _listbox_begin_select(event.widget, event.widget._active)
-
-
-def _listbox_select_none(event: Event) -> None:
+def _listbox_select_none(listbox: Listbox) -> None:
     """listbox.tcl's ``<<SelectNone>>``: clear, except in browse mode."""
-    listbox = event.widget
     if str(listbox._options["selectmode"]) != "browse":
         listbox.selection_clear(0, "end")
         listbox._fire_select()

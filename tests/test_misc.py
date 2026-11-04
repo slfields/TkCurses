@@ -270,13 +270,86 @@ def test_a_virtual_event_can_be_generated_directly(root):
     assert calls == ["pasted"]
 
 
-def test_both_the_physical_and_the_virtual_binding_fire(root):
+def test_on_one_tag_the_physical_binding_beats_the_virtual_one(root):
+    """Measured on Tk 9.0.2: one binding per tag, and a tie goes to the
+    physical one. This used to run both. TkCurses-hkul."""
     calls = []
     root.event_add("<<Paste>>", "<Control-v>")
     root.bind("<Control-v>", lambda event: calls.append("physical"))
     root.bind("<<Paste>>", lambda event: calls.append("virtual"))
     root.event_generate("<Control-v>")
-    assert sorted(calls) == ["physical", "virtual"]
+    assert calls == ["physical"]
+
+
+@pytest.mark.parametrize(
+    ("bound", "key", "expected"),
+    [
+        (["<Key>", "<<PrevLine>>"], "<Key-Up>", ["<<PrevLine>>"]),
+        (
+            ["<<PrevLine>>", "<<SelectPrevLine>>"],
+            "<Shift-Key-Up>",
+            ["<<SelectPrevLine>>"],
+        ),
+        (["<<PrevLine>>"], "<Shift-Key-Up>", ["<<PrevLine>>"]),
+        (["<<PrevLine>>", "<<PrevPara>>"], "<Control-Key-Up>", ["<<PrevPara>>"]),
+        (["<Up>", "<<SelectPrevLine>>"], "<Shift-Key-Up>", ["<<SelectPrevLine>>"]),
+        (["<Shift-Up>", "<<PrevLine>>"], "<Shift-Key-Up>", ["<Shift-Up>"]),
+    ],
+)
+def test_a_virtual_binding_ranks_as_the_key_that_raised_it(root, bound, key, expected):
+    """Each measured on one Frame in Tk 9.0.2."""
+    root.event_add("<<PrevLine>>", "<Up>")
+    root.event_add("<<SelectPrevLine>>", "<Shift-Up>")
+    root.event_add("<<PrevPara>>", "<Control-Up>")
+    calls = []
+    for sequence in bound:
+        root.bind(sequence, lambda event, s=sequence: calls.append(s))
+    root.event_generate(key)
+    assert calls == expected
+
+
+def test_a_tie_with_the_first_defined_virtual_still_goes_to_the_physical(root):
+    """<<Copy>> is defined first, so the order cannot be what decides."""
+    calls = []
+    root.bind("<Control-Key-Insert>", lambda event: calls.append("physical"))
+    root.bind("<<Copy>>", lambda event: calls.append("virtual"))
+    root.event_generate("<Control-Key-Insert>")
+    assert calls == ["physical"]
+
+
+def test_a_virtual_ranks_as_its_most_particular_sequence_that_matched(root):
+    """Measured on Tk 9.0.2: <<Mine>> on both Up and Shift-Up beats
+    <<PrevLine>> for Shift-Up - it ranks as Shift-Up, not as Up."""
+    root.event_add("<<PrevLine>>", "<Up>")
+    root.event_add("<<Mine>>", "<Up>", "<Shift-Up>")
+    calls = []
+    root.bind("<<PrevLine>>", lambda event: calls.append("PrevLine"))
+    root.bind("<<Mine>>", lambda event: calls.append("Mine"))
+    root.event_generate("<Shift-Key-Up>")
+    assert calls == ["Mine"]
+
+
+def test_of_two_virtual_events_on_one_key_the_first_defined_runs(root):
+    """Measured on Tk 9.0.2 in four orders of defining and binding."""
+    root.event_add("<<Q>>", "<Key-F6>")
+    root.event_add("<<P>>", "<Key-F6>")
+    calls = []
+    root.bind("<<P>>", lambda event: calls.append("P"))
+    root.bind("<<Q>>", lambda event: calls.append("Q"))
+    root.event_generate("<Key-F6>")
+    assert calls == ["Q"]
+
+
+def test_on_two_tags_the_physical_and_the_virtual_binding_both_run(root):
+    from tkcurses import Frame
+
+    frame = Frame(root)
+    calls = []
+    root.event_add("<<Paste>>", "<Control-v>")
+    frame.bind("<Control-v>", lambda event: calls.append("widget"))
+    frame.bind_class("Frame", "<<Paste>>", lambda event: calls.append("class"))
+    frame.event_generate("<Control-v>")
+    assert calls == ["widget", "class"]
 
 
 def test_event_info_reports_a_virtual_events_sequences(root):

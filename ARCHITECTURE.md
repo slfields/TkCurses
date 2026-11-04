@@ -2136,6 +2136,39 @@ terminal sends one byte, 0x1f, for both and it is decoded as underscore;
 `event_info("<<Copy>>")` therefore differs from Tk's, which also lists
 Control-c, F16 and Meta-w.
 
+The navigation events are defined too, with X11's keys and in `tk.tcl`'s
+order (`TkCurses-yu5l`): `<<PrevChar>>`/`<<NextChar>>` Left/Right,
+`<<PrevWord>>`/`<<NextWord>>` Control-Left/Right, `<<LineStart>>`/
+`<<LineEnd>>` Home/End, `<<PrevLine>>`/`<<NextLine>>` Up/Down,
+`<<PrevPara>>`/`<<NextPara>>` Control-Up/Down, and a `Select` form of each
+with Shift added. Not `<<SelectNone>>`: its Control-backslash is the tty's
+quit key, and a binding on it would take SIGQUIT from the program. Nor
+`<<Undo>>`, `<<Redo>>` or `<<ToggleSelection>>`, which nothing here binds
+yet. Listbox binds the navigation events as listbox.tcl does; Entry, Text
+and the ttk widgets still bind the keys, so a key `event_add`ed to
+`<<LineStart>>` moves a Listbox and not them (`TkCurses-wmaq`).
+
+**A physical binding and a virtual one compete, within a tag** - one runs,
+measured on Tk 9.0.2 on one Frame (`TkCurses-hkul`):
+
+| Bound on the tag | Key | Runs |
+|---|---|---|
+| `<Up>`, `<<PrevLine>>` | Up | `<Up>` |
+| `<Key>`, `<<PrevLine>>` | Up | `<<PrevLine>>` |
+| `<<PrevLine>>`, `<<SelectPrevLine>>` | Shift-Up | `<<SelectPrevLine>>` |
+| `<<PrevLine>>`, `<<PrevPara>>` | Control-Up | `<<PrevPara>>` |
+| `<Up>`, `<<SelectPrevLine>>` | Shift-Up | `<<SelectPrevLine>>` |
+| `<Shift-Up>`, `<<PrevLine>>` | Shift-Up | `<Shift-Up>` |
+| `<Control-v>`, `<<Paste>>` | Control-v | `<Control-v>` |
+| two events on F6, both bound | F6 | the one defined first |
+
+So a virtual binding ranks as the most particular of its registered
+sequences that the key matched, and a tie goes to the physical binding and
+then to the virtual event defined first. On two tags - `<Control-v>` on the
+widget, `<<Paste>>` on its class - both run, one per tag. Ours used to treat
+the two as separate events and run both on one tag; the docstring that said
+so claimed it was Tk's, and nothing had measured it.
+
 **Entry, its subclasses and Text bind them as Tk's do**, measured on Tk 9.0.2:
 
 - **copy** puts the selection on the clipboard — what is *shown*, so a
@@ -3941,8 +3974,9 @@ string, so the handler raises. A caller needs to tell "nothing is selected"
 from "an empty string was selected", which is why tkinter raises too.
 
 PRIMARY's data does not leave the process (CLIPBOARD's can — see "Copy, cut
-and paste"), but the per-widget option is meaningful without it, and `TkCurses-9e8` carries
-`Listbox` and `Text`, whose selection models differ. `TkCurses-163`.
+and paste"), but the per-widget option is meaningful without it. Text and
+Listbox have it too, each on its own selection model: `TkCurses-163`,
+`TkCurses-9e8`.
 
 **A focused entry shows it in its border, in every state.** Tk signals the
 focus on an entry two ways: the insertion cursor, and the
@@ -4501,8 +4535,30 @@ listbox, but in the one interleaving measured - click and Control-click in
 one list, a click in another, then Shift-click back in the first, with
 `exportselection` off - the result was the same as without the other click,
 `(1, 3, 4, 5)`. With `exportselection` on, Tk's default, the click in the
-other list clears the first one's selection outright, which this library
-does not do yet (`TkCurses-9e8`).
+other list takes PRIMARY and clears the first one's selection, so the
+Shift-click finds no selected anchor and begins afresh: `(5,)`, here as in
+Tk.
+
+**`exportselection`** (`TkCurses-9e8`), measured on Tk 9.0.2 with tkinter.
+It differs from Entry's in two places, marked:
+
+- selecting takes PRIMARY, which reads as the selected items **one per
+  line** - `two\nfour` - and follows them as they change: delete the first
+  of two selected and it reads as the second.
+- clearing the selection keeps PRIMARY, which then reads as nothing - it
+  raises.
+- losing it - to an Entry, a Text, another Listbox - clears the selection
+  and sends `<<ListboxSelect>>`, even when nothing was selected and **even
+  while disabled**, where nothing else changes the selection.
+- turning the option on exports what is selected at once. Turning it off
+  **keeps PRIMARY**, which then reads as nothing, and a later loss leaves
+  the selection alone. Entry gives PRIMARY up at once.
+- with it off nothing is taken, and the list's selection survives others
+  taking PRIMARY.
+
+The Combobox popdown and the file dialog's two lists turn it off, as
+`combobox.tcl` and tkinter's `FileDialog` do: choosing from them must not
+take PRIMARY from an entry.
 
 **The rest of `listbox.tcl`** (`TkCurses-cpk9`), each key, button and
 virtual event bound as Tk binds it and named beside the code:
@@ -4518,15 +4574,19 @@ virtual event bound as Tk binds it and named beside the code:
 | Control-Home, -End | activate, `see`, and select the first / last item, whatever the mode |
 | Control-Shift-Home, -End | `tk::ListboxDataExtend`: extended runs the range, multiple only moves |
 | space, Select, `<<Invoke>>` | `tk::ListboxBeginSelect` on the active item |
+| `<<Copy>>` | the selection to the clipboard, if this list owns PRIMARY |
 | Control-Shift-space, Shift-Select | `tk::ListboxBeginExtend` on the active item |
 | Escape | `tk::ListboxCancel`: extended only, put back what the range replaced |
 | `<<SelectAll>>` | everything; in single and browse, the active item alone |
 | `<<SelectNone>>` | clear, except in browse |
 
-A key is matched as Tk matches it, measured on Tk 9.0.2: the binding used is
-the one with the most modifiers that are all held, so Control-Up is Up's,
-Shift-Home is Home's and Shift-space is space's. Nothing
-breaks: a handled key still reaches the toplevel's bindings and `all`'s, as
+Each is bound as listbox.tcl binds it - Up as `<<PrevLine>>`, Home as
+`<<LineStart>>`, Control-Left as `<<PrevWord>>`, Control-Home as itself -
+and the matcher chooses as Tk's does, measured on Tk 9.0.2: Control-Up runs
+`<<PrevLine>>` because nothing binds `<<PrevPara>>`, Shift-Home runs
+`<<LineStart>>`, Shift-space runs space's. A program can `event_add`
+Control-p to `<<PrevLine>>` and the list follows, or `event_generate` one.
+Nothing breaks: a handled key still reaches the toplevel's bindings and `all`'s, as
 it does in Tk. Ours used to stop the keys it handled, which would have taken
 Escape from a dialog whose list had the focus.
 
@@ -4534,14 +4594,8 @@ Escape from a dialog whose list had the focus.
 which a tty turns into SIGQUIT, and binding it here would take the quit key
 from every program with a Listbox; a program may `event_add` it.
 
-listbox.tcl binds most of the keys above through virtual events -
-`<<PrevLine>>` for Up, `<<LineStart>>` for Home, `<<PrevWord>>` for
-Control-Left - which `tk.tcl` maps to those same keys on X11. Here the keys
-are bound themselves, so they behave alike, but the navigation events are not
-defined anywhere in this library: a program cannot `event_generate` them, nor
-`event_add` another key to them. `<<Invoke>>` is bound; listbox.tcl's
-`<<Copy>>`, which copies the selection when the list owns it, waits on
-`exportselection` (`TkCurses-9e8`). Both are `TkCurses-yu5l`.
+Measured on Tk 9.0.2: with `<<LineStart>>` deleted, Home does nothing; an
+unexported list's `<<Copy>>` leaves the clipboard alone.
 
 The mouse: a press is `tk::ListboxBeginSelect`, the release activates the
 item under the pointer, and a drag is `tk::ListboxMotion` - the selection

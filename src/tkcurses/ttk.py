@@ -1791,7 +1791,11 @@ class Combobox(Widget, _EntryCommands):
         # Bordered, as Tk's popdown is: a list of values floating over the
         # application with nothing around it reads as text that has landed on
         # the screen rather than as a thing to choose from.
-        listbox = tkcurses.Listbox(window, name="list", relief="solid")
+        # Not exported, as combobox.tcl makes it: choosing from the list
+        # must not take PRIMARY from the entry.
+        listbox = tkcurses.Listbox(
+            window, name="list", relief="solid", exportselection=False
+        )
         listbox.place(x=0, y=0, relwidth=1.0, relheight=1.0)
         self._popdown, self._listbox = window, listbox
         self._fill_list()

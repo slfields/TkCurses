@@ -514,7 +514,13 @@ def test_random_gestures_end_where_tk_ends(root, case):
     """
     data = GESTURE_DATA
     height = case["height"]
-    box = Listbox(root, name="g", height=height, selectmode=case["mode"])
+    box = Listbox(
+        root,
+        name="g",
+        height=height,
+        selectmode=case["mode"],
+        exportselection=False,  # as recorded
+    )
     box._allocate(Rect(0, 0, data["width"] + 4, height + 2))
     box._map()
     box.insert("end", *data["items"])
@@ -973,3 +979,209 @@ def test_invoke_selects_the_active_item_as_space_does(listbox):
     listbox.activate(2)
     listbox.event_generate("<<Invoke>>")
     assert listbox.curselection() == (2,)
+
+
+# ----------------------------------------------------------- exportselection
+#
+# Each measured on Tk 9.0.2 with tkinter, TkCurses-9e8.
+
+
+def lists(root, *names, **options):
+    """Fresh extended listboxes holding one, two, three and four."""
+    made = []
+    for name in names:
+        box = Listbox(root, name=name, selectmode="extended", **options)
+        box._allocate(Rect(0, 0, 18, 6))
+        box._map()
+        box.insert("end", "one", "two", "three", "four")
+        made.append(box)
+    return made
+
+
+def owner(root):
+    try:
+        return root.selection_own_get()
+    except TclError:
+        return None
+
+
+def test_a_selection_is_exported_one_item_per_line(root):
+    (box,) = lists(root, "a")
+    box.selection_set(1)
+    box.selection_set(3)
+    assert owner(root) is box
+    assert root.selection_get() == "two\nfour"
+
+
+def test_a_cleared_selection_keeps_primary_and_reads_as_nothing(root):
+    (box,) = lists(root, "a")
+    box.selection_set(1)
+    box.selection_clear(0, "end")
+    assert owner(root) is box
+    with pytest.raises(TclError):
+        root.selection_get()
+
+
+def test_primary_follows_the_items_when_they_change(root):
+    (box,) = lists(root, "a")
+    box.selection_set(0, 1)
+    box.delete(0)
+    assert root.selection_get() == "two"
+
+
+def test_an_entry_taking_primary_clears_the_list_and_says_so(root):
+    from tkcurses import Entry
+
+    (box,) = lists(root, "a")
+    seen = []
+    box.bind("<<ListboxSelect>>", lambda event: seen.append(1))
+    box.selection_set(1)
+    entry = Entry(root, name="e")
+    entry.insert(0, "entrytext")
+    entry.selection_range(0, 3)
+    assert (box.curselection(), len(seen)) == ((), 1)
+    box.selection_set(2)
+    assert owner(root) is box
+    assert not entry.selection_present()
+
+
+def test_another_list_taking_primary_clears_the_first(root):
+    first, second = lists(root, "a", "b")
+    seen = []
+    first.bind("<<ListboxSelect>>", lambda event: seen.append(1))
+    first.selection_set(0)
+    second.selection_set(1)
+    assert (first.curselection(), len(seen), owner(root)) == ((), 1, second)
+
+
+def test_a_loss_sends_the_event_with_nothing_selected_and_while_disabled(root):
+    first, second = lists(root, "a", "b")
+    seen = []
+    first.bind("<<ListboxSelect>>", lambda event: seen.append(1))
+    first.selection_set(0)
+    first.selection_clear(0, "end")
+    second.selection_set(0)
+    assert len(seen) == 1
+    first.selection_set(1)
+    first.configure(state="disabled")
+    second.selection_set(2)
+    assert (first.curselection(), len(seen)) == ((), 2)
+
+
+def test_without_exportselection_nothing_is_taken_or_lost(root):
+    first, second = lists(root, "a", "b")
+    (quiet,) = lists(root, "q", exportselection=False)
+    first.selection_set(0)
+    quiet.selection_set(1)
+    assert owner(root) is first
+    second.selection_set(0)
+    assert quiet.curselection() == (1,)
+
+
+def test_turning_exportselection_on_exports_what_is_selected(root):
+    (first,) = lists(root, "a")
+    (quiet,) = lists(root, "q", exportselection=False)
+    first.selection_set(0)
+    quiet.selection_set(0, 1)
+    quiet.configure(exportselection=True)
+    assert (owner(root), root.selection_get()) == (quiet, "one\ntwo")
+    assert first.curselection() == ()
+
+
+def test_turning_exportselection_off_keeps_primary_but_reads_as_nothing(root):
+    """Unlike Entry, which gives PRIMARY up."""
+    from tkcurses import Entry
+
+    (box,) = lists(root, "a")
+    box.selection_set(0)
+    box.configure(exportselection=False)
+    assert owner(root) is box
+    with pytest.raises(TclError):
+        root.selection_get()
+    entry = Entry(root, name="e")
+    entry.insert(0, "abc")
+    entry.selection_range(0, 1)
+    assert box.curselection() == (0,)
+
+
+def test_a_click_in_another_list_ends_a_range_begun_in_this_one(root):
+    """The interleaving in TkCurses-9e8's notes: click 1 and Control-click 3
+    in B, click 6 in A, Shift-click 5 in B. A's click takes PRIMARY and
+    clears B, so the Shift-click finds no selected anchor and begins afresh:
+    (5,). Without exportselection it is (1, 3, 4, 5)."""
+    for options, expected in (({}, (5,)), ({"exportselection": False}, (1, 3, 4, 5))):
+        a, b = (
+            Listbox(
+                root,
+                name=f"{n}{len(options)}",
+                selectmode="extended",
+                height=8,
+                **options,
+            )
+            for n in "ab"
+        )
+        for box in (a, b):
+            box._allocate(Rect(0, 0, 18, 10))
+            box._map()
+            box.insert("end", *map(str, range(8)))
+        click(b, 1)
+        click(b, 3, MOD_CTRL)
+        click(a, 6)
+        click(b, 5, MOD_SHIFT)
+        assert b.curselection() == expected
+
+
+# ------------------------------------------------------------ virtual events
+#
+# Each measured on Tk 9.0.2 with tkinter, TkCurses-yu5l.
+
+
+def test_a_generated_prevline_moves_up(listbox):
+    listbox.activate(2)
+    listbox.event_generate("<<PrevLine>>")
+    assert (listbox.index("active"), listbox.curselection()) == (1, (1,))
+
+
+def test_a_key_added_to_prevline_moves_the_list_too(listbox, root):
+    listbox.activate(1)
+    root.event_add("<<PrevLine>>", "<Control-Key-p>")
+    press(listbox, "p", MOD_CTRL)
+    assert listbox.index("active") == 0
+
+
+def test_home_does_nothing_once_linestart_is_gone(listbox, root):
+    listbox.insert("end", "x" * 80)
+    listbox.xview("moveto", 0.5)
+    root.event_delete("<<LineStart>>")
+    press(listbox, "Home")
+    assert listbox._left > 0
+
+
+def test_copy_puts_the_exported_selection_on_the_clipboard(root):
+    (box,) = lists(root, "a")
+    box.selection_set(1, 2)
+    box.event_generate("<<Copy>>")
+    assert root.clipboard_get() == "two\nthree"
+
+
+def test_copy_from_an_unexported_list_leaves_the_clipboard_alone(root):
+    (box,) = lists(root, "q", exportselection=False)
+    box.selection_set(0)
+    root.clipboard_clear()
+    root.clipboard_append("before")
+    box.event_generate("<<Copy>>")
+    assert root.clipboard_get() == "before"
+
+
+def test_the_navigation_events_are_defined_as_tk_defines_them(root):
+    """tk.tcl, X11: each with the one key it names there."""
+    expected = {
+        "<<PrevLine>>": "<Key-Up>",
+        "<<SelectNextLine>>": "<Shift-Key-Down>",
+        "<<LineStart>>": "<Key-Home>",
+        "<<PrevWord>>": "<Control-Key-Left>",
+        "<<SelectNextPara>>": "<Control-Shift-Key-Down>",
+    }
+    for virtual, sequence in expected.items():
+        assert root.event_info(virtual) == (sequence,)
+    assert "<<SelectNone>>" not in root.event_info()

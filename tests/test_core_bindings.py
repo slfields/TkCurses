@@ -569,7 +569,9 @@ def test_every_tag_gets_its_own_turn():
 
 
 def test_a_virtual_event_still_fires_beside_the_physical_one():
-    """They are two events, not two patterns competing for one."""
+    """Without ``raised`` the table cannot tell that the one raised the
+    other, so they are two events. Misc._dispatch passes it, and then they
+    compete: tests/test_misc.py. TkCurses-hkul."""
     table = BindingTable()
     fired: list[str] = []
     table.bind("w", parse_sequence("<Key-v>"), lambda event: fired.append("physical"))

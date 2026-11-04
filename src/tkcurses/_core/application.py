@@ -236,6 +236,30 @@ DEFAULT_VIRTUAL_EVENTS: dict[str, tuple[str, ...]] = {
     # in a pty. Without the second, Ctrl-/ would select nothing.
     "<<SelectAll>>": ("<Control-Key-slash>", "<Control-Key-underscore>"),
     "<<Clear>>": (),
+    # The navigation events, as tk.tcl defines them for X11 and in its
+    # order - the order settles which of two runs when both fit a key
+    # equally. Not <<SelectNone>>: its Control-backslash is the tty's quit
+    # key. TkCurses-yu5l.
+    "<<NextChar>>": ("<Key-Right>",),
+    "<<SelectNextChar>>": ("<Shift-Key-Right>",),
+    "<<PrevChar>>": ("<Key-Left>",),
+    "<<SelectPrevChar>>": ("<Shift-Key-Left>",),
+    "<<NextWord>>": ("<Control-Key-Right>",),
+    "<<SelectNextWord>>": ("<Control-Shift-Key-Right>",),
+    "<<PrevWord>>": ("<Control-Key-Left>",),
+    "<<SelectPrevWord>>": ("<Control-Shift-Key-Left>",),
+    "<<LineStart>>": ("<Key-Home>",),
+    "<<SelectLineStart>>": ("<Shift-Key-Home>",),
+    "<<LineEnd>>": ("<Key-End>",),
+    "<<SelectLineEnd>>": ("<Shift-Key-End>",),
+    "<<PrevLine>>": ("<Key-Up>",),
+    "<<NextLine>>": ("<Key-Down>",),
+    "<<SelectPrevLine>>": ("<Shift-Key-Up>",),
+    "<<SelectNextLine>>": ("<Shift-Key-Down>",),
+    "<<PrevPara>>": ("<Control-Key-Up>",),
+    "<<NextPara>>": ("<Control-Key-Down>",),
+    "<<SelectPrevPara>>": ("<Control-Shift-Key-Up>",),
+    "<<SelectNextPara>>": ("<Control-Shift-Key-Down>",),
 }
 
 

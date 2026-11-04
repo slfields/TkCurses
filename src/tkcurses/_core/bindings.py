@@ -68,7 +68,7 @@ from tkcurses._core.events import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator, Mapping
 
 __all__ = [
     "BREAK",
@@ -713,6 +713,7 @@ class BindingTable:
         tag: str,
         patterns: Iterable[EventPattern],
         completed: Iterable[PatternSequence] = (),
+        raised: Mapping[str, Raised] | None = None,
     ) -> Iterator[Binding]:
         """Bindings on ``tag`` for the most particular pattern that fires.
 
@@ -728,17 +729,25 @@ class BindingTable:
         ``completed`` are the sequences on this tag that this event finished;
         they compete with the single patterns by the same ranking, so a
         finished ``<Control-x><Control-s>`` runs instead of ``<Control-s>``.
+
+        ``raised`` are the virtual events a physical event raised, by name.
+        Each competes with the physical bindings for the one slot, ranked as
+        the physical pattern that raised it; a tie goes to the physical
+        binding, then to the virtual event defined first. Measured on Tk
+        9.0.2 - ``<Up>`` beats ``<<PrevLine>>``, ``<<PrevLine>>`` beats
+        ``<Key>``, Shift-Up runs ``<<SelectPrevLine>>`` and not
+        ``<<PrevLine>>``. They used to be treated as two events, and both
+        ran. TkCurses-hkul.
         """
         registered = self._tags.get(tag)
         if not registered:
             return
         wanted = list(patterns)
         finished = set(completed)
-        # Grouped by event type, because a physical event and the virtual
-        # event it triggers are two different events and Tk delivers both.
-        # Specificity chooses between patterns for the *same* event, so
-        # <Key> and <Shift-Key> compete while <Key> and <<Paste>> do not.
-        best: dict[str, tuple[int, int, int]] = {}
+        raised = raised or {}
+        # Grouped by event type, so that a raised virtual event competes in
+        # the group of the physical event that raised it.
+        best: dict[str, tuple[tuple[int, int, int], int, int]] = {}
         chosen: dict[str, list[Binding]] = {}
         for pattern, bindings in list(registered.items()):
             if isinstance(pattern, PatternSequence):
@@ -746,7 +755,13 @@ class BindingTable:
                     continue
             elif not any(pattern.matches(candidate) for candidate in wanted):
                 continue
-            kind, rank = pattern.type, pattern.specificity
+            via = None
+            if isinstance(pattern, EventPattern) and pattern.is_virtual:
+                via = raised.get(pattern.detail or "")
+            if via is None:
+                kind, rank = pattern.type, (pattern.specificity, 1, 0)
+            else:
+                kind, rank = via.type, (via.specificity, 0, -via.order)
             if kind not in best or rank > best[kind]:
                 best[kind], chosen[kind] = rank, list(bindings)
             elif rank == best[kind]:
@@ -758,9 +773,16 @@ class BindingTable:
             yield from chosen[kind]
 
     def dispatch(
-        self, tags: Iterable[str], event: Any, patterns: Iterable[EventPattern]
+        self,
+        tags: Iterable[str],
+        event: Any,
+        patterns: Iterable[EventPattern],
+        raised: Mapping[str, Raised] | None = None,
     ) -> bool:
         """Run every binding on ``tags`` that matches, in tag order.
+
+        ``raised`` is passed to :meth:`matching`: what the physical event
+        among ``patterns`` raised, from :meth:`VirtualEvents.raised_ranks`.
 
         Returns True if a callback returned ``"break"``, which stops the event
         there: remaining callbacks and remaining tags are skipped, and the
@@ -770,7 +792,8 @@ class BindingTable:
         tags = list(tags)
         completed = self._advance(tags, wanted, getattr(event, "widget", None))
         for tag in tags:
-            for binding in list(self.matching(tag, wanted, completed.get(tag, ()))):
+            found = self.matching(tag, wanted, completed.get(tag, ()), raised)
+            for binding in list(found):
                 if binding.func(event) == BREAK:
                     return True
         return False
@@ -911,6 +934,17 @@ class BindingTable:
             self._located.pop(binding.funcid, None)
 
 
+@dataclass(frozen=True)
+class Raised:
+    """A virtual event a physical one raised: the physical event's type, the
+    specificity of the registered pattern that matched, and the order the
+    virtual event was defined in."""
+
+    type: str
+    specificity: tuple[int, int, int]
+    order: int
+
+
 class VirtualEvents:
     """Virtual event names and the physical sequences that raise them.
 
@@ -969,6 +1003,21 @@ class VirtualEvents:
             for name, registered in self._events.items()
             if any(candidate.matches(pattern) for candidate in registered)
         ]
+
+    def raised_ranks(self, pattern: EventPattern) -> dict[str, Raised]:
+        """What ``pattern`` raises, each ranked for :meth:`BindingTable.matching`:
+        as the most particular of its registered patterns that matched, and
+        by when it was defined."""
+        found: dict[str, Raised] = {}
+        for order, (name, registered) in enumerate(self._events.items()):
+            ranks = [
+                candidate.specificity
+                for candidate in registered
+                if isinstance(candidate, EventPattern) and candidate.matches(pattern)
+            ]
+            if ranks:
+                found[name] = Raised(pattern.type, max(ranks), order)
+        return found
 
     @staticmethod
     def _name(virtual: str) -> str:

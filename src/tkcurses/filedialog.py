@@ -120,7 +120,11 @@ class _Browser:
         middle.pack(expand=True, fill="both")
 
         self.dirs = tkcurses.Listbox(
-            middle, name="dirs", height=LIST_HEIGHT, width=LIST_WIDTH
+            middle,
+            name="dirs",
+            height=LIST_HEIGHT,
+            width=LIST_WIDTH,
+            exportselection=False,  # as tkinter's FileDialog makes them
         )
         self.dirs.pack(side="left", expand=True, fill="both")
         self.dirsbar = tkcurses.Scrollbar(middle, command=self.dirs.yview)
@@ -128,7 +132,11 @@ class _Browser:
         self.dirs.configure(yscrollcommand=self.dirsbar.set)
 
         self.files = tkcurses.Listbox(
-            middle, name="files", height=LIST_HEIGHT, width=LIST_WIDTH
+            middle,
+            name="files",
+            height=LIST_HEIGHT,
+            width=LIST_WIDTH,
+            exportselection=False,  # as tkinter's FileDialog makes them
         )
         self.files.pack(side="left", expand=True, fill="both")
         self.filesbar = tkcurses.Scrollbar(middle, command=self.files.yview)

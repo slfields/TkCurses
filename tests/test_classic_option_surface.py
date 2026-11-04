@@ -73,9 +73,7 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
         "TkCurses-l26": "bitmap",
     },
     "LabelFrame": {},
-    "Listbox": {
-        "TkCurses-9e8": "exportselection",
-    },
+    "Listbox": {},
     "Menu": {},
     "Menubutton": {
         "TkCurses-l26": "bitmap",

@@ -3695,3 +3695,17 @@ def test_pane_refuses_an_option_ttk_panes_lack(root, name):
     paned.add(child)
     with pytest.raises(TclError, match=f'unknown option "-{name}"'):
         paned.pane(child, name)
+
+
+def test_opening_the_dropdown_leaves_another_entrys_selection_alone(combobox):
+    """combobox.tcl makes its list with -exportselection false, so selecting
+    the current value there takes nothing from PRIMARY. TkCurses-9e8."""
+    from tkcurses import Entry
+
+    entry = Entry(combobox.master, name="other")
+    entry.insert(0, "kept")
+    entry.selection_range(0, 2)
+    combobox.current(1)
+    combobox._post()
+    assert combobox._listbox.curselection() == (1,)
+    assert entry.selection_present()

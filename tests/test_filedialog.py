@@ -316,3 +316,15 @@ def test_choosing_a_filetype_that_is_not_there_changes_nothing(gallery):
     browser.refresh()
     browser._kind_chosen("Nonesuch")
     assert list(browser.files.get(0, "end")) == ["one.png"]
+
+
+def test_choosing_from_the_lists_leaves_primary_alone(browser, tree):
+    """Both lists are made with exportselection off, as tkinter's FileDialog
+    makes them. TkCurses-9e8."""
+    browser.set_filter(str(tree), "*")
+    browser.refresh()
+    browser.selection.insert(0, "kept")
+    browser.selection.selection_range(0, 2)
+    browser.files.selection_set(0)
+    browser.dirs.selection_set(0)
+    assert browser.selection.selection_present()
