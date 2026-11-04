@@ -16,7 +16,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
-"""Word boundaries, held to what Tk 9.0.2 answers. TkCurses-wmaq."""
+"""Word boundaries, held to what Tk 9.0.2 answers. TkCurses-wmaq,
+TkCurses-asfo."""
 
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from tkcurses._core.editing import run_end, run_start
 from tkcurses._core.words import end_of_word, start_of_next_word, start_of_previous_word
 
 DATA = json.loads(
@@ -42,6 +44,20 @@ PROCEDURES = {
 def test_each_index_answers_as_tk_does(case, name):
     text = case["s"]
     assert [PROCEDURES[name](text, i) for i in range(len(text) + 1)] == case[name]
+
+
+@pytest.mark.parametrize("case", DATA["cases"], ids=lambda case: repr(case["s"]))
+def test_a_double_click_finds_the_words_tk_finds(case):
+    """``tk::wordBreakBefore`` and ``tk::wordBreakAfter``, which entry.tcl
+    and text.tcl select words by, from one before the start to one past the
+    end, then from ``end``: ``run_start`` and ``run_end``, with Tk's ``""``
+    read as their callers read it - the start, and the end."""
+    text = case["s"]
+    indices = [*range(-1, len(text) + 2), len(text) - 1]
+    before = [run_start(text, i) for i in indices]
+    after = [run_end(text, i) for i in indices]
+    assert before == [0 if n is None else n for n in case["wordBreakBefore"]]
+    assert after == [len(text) if n is None else n for n in case["wordBreakAfter"]]
 
 
 def test_a_space_beside_a_newline_is_two_stops():

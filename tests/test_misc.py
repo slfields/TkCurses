@@ -282,6 +282,39 @@ def test_on_one_tag_the_physical_binding_beats_the_virtual_one(root):
 
 
 @pytest.mark.parametrize(
+    ("order", "rebound", "expected"),
+    [
+        (["<Shift-Key-Next>", "<Control-Key-Next>"], None, "<Control-Key-Next>"),
+        (["<Control-Key-Next>", "<Shift-Key-Next>"], None, "<Shift-Key-Next>"),
+        (
+            ["<Shift-Key-Next>", "<Control-Key-Next>"],
+            "<Shift-Key-Next>",
+            "<Control-Key-Next>",
+        ),
+        (
+            ["<Control-Key-Next>", "<Shift-Key-Next>"],
+            "<Control-Key-Next>",
+            "<Shift-Key-Next>",
+        ),
+    ],
+)
+def test_of_two_equal_bindings_the_one_registered_last_runs(
+    root, order, rebound, expected
+):
+    """bind(n): "the most recently registered sequence is the winner" - and
+    registered is when it was first bound, not bound again. Measured on Tk
+    9.0.2 with Control-Shift-Next on one Frame. Both used to run.
+    TkCurses-5co5."""
+    calls = []
+    for sequence in order:
+        root.bind(sequence, lambda event, s=sequence: calls.append(s))
+    if rebound:
+        root.bind(rebound, lambda event, s=rebound: calls.append(s))
+    root.event_generate("<Control-Shift-Key-Next>")
+    assert calls == [expected]
+
+
+@pytest.mark.parametrize(
     ("bound", "key", "expected"),
     [
         (["<Key>", "<<PrevLine>>"], "<Key-Up>", ["<<PrevLine>>"]),

@@ -108,6 +108,19 @@ def align_offset(line_width: int, available: int, justify: str = "left") -> int:
     return max(0, int((available - line_width) * fraction))
 
 
+def word_break(line: str, start: int, end: int) -> int:
+    """Where a row of ``line`` from ``start`` ends, when ``end`` is the first
+    character that does not fit: past the spaces there, which hang beyond
+    the edge as Tk's do, or after the last space that fits, or at ``end``
+    in the middle of a word too long for any row."""
+    if line[end] == " ":
+        while end < len(line) and line[end] == " ":
+            end += 1
+        return end
+    cut = line.rfind(" ", start, end)
+    return cut + 1 if cut > start else end
+
+
 def wrap_spans(line: str, width: int, mode: str = "char") -> list[tuple[int, int]]:
     """Where one line breaks on screen, as ``(start, end)`` character offsets.
 
@@ -120,7 +133,10 @@ def wrap_spans(line: str, width: int, mode: str = "char") -> list[tuple[int, int
     the widget scroll sideways, ``char`` breaks wherever the width runs out,
     and ``word`` breaks at the last space that fits, keeping that space at the
     end of the line it broke - which is what stops a wrapped paragraph
-    starting every line with a space.
+    starting every line with a space. Spaces after a word that reaches the
+    edge stay on its row too, however many, past the edge where nothing
+    draws them: measured on Tk 9.0.2, ``16 a's + "   bbb"`` in 16 columns is
+    one row to the third space and ``bbb`` on the next. TkCurses-5co5.
 
     Always at least one span, so an empty line still occupies a row.
     """
@@ -131,13 +147,7 @@ def wrap_spans(line: str, width: int, mode: str = "char") -> list[tuple[int, int
     while start < len(line):
         end = min(start + width, len(line))
         if mode == "word" and end < len(line):
-            # Searched within the span, not one past it. A space sitting
-            # exactly at start + width would otherwise be kept as well, and
-            # the row would come out one cell wider than the area it has to
-            # fit in - which in a character grid means over the border.
-            cut = line.rfind(" ", start, end)
-            if cut > start:
-                end = cut + 1
+            end = word_break(line, start, end)
         spans.append((start, end))
         start = end
     return spans

@@ -762,13 +762,14 @@ class BindingTable:
                 kind, rank = pattern.type, (pattern.specificity, 1, 0)
             else:
                 kind, rank = via.type, (via.specificity, 0, -via.order)
-            if kind not in best or rank > best[kind]:
+            # Two different patterns equally particular: the one registered
+            # last wins, as bind(n) says - registered, not bound: binding a
+            # sequence again leaves it where it was. Measured on Tk 9.0.2
+            # with <Shift-Next> and <Control-Next> on one Frame, which is
+            # why text.tcl's Control-Shift-Next scrolls sideways. They used
+            # to both run. TkCurses-5co5.
+            if kind not in best or rank >= best[kind]:
                 best[kind], chosen[kind] = rank, list(bindings)
-            elif rank == best[kind]:
-                # Two different patterns, equally particular, both matching:
-                # rare, and no reason to prefer whichever was registered
-                # first, so both run.
-                chosen[kind].extend(bindings)
         for kind in chosen:
             yield from chosen[kind]
 

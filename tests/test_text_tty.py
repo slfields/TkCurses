@@ -141,11 +141,13 @@ def test_the_view_follows_the_cursor_sideways(terminal, tmp_path):
             "t = tkcurses.Text(root, width=16, height=4, wrap='none')\n"
             "t.place(x=2, y=2)\n"
             "t.insert('1.0', 'START' + '.' * 40 + 'FINISH')\n"
-            "t.focus_set()"
+            "t.focus_set()\n"
+            "root.after(100, lambda: t.see('insert'))"
         ),
         workdir=tmp_path,
     )
-    # Inserting leaves the cursor at the end, so the view is already there.
+    # Inserting leaves the cursor at the end but the view where it was, as
+    # Tk's does, so the program asks for it to follow.
     term.wait_for_text("FINISH")
     term.wait_for_idle()
     assert "START" not in "\n".join(term.display)

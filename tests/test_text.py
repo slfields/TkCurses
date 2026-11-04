@@ -310,10 +310,12 @@ def test_home_and_end(text):
 
 
 def test_page_keys_move_a_screenful(text):
+    """A page of five rows is three, as Tk's: measured on Tk 9.0.2, Next
+    from 1.0 in a Text five rows tall goes to 4.0. TkCurses-5co5."""
     text.insert("1.0", "\n".join(f"line {n}" for n in range(20)))
     text.mark_set("insert", "1.0")
     text._handle(KeyEvent(keysym="Next"))
-    assert text.index("insert") == "6.0"
+    assert text.index("insert") == "4.0"
     text._handle(KeyEvent(keysym="Prior"))
     assert text.index("insert") == "1.0"
 
@@ -545,7 +547,7 @@ def test_yview_scroll_by_units_and_pages(text):
     text.yview_scroll(3, "units")
     assert text._top == 3
     text.yview_scroll(1, "pages")
-    assert text._top == 8
+    assert text._top == 6  # Tk 9.0.2: 4.0, then 7.0
 
 
 def test_the_view_never_scrolls_past_the_end(text):
@@ -567,12 +569,17 @@ def test_the_scrollcommand_is_told_where_the_view_is(text):
     assert seen[-1][1] <= 1.0
 
 
-def test_see_scrolls_the_least_it_can(text):
+@pytest.mark.parametrize(
+    ("target", "top"), [("7.0", "3.0"), ("9.0", "6.0"), ("20.0", "17.0")]
+)
+def test_see_scrolls_the_least_near_the_view_and_centres_further(text, target, top):
+    """Measured on Tk 9.0.2 from the top of a Text five rows tall: two rows
+    below the view is scrolled to the bottom row, four is centred, on the
+    fourth row. TkCurses-5co5."""
     text.insert("1.0", "\n".join(f"line {n}" for n in range(40)))
     text.yview_moveto(0.0)
-    text.see("20.0")
-    # Scrolled exactly enough to put row 20 on the last visible line.
-    assert text._top == 19 - text._view_size()[1] + 1
+    text.see(target)
+    assert text.index("@0,0") == top
 
 
 def test_see_scrolls_sideways_when_not_wrapping(text):
@@ -592,7 +599,8 @@ def test_wrapping_pins_the_horizontal_view(root):
 
 def test_xview_reports_fractions(text):
     text.insert("1.0", "x" * 100)
-    # Inserting left the cursor at the end, and see() followed it sideways.
+    # Not by the insert, which leaves the view alone, as Tk's does.
+    text.see("1.end")
     first, last = text.xview()
     assert 0.0 < first < last <= 1.0
     text.xview_moveto(0.0)
@@ -608,13 +616,17 @@ def test_wrap_none_is_one_display_row_per_line(text):
 
 
 def test_no_display_row_is_wider_than_the_area(root):
-    """A row one cell too wide draws over the border, in a character grid."""
+    """A row one cell too wide draws over the border, in a character grid -
+    but for the spaces after a word that reaches the edge, which hang past
+    it as Tk's do, where nothing draws them."""
     widget = Text(root, name="w", width=10, height=4, wrap="word")
     widget._allocate(Rect(0, 0, 12, 6))
     widget._map()
     widget.insert("1.0", "alpha beta gamma delta epsilon zeta")
     width = widget._view_size()[0]
-    assert all(stop - start <= width for _, start, stop in widget._display_lines())
+    line = widget.get("1.0", "1.end")
+    rows = widget._display_lines()
+    assert all(len(line[start:stop].rstrip(" ")) <= width for _, start, stop in rows)
 
 
 def test_wrap_char_breaks_at_the_width(root):
@@ -632,7 +644,9 @@ def test_wrap_word_breaks_at_spaces(root):
     widget.insert("1.0", "alpha beta gamma")
     line = widget.get("1.0", "1.end")
     rows = widget._display_lines()
-    assert [line[start:stop] for _, start, stop in rows] == ["alpha ", "beta gamma"]
+    # "alpha beta" fills the ten columns, and the space after it hangs:
+    # Tk 9.0.2 ends the first row at 1.10.
+    assert [line[start:stop] for _, start, stop in rows] == ["alpha beta ", "gamma"]
 
 
 def test_the_view_is_sane_before_the_widget_is_laid_out(root):
@@ -1250,7 +1264,9 @@ def test_geometry_follows_a_wrapped_line(root):
 
 def test_geometry_of_an_empty_widget(text):
     """There is always one line, so there is always somewhere to point."""
-    assert text.bbox("1.0") == (1, 1, 1, 1)
+    # The newline, which Tk boxes to the right edge: (3, 3, 160, 19) in a
+    # Text twenty columns wide, measured on Tk 9.0.2.
+    assert text.bbox("1.0") == (1, 1, 20, 1)
     info = text.dlineinfo("1.0")
     assert info is not None and info[2] == 0, "no text on it yet"
 

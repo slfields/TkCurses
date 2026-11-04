@@ -40,6 +40,8 @@ for number in range(1, 21):
     scrolled.insert("end", "line %02d\\n" % number)
 scrolled.focus_set()
 root.update_layout()
+# An insert leaves the view where it was, as Tk's does: at the top.
+scrolled.see("end")
 buffer = root.tk.screen.buffer
 root.tk.screen.refresh()
 root.after(6000, root.quit)

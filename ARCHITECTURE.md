@@ -2173,6 +2173,15 @@ widget, `<<Paste>>` on its class - both run, one per tag. Ours used to treat
 the two as separate events and run both on one tag; the docstring that said
 so claimed it was Tk's, and nothing had measured it.
 
+**Two physical bindings equally particular: the one registered last runs**,
+as `bind(n)` says - "the most recently registered sequence is the winner".
+Registered means first bound: binding a sequence again leaves it where it
+was. Measured on Tk 9.0.2 on one Frame with Control-Shift-Next, which
+`<Shift-Next>` and `<Control-Next>` both match with one modifier each: the
+later of the two runs, in either order, and still does after the earlier
+is bound again. It is why text.tcl's Control-Shift-Next scrolls sideways.
+Ours ran both (`TkCurses-5co5`).
+
 **Entry, its subclasses and Text bind them as Tk's do**, measured on Tk 9.0.2:
 
 - **copy** puts the selection on the clipboard — what is *shown*, so a
@@ -2488,7 +2497,12 @@ So `foo_bar-baz` is three words, `foo_bar`, `-` and `baz`; `it's`, `3.14`
 and `1,000` are one each; a run of spaces is one piece and a tab another;
 and from the end of `abc` in `abc  \n  def` the next word starts at the
 newline. An answer at the end of the text is no answer: Tk returns `""`, and
-the bindings then go to `end` themselves. `_core/words.py` models it; ICU's
+the bindings then go to `end` themselves. A double-click is the exception:
+`tk::wordBreakBefore` and `tk::wordBreakAfter` are still tk.tcl's, over
+`word.tcl`'s runs of `\w` and `\W`, so `it's` is three pieces to a
+double-click and one to Control-Right. Recorded beside the others, and
+`_core/editing.py`'s `run_start` and `run_end` answer as they do from every
+index (`TkCurses-asfo`). `_core/words.py` models the rest; ICU's
 dictionary segmentation of Chinese, Japanese and Thai is not, and a run of
 those is one word there.
 
@@ -2534,9 +2548,7 @@ ttk.Spinbox alone. In an Entry the two events do nothing.
 - **Control-Up and Control-Down go by paragraph** - a line following an
   empty one, past its leading blanks (`tk::TextPrevPara`, `tk::TextNextPara`).
   A line of spaces is not empty.
-- **Prior and Next are not yet Tk's** (`TkCurses-5co5`): Tk scrolls the view
-  a page and finds the cursor in it, ours moves the cursor a page of rows;
-  they were left out of the recording.
+- **Prior and Next go by the view**, not the cursor - see "Paging a Text".
 
 **Kept different on purpose**: classic Tk reports a selection a Shift-move
 ran onto its own anchor as present and empty - `sel.first` equal to
@@ -2556,6 +2568,72 @@ no index, because the base ends at the first space or sign. Units abbreviate
 no embedded windows - and `any` before a unit changes nothing. `display` is
 refused: the buffer does not know how the lines wrap. Ours still accepts a
 leading space, which Tk refuses.
+
+### Paging a Text
+
+**Prior and Next are `tk::TextScrollPages`**: scroll the view a page, then
+put the cursor where it was on screen, with Shift extending the selection;
+Control-Prior and Control-Next scroll sideways a page and leave the cursor
+(`TkCurses-5co5`). Held to `tests/support/page_keys.json` - 450 runs
+recorded from Tk 9.0.2 of Prior and Next under every modifier, the arrows,
+and the program scrolling and moving the cursor, in Texts four and twelve
+rows tall and one wrapped at a word, with the view after every step. All of
+them replay alike, but for five (below). Getting there took the rest of
+this section, each measured:
+
+- **A page is Tk's, measured**: three quarters of the height while a line
+  is a quarter of it or more, otherwise the height less two lines - 1, 1,
+  2, 3, 3, 4 rows for heights 1 to 6, 8 for 10. Sideways, the width less
+  two, and nothing in a Text two wide or less. It is `yview scroll 1 pages`
+  itself, so a Scrollbar's trough moves the same. Ours went a whole height.
+- **`see` scrolls the least only near the view**: up to `max(3, height //
+  3)` rows past it, `max(3, width // 3)` columns sideways. Further, it
+  centres - the row `(height + 1) // 2` from the top, the column `width //
+  2` from the left - and sideways it never goes past the longest line's end
+  at the right edge. Measured at heights 1 to 18 and widths 9 to 30. A Text
+  one row tall keeps the row in view, where Tk's pixel centring leaves it
+  half out. Ours always scrolled the least.
+- **An `@x,y` outside the text area is clamped into it**: above it the top
+  row's first visible character, whatever `x` is; below it the last row's
+  last; beside it the nearest visible column. `TextScrollPages`, for a
+  cursor off screen, answers `@[winfo height / 2],0` - an x that is a
+  height, in the border above the text - which this rule turns into the top
+  row's start. Ours read the line above the top.
+- **The last character of a row has a box to the right edge**: the newline,
+  or the space a word wrap broke after. It runs from where the character
+  is, off the left edge if need be, to that edge; past the edge it is a box
+  of no width on it. So a cursor at the end of a long line, scrolled out of
+  view to the right, pages to the right edge. Every other character beside
+  the view has no box - except a space hanging past the edge of a wrapped
+  row, which has one where it would be, with a negative width.
+- **Spaces after a word that fills a row hang past the edge**, however
+  many: `aaaaaaaaaaaaaaaa   bbb` in sixteen columns is one row to the third
+  space, and `alpha beta gamma` in ten is `alpha beta ` and `gamma`. Ours
+  moved the word to the next row, to keep the space off the border;
+  nothing draws past the edge, so it cannot get there.
+- **Past the end of a wrapped row is its last character**, for a click, an
+  `@x,y` and Up and Down, not the next row's first.
+- **A wrapped Text does not scroll sideways**, by any command.
+- **Neither `mark_set("insert")` nor a program's `insert` moves the view**,
+  in Tk; the bindings call `see`, typing among them. Ours did both, which
+  is also why a page from a cursor the program had put off screen went to
+  the wrong place. Programs that relied on it - three of the tty tests -
+  now say `see` themselves, as they would have to under Tk.
+
+**The five left are Tk remembering a page.** After `yview scroll 1 pages`
+forwards, Tk's `see` reaches one row further up than from the same view
+reached a row at a time: from a top of 7.0 in four rows, `see 3.3` puts
+3.0 at the top after a page and then three units, and 1.0 after six units.
+It lasts until a page back or a `moveto`, and in a wrapped Text a page back
+does the same downwards. Something below the row the view shows - a
+partly scrolled line, perhaps - that a view kept in rows has nowhere to
+hold. The replay marks those five as expected to differ.
+
+Not done here, filed: Tk keeps its view on an index, so inserting above it
+leaves the same text at the top, where ours keeps a row number
+(`TkCurses-ntu4`); and Tk scrolls sideways over the longest line on
+screen, ours over the longest line there is (`TkCurses-8tjr`) - every
+recorded line is one length, so the corpus does not depend on it.
 
 ### Cell Structure
 

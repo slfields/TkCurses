@@ -162,7 +162,7 @@ from tkcurses._core.screen import (
     TerminalCursor,
 )
 from tkcurses._core.system_clipboard import ask_terminal_for_osc52, choose_route
-from tkcurses._core.text import align_offset, measure, wrap, wrap_spans
+from tkcurses._core.text import align_offset, measure, word_break, wrap, wrap_spans
 from tkcurses._core.textbuffer import Index, TextBuffer
 from tkcurses._core.textlayout import (
     WORDPROCESSOR,
@@ -11259,6 +11259,9 @@ class Text(_Drawable, XView, YView):
         bind(name, "<<PasteSelection>>", _text_paste_selection)
         for sequence, (goes_to, selects) in _TEXT_NAVIGATION.items():
             bind(name, sequence, _text_navigation(goes_to, selects))
+        # text.tcl: sideways a page, the cursor left where it is.
+        bind(name, "<Control-Key-Prior>", lambda e: e.widget.xview_scroll(-1, "pages"))
+        bind(name, "<Control-Key-Next>", lambda e: e.widget.xview_scroll(1, "pages"))
         bind(name, "<Button-1>", _text_press)
         bind(name, "<Double-Button-1>", _text_double)
         bind(name, "<Triple-Button-1>", _text_triple)
@@ -11397,9 +11400,16 @@ class Text(_Drawable, XView, YView):
             self._buffer.delete(self._resolve(first), self._resolve(last))
         self._after_edit()
 
-    def _after_edit(self) -> None:
-        """Put the view back where it should be and repaint."""
-        self.see("insert")
+    def _after_edit(self, *, typed: bool = False) -> None:
+        """Repaint after a change, and bring the cursor into view if it was
+        typed.
+
+        Only then: a program's ``insert`` or ``delete`` leaves the view
+        alone in Tk, measured on Tk 9.0.2, and text.tcl's typing bindings
+        are what call ``see`` - ``tk::TextInsert`` among them. TkCurses-5co5.
+        """
+        if typed:
+            self.see("insert")
         self._redraw()
         self._report_view()
         self._set_modified(True)
@@ -11470,21 +11480,39 @@ class Text(_Drawable, XView, YView):
     def bbox(self, index: Any) -> tuple[int, int, int, int] | None:
         """Where the character at ``index`` is, as ``(x, y, width, height)``.
 
-        One cell, so the size is always ``1, 1``. None when the character
+        One cell, so the size is usually ``1, 1``. None when the character
         is not on screen, horizontally as well as vertically: a long line
         scrolled sideways puts characters out of view without putting their
         line out of view, and Tk returns None for those too.
+
+        But for the last character of a row - the newline, or the space a
+        word wrap broke at - which Tk draws to the right edge of the view
+        wherever it is: its box runs from where it is, off to the left if
+        need be, to that edge, and past the edge it is a box of no width
+        on it. Measured on Tk 9.0.2; tk::TextScrollPages reads it, so a
+        cursor at the end of a line scrolled out of view to the right pages
+        to the right edge. TkCurses-5co5.
         """
         found = self._row_and_column(index)
         if found is None:
             return None
-        row, column, _ = found
+        row, column, (start, stop) = found
         area = self._text_area()
         x = area.x + (column - self._left)
         y = area.y + (row - self._top)
-        if not 0 <= x - area.x < area.width:
-            return None
         if not 0 <= y - area.y < area.height:
+            return None
+        resolved = self._resolve(index)
+        last = self._row_last(resolved.line, start, stop)
+        right = area.x + area.width
+        if resolved.char == last:
+            x = min(x, right)
+            return (x, y, right - x, 1)
+        if x >= right and self._wrap_mode() != "none":
+            # A space hanging past the edge of a wrapped row: where it would
+            # be, with the negative width Tk gives it.
+            return (x, y, right - x, 1)
+        if not 0 <= x - area.x < area.width:
             return None
         return (x, y, 1, 1)
 
@@ -11675,10 +11703,13 @@ class Text(_Drawable, XView, YView):
     # ----------------------------------------------------------------- marks
 
     def mark_set(self, name: str, index: Any) -> None:
-        """Put a mark at an index."""
+        """Put a mark at an index.
+
+        The view stays where it is, even for ``insert``, as Tk's does:
+        text.tcl's bindings call ``see`` themselves. Measured on Tk 9.0.2.
+        TkCurses-5co5.
+        """
         self._buffer.mark_set(name, self._resolve(index))
-        if name == "insert":
-            self.see("insert")
         self._redraw()
 
     def mark_unset(self, *names: str) -> None:
@@ -11893,32 +11924,6 @@ class Text(_Drawable, XView, YView):
 
     # ------------------------------------------------------------- editing
 
-    def _page(self, count: int, *, extend: bool) -> None:
-        """Move the insert cursor ``count`` pages, dragging the selection
-        along if asked.
-
-        ``extend`` is what Shift does: the selection runs from wherever it
-        was anchored to wherever the cursor has got to. Without it the
-        selection is dropped. Not yet text.tcl's ``tk::TextScrollPages``,
-        which scrolls the view and then finds the cursor in it.
-        """
-        # Moving the cursor ends whatever was being typed: the next edit is
-        # somewhere else, so it is a new thing to undo.
-        self._separate_if_asked(None)
-        insert = self._buffer.mark_index("insert") or Index(1, 0)
-        target = self._by_row(insert, count * self._view_size()[1])
-        if extend and self._anchor is None:
-            self._anchor = insert
-        self._buffer.mark_set("insert", target)
-        if extend and self._anchor is not None:
-            self._select(self._anchor, target)
-        else:
-            self._anchor = None
-            self._buffer.tag_remove("sel", "1.0", "end")
-        self.see("insert")
-        self._redraw()
-        self._report_view()
-
     def _row_edge(self, index: Index, *, end: bool) -> Index:
         """``display linestart`` and ``display lineend``: the start or end of
         the display row an index is on.
@@ -11938,20 +11943,13 @@ class Text(_Drawable, XView, YView):
             stop -= 1
         return self._buffer.clamp(Index(line, stop))
 
-    def _by_row(self, index: Index, distance: int) -> Index:
-        """The index ``distance`` display rows away, at the same column.
-
-        Display rows, not buffer lines: with wrapping on, Up from the middle
-        of a wrapped paragraph has to go to the row above it on screen, which
-        is what every editor does and what the buffer alone cannot answer.
-        """
-        rows = self._text_rows()
-        row = self._row_of(index, rows)
-        _, start, _ = rows[min(row, len(rows) - 1)]
-        column = index.char - start
-        target = min(max(row + distance, 0), len(rows) - 1)
-        line, new_start, new_stop = rows[target]
-        return self._buffer.clamp(Index(line, min(new_start + column, new_stop)))
+    def _row_last(self, line: int, start: int, stop: int) -> int:
+        """The last index on a display row: the character a word wrap broke
+        after, or the end of the line on its last row. Measured on Tk 9.0.2,
+        past the end of a wrapped row is that character and not the next
+        row's first, for ``@x,y`` and for Up and Down. TkCurses-5co5."""
+        text = self._buffer.lines[line - 1] if line <= len(self._buffer.lines) else ""
+        return stop - 1 if start < stop < len(text) else stop
 
     def _type(self, characters: str) -> None:
         """Put typed characters in, replacing the selection if there is one."""
@@ -11964,7 +11962,7 @@ class Text(_Drawable, XView, YView):
         insert = self._buffer.mark_index("insert") or Index(1, 0)
         self._buffer.insert(insert, characters)
         self._anchor = None
-        self._after_edit()
+        self._after_edit(typed=True)
 
     def _backspace(self) -> None:
         """Delete the selection, or the character before the cursor."""
@@ -11977,7 +11975,7 @@ class Text(_Drawable, XView, YView):
             if start == insert:
                 return
             self._buffer.delete(start, insert)
-        self._after_edit()
+        self._after_edit(typed=True)
 
     def _delete_forward(self) -> None:
         """Delete the selection, or the character after the cursor."""
@@ -11987,7 +11985,7 @@ class Text(_Drawable, XView, YView):
         if not self._delete_selection():
             insert = self._buffer.mark_index("insert") or Index(1, 0)
             self._buffer.delete(insert)
-        self._after_edit()
+        self._after_edit(typed=True)
 
     # --------------------------------------------------------- display lines
 
@@ -12088,9 +12086,7 @@ class Text(_Drawable, XView, YView):
             room = max(1, width - left - right)
             stop = self._fits(line, start, left, room, style)
             if mode == "word" and stop < len(line):
-                cut = line.rfind(" ", start, stop)
-                if cut > start:
-                    stop = cut + 1
+                stop = word_break(line, start, stop)
             rows.append((number, start, stop))
             if stop >= len(line):
                 return rows
@@ -12218,13 +12214,25 @@ class Text(_Drawable, XView, YView):
     def _index_at_cell(self, x: int, y: int) -> Index:
         """The index at a cell within this widget, for a click or ``@x,y``."""
         area = self._text_area()
+        width, height = self._view_size()
         rows = self._display_lines()
-        row = min(max(self._top + (y - area.y), 0), len(rows) - 1)
-        line, start, stop = rows[row]
+        # Clamped into the text area as Tk clamps it: above the area is the
+        # top row's first visible character and below it the last row's
+        # last, whatever x says, and beside it the nearest column in view.
+        # Measured on Tk 9.0.2, where tk::TextScrollPages leans on the first
+        # - its @[winfo height / 2],0 lands in the border. TkCurses-5co5.
+        if y < area.y:
+            row, column = self._top, self._left
+        elif y >= area.y + height:
+            row = min(self._top + height, len(rows)) - 1
+            column = self._left + width - 1
+        else:
+            row = self._top + (y - area.y)
+            column = min(max(0, x - area.x), width - 1) + self._left
+        line, start, stop = rows[min(max(row, 0), len(rows) - 1)]
         # Spacing belongs to the row beside it, measured: with spacing1 and
         # spacing3 of 16 pixels, every y from 2 to 40 answers 1.0 in Tk.
         line = abs(line)
-        column = max(0, x - area.x) + self._left
         left, _ = self._row_margins(line, start)
         offset = char_at(
             self._row_text(line, start, stop),
@@ -12233,27 +12241,39 @@ class Text(_Drawable, XView, YView):
             stops=self._stops,
             style=str(self._options["tabstyle"]),
         )
-        return self._buffer.clamp(Index(line, min(start + offset, stop)))
+        last = self._row_last(line, start, stop)
+        return self._buffer.clamp(Index(line, min(start + offset, last)))
 
     # --------------------------------------------------------------- the view
 
     def see(self, index: Any) -> None:
-        """Scroll the least that puts an index on screen, both directions."""
+        """Put an index on screen, as Tk does: the least scroll when it is
+        near the view, and otherwise centred on it, each way.
+
+        Measured on Tk 9.0.2 at heights 1 to 18 and widths 9 to 30: an
+        index up to ``max(3, height // 3)`` rows past the view - or
+        ``max(3, width // 3)`` columns - is scrolled to the edge; further,
+        its row goes ``(height + 1) // 2`` from the top and its column
+        ``width // 2`` from the left. A Text one row tall is the exception:
+        Tk's centring in pixels leaves that row half in view, which in
+        cells is out of it, so here it stays in view. TkCurses-5co5.
+        """
         target = self._resolve(index)
         width, height = self._view_size()
         rows = self._display_lines()
         row = self._row_of(target, rows)
-        if row < self._top:
-            self._top = row
-        elif row >= self._top + height:
-            self._top = row - height + 1
+        self._top = _see_offset(
+            self._top, row, height, min((height + 1) // 2, height - 1)
+        )
         if self._wrap_mode() == "none":
-            if target.char < self._left:
-                self._left = target.char
-            elif target.char > self._left + width - 1:
-                self._left = target.char - width + 1
-        self._top = max(0, min(self._top, max(0, len(rows) - 1)))
+            widest = max((len(line) for line in self._buffer.lines), default=0)
+            left = _see_offset(self._left, target.char, width, width // 2)
+            # Clamped as xview clamps it: the end of the longest line at the
+            # right edge, which leaves a cursor past it out of view, as Tk's.
+            self._left = min(left, max(0, widest - width))
+        self._top = max(0, min(self._top, max(0, len(rows) - height)))
         self._left = max(0, self._left)
+        self._redraw()
         # A scrollbar cannot know the view moved unless it is told, and see()
         # is the one thing that moves it without going through _scroll.
         self._report_view()
@@ -12300,13 +12320,15 @@ class Text(_Drawable, XView, YView):
         elif action == "scroll":
             count = int(float(args[1]))
             unit = str(args[2]) if len(args) > 2 else "units"
-            current += count * (span if unit.startswith("page") else 1)
+            current += count * (
+                _page_size(span, vertical) if unit.startswith("page") else 1
+            )
         else:
             raise TclError(f'bad option "{action}": must be moveto or scroll')
         limit = max(0, total - (span if vertical else 0))
         if vertical:
             self._top = max(0, min(current, limit))
-        else:
+        elif self._wrap_mode() == "none":
             self._left = max(0, min(current, max(0, total - span)))
         self._redraw()
         self._report_view()
@@ -12589,10 +12611,31 @@ class Text(_Drawable, XView, YView):
         return self._insert_at
 
 
-#: Prior and Next, which text.tcl binds as themselves rather than through a
-#: virtual event, and how many pages each goes. The rest of the motion is
-#: _TEXT_NAVIGATION's.
-_TEXT_PAGES: dict[str, int] = {"Prior": -1, "Next": 1}
+def _page_size(span: int, vertical: bool) -> int:
+    """How far ``yview scroll 1 pages`` goes in a Text ``span`` rows tall, or
+    ``xview`` in one ``span`` columns wide.
+
+    Tk's rule, in lines: three quarters of the height when a line
+    is a quarter of it or more, and two lines less than the height
+    otherwise; sideways, two columns less than the width. Measured on Tk
+    9.0.2 at heights 1 to 10 and widths 1 to 30. TkCurses-5co5.
+    """
+    if not vertical:
+        return max(0, span - 2)
+    return max(1, 3 * span // 4) if span <= 4 else span - 2
+
+
+def _see_offset(first: int, target: int, span: int, centre: int) -> int:
+    """Where a view ``span`` long starting at ``first`` starts once ``target``
+    is in it, by :meth:`Text.see`'s rule."""
+    if first <= target < first + span:
+        return first
+    reach = max(3, span // 3)
+    if first - reach <= target < first:
+        return target
+    if first + span <= target < first + span + reach:
+        return target - span + 1
+    return target - centre
 
 
 def _text_key(event: Event) -> str | None:
@@ -12605,11 +12648,7 @@ def _text_key(event: Event) -> str | None:
     """
     text = event.widget
     keysym = event.keysym
-    extend = bool(event.state & MOD_SHIFT)
 
-    if keysym in _TEXT_PAGES:
-        text._page(_TEXT_PAGES[keysym], extend=extend)
-        return "break"
     if keysym == "BackSpace":
         text._backspace()
         return "break"
@@ -12763,7 +12802,8 @@ def _text_up_down_line(text: Text, count: int) -> str:
         new = text._buffer.end() if column == 0 else last
     else:
         line, new_start, new_stop = rows[target]
-        new = text._buffer.clamp(Index(line, min(new_start + column, new_stop)))
+        last_on_row = text._row_last(line, new_start, new_stop)
+        new = text._buffer.clamp(Index(line, min(new_start + column, last_on_row)))
     text._prev_pos = new
     line, start, _ = rows[text._row_of(insert, rows)]
     # "end display lineend", which is the last character and not end.
@@ -12833,6 +12873,26 @@ def _text_down(text: Text) -> str:
     return _text_up_down_line(text, 1)
 
 
+def _text_scroll_pages(text: Text, count: int) -> str:
+    """``tk::TextScrollPages``: scroll the view ``count`` pages, and answer
+    where the cursor was on screen - or, if it was not on screen, the top
+    row's first visible character, which is where Tk's ``@[winfo height /
+    2],0`` lands."""
+    box = text.bbox("insert")
+    text.yview_scroll(count, "pages")
+    if box is None:
+        return text.index(f"@{text.winfo_height() // 2},0")
+    return text.index(f"@{box[0]},{box[1]}")
+
+
+def _text_page_up(text: Text) -> str:
+    return _text_scroll_pages(text, -1)
+
+
+def _text_page_down(text: Text) -> str:
+    return _text_scroll_pages(text, 1)
+
+
 def _text_start(text: Text) -> str:
     del text
     return "1.0"
@@ -12843,8 +12903,8 @@ def _text_last(text: Text) -> str:
     return text.index("end - 1c")
 
 
-#: Each navigation event, and Control-Home and Control-End, with where it
-#: goes and whether it extends the selection.
+#: Each navigation event, and Prior, Next, Control-Home and Control-End,
+#: with where it goes and whether it extends the selection.
 _TEXT_NAVIGATION: dict[str, tuple[Callable[[Text], str], bool]] = {
     "<<PrevChar>>": (_text_previous_char, False),
     "<<NextChar>>": (_text_next_char, False),
@@ -12866,6 +12926,10 @@ _TEXT_NAVIGATION: dict[str, tuple[Callable[[Text], str], bool]] = {
     "<<SelectLineStart>>": (_text_line_start, True),
     "<<LineEnd>>": (_text_line_end, False),
     "<<SelectLineEnd>>": (_text_line_end, True),
+    "<Key-Prior>": (_text_page_up, False),
+    "<Shift-Key-Prior>": (_text_page_up, True),
+    "<Key-Next>": (_text_page_down, False),
+    "<Shift-Key-Next>": (_text_page_down, True),
     "<Control-Key-Home>": (_text_start, False),
     "<Control-Shift-Key-Home>": (_text_start, True),
     "<Control-Key-End>": (_text_last, False),
