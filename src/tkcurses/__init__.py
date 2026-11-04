@@ -1185,6 +1185,7 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "tristateimage": _image_name,
     "type": _menu_type,
     "undo": _tcl_boolean,
+    "autoseparators": _tcl_boolean,
     "textvariable": _variable,
     # Not listvariable: Listbox takes a name, but only one way - it writes
     # its items there and hears no write made elsewhere. Kept, as partial,
@@ -11079,9 +11080,6 @@ class Text(_Drawable, XView, YView):
         self._tag_order: list[str] = shared.setdefault("tag_order", [])
         shared.setdefault("modified", False)
         shared.setdefault("margined", False)
-        #: What the last recorded edit was, so autoseparators can break the
-        #: group when the user switches between typing and deleting.
-        self._last_edit: str | None = None
         #: Whether ANY tag sets a margin. Almost none ever do, and resolving
         #: margins means asking which tags cover a row and walking the raise
         #: order - per row, inside wrapping, which is hot. Measured: doing it
@@ -11096,6 +11094,7 @@ class Text(_Drawable, XView, YView):
             raise
         self._apply_window()
         self._buffer.undo_enabled = self.getboolean(self._options["undo"])
+        self._buffer.auto_separators = self._auto_separators
         self._buffer.max_undo = _as_int(self._options["maxundo"], 0)
         self._stops = parse_tabs(self._options["tabs"], self.winfo_fpixels)
         self._buffer.mark_set("insert", "1.0")
@@ -11457,6 +11456,8 @@ class Text(_Drawable, XView, YView):
             # Turning it off does NOT throw the stack away: Tk keeps it, so
             # switching undo off and on again leaves the history intact.
             self._buffer.undo_enabled = self.getboolean(self._options["undo"])
+        if "autoseparators" in given:
+            self._buffer.auto_separators = self._auto_separators
         if "maxundo" in given:
             self._buffer.max_undo = _as_int(self._options["maxundo"], 0)
             self._buffer.trim_undo()
@@ -11749,11 +11750,20 @@ class Text(_Drawable, XView, YView):
 
     # ------------------------------------------------------------------ undo
 
-    def edit_undo(self) -> None:
-        """Take back the most recent group of edits.
+    def edit_undo(self) -> tuple[str, ...]:
+        """Take back the most recent group of edits, and answer the ranges
+        they changed, flat - Tk 9's ``edit undo``.
 
         Raises:
             TclError: If there is nothing to undo, as tkinter does.
+
+        As each edit is taken back, the cursor of the Text that made it -
+        this one or a peer - goes to where it happened and is brought into
+        view: before text that went, after text that comes back. Measured on
+        Tk 9.0.2, where undoing an insertion of three lines at 1.0, made with
+        the cursor at 30.0, leaves the cursor at 1.0 and the view there; a
+        peer's edit undone here moves the peer's cursor and not this one's.
+        Ours left the cursor where it was and scrolled to it. TkCurses-2sbq.
 
         With ``-undo false`` this does nothing at all and raises nothing,
         which is also measured rather than assumed: Tk treats "undo is off"
@@ -11765,47 +11775,52 @@ class Text(_Drawable, XView, YView):
         not move either: Tk 9.0.2's disabled undo pops the group while
         refusing its edits, so the history no longer describes the text and a
         later redo applies the same edit twice - "hello world" became "hello
-        world world". Copying that would copy a defect. TkCurses-aah.
+        world world". Copying that would copy a defect. TkCurses-aah. Nor
+        does the cursor move, and nothing is answered as changed, where Tk's
+        answers the ranges it refused and moves the cursor to them.
+
+        ``()`` where nothing is done, as tkinter answers ``""``.
         """
         if not self.getboolean(self._options["undo"]):
-            return
+            return ()
         if not self._editable:
             if not self._buffer.can_undo:
                 raise TclError("nothing to undo")
-            return
-        if not self._buffer.edit_undo():
+            return ()
+        changed = self._buffer.edit_undo(_see_insert)
+        if changed is None:
             raise TclError("nothing to undo")
-        self._last_edit = None
         self._after_undo()
+        return tuple(map(str, changed))
 
-    def edit_redo(self) -> None:
-        """Put back the most recently undone group.
+    def edit_redo(self) -> tuple[str, ...]:
+        """Put back the most recently undone group, and answer the ranges
+        it changed, as :meth:`edit_undo` does.
 
         Raises:
             TclError: If there is nothing to redo, as tkinter does.
 
-        Disabled, the same as :meth:`edit_undo`: nothing changes, the stack
-        included, and an empty stack still raises.
+        The cursor of each edit's Text goes to where it happened: after
+        text put back, before text taken out again. Disabled, the same as
+        :meth:`edit_undo`: nothing changes, the stack included, and an empty
+        stack still raises.
         """
         if not self.getboolean(self._options["undo"]):
-            return
+            return ()
         if not self._editable:
             if not self._buffer.can_redo:
                 raise TclError("nothing to redo")
-            return
-        if not self._buffer.edit_redo():
+            return ()
+        changed = self._buffer.edit_redo(_see_insert)
+        if changed is None:
             raise TclError("nothing to redo")
-        self._last_edit = None
         self._after_undo()
+        return tuple(map(str, changed))
 
     def _after_undo(self) -> None:
-        """Repaint after the stack moved the text under the cursor.
-
-        The insert mark is moved by the same ``_shift`` that moves every
-        other mark, so it is already somewhere sensible - but it may be off
-        screen, and the scrollbars no longer describe what is there.
-        """
-        self.see("insert")
+        """Repaint after the stack changed the text: the cursors it moved
+        were each brought into view as they moved (see _see_insert), and
+        the scrollbars no longer describe what is there."""
         self._redraw()
         self._report_view()
         self._set_modified(True)
@@ -11813,12 +11828,10 @@ class Text(_Drawable, XView, YView):
     def edit_separator(self) -> None:
         """Break the undo group, so the next edit undoes on its own."""
         self._buffer.edit_separator()
-        self._last_edit = None
 
     def edit_reset(self) -> None:
         """Throw away the undo and redo history, keeping the text."""
         self._buffer.edit_reset()
-        self._last_edit = None
 
     def edit_modified(self, arg: Any = None) -> int | None:
         """Read the modified flag, or set it.
@@ -11831,25 +11844,23 @@ class Text(_Drawable, XView, YView):
         self._set_modified(self.getboolean(arg))
         return None
 
-    def _separate_if_asked(self, kind: str | None) -> None:
-        """Start a new undo group when the user changes what they are doing.
+    @property
+    def _auto_separators(self) -> bool:
+        return bool(self.getboolean(self._options["autoseparators"]))
 
-        With ``-autoseparators true`` a run of typing undoes as a run, and
-        the run ends where a person would say it ended: when they move the
-        cursor, click somewhere else, or switch from typing to deleting.
-        Without this every character is its own group and undo becomes
-        backspace with extra steps.
-
-        Programmatic ``insert()`` and ``delete()`` deliberately do NOT come
-        here. Measured against Tk: three ``insert()`` calls in a row with
-        autoseparators on are one group, because Tk's separators come from
-        the key bindings rather than from the widget command.
+    def _separate_if_asked(self) -> None:
+        """``if {[%W cget -autoseparators]} {%W edit separator}``, which
+        text.tcl's bindings say wherever an operation should end the undo
+        group: moving the cursor, a click, clearing the selection, after
+        Return. A switch between inserting and deleting ends it as well, in
+        the store, programmatic edits included - see ``_Store.record``.
+        Ours kept that switch per widget, on the key paths only, and also
+        broke the group before a newline, which Tk does not: typing
+        ``abc``, Return, ``def`` undoes ``def`` and then ``abc`` with its
+        newline. TkCurses-hy15.
         """
-        if not self.getboolean(self._options["autoseparators"]):
-            return
-        if kind is None or kind != self._last_edit:
+        if self._auto_separators:
             self._buffer.edit_separator()
-        self._last_edit = kind
 
     # ----------------------------------------------------------------- marks
 
@@ -12103,23 +12114,40 @@ class Text(_Drawable, XView, YView):
         return stop - 1 if start < stop < len(text) else stop
 
     def _type(self, characters: str) -> None:
-        """Put typed characters in, replacing the selection if there is one."""
+        """Put typed characters in, replacing the selection if there is one.
+
+        Grouped as ``tk::TextInsert`` groups them: text typed over the
+        selection is one group of its own, the deletion and the insertion
+        together, with autoseparators off between them. And Return, which is
+        the newline, ends the group after it.
+        """
         if not self._editable:
             return
-        # A newline ends the run: undoing a paragraph should not also take
-        # back the one before it.
-        self._separate_if_asked("\n" if "\n" in characters else "type")
-        self._delete_selection()
-        insert = self._buffer.mark_index("insert") or Index(1, 0)
-        self._buffer.insert(insert, characters)
+        auto = self._auto_separators
+        if self._selection_range() is not None:
+            self._separate_if_asked()
+            self._buffer.auto_separators = False
+            try:
+                self._delete_selection()
+                self._insert_typed(characters)
+            finally:
+                self._buffer.auto_separators = auto
+            self._separate_if_asked()
+        else:
+            self._insert_typed(characters)
+        if "\n" in characters:
+            self._separate_if_asked()
         self._anchor = None
         self._after_edit(typed=True)
+
+    def _insert_typed(self, characters: str) -> None:
+        insert = self._buffer.mark_index("insert") or Index(1, 0)
+        self._buffer.insert(insert, characters)
 
     def _backspace(self) -> None:
         """Delete the selection, or the character before the cursor."""
         if not self._editable:
             return
-        self._separate_if_asked("erase")
         if not self._delete_selection():
             insert = self._buffer.mark_index("insert") or Index(1, 0)
             start = self._buffer.index(f"{insert} -1c")
@@ -12132,7 +12160,6 @@ class Text(_Drawable, XView, YView):
         """Delete the selection, or the character after the cursor."""
         if not self._editable:
             return
-        self._separate_if_asked("erase")
         if not self._delete_selection():
             insert = self._buffer.mark_index("insert") or Index(1, 0)
             self._buffer.delete(insert)
@@ -12841,7 +12868,7 @@ def _text_set_cursor(text: Text, index: str) -> None:
     which no cursor can be at - the selection cleared, the cursor in view."""
     if text.compare(index, "==", "end"):
         index = "end - 1c"
-    text._separate_if_asked(None)
+    text._separate_if_asked()
     text.mark_set("insert", index)
     text.tag_remove("sel", "1.0", "end")
     text.see("insert")
@@ -12869,7 +12896,7 @@ def _text_key_select(text: Text, index: str) -> None:
         text.tag_remove("sel", "1.0", first)
         text.tag_add("sel", first, last)
         text.tag_remove("sel", last, "end")
-    text._separate_if_asked(None)
+    text._separate_if_asked()
     text.mark_set("insert", new)
     text.see("insert")
     text._redraw()
@@ -13034,6 +13061,13 @@ def _text_down(text: Text) -> str:
     return _text_up_down_line(text, 1)
 
 
+def _see_insert(view: TextBuffer) -> None:
+    """The ``see insert`` of one of Tk's undo atoms, in the Text whose edit
+    it replays - TextPushUndoAction, in tkText.c."""
+    if view.owner is not None:
+        view.owner.see("insert")
+
+
 def _text_scroll_pages(text: Text, count: int) -> str:
     """``tk::TextScrollPages``: scroll the view ``count`` pages, and answer
     where the cursor was on screen - or, if it was not on screen, the top
@@ -13110,7 +13144,7 @@ def _text_select_none(event: Event) -> None:
     """text.tcl's ``<<SelectNone>>``: no selection, and an undo separator."""
     text = event.widget
     text.tag_remove("sel", "1.0", "end")
-    text._separate_if_asked(None)
+    text._separate_if_asked()
 
 
 # ---------------------------------------------------- the clipboard, on a Text
@@ -13213,7 +13247,7 @@ def _text_press(event: Event) -> None:
     """Take the focus, put the cursor where the click was, and start a drag."""
     text = event.widget
     text.focus_set()
-    text._separate_if_asked(None)
+    text._separate_if_asked()
     index = text._index_at_cell(event.x, event.y)
     text._buffer.mark_set("insert", index)
     text._buffer.mark_set("current", index)
@@ -13312,7 +13346,7 @@ def _text_control_click(event: Event) -> None:
     text = event.widget
     _cancel_autoscan(text)
     text._dragging = False
-    text._separate_if_asked(None)
+    text._separate_if_asked()
     text._buffer.mark_set("insert", text._index_at_cell(event.x, event.y))
     text.see("insert")
     text._redraw()

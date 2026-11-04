@@ -73,7 +73,7 @@ from typing import TYPE_CHECKING, Any
 from tkcurses._core.errors import TclError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
 __all__ = ["Index", "TextBuffer", "TextIndexError"]
 
@@ -115,6 +115,9 @@ class _Edit:
     at: int
     text: str
     inserted: bool
+    #: The key of the view that made it, whose cursor an undo or redo of it
+    #: moves; see :meth:`_Store.replay`.
+    view: str = ""
 
 
 class TextIndexError(TclError):
@@ -164,6 +167,26 @@ _OWN = "\0"
 _TOP = f"{_OWN}top{_OWN}"
 
 
+def _merge_undone(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """An undo's ranges as ``tk::TextUndoRedoProcessMarks`` merges them.
+
+    Sorted by where they start, then each takes in those that start before
+    it ends: one inside it goes, one running past it extends it. Measured
+    against text.tcl's loop rather than tidied: a range that has been
+    extended is still compared by the end it had, as the script does.
+    """
+    pending = sorted(ranges, key=lambda pair: pair[0])
+    merged: list[tuple[int, int]] = []
+    while pending:
+        first, last = pending.pop(0)
+        merged.append((first, last))
+        while pending and pending[0][0] <= last:
+            other = pending.pop(0)[1]
+            if other > last:
+                merged[-1] = (first, other)
+    return merged
+
+
 def _cut(ranges: list[tuple[int, int]], start: int, stop: int) -> list[tuple[int, int]]:
     """A tag's ranges less ``start`` to ``stop``, splitting any it falls in."""
     kept: list[tuple[int, int]] = []
@@ -208,6 +231,13 @@ class _Store:
         #: Whether edits are recorded at all - the widgets' ``-undo``, shared:
         #: measured on Tk 9.0.2, whichever peer set it last decides.
         self.undo_enabled = False
+        #: ``-autoseparators``, shared as ``-undo`` is, and the kind of the
+        #: last edit recorded, "insert" or "delete": a recorded edit of the
+        #: other kind starts a new group when it is on. Tk keeps both in the
+        #: text its peers share (lastEditMode, in tkText.c), so a peer's
+        #: insert and this widget's delete undo apart. Measured on Tk 9.0.2.
+        self.auto_separators = True
+        self.last_edit_mode: str | None = None
         #: How many groups the stack keeps, oldest dropped first - ``-maxundo``.
         #: 0 or below keeps them all, as Tk's does.
         self.max_undo = 0
@@ -220,19 +250,19 @@ class _Store:
 
     # -------------------------------------------------------------- edits
 
-    def insert(self, at: int, text: str) -> None:
-        self.record(_Edit(at, text, inserted=True))
+    def insert(self, at: int, text: str, view: str = "") -> None:
+        self.record(_Edit(at, text, inserted=True, view=view))
         self.text = self.text[:at] + text + self.text[at:]
         self.version += 1
         self.shift(at, len(text))
 
-    def delete(self, start: int, stop: int) -> None:
+    def delete(self, start: int, stop: int, view: str = "") -> None:
         tops = {
             key: self._top_after_delete(offset, start, stop)
             for key, (offset, _) in self.marks.items()
             if key.startswith(_TOP)
         }
-        self.record(_Edit(start, self.text[start:stop], inserted=False))
+        self.record(_Edit(start, self.text[start:stop], inserted=False, view=view))
         self.text = self.text[:start] + self.text[stop:]
         self.version += 1
         self.shift(stop, -(stop - start), floor=start)
@@ -322,6 +352,10 @@ class _Store:
         """
         if not self.undo_enabled or self.replaying:
             return
+        mode = "insert" if edit.inserted else "delete"
+        if self.auto_separators and mode != self.last_edit_mode:
+            self.separate = True
+        self.last_edit_mode = mode
         # Measured against Tk: an edit made after an undo drops what was
         # undone, leaving "nothing to redo". The alternative - keeping it -
         # would let redo reapply an edit to text it no longer fits.
@@ -336,18 +370,70 @@ class _Store:
         if self.max_undo > 0 and len(self.done) > self.max_undo:
             del self.done[: len(self.done) - self.max_undo]
 
-    def replay(self, edits: Iterable[_Edit], *, forward: bool) -> None:
-        """Replay edits, or reverse them, without recording what that does."""
+    def replay(
+        self,
+        edits: Iterable[_Edit],
+        *,
+        forward: bool,
+        moved: Callable[[TextBuffer], None] | None = None,
+    ) -> list[tuple[int, int]]:
+        """Replay edits, or reverse them, without recording what that does.
+
+        Each does what one of Tk's undo atoms does (TextPushUndoAction, in
+        tkText.c): the edit, then ``mark set insert`` in the view that made
+        it - after text put in, before text taken out - and ``see insert``,
+        which is ``moved``'s to do. Returns the ranges it changed, as
+        ``tk::TextUndoRedoProcessMarks`` in text.tcl does: where each edit's
+        text begins and ends, the end taken as a ``line.char`` in the text
+        that held it, read again in the text as it now is; both moved by the
+        later edits, the start with left gravity and the end with right; then
+        merged. Measured on Tk 9.0.2: undoing an insertion of ``AB\nCD`` at
+        5.2 answers 5.2 to 6.2, though line 6 is now another line.
+        """
+        views = {view._key: view for view in self.views}
+        edges: list[tuple[str, str]] = []
         self.replaying = True
         try:
-            for edit in edits:
+            for n, edit in enumerate(edits):
+                stop = edit.at + len(edit.text)
                 putting_in = edit.inserted if forward else not edit.inserted
                 if putting_in:
                     self.insert(edit.at, edit.text)
+                    end = stop
                 else:
-                    self.delete(edit.at, edit.at + len(edit.text))
+                    line, char = self._line_char(stop)
+                    self.delete(edit.at, stop)
+                    end = self._offset_of_line_char(line, char)
+                view = views.get(edit.view)
+                if view is not None:
+                    key = view._mark_key("insert")
+                    gravity = self.marks.get(key, (0, "right"))[1]
+                    self.marks[key] = (stop if putting_in else edit.at, gravity)
+                    if moved is not None:
+                        moved(view)
+                left, right = f"{_OWN}undoL{n}", f"{_OWN}undoR{n}"
+                self.marks[left] = (edit.at, "left")
+                self.marks[right] = (end, "right")
+                edges.append((left, right))
         finally:
             self.replaying = False
+        ranges = [
+            (self.marks.pop(left)[0], self.marks.pop(right)[0]) for left, right in edges
+        ]
+        return _merge_undone(ranges)
+
+    def _line_char(self, offset: int) -> tuple[int, int]:
+        return self.text.count("\n", 0, offset), offset - (
+            self.text.rfind("\n", 0, offset) + 1
+        )
+
+    def _offset_of_line_char(self, line: int, char: int) -> int:
+        """Where a ``line.char`` falls in the text, clamped as Tk clamps an
+        index: past a line's end is its end, past the last line the end."""
+        lines = self.text.split("\n")[:-1]
+        if line >= len(lines):
+            return len(self.text)
+        return sum(len(each) + 1 for each in lines[:line]) + min(char, len(lines[line]))
 
 
 class TextBuffer:
@@ -858,7 +944,7 @@ class TextBuffer:
         if not text or self._shell:
             return self.index(index)
         at = min(self.offset_of(self.index(index)), len(self._text) - 1)
-        self._store.insert(self._global(at), text)
+        self._store.insert(self._global(at), text, self._key)
         return self.index_of(at + len(text))
 
     def delete(self, first: Index | str, last: Index | str | None = None) -> None:
@@ -890,7 +976,7 @@ class TextBuffer:
         start = min(start, stop)
         if start == stop:
             return
-        self._store.delete(self._global(start), self._global(stop))
+        self._store.delete(self._global(start), self._global(stop), self._key)
         if whole:
             newline = self._global(len(self._text) - 1)
             for name, ranges in self._store.tags.items():
@@ -1062,6 +1148,15 @@ class TextBuffer:
         self._store.undo_enabled = value
 
     @property
+    def auto_separators(self) -> bool:
+        """``-autoseparators`` - shared by every peer, as ``-undo`` is."""
+        return self._store.auto_separators
+
+    @auto_separators.setter
+    def auto_separators(self, value: bool) -> None:
+        self._store.auto_separators = value
+
+    @property
     def max_undo(self) -> int:
         """How many groups the stack keeps - shared by every peer."""
         return self._store.max_undo
@@ -1112,8 +1207,14 @@ class TextBuffer:
         """Whether there is a group to put back."""
         return bool(self._store.undone)
 
-    def edit_undo(self) -> bool:
-        """Take back the newest group. False when there is nothing to take.
+    def edit_undo(
+        self, moved: Callable[[TextBuffer], None] | None = None
+    ) -> list[Index] | None:
+        """Take back the newest group. None when there is nothing to take.
+
+        Otherwise the ranges it changed, flat, as indices in this view; see
+        :meth:`_Store.replay`, which also moves the cursor of each view
+        whose edit it takes back and calls ``moved`` with that view.
 
         The group is reversed newest edit first, which is the only order
         that works: the offsets in each record describe the text as it was
@@ -1130,23 +1231,43 @@ class TextBuffer:
         """
         store = self._store
         if not store.done:
-            return False
+            return None
         group = store.done.pop()
-        store.replay(reversed(group), forward=False)
+        ranges = store.replay(reversed(group), forward=False, moved=moved)
         store.undone.append(group)
-        store.separate = True
-        return True
+        # TkUndoRevert, in tkUndo.c, pops the separator under the group it
+        # takes back and frees it, so with nothing to put one back the next
+        # edit joins the group below - autoseparators put one back. Measured
+        # on Tk 9.0.2 without them: x, a failed redo, y; undo takes y; then
+        # z; and the next undo takes z and x together.
+        store.separate = store.auto_separators
+        return self._indices_of(ranges)
 
-    def edit_redo(self) -> bool:
-        """Put back the newest undone group. False when there is none."""
+    def edit_redo(
+        self, moved: Callable[[TextBuffer], None] | None = None
+    ) -> list[Index] | None:
+        """Put back the newest undone group. None when there is none, and
+        otherwise what :meth:`edit_undo` answers."""
         store = self._store
+        # TkUndoApply puts a separator on the undo stack before it looks, so
+        # even a redo that finds nothing ends the group being made.
+        store.separate = True
         if not store.undone:
-            return False
+            return None
         group = store.undone.pop()
-        store.replay(group, forward=True)
+        ranges = store.replay(group, forward=True, moved=moved)
         store.done.append(group)
         store.separate = True
-        return True
+        return self._indices_of(ranges)
+
+    def _indices_of(self, ranges: list[tuple[int, int]]) -> list[Index]:
+        """Store ranges as this view's indices, flat."""
+        lo, hi = self._window()
+        return [
+            self.index_of(min(max(offset, lo), hi) - lo)
+            for pair in ranges
+            for offset in pair
+        ]
 
     # ----------------------------------------------------------------- marks
 

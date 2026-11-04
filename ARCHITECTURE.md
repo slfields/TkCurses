@@ -2683,10 +2683,55 @@ line's height in Tk, whose `yview scroll` never stops inside one. A view
 that starts in such spacing keeps its place in it, as the text Tk shows
 keeps its place.
 
-Left, and filed: Tk's `xview moveto` goes to a fraction of a pixel, part
-way across a character, which a cell cannot - the recorder moves to 0 and 1
-only. And `edit undo` puts the cursor at the change and the view on it,
-where ours leaves the cursor where it was (`TkCurses-2sbq`).
+Left: Tk's `xview moveto` goes to a fraction of a pixel, part way across a
+character, which a cell cannot - the recorder moves to 0 and 1 only.
+
+### Undo and redo in a Text
+
+Each recorded edit is two of Tk's undo atoms (`TextPushUndoAction`, in
+`tkText.c`): the edit, then `mark set insert` and `see insert` **in the
+widget that made it** - before text taken out, after text put back. So
+undoing a peer's edit moves the peer's cursor, not this one's. Measured on
+Tk 9.0.2: three lines put in at 1.0 with the cursor at 30.0, undone, leave
+the cursor and the view at 1.0; `delete 2.0 4.0` undone leaves it at 4.0,
+and redone at 2.0.
+
+`edit undo` and `edit redo` answer the ranges they changed, flat, as
+`tk::TextUndoRedoProcessMarks` (`text.tcl`) makes them: a left-gravity mark
+at each edit's start and a right-gravity one at its end, read once the group
+is done, sorted and merged. The merge compares each range by the end it
+started with, not one it was extended to, so an edit inside the extension is
+answered on its own - kept as the script has it. With `-undo false` both
+answer `()`, where tkinter answers `""`.
+
+**Groups.** Tk keeps `-autoseparators` and the kind of the last edit in the
+text its peers share (`lastEditMode`): any recorded insert or delete,
+programmatic or a peer's, that switches kind starts a new group. text.tcl's
+bindings add separators of their own - after Return, not before it; either
+side of typing over the selection, which `tk::TextInsert` makes one group
+by turning autoseparators off around it; on `tk::TextSetCursor`, a
+Control-click and `<<SelectNone>>`. And `tkUndo.c`: `TkUndoApply` puts a
+separator on the undo stack before it looks, so even a redo with nothing to
+redo ends the group being made; `TkUndoRevert` pops the separator below the
+group it takes back and frees it, so with autoseparators off the next edit
+**joins the group below** - `x`, a separator, `y`, undo, `z`, and the next
+undo takes `z` and `x` together. Ours kept the switch per widget, on the key
+paths only, and broke the group before a newline (`TkCurses-hy15`).
+
+**Deliberately unlike Tk**, a disabled Text's undo changes nothing, moves no
+cursor and answers `()`; Tk's pops the group while refusing its edits
+(`TkCurses-aah`).
+
+Held by a replay of 200 runs recorded from Tk (`tests/test_text_undo.py`).
+One thing the recorder has to correct for: Tk centres in pixels, and a
+centring `see` leaves the top line part out of the window - the bottom of
+the centred line goes to `(dInfoPtr->y + dInfoPtr->maxY + lineHeight)/2`
+(`TkTextSetYView`, in `tkTextDisp.c`), which with Tk's 3-pixel inset is
+never a line boundary. The next `see` then measures from the pixel: from
+16.0 reached by `yview`, `see 23.8` shows 21.0, and from 16.0 reached by
+centring, 20.0. A terminal has only the first, so the recorder wraps each
+widget's command to follow every `see`, the undo atoms' own included, with
+`yview` to the first index on screen (`TkCurses-2sbq`).
 
 ### Deleting to the end of a Text
 

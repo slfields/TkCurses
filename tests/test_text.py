@@ -842,7 +842,7 @@ def undoable(root):
 def test_undo_is_off_unless_asked_for(text):
     """Tk's default, and it means edit_undo does nothing rather than fail."""
     text.insert("1.0", "x")
-    assert text.edit_undo() is None
+    assert text.edit_undo() == ()
     assert text.get("1.0", "end-1c") == "x"
 
 
@@ -857,7 +857,7 @@ def test_nothing_to_undo_is_an_error_only_when_undo_is_on(undoable, text):
         undoable.edit_undo()
     with pytest.raises(TclError, match="nothing to redo"):
         undoable.edit_redo()
-    assert text.edit_undo() is None
+    assert text.edit_undo() == ()
 
 
 def test_programmatic_edits_group_together(undoable):

@@ -475,9 +475,14 @@ def test_undoing_does_not_record_its_own_reversal():
 
 
 def test_a_group_is_reversed_newest_edit_first():
-    """The only order that works: earlier offsets describe earlier text."""
+    """The only order that works: earlier offsets describe earlier text.
+
+    Autoseparators off, or the switch from inserting to deleting would part
+    them, as it does in Tk.
+    """
     buffer = TextBuffer()
     buffer.undo_enabled = True
+    buffer.auto_separators = False
     buffer.insert("1.0", "hello")
     buffer.delete("1.0", "1.2")
     buffer.insert("end", "!")
