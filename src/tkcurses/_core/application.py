@@ -239,21 +239,24 @@ DEFAULT_VIRTUAL_EVENTS: dict[str, tuple[str, ...]] = {
     # The navigation events, as tk.tcl defines them for X11 and in its
     # order - the order settles which of two runs when both fit a key
     # equally. Not <<SelectNone>>: its Control-backslash is the tty's quit
-    # key. TkCurses-yu5l.
-    "<<NextChar>>": ("<Key-Right>",),
+    # key. TkCurses-yu5l. With the emacs keys tk::EventMotifBindings adds
+    # while tk_strictMotif is off, as it is unless a program sets it, less
+    # their Select forms: Control-B is the byte Control-b is, so a terminal
+    # cannot send it. TkCurses-wmaq.
+    "<<NextChar>>": ("<Key-Right>", "<Control-Key-f>"),
     "<<SelectNextChar>>": ("<Shift-Key-Right>",),
-    "<<PrevChar>>": ("<Key-Left>",),
+    "<<PrevChar>>": ("<Key-Left>", "<Control-Key-b>"),
     "<<SelectPrevChar>>": ("<Shift-Key-Left>",),
     "<<NextWord>>": ("<Control-Key-Right>",),
     "<<SelectNextWord>>": ("<Control-Shift-Key-Right>",),
     "<<PrevWord>>": ("<Control-Key-Left>",),
     "<<SelectPrevWord>>": ("<Control-Shift-Key-Left>",),
-    "<<LineStart>>": ("<Key-Home>",),
+    "<<LineStart>>": ("<Key-Home>", "<Control-Key-a>"),
     "<<SelectLineStart>>": ("<Shift-Key-Home>",),
-    "<<LineEnd>>": ("<Key-End>",),
+    "<<LineEnd>>": ("<Key-End>", "<Control-Key-e>"),
     "<<SelectLineEnd>>": ("<Shift-Key-End>",),
-    "<<PrevLine>>": ("<Key-Up>",),
-    "<<NextLine>>": ("<Key-Down>",),
+    "<<PrevLine>>": ("<Key-Up>", "<Control-Key-p>"),
+    "<<NextLine>>": ("<Key-Down>", "<Control-Key-n>"),
     "<<SelectPrevLine>>": ("<Shift-Key-Up>",),
     "<<SelectNextLine>>": ("<Shift-Key-Down>",),
     "<<PrevPara>>": ("<Control-Key-Up>",),

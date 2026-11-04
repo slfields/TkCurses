@@ -2141,12 +2141,16 @@ order (`TkCurses-yu5l`): `<<PrevChar>>`/`<<NextChar>>` Left/Right,
 `<<PrevWord>>`/`<<NextWord>>` Control-Left/Right, `<<LineStart>>`/
 `<<LineEnd>>` Home/End, `<<PrevLine>>`/`<<NextLine>>` Up/Down,
 `<<PrevPara>>`/`<<NextPara>>` Control-Up/Down, and a `Select` form of each
-with Shift added. Not `<<SelectNone>>`: its Control-backslash is the tty's
+with Shift added. With them, the emacs keys `tk::EventMotifBindings` adds
+while `tk_strictMotif` is off, which it is unless a program sets it:
+Control-b/f, Control-p/n and Control-a/e (`TkCurses-wmaq`). Not their
+`Select` forms, Control-B and the rest - a terminal sends Control-B as the
+byte Control-b is. Not `<<SelectNone>>`: its Control-backslash is the tty's
 quit key, and a binding on it would take SIGQUIT from the program. Nor
 `<<Undo>>`, `<<Redo>>` or `<<ToggleSelection>>`, which nothing here binds
-yet. Listbox binds the navigation events as listbox.tcl does; Entry, Text
-and the ttk widgets still bind the keys, so a key `event_add`ed to
-`<<LineStart>>` moves a Listbox and not them (`TkCurses-wmaq`).
+yet. Listbox, Entry, Spinbox, the ttk entries and Text bind the navigation
+events as Tk's scripts do - see "Moving with the keyboard"; Scale,
+Scrollbar and Menu still bind the keys (`TkCurses-rs2l`).
 
 **A physical binding and a virtual one compete, within a tag** - one runs,
 measured on Tk 9.0.2 on one Frame (`TkCurses-hkul`):
@@ -2452,6 +2456,106 @@ tied, `state(["disabled"])` leaves `cget("state")` alone. Ours stored the
 option and left the flags, at construction and on `configure` alike, so
 `ttk.Combobox(state="readonly")` — the usual pick-from-a-list combobox — still
 took typing, and could not have been told from an editable one here.
+
+### Moving with the keyboard
+
+**Entry, Spinbox, ttk.Entry, ttk.Combobox, ttk.Spinbox and Text bind the
+navigation virtual events**, as `entry.tcl`, `spinbox.tcl`, `ttk/entry.tcl`
+and `text.tcl` do, and Text also binds Control-Home and Control-End as
+themselves (`TkCurses-wmaq`). Each was held to a recording of real Tk:
+`tests/support/record_navigation_keys.py` drove Tk 9.0.2 through 1050 random
+runs of the arrows, Home and End under every modifier, the events
+themselves, and the program moving the cursor and the selection - 150 per
+widget, and a Text both unwrapped and wrapped at a word. Ours replays all of
+them the same, but for one difference kept on purpose, below. None of the
+bindings breaks, so Left in an Entry also reaches the toplevel's bindings and
+`all`'s, measured in all five; ours used to stop them.
+
+**Where a word starts and ends** is not `word.tcl`'s rule in Tk 9. `tk.tcl`
+defines `tk::endOfWord`, `tk::startOfNextWord` and `tk::startOfPreviousWord`
+over `word.tcl` only if they do not exist, and Tk 9.0.2, built with ICU,
+makes them in C - `tcl_wordchars` is never even set. Measured over 417
+strings (`tests/support/word_boundaries.json`), each is a step over Unicode's
+default word boundaries (UAX #29) and sometimes a second, never more:
+
+| Procedure | Answers |
+|---|---|
+| `endOfWord` | the next boundary, and the one after it unless the first is white space |
+| `startOfNextWord` | the next boundary, and the one after it if the first is white space |
+| `startOfPreviousWord` | the boundary before, and the one before that if it is white space |
+
+So `foo_bar-baz` is three words, `foo_bar`, `-` and `baz`; `it's`, `3.14`
+and `1,000` are one each; a run of spaces is one piece and a tab another;
+and from the end of `abc` in `abc  \n  def` the next word starts at the
+newline. An answer at the end of the text is no answer: Tk returns `""`, and
+the bindings then go to `end` themselves. `_core/words.py` models it; ICU's
+dictionary segmentation of Chinese, Japanese and Thai is not, and a run of
+those is one word there.
+
+**Classic and ttk extend a selection differently.** A classic entry's
+Shift-move is `tk::EntryKeySelect`: with nothing selected, `selection from
+insert` then `selection to`; otherwise `selection adjust`, which moves the
+nearer end. ttk's is `ttk::entry::ExtendTo`, which keeps whichever end the
+cursor is not at. Each is replayed against its own recording.
+
+**A password field moves by word to an end.** With `show` set, Entry and
+ttk.Entry go to the start or the end on Control-Left and Control-Right,
+because each script checks `winfo class` for its own class. ttk.Combobox
+and ttk.Spinbox share the procedure and fail the check, so they move by word
+with `show="*"`, measured on `ab cd ef`. Classic Spinbox has no `show`.
+
+**Up and Down in a Spinbox step it**, through `<<PrevLine>>` and
+`<<NextLine>>` in a classic one (`invoke buttonup`) and as the keys
+themselves in a ttk one, where `<<PrevLine>>` is TEntry's binding that does
+nothing: `event_generate("<<PrevLine>>")` steps a Spinbox and leaves a
+ttk.Spinbox alone. In an Entry the two events do nothing.
+
+**In a Text**, measured, in the order the replay found them:
+
+- **Up and Down keep a column** for as long as the cursor stays where the
+  last press left it (`tk::TextUpDownLine`'s `Priv(prevPos)` and
+  `Priv(textPosOrig)`, global in Tk and one per Text here), so Down through a
+  short line comes back out where it went in.
+- **Above the first row is that row's start. Below the last it depends on
+  the column**: `9.0 + 1 displaylines` is `10.0`, which is `end`, and
+  `9.1 + 1 displaylines` is `9.7`, the last character. A plain Down lands on
+  the character either way; Shift-Down from the first column selects the
+  final newline as well.
+- **End on a row that wraps is that row's last character** - the space a
+  word wrap broke at, or the last letter of a word broken across rows -
+  because the index after it starts the next row. End at 5.10 in a 16-column
+  `fourth_word-joined end` goes to 5.15. At the end of a line it is the end
+  of the line, trailing spaces included; ours used to stop before them.
+- **Control-Left reads backwards a line at a time** (`tk::TextPrevPos`), and
+  hands the word procedure `end`, which in Tk 9's C is the last character and
+  not the length: `startOfPreviousWord` on `\nx` answers 0 from `end` and 1
+  from 2. So from 7.1, on a line holding `x` below one of spaces, it goes to
+  6.3, the end of the line above.
+- **Control-Up and Control-Down go by paragraph** - a line following an
+  empty one, past its leading blanks (`tk::TextPrevPara`, `tk::TextNextPara`).
+  A line of spaces is not empty.
+- **Prior and Next are not yet Tk's** (`TkCurses-5co5`): Tk scrolls the view
+  a page and finds the cursor in it, ours moves the cursor a page of rows;
+  they were left out of the recording.
+
+**Kept different on purpose**: classic Tk reports a selection a Shift-move
+ran onto its own anchor as present and empty - `sel.first` equal to
+`sel.last` - after which BackSpace deletes nothing. Ours has no selection
+there (see `TextField.select_to`). The replay compares that step as no
+selection, and one run whose later steps follow from it is marked as
+expected to differ.
+
+**Index modifiers apply left to right**, measured on Tk 9.0.2:
+`3.0 lineend +1c` is `4.0` and `3.2 +1c lineend` is `3.3`. Ours used to take
+`linestart`, `lineend`, `wordstart` and `wordend` off the end first, which
+refused the first form and would have reversed it - and `text.tcl`'s own
+procedures are written that way. Tk tries the whole string as a mark before
+splitting it, so a mark may be called `my-mark`, and then `my-mark +1c` is
+no index, because the base ends at the first space or sign. Units abbreviate
+(`+1c`, `+2 ch`, `- 1 l`), `indices` counts as `chars` here - a buffer holds
+no embedded windows - and `any` before a unit changes nothing. `display` is
+refused: the buffer does not know how the lines wrap. Ours still accepts a
+leading space, which Tk refuses.
 
 ### Cell Structure
 

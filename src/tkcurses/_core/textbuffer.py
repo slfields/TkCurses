@@ -77,7 +77,19 @@ __all__ = ["Index", "TextBuffer", "TextIndexError"]
 _WORD = re.compile(r"\w")
 
 #: ``+3 chars``, ``-2 lines``, and the compact ``+3c`` / ``-2l`` Tk also takes.
-_COUNT = re.compile(r"^([+-])\s*(\d+)\s*([a-z]+)$")
+#: The pieces of a modifier list: a sign, or a run of anything else up to
+#: the next space or sign. ``+1c`` is the two pieces ``+`` and ``1c``.
+_MODIFIER_PIECE = re.compile(r"[+-]|[^\s+-]+")
+#: Where the base index ends, once the whole string is not a mark's name.
+_BASE_END = re.compile(r"[\s+-]")
+#: A count's units, each with the letter its abbreviations start with.
+#: ``indices`` counts what ``chars`` does here: a buffer holds no embedded
+#: windows or images to tell them apart.
+_UNITS = {"chars": "chars", "indices": "chars", "lines": "lines"}
+#: The word modifiers. Tk takes any abbreviation of five letters or more, so
+#: ``lines`` is ``linestart`` - and is never a unit here, where it follows no
+#: count.
+_EDGES = ("linestart", "lineend", "wordstart", "wordend")
 
 _GRAVITIES = ("left", "right")
 
@@ -619,9 +631,17 @@ class TextBuffer:
         try:
             if not text:
                 raise TextIndexError(text)
-            base, modifiers = self._split_modifiers(text)
+            # The whole string is tried as a mark first, as Tk does: a mark
+            # may be called my-mark, and then "my-mark +1c" is no index at
+            # all, because the base stops at the first space or sign.
+            local = self._mark_offset(text)
+            if local is not None:
+                return self.clamp(self.index_of(local))
+            cut = _BASE_END.search(text)
+            base = text if cut is None else text[: cut.start()]
             index = self._resolve_base(base)
-            for modifier in modifiers:
+            rest = "" if cut is None else text[cut.start() :]
+            for modifier in self._modifiers(rest):
                 index = self._apply_modifier(index, modifier)
         except _NoTaggedCharacters:
             raise
@@ -633,28 +653,50 @@ class TextBuffer:
         return self.clamp(index)
 
     @staticmethod
-    def _split_modifiers(text: str) -> tuple[str, list[str]]:
-        """Separate the base index from the modifiers that follow it.
+    def _modifiers(text: str) -> list[tuple[str, int]]:
+        """The modifiers after the base, in order, each as a unit and a count.
 
-        Tk allows ``insert+1c`` with no spaces as well as ``insert + 1 chars``,
-        so the split looks for the signs rather than for whitespace, and the
-        word modifiers are taken off the end first.
+        Measured on Tk 9.0.2, which applies them left to right:
+        ``3.0 lineend +1c`` is the start of line 4 and ``3.2 +1c lineend`` the
+        end of line 3. Spaces are optional around a sign and between a count
+        and its unit, and a unit may be cut short - ``+1c``, ``- 2 ch``, ``+ 1
+        l``. A count may name ``any`` before its unit, which changes nothing
+        here; ``display`` is refused, since the buffer knows nothing of how
+        the lines wrap. Raises :class:`TextIndexError` for anything else.
         """
-        words = text.split()
-        modifiers: list[str] = []
-        while words and words[-1] in ("linestart", "lineend", "wordstart", "wordend"):
-            modifiers.insert(0, words.pop())
-        rest = " ".join(words)
-        counts: list[str] = []
-        while True:
-            cut = max(rest.rfind("+"), rest.rfind("-"))
-            # Not at position 0: a leading sign belongs to the base, and there
-            # is no index string that legitimately starts with one.
-            if cut <= 0:
-                break
-            counts.insert(0, rest[cut:].strip())
-            rest = rest[:cut].strip()
-        return rest, counts + modifiers
+        pieces = _MODIFIER_PIECE.findall(text)
+        found: list[tuple[str, int]] = []
+        while pieces:
+            piece = pieces.pop(0)
+            if piece in "+-":
+                if not pieces:
+                    raise TextIndexError(text)
+                digits = re.match(r"\d+", pieces[0])
+                if digits is None:
+                    raise TextIndexError(text)
+                count = int(digits.group())
+                unit = pieces.pop(0)[digits.end() :] or (
+                    pieces.pop(0) if pieces else ""
+                )
+                if unit and "any".startswith(unit):
+                    unit = pieces.pop(0) if pieces else ""
+                name = next(
+                    (name for name in _UNITS if unit and name.startswith(unit)), None
+                )
+                if name is None:
+                    raise TextIndexError(text)
+                found.append((_UNITS[name], count if piece == "+" else -count))
+                continue
+            if "any".startswith(piece) and pieces:
+                piece = pieces.pop(0)
+            edge = next(
+                (edge for edge in _EDGES if len(piece) >= 5 and edge.startswith(piece)),
+                None,
+            )
+            if edge is None:
+                raise TextIndexError(text)
+            found.append((edge, 0))
+        return found
 
     def _resolve_base(self, base: str) -> Index:
         """The starting point, before any modifier is applied."""
@@ -681,25 +723,19 @@ class TextBuffer:
                 return self.index_of(edge)
         raise TextIndexError(f'bad text index "{base}"')
 
-    def _apply_modifier(self, index: Index, modifier: str) -> Index:
+    def _apply_modifier(self, index: Index, modifier: tuple[str, int]) -> Index:
         """Move an index by one modifier."""
-        if modifier == "linestart":
+        kind, count = modifier
+        if kind == "linestart":
             return Index(index.line, 0)
-        if modifier == "lineend":
+        if kind == "lineend":
             return Index(index.line, self.line_length(index.line))
-        if modifier in ("wordstart", "wordend"):
-            return self._word_edge(index, start=modifier == "wordstart")
-        match = _COUNT.match(modifier.replace(" ", ""))
-        if match is None:
-            raise TextIndexError(f'bad text index modifier "{modifier}"')
-        sign, digits, unit = match.groups()
-        count = int(digits) * (1 if sign == "+" else -1)
-        if "char".startswith(unit[:4]) or unit in ("c", "chars", "character"):
+        if kind in ("wordstart", "wordend"):
+            return self._word_edge(index, start=kind == "wordstart")
+        if kind == "chars":
             return self.index_of(self.offset_of(index) + count)
-        if unit in ("l", "line", "lines"):
-            line = index.line + count
-            return Index(line, min(index.char, self.line_length(line)))
-        raise TextIndexError(f'bad text index modifier "{modifier}"')
+        line = index.line + count
+        return Index(line, min(index.char, self.line_length(line)))
 
     def _word_edge(self, index: Index, *, start: bool) -> Index:
         """The beginning or end of the word an index is in.

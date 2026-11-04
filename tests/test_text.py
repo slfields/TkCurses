@@ -291,11 +291,13 @@ def test_down_keeps_the_column_where_it_can(text):
     assert text.index("insert") == "2.2"
 
 
-def test_up_from_the_first_line_stays_put(text):
+def test_up_from_the_first_line_goes_to_its_start(text):
+    """tk::TextUpDownLine, measured on Tk 9.0.2: there is no line above, so
+    the cursor goes to the start of this one. TkCurses-wmaq."""
     text.insert("1.0", "hello")
     text.mark_set("insert", "1.2")
     text._handle(KeyEvent(keysym="Up"))
-    assert text.index("insert") == "1.2"
+    assert text.index("insert") == "1.0"
 
 
 def test_home_and_end(text):
@@ -1613,3 +1615,64 @@ def test_a_disabled_redo_changes_nothing_and_keeps_the_history(history):
     history.configure(state="normal")
     history.edit_redo()
     assert history.get("1.0", "end-1c") == "hello world"
+
+
+#: Index expressions and what Tk 9.0.2 makes of them in ``aaa bb``,
+#: ``bbb-cc dd``, ``ccc``, ``ddd eee``, with insert at 2.1, a mark called
+#: my-mark at 2.5 and 1.2-2.2 selected; None for ``bad text index``. Tk
+#: applies the modifiers left to right, and tries the whole string as a mark
+#: before splitting it. TkCurses-wmaq.
+TK_INDICES = [
+    ("1.1 linee", "1.6"),
+    ("1.1 lines", "1.0"),
+    ("1.1 line", None),
+    ("3.0 lineend + 1c", "4.0"),
+    ("3.0 lineend +1c", "4.0"),
+    ("3.0 lineend+1c", "4.0"),
+    ("3.2 +1c lineend", "3.3"),
+    ("3.2 lineend -1c", "3.2"),
+    ("3.0 linestart - 1c", "2.9"),
+    ("insert linestart + 1 line", "3.0"),
+    ("insert lineend - 2 chars linestart", "2.0"),
+    ("insert +1c", "2.2"),
+    ("insert+1c", "2.2"),
+    ("insert + 1 chars", "2.2"),
+    ("insert -1line", "1.1"),
+    ("insert - 1 l", "1.1"),
+    ("insert +2 ch", "2.3"),
+    ("insert + 1 indices", "2.2"),
+    ("end - 1 indices", "5.0"),
+    ("end-1c", "5.0"),
+    ("end -1 i", "5.0"),
+    ("insert + 1 any lines", "3.1"),
+    ("insert wordstart", "2.0"),
+    ("insert wordend +1c", "2.4"),
+    ("insert wordend + 1c wordend", "2.6"),
+    ("2.1 wordstart - 1c", "1.6"),
+    ("my-mark", "2.5"),
+    ("my-mark +1c", None),
+    ("my-mark lineend", None),
+    ("sel.first", "1.2"),
+    ("sel.first +1c lineend", "1.6"),
+    ("1.0 + 1 c", "1.1"),
+    ("1.0 +1 cha", "1.1"),
+    ("3.0  +  1c", "3.1"),
+    ("insert + x c", None),
+    ("insert + 1 q", None),
+    ("insert +", None),
+    ("insert lineend junk", None),
+    ("insert linestartx", None),
+]
+
+
+@pytest.mark.parametrize(("spec", "expected"), TK_INDICES)
+def test_an_index_expression_resolves_as_in_tk(text, spec, expected):
+    text.insert("1.0", "aaa bb\nbbb-cc dd\nccc\nddd eee\n")
+    text.mark_set("insert", "2.1")
+    text.mark_set("my-mark", "2.5")
+    text.tag_add("sel", "1.2", "2.2")
+    if expected is None:
+        with pytest.raises(TclError, match="bad text index"):
+            text.index(spec)
+    else:
+        assert text.index(spec) == expected

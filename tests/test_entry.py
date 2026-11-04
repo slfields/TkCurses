@@ -228,8 +228,14 @@ def test_an_unprintable_key_is_left_alone(entry):
     assert entry.get() == "abc"
 
 
-def test_an_editing_key_stops_there(entry):
-    assert entry._handle(KeyEvent(keysym="Left", char="")) is True
+def test_a_navigation_key_goes_on_to_the_other_tags(entry):
+    """Measured on Tk 9.0.2: entry.tcl's <<PrevChar>> does not break, so
+    Left also reaches the toplevel's and ``all``'s bindings. TkCurses-wmaq."""
+    seen = []
+    entry.bind_all("<Key>", lambda event: seen.append(event.keysym))
+    entry.insert(0, "abc")
+    assert entry._handle(KeyEvent(keysym="Left", char="")) is False
+    assert (entry.index("insert"), seen) == (2, ["Left"])
 
 
 # -------------------------------------------------------------------- mouse

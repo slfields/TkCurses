@@ -1679,6 +1679,7 @@ class Combobox(Widget, _EntryCommands):
         bind(self._ttk_class, "<FocusIn>", tkcurses._entry_focus_in)
         bind(self._ttk_class, "<FocusOut>", tkcurses._entry_focus_out)
         tkcurses._bind_entry_clipboard(bind, self._ttk_class)
+        tkcurses._bind_entry_navigation(bind, self._ttk_class, themed=True)
 
     # ---------------------------------------------------------------- state
 

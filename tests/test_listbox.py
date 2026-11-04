@@ -1144,8 +1144,8 @@ def test_a_generated_prevline_moves_up(listbox):
 
 def test_a_key_added_to_prevline_moves_the_list_too(listbox, root):
     listbox.activate(1)
-    root.event_add("<<PrevLine>>", "<Control-Key-p>")
-    press(listbox, "p", MOD_CTRL)
+    root.event_add("<<PrevLine>>", "<Control-Key-k>")
+    press(listbox, "k", MOD_CTRL)
     assert listbox.index("active") == 0
 
 
@@ -1174,14 +1174,15 @@ def test_copy_from_an_unexported_list_leaves_the_clipboard_alone(root):
 
 
 def test_the_navigation_events_are_defined_as_tk_defines_them(root):
-    """tk.tcl, X11: each with the one key it names there."""
+    """tk.tcl, X11, with tk_strictMotif off: each with the keys it names
+    there that a terminal can send."""
     expected = {
-        "<<PrevLine>>": "<Key-Up>",
-        "<<SelectNextLine>>": "<Shift-Key-Down>",
-        "<<LineStart>>": "<Key-Home>",
-        "<<PrevWord>>": "<Control-Key-Left>",
-        "<<SelectNextPara>>": "<Control-Shift-Key-Down>",
+        "<<PrevLine>>": ("<Key-Up>", "<Control-Key-p>"),
+        "<<SelectNextLine>>": ("<Shift-Key-Down>",),
+        "<<LineStart>>": ("<Key-Home>", "<Control-Key-a>"),
+        "<<PrevWord>>": ("<Control-Key-Left>",),
+        "<<SelectNextPara>>": ("<Control-Shift-Key-Down>",),
     }
-    for virtual, sequence in expected.items():
-        assert root.event_info(virtual) == (sequence,)
+    for virtual, sequences in expected.items():
+        assert root.event_info(virtual) == sequences
     assert "<<SelectNone>>" not in root.event_info()

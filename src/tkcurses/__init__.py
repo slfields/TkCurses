@@ -172,6 +172,7 @@ from tkcurses._core.textlayout import (
     parse_tabs,
     render,
 )
+from tkcurses._core.words import end_of_word, start_of_next_word, start_of_previous_word
 
 # Every constant tkinter's own module defines, re-exported so that a
 # star-import puts the same names in scope. tkinter does this with
@@ -8221,6 +8222,7 @@ class Entry(_Drawable, XView):
         bind(name, "<FocusIn>", _entry_focus_in)
         bind(name, "<FocusOut>", _entry_focus_out)
         _bind_entry_clipboard(bind, name)
+        _bind_entry_navigation(bind, name, themed=_is_ttk(self))
 
     # ---------------------------------------------------------------- state
 
@@ -9065,13 +9067,6 @@ _EDIT_VALIDATED = ("key", "all")
 _FOCUS_IN_VALIDATED = ("focus", "focusin", "all")
 _FOCUS_OUT_VALIDATED = ("focus", "focusout", "all")
 
-_ENTRY_MOTION: dict[str, Any] = {
-    "Left": -1,
-    "Right": 1,
-    "Home": "start",
-    "End": "end",
-}
-
 
 def _entry_key(event: Event) -> str | None:
     """Handle one key in an Entry, then bring the cursor into view.
@@ -9093,19 +9088,6 @@ def _entry_keystroke(event: Event) -> str | None:
     entry = event.widget
     field = entry._field
     keysym = event.keysym
-    extend = bool(event.state & MOD_SHIFT)
-
-    if keysym in _ENTRY_MOTION:
-        motion = _ENTRY_MOTION[keysym]
-        if motion == "start":
-            field.move_to(0, extend=extend)
-        elif motion == "end":
-            field.move_to(len(field.text), extend=extend)
-        else:
-            field.move_by(motion, extend=extend)
-        if extend:
-            entry._claim_primary()
-        return "break"
 
     if keysym == "BackSpace":
         if not field.delete_selection() and field.cursor > 0:
@@ -9528,6 +9510,159 @@ def _bind_entry_clipboard(bind: Callable[..., Any], name: str) -> None:
     bind(name, "<<Clear>>", _entry_clear)
     bind(name, "<<SelectAll>>", _entry_select_all)
     bind(name, "<<PasteSelection>>", _entry_paste_selection)
+
+
+# ------------------------------------------------- moving through an entry
+#
+# entry.tcl and spinbox.tcl bind tk.tcl's navigation events, and ttk's
+# entry.tcl binds the same ones differently: classic Tk extends a selection
+# from the anchor `selection from` set (tk::EntryKeySelect), ttk from
+# whichever end of the selection the cursor is not at (ttk::entry::ExtendTo).
+# Measured over 750 recorded sequences, tests/support/navigation_keys.json.
+# None breaks, as none of Tk's does. TkCurses-wmaq.
+
+
+def _entry_previous_char(entry: Entry) -> int:
+    """``tk::EntryPreviousChar``, and ttk's ``PrevChar``: one back, or 0."""
+    return max(0, entry.index("insert") - 1)
+
+
+def _entry_next_char(entry: Entry) -> int:
+    """``tk::EntryNextChar``: one on, or the end."""
+    return min(len(entry.get()), entry.index("insert") + 1)
+
+
+def _entry_hides_words(entry: Entry) -> bool:
+    """Whether word motion goes straight to an end, as for a password.
+
+    Only for the class named in each script's check, ``winfo class $w eq
+    "Entry"`` or ``"TEntry"``: a Spinbox or a Combobox with ``show`` set
+    still moves by word.
+    """
+    return entry.winfo_class() in ("Entry", "TEntry") and bool(entry.cget("show"))
+
+
+def _entry_previous_word(entry: Entry) -> int:
+    """``tk::EntryPreviousWord``, and ttk's ``PrevWord``."""
+    if _entry_hides_words(entry):
+        return 0
+    found = start_of_previous_word(entry.get(), entry.index("insert"))
+    return 0 if found is None else found
+
+
+def _entry_next_word(entry: Entry) -> int:
+    """``tk::EntryNextWord``, and ttk's ``NextWord``: past the end of this
+    word and the space after it."""
+    text = entry.get()
+    if _entry_hides_words(entry):
+        return len(text)
+    found = end_of_word(text, entry.index("insert"))
+    if found is not None:
+        found = start_of_next_word(text, found)
+    return len(text) if found is None else found
+
+
+def _entry_select_next_word(entry: Entry) -> int:
+    """``tk::EntrySelectNextWord``, and ttk's ``SelectNextWord``: to the end
+    of this word only."""
+    text = entry.get()
+    if _entry_hides_words(entry):
+        return len(text)
+    found = end_of_word(text, entry.index("insert"))
+    return len(text) if found is None else found
+
+
+def _entry_start(entry: Entry) -> int:
+    del entry
+    return 0
+
+
+def _entry_end(entry: Entry) -> int:
+    return len(entry.get())
+
+
+def _entry_set_cursor(entry: Entry, index: int) -> None:
+    """``tk::EntrySetCursor`` and ``ttk::entry::Move``: the cursor to
+    ``index``, the selection cleared, the cursor brought into view."""
+    entry.icursor(index)
+    entry.selection_clear()
+    entry._see_cursor()
+    entry._redraw()
+
+
+def _entry_key_select(entry: Entry, index: int) -> None:
+    """``tk::EntryKeySelect``: a selection begun from the cursor, or the
+    nearer end of the one there is moved; then the cursor follows."""
+    if not entry.selection_present():
+        entry.selection_from("insert")
+        entry.selection_to(index)
+    else:
+        entry.selection_adjust(index)
+    entry.icursor(index)
+    entry._see_cursor()
+    entry._redraw()
+
+
+def _ttk_entry_extend_to(entry: Entry, index: int) -> None:
+    """``ttk::entry::ExtendTo``: the selection runs from its end away from
+    the cursor - or from the cursor, if there is none - to ``index``."""
+    insert = entry.index("insert")
+    if not entry.selection_present():
+        anchor = insert
+    else:
+        first, last = entry.index("sel.first"), entry.index("sel.last")
+        before = index < first or (insert == first and index <= last)
+        anchor = last if before else first
+    entry.selection_range(min(anchor, index), max(anchor, index))
+    entry.icursor(index)
+    entry._see_cursor()
+    entry._redraw()
+
+
+#: Each navigation event, and where it goes: the target, and whether it
+#: extends the selection. As entry.tcl, spinbox.tcl and ttk/entry.tcl bind
+#: them, which agree on every target.
+_ENTRY_NAVIGATION: dict[str, tuple[Callable[[Entry], int], bool]] = {
+    "<<PrevChar>>": (_entry_previous_char, False),
+    "<<NextChar>>": (_entry_next_char, False),
+    "<<SelectPrevChar>>": (_entry_previous_char, True),
+    "<<SelectNextChar>>": (_entry_next_char, True),
+    "<<PrevWord>>": (_entry_previous_word, False),
+    "<<NextWord>>": (_entry_next_word, False),
+    "<<SelectPrevWord>>": (_entry_previous_word, True),
+    "<<SelectNextWord>>": (_entry_select_next_word, True),
+    "<<LineStart>>": (_entry_start, False),
+    "<<LineEnd>>": (_entry_end, False),
+    "<<SelectLineStart>>": (_entry_start, True),
+    "<<SelectLineEnd>>": (_entry_end, True),
+}
+
+
+def _entry_navigation(
+    target: Callable[[Entry], int], extend: bool, themed: bool
+) -> Callable[[Event], None]:
+    """The binding for one navigation event in a classic or a ttk entry."""
+    if not extend:
+        return lambda event: _entry_set_cursor(event.widget, target(event.widget))
+    select = _ttk_entry_extend_to if themed else _entry_key_select
+    return lambda event: select(event.widget, target(event.widget))
+
+
+def _bind_entry_navigation(
+    bind: Callable[..., Any], name: str, *, themed: bool, lines: bool = True
+) -> None:
+    """Install the navigation events under one entry class's name.
+
+    ``lines`` binds ``<<PrevLine>>`` and ``<<NextLine>>`` to nothing, as
+    entry.tcl and ttk/entry.tcl do, so that Up and Down reach no other
+    binding on the class; a Spinbox binds them itself.
+    """
+    for virtual, (target, extend) in _ENTRY_NAVIGATION.items():
+        bind(name, virtual, _entry_navigation(target, extend, themed))
+    bind(name, "<<SelectNone>>", lambda event: event.widget.selection_clear())
+    if lines:
+        bind(name, "<<PrevLine>>", _do_nothing)
+        bind(name, "<<NextLine>>", _do_nothing)
 
 
 def _entry_drag(event: Event) -> None:
@@ -10367,7 +10502,8 @@ class Spinbox(Entry):
 
         Binding tags name one class, not a chain of them, so a Spinbox does
         not inherit Entry's class bindings and has to say the same things
-        again - which is also the chance to put Up and Down in front of them.
+        again. Up and Down step: spinbox.tcl binds them as ``<<PrevLine>>``
+        and ``<<NextLine>>``, ttk/spinbox.tcl as the keys themselves.
         """
         # winfo_class() and not the literal: a subclass reporting another name
         # - every ttk widget does - must bind under THAT name or it receives
@@ -10377,7 +10513,7 @@ class Spinbox(Entry):
             return
         self.tk.bound_classes.add(name)
         bind = self.bind_class
-        bind(name, "<Any-Key>", _spinbox_key)
+        bind(name, "<Any-Key>", _entry_key)
         bind(name, "<Button-1>", _spinbox_click)
         bind(name, "<Motion>", _entry_drag)
         bind(name, "<ButtonRelease-1>", _spinbox_release)
@@ -10396,6 +10532,14 @@ class Spinbox(Entry):
         bind(name, "<FocusIn>", _entry_focus_in)
         bind(name, "<FocusOut>", _entry_focus_out)
         _bind_entry_clipboard(bind, name)
+        themed = _is_ttk(self)
+        _bind_entry_navigation(bind, name, themed=themed, lines=themed)
+        if themed:
+            bind(name, "<Key-Up>", _spinbox_step(1))
+            bind(name, "<Key-Down>", _spinbox_step(-1))
+        else:
+            bind(name, "<<PrevLine>>", _spinbox_step(1))
+            bind(name, "<<NextLine>>", _spinbox_step(-1))
 
     # --------------------------------------------------------------- values
 
@@ -10621,16 +10765,11 @@ class Spinbox(Entry):
             )
 
 
-def _spinbox_key(event: Event) -> str | None:
-    """Step on Up and Down, and otherwise behave exactly like an Entry."""
-    spinbox = event.widget
-    if event.keysym == "Up":
-        spinbox._step(1)
-        return "break"
-    if event.keysym == "Down":
-        spinbox._step(-1)
-        return "break"
-    return _entry_key(event)
+def _spinbox_step(amount: int) -> Callable[[Event], None]:
+    """Step the value: spinbox.tcl's ``<<PrevLine>>`` and ``<<NextLine>>``,
+    which ``invoke buttonup`` and ``buttondown``, and ttk/spinbox.tcl's Up
+    and Down. Neither breaks."""
+    return lambda event: event.widget._step(amount)
 
 
 def _spinbox_click(event: Event) -> None:
@@ -10913,6 +11052,11 @@ class Text(_Drawable, XView, YView):
         self._top = 0
         self._left = 0
         self._anchor: Index | None = None
+        # tk::TextUpDownLine's Priv(prevPos) and Priv(textPosOrig): where Up
+        # or Down last left the cursor, and the index whose column they keep.
+        # Tk's are global; one per Text here, as the Listbox's are.
+        self._prev_pos: Index | None = None
+        self._pos_orig: Index | None = None
         self._dragging = False
         # What a drag extends by, whether it has moved off the press, where the
         # press and the pointer were, and the pending autoscroll. TkCurses-svtr.
@@ -11111,7 +11255,10 @@ class Text(_Drawable, XView, YView):
         bind(name, "<<Paste>>", _text_paste)
         bind(name, "<<Clear>>", _text_clear)
         bind(name, "<<SelectAll>>", _text_select_all)
+        bind(name, "<<SelectNone>>", _text_select_none)
         bind(name, "<<PasteSelection>>", _text_paste_selection)
+        for sequence, (goes_to, selects) in _TEXT_NAVIGATION.items():
+            bind(name, sequence, _text_navigation(goes_to, selects))
         bind(name, "<Button-1>", _text_press)
         bind(name, "<Double-Button-1>", _text_double)
         bind(name, "<Triple-Button-1>", _text_triple)
@@ -11746,28 +11893,20 @@ class Text(_Drawable, XView, YView):
 
     # ------------------------------------------------------------- editing
 
-    def _move(self, where: Any, *, extend: bool) -> None:
-        """Move the insert cursor, dragging the selection along if asked.
+    def _page(self, count: int, *, extend: bool) -> None:
+        """Move the insert cursor ``count`` pages, dragging the selection
+        along if asked.
 
-        ``extend`` is what a shifted arrow does: the selection runs from
-        wherever it was anchored to wherever the cursor has got to. Without
-        it the selection is dropped, which is what a plain arrow does.
+        ``extend`` is what Shift does: the selection runs from wherever it
+        was anchored to wherever the cursor has got to. Without it the
+        selection is dropped. Not yet text.tcl's ``tk::TextScrollPages``,
+        which scrolls the view and then finds the cursor in it.
         """
         # Moving the cursor ends whatever was being typed: the next edit is
         # somewhere else, so it is a new thing to undo.
         self._separate_if_asked(None)
         insert = self._buffer.mark_index("insert") or Index(1, 0)
-        if isinstance(where, tuple):
-            kind, count = where
-            if kind == "word":
-                target = self._by_word(insert, count)
-            elif kind in ("rowstart", "rowend"):
-                target = self._row_edge(insert, end=kind == "rowend")
-            else:
-                rows = self._view_size()[1]
-                target = self._by_row(insert, count * (rows if kind == "page" else 1))
-        else:
-            target = self._resolve(where)
+        target = self._by_row(insert, count * self._view_size()[1])
         if extend and self._anchor is None:
             self._anchor = insert
         self._buffer.mark_set("insert", target)
@@ -11781,42 +11920,23 @@ class Text(_Drawable, XView, YView):
         self._report_view()
 
     def _row_edge(self, index: Index, *, end: bool) -> Index:
-        """The start or end of the display row an index is on.
+        """``display linestart`` and ``display lineend``: the start or end of
+        the display row an index is on.
 
-        The end stops before the space that caused the wrap, which is where
-        Tk puts it: the space belongs to the row but pressing End should not
-        land past the last word on it.
+        The end of a row that wraps is its last character, since the index
+        after that starts the next row: the space a word wrap broke at, or
+        the last letter of a word broken across rows. Measured on Tk 9.0.2,
+        End at 5.10 in a 16-column ``fourth_word-joined end`` goes to 5.15.
+        The end of a line's last row is the end of the line, spaces and all.
         """
         rows = self._display_lines()
         line, start, stop = rows[self._row_of(index, rows)]
         if not end:
             return self._buffer.clamp(Index(line, start))
         text = self._buffer.lines[line - 1] if line <= len(self._buffer.lines) else ""
-        while stop > start and text[stop - 1 : stop] == " ":
+        if start < stop < len(text):
             stop -= 1
         return self._buffer.clamp(Index(line, stop))
-
-    def _by_word(self, index: Index, direction: int) -> Index:
-        """The start of the next or previous word, as Control-arrow moves.
-
-        Forwards means the beginning of the word after this one, not the end
-        of this one - which is what Tk does and what makes repeated presses
-        walk the words rather than alternate between their two ends.
-        """
-        offset = self._buffer.offset_of(index)
-        text = self._buffer.text
-        limit = len(text) - 1
-        if direction > 0:
-            while offset < limit and _is_word(text[offset]):
-                offset += 1
-            while offset < limit and not _is_word(text[offset]):
-                offset += 1
-        else:
-            while offset > 0 and not _is_word(text[offset - 1]):
-                offset -= 1
-            while offset > 0 and _is_word(text[offset - 1]):
-                offset -= 1
-        return self._buffer.index_of(offset)
 
     def _by_row(self, index: Index, distance: int) -> Index:
         """The index ``distance`` display rows away, at the same column.
@@ -12469,36 +12589,10 @@ class Text(_Drawable, XView, YView):
         return self._insert_at
 
 
-#: Keys that move the insert cursor without changing anything, and what they
-#: mean as an index expression or as a display-line movement.
-_TEXT_MOTION: dict[str, Any] = {
-    "Left": "insert -1c",
-    "Right": "insert +1c",
-    # Home and End move within the *display* line, not the logical one: on a
-    # wrapped paragraph they go to the beginning and end of the row on
-    # screen. Checked against Tk 9.0.2, which answers 1.17 for Home pressed
-    # at 1.20 on a line whose second row starts there.
-    "Home": ("rowstart", 0),
-    "End": ("rowend", 0),
-    "Prior": ("page", -1),
-    "Next": ("page", 1),
-    "Up": ("row", -1),
-    "Down": ("row", 1),
-}
-
-#: The same keys with Control held, which in Tk move by word and to the ends
-#: of the whole document rather than of a line.
-_TEXT_CONTROL_MOTION: dict[str, Any] = {
-    "Home": "1.0",
-    "End": "end -1c",
-    "Left": ("word", -1),
-    "Right": ("word", 1),
-}
-
-
-def _is_word(character: str) -> bool:
-    """True for the characters Tk counts as part of a word."""
-    return character.isalnum() or character == "_"
+#: Prior and Next, which text.tcl binds as themselves rather than through a
+#: virtual event, and how many pages each goes. The rest of the motion is
+#: _TEXT_NAVIGATION's.
+_TEXT_PAGES: dict[str, int] = {"Prior": -1, "Next": 1}
 
 
 def _text_key(event: Event) -> str | None:
@@ -12513,11 +12607,8 @@ def _text_key(event: Event) -> str | None:
     keysym = event.keysym
     extend = bool(event.state & MOD_SHIFT)
 
-    if event.state & MOD_CTRL and keysym in _TEXT_CONTROL_MOTION:
-        text._move(_TEXT_CONTROL_MOTION[keysym], extend=extend)
-        return "break"
-    if keysym in _TEXT_MOTION:
-        text._move(_TEXT_MOTION[keysym], extend=extend)
+    if keysym in _TEXT_PAGES:
+        text._page(_TEXT_PAGES[keysym], extend=extend)
         return "break"
     if keysym == "BackSpace":
         text._backspace()
@@ -12534,6 +12625,267 @@ def _text_key(event: Event) -> str | None:
         text._type(event.char)
         return "break"
     return None
+
+
+# ------------------------------------------------------ moving through a Text
+#
+# text.tcl's bindings for tk.tcl's navigation events and for Control-Home
+# and Control-End, each procedure named beside the code that follows it.
+# Measured over 300 recorded sequences, wrapped and not,
+# tests/support/navigation_keys.json.
+# None breaks, as none of Tk's does. TkCurses-wmaq.
+
+
+def _text_set_cursor(text: Text, index: str) -> None:
+    """``tk::TextSetCursor``: the cursor to ``index`` - short of ``end``,
+    which no cursor can be at - the selection cleared, the cursor in view."""
+    if text.compare(index, "==", "end"):
+        index = "end - 1c"
+    text._separate_if_asked(None)
+    text.mark_set("insert", index)
+    text.tag_remove("sel", "1.0", "end")
+    text.see("insert")
+    text._redraw()
+
+
+def _text_key_select(text: Text, index: str) -> None:
+    """``tk::TextKeySelect``: select from the cursor to ``index``, or, with a
+    selection already there, from its anchor; then move the cursor."""
+    new = text.index(index)
+    if not text.tag_ranges("sel"):
+        if text.compare(new, "<", "insert"):
+            text.tag_add("sel", new, "insert")
+        else:
+            text.tag_add("sel", "insert", new)
+        text._anchor = text._buffer.mark_index("insert")
+    else:
+        if text._anchor is None:
+            text._anchor = text._buffer.mark_index("insert")
+        anchor = str(text._anchor)
+        if text.compare(new, "<", anchor):
+            first, last = new, anchor
+        else:
+            first, last = anchor, new
+        text.tag_remove("sel", "1.0", first)
+        text.tag_add("sel", first, last)
+        text.tag_remove("sel", last, "end")
+    text._separate_if_asked(None)
+    text.mark_set("insert", new)
+    text.see("insert")
+    text._redraw()
+
+
+def _text_next_pos(text: Text, start: str, op: Callable[[str, int], int | None]) -> str:
+    """``tk::TextNextPos``: where ``op`` first answers in the text from
+    ``start``, read a line at a time, or ``end``."""
+    gathered = ""
+    current = text.index(start)
+    while text.compare(current, "<", "end"):
+        gathered += text.get(current, f"{current} lineend + 1c")
+        found = op(gathered, 0)
+        if found is not None:
+            return text.index(f"{start} + {found} chars")
+        current = text.index(f"{current} lineend + 1c")
+    return text.index("end")
+
+
+def _text_prev_pos(text: Text, start: str, op: Callable[[str, int], int | None]) -> str:
+    """``tk::TextPrevPos``: where ``op`` first answers in the text before
+    ``start``, read a line at a time backwards, or the start."""
+    gathered = ""
+    current = text.index(start)
+    while text.compare(current, ">", "1.0"):
+        gathered = text.get(f"{current} linestart - 1c", current) + gathered
+        # The procedure is given ``end``, which in Tk 9's C means the last
+        # character and not the length: measured, startOfPreviousWord on
+        # "\nx" answers 0 from end and 1 from 2.
+        found = op(gathered, len(gathered) - 1)
+        if found is not None:
+            return text.index(f"{current} linestart - 1c + {found} chars")
+        current = text.index(f"{current} linestart - 1c")
+    return "1.0"
+
+
+def _text_previous_char(text: Text) -> str:
+    """``tk::TextPrevPos insert tk::startOfCluster``: one character back."""
+    return text.index("insert - 1c")
+
+
+def _text_next_char(text: Text) -> str:
+    """``tk::TextNextPos insert tk::endOfCluster``: one on, which past the
+    last character is ``end``."""
+    return text.index("insert + 1 chars")
+
+
+def _text_previous_word(text: Text) -> str:
+    """``tk::TextPrevPos insert tk::startOfPreviousWord``."""
+    return _text_prev_pos(text, "insert", start_of_previous_word)
+
+
+def _text_next_word(text: Text) -> str:
+    """``tk::TextNextWord``: past the end of this word, then on to the start
+    of the next."""
+    end = _text_next_pos(text, "insert", end_of_word)
+    return _text_next_pos(text, end, start_of_next_word)
+
+
+def _text_select_next_word(text: Text) -> str:
+    """``tk::TextSelectNextWord``: to the end of this word only."""
+    return _text_next_pos(text, "insert", end_of_word)
+
+
+def _text_up_down_line(text: Text, count: int) -> str:
+    """``tk::TextUpDownLine``: ``count`` display lines on from where the run
+    of Up and Down began, at that index's column.
+
+    The column is kept from the first press for as long as the cursor stays
+    where the last press left it, so Down through a short line comes back
+    out at the column it went in at. Above the first line is that line's
+    start and below the last is the end, and landing on the last character -
+    or on the start of the row the cursor was on - begins a new run.
+    """
+    insert = text._buffer.mark_index("insert") or Index(1, 0)
+    if text._prev_pos != insert or text._pos_orig is None:
+        text._pos_orig = insert
+    rows = text._text_rows()
+    origin = text._pos_orig
+    row = text._row_of(origin, rows)
+    target = text._row_of(insert, rows) + count
+    column = origin.char - rows[row][1]
+    last = text._buffer.clamp(Index(rows[-1][0], rows[-1][2]))
+    if target < 0:
+        new = Index(rows[0][0], rows[0][1])
+    elif target >= len(rows):
+        # Measured on Tk 9.0.2: below the last row is ``end`` from the first
+        # column and the last character from any other - "9.0 + 1
+        # displaylines" is 10.0, "9.1 + 1 displaylines" 9.7. A plain Down
+        # ends on the character either way; a shifted one selects to end.
+        new = text._buffer.end() if column == 0 else last
+    else:
+        line, new_start, new_stop = rows[target]
+        new = text._buffer.clamp(Index(line, min(new_start + column, new_stop)))
+    text._prev_pos = new
+    line, start, _ = rows[text._row_of(insert, rows)]
+    # "end display lineend", which is the last character and not end.
+    if new == last or new == Index(line, start):
+        text._pos_orig = new
+    return str(new)
+
+
+def _text_past_indent(text: Text, line: str) -> str:
+    """``line``, moved past its leading spaces and tabs if anything follows
+    them, as text.tcl's paragraph procedures move it."""
+    content = text.get(line, f"{line} lineend")
+    stripped = content.lstrip(" \t")
+    if stripped and len(stripped) < len(content):
+        return text.index(f"{line} + {len(content) - len(stripped)} chars")
+    return line
+
+
+def _text_previous_para(text: Text) -> str:
+    """``tk::TextPrevPara``: the start of this paragraph, or of the one
+    before if the cursor is already there - the first line after an empty
+    one, past its indent."""
+    position = text.index("insert linestart")
+    while True:
+        starts = text.get(f"{position} - 1 line") == "\n"
+        if (starts and text.get(position) != "\n") or position == "1.0":
+            position = _text_past_indent(text, position)
+            if text.compare(position, "!=", "insert") or position.startswith("1."):
+                return position
+        position = text.index(f"{position} - 1 line")
+
+
+def _text_next_para(text: Text) -> str:
+    """``tk::TextNextPara``: past the empty lines after this paragraph, to
+    the next one's first line, past its indent; or the last character."""
+    position = text.index("insert linestart + 1 line")
+    while text.get(position) != "\n":
+        if text.compare(position, "==", "end"):
+            return text.index("end - 1c")
+        position = text.index(f"{position} + 1 line")
+    while text.get(position) == "\n":
+        position = text.index(f"{position} + 1 line")
+        if text.compare(position, "==", "end"):
+            return text.index("end - 1c")
+    return _text_past_indent(text, position)
+
+
+def _text_line_edge(text: Text, *, end: bool) -> str:
+    """``insert display linestart`` and ``insert display lineend``."""
+    insert = text._buffer.mark_index("insert") or Index(1, 0)
+    return str(text._row_edge(insert, end=end))
+
+
+def _text_line_start(text: Text) -> str:
+    return _text_line_edge(text, end=False)
+
+
+def _text_line_end(text: Text) -> str:
+    return _text_line_edge(text, end=True)
+
+
+def _text_up(text: Text) -> str:
+    return _text_up_down_line(text, -1)
+
+
+def _text_down(text: Text) -> str:
+    return _text_up_down_line(text, 1)
+
+
+def _text_start(text: Text) -> str:
+    del text
+    return "1.0"
+
+
+def _text_last(text: Text) -> str:
+    """``end - 1 indices``: the last character, which is the final newline."""
+    return text.index("end - 1c")
+
+
+#: Each navigation event, and Control-Home and Control-End, with where it
+#: goes and whether it extends the selection.
+_TEXT_NAVIGATION: dict[str, tuple[Callable[[Text], str], bool]] = {
+    "<<PrevChar>>": (_text_previous_char, False),
+    "<<NextChar>>": (_text_next_char, False),
+    "<<PrevLine>>": (_text_up, False),
+    "<<NextLine>>": (_text_down, False),
+    "<<SelectPrevChar>>": (_text_previous_char, True),
+    "<<SelectNextChar>>": (_text_next_char, True),
+    "<<SelectPrevLine>>": (_text_up, True),
+    "<<SelectNextLine>>": (_text_down, True),
+    "<<PrevWord>>": (_text_previous_word, False),
+    "<<NextWord>>": (_text_next_word, False),
+    "<<PrevPara>>": (_text_previous_para, False),
+    "<<NextPara>>": (_text_next_para, False),
+    "<<SelectPrevWord>>": (_text_previous_word, True),
+    "<<SelectNextWord>>": (_text_select_next_word, True),
+    "<<SelectPrevPara>>": (_text_previous_para, True),
+    "<<SelectNextPara>>": (_text_next_para, True),
+    "<<LineStart>>": (_text_line_start, False),
+    "<<SelectLineStart>>": (_text_line_start, True),
+    "<<LineEnd>>": (_text_line_end, False),
+    "<<SelectLineEnd>>": (_text_line_end, True),
+    "<Control-Key-Home>": (_text_start, False),
+    "<Control-Shift-Key-Home>": (_text_start, True),
+    "<Control-Key-End>": (_text_last, False),
+    "<Control-Shift-Key-End>": (_text_last, True),
+}
+
+
+def _text_navigation(
+    target: Callable[[Text], str], extend: bool
+) -> Callable[[Event], None]:
+    """The binding for one navigation event in a Text."""
+    move = _text_key_select if extend else _text_set_cursor
+    return lambda event: move(event.widget, target(event.widget))
+
+
+def _text_select_none(event: Event) -> None:
+    """text.tcl's ``<<SelectNone>>``: no selection, and an undo separator."""
+    text = event.widget
+    text.tag_remove("sel", "1.0", "end")
+    text._separate_if_asked(None)
 
 
 # ---------------------------------------------------- the clipboard, on a Text
