@@ -236,6 +236,16 @@ DEFAULT_VIRTUAL_EVENTS: dict[str, tuple[str, ...]] = {
     # in a pty. Without the second, Ctrl-/ would select nothing.
     "<<SelectAll>>": ("<Control-Key-slash>", "<Control-Key-underscore>"),
     "<<Clear>>": (),
+    # tk.tcl's X11 keys less the Lock forms: a terminal sends Control-z as
+    # 0x1A whatever Caps Lock says, so Lock never reaches a binding. Control-
+    # Shift-z is the same byte as Control-z and arrives only from a terminal
+    # that reports modifiers. Control-z is the tty's suspend key, and is
+    # taken from it only while a Text with -undo has the focus - see
+    # Application.refresh_signal_keys. Alt-z, which a terminal can send, is
+    # Text's own binding, not a sequence here: Tk 9.0.2 never fires a virtual
+    # event of two keys (VirtualEvents.add). TkCurses-5t48.
+    "<<Undo>>": ("<Control-Key-z>",),
+    "<<Redo>>": ("<Control-Key-Z>",),
     # The navigation events, as tk.tcl defines them for X11 and in its
     # order - the order settles which of two runs when both fit a key
     # equally. Not <<SelectNone>>: its Control-backslash is the tty's quit
@@ -280,6 +290,8 @@ class Application:
             self.virtual_events.add(
                 virtual, *(parse_sequence(sequence) for sequence in sequences)
             )
+        # After the defaults: there is no terminal to tell about them yet.
+        self.virtual_events.on_change = self.refresh_signal_keys
         self.timers = AfterQueue()
         self.selections = Selections()
         self.options = OptionDatabase()
@@ -322,7 +334,7 @@ class Application:
         #: Widget that currently has keyboard focus, and the last widget to
         #: have had it within each toplevel, which is what focus_lastfor()
         #: reports and what a toplevel restores when it is raised again.
-        self.focus: Misc | None = None
+        self._focus: Misc | None = None
         self.focus_history: dict[int, Misc] = {}
 
         #: Set by tk_focusFollowsMouse(), which is one-way in Tk: there is no
@@ -398,6 +410,17 @@ class Application:
         #: does in tkinter.
         self.quit_requested = False
 
+    @property
+    def focus(self) -> Misc | None:
+        return self._focus
+
+    @focus.setter
+    def focus(self, widget: Misc | None) -> None:
+        changed = widget is not self._focus
+        self._focus = widget
+        if changed:
+            self.refresh_signal_keys()
+
     def refresh_signal_keys(self) -> None:
         """Take back from the tty exactly the signal keys something binds.
 
@@ -408,14 +431,23 @@ class Application:
         backslash if it stops responding - and unbinding gives the signal
         straight back.
 
-        Called whenever anything is bound or unbound, and again when the
-        input handler arrives, since bindings are usually made before there
-        is a terminal to tell.
+        Called whenever anything is bound or unbound, a virtual event's keys
+        change or the focus moves, and again when the input handler arrives,
+        since bindings are usually made before there is a terminal to tell.
+
+        The focused widget may claim keys of its own, through
+        ``_claimed_signal_keys``: a Text with ``-undo`` takes Control-z for
+        ``<<Undo>>`` while it has the focus, and gives suspend back when it
+        loses it, so a program with a Text still suspends from everywhere
+        else. TkCurses-5t48.
         """
         handler = self.input
         if handler is None:
             return
         wanted = self.bindings.details_bound_with(MOD_CTRL) & set(SIGNAL_KEYS)
+        claims = getattr(self._focus, "_claimed_signal_keys", None)
+        if claims is not None:
+            wanted |= claims()
         handler.claim_signal_keys(wanted)
 
     def next_name(self, class_name: str) -> str:

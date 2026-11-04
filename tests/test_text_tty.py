@@ -455,3 +455,31 @@ def test_typing_in_one_peer_shows_in_the_other(terminal, tmp_path):
         message="twoXY in both peers",
     )
     assert "one" not in term.display[2][25:]
+
+
+def test_control_z_undoes_in_a_text_and_alt_z_redoes(terminal, tmp_path):
+    """With ``-undo`` on and the focus in the Text, Control-z reaches it as
+    ``<<Undo>>`` instead of suspending the program, and Alt-z - Escape then
+    ``z``, as a terminal sends it - redoes. TkCurses-5t48."""
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "t = tkcurses.Text(root, width=20, height=5, undo=True)\n"
+            "t.place(x=2, y=2)\n"
+            "t.focus_set()\n"
+            "def show():\n"
+            "    buffer.write(9, 0, ('text=[%s]' % t.get('1.0', 'end-1c')).ljust(30))\n"
+            "    root.tk.screen.refresh()\n"
+            "    root.after(50, show)\n"
+            "show()"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("text=[]")
+    term.send(b"abc")
+    term.wait_for_text("text=[abc]")
+    term.send(b"\x1a")
+    term.wait_for_text("text=[]")
+    term.send(b"\x1bz")
+    term.wait_for_text("text=[abc]")
+    assert term.exit_status is None, "Control-z must not have suspended it"

@@ -2132,7 +2132,9 @@ with Tk's sequences less the ones that cannot arrive: `<<Cut>>` is Ctrl-X,
 Ctrl-W and Shift-Delete; `<<Paste>>` Ctrl-V, Ctrl-Y and Shift-Insert;
 `<<Copy>>` Ctrl-Insert; `<<SelectAll>>` Ctrl-/ **and Ctrl-_**, because a
 terminal sends one byte, 0x1f, for both and it is decoded as underscore;
-`<<PasteSelection>>` the middle button's release; `<<Clear>>` nothing.
+`<<PasteSelection>>` the middle button's release; `<<Clear>>` nothing;
+`<<Undo>>` Ctrl-Z and `<<Redo>>` Ctrl-Shift-Z, less their Lock forms - see
+"Undo and redo in a Text".
 `event_info("<<Copy>>")` therefore differs from Tk's, which also lists
 Control-c, F16 and Meta-w.
 
@@ -2717,6 +2719,25 @@ group it takes back and frees it, so with autoseparators off the next edit
 **joins the group below** - `x`, a separator, `y`, undo, `z`, and the next
 undo takes `z` and `x` together. Ours kept the switch per widget, on the key
 paths only, and broke the group before a newline (`TkCurses-hy15`).
+
+**The keys** are tk.tcl's for X11 and text.tcl's bindings: `<<Undo>>` is
+Control-z and `<<Redo>>` Control-Shift-z, and a Text binds both, the undo
+with a separator either side and neither an error when there is nothing to
+do. Measured on Tk 9.0.2, neither Entry nor any ttk entry binds them. Three
+things a terminal changes (`TkCurses-5t48`):
+
+- **Control-z is the tty's suspend key.** It is taken from the tty only
+  while a Text with `-undo` true has the focus and `<<Undo>>` or `<<Redo>>`
+  is on Control-z - the focused widget's `_claimed_signal_keys`, read on
+  every focus change, `-undo` change and `event add`/`delete`. Everywhere
+  else Control-z still suspends the program.
+- **Control-Shift-z is the byte Control-z is**, 0x1A, so it arrives only
+  from a terminal that reports modifiers. So the Text also binds Alt-z, as a
+  terminal sends it - Escape, then `z` - to redo. A binding of ours, not one
+  of `<<Redo>>`'s sequences: Tk 9.0.2 lists a two-key virtual event and never
+  fires it, measured on a Text and on a bare Frame. Like any sequence it has
+  no time limit, so Escape and a later `z` redo too.
+- **The Lock forms are left out**: Caps Lock does not change the byte.
 
 **Deliberately unlike Tk**, a disabled Text's undo changes nothing, moves no
 cursor and answers `()`; Tk's pops the group while refusing its edits

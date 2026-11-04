@@ -132,7 +132,7 @@ from tkcurses._core.images import (
     Image,
     PhotoImage,
 )
-from tkcurses._core.input import InputHandler
+from tkcurses._core.input import SIGNAL_KEYS, InputHandler
 from tkcurses._core.menus import (
     # The GLYPH drawn for a submenu, not tkinter's CASCADE, which is the
     # string 'cascade' naming an entry TYPE. Two different things with one
@@ -11407,6 +11407,11 @@ class Text(_Drawable, XView, YView):
         bind(name, "<<SelectAll>>", _text_select_all)
         bind(name, "<<SelectNone>>", _text_select_none)
         bind(name, "<<PasteSelection>>", _text_paste_selection)
+        bind(name, "<<Undo>>", _text_undo)
+        bind(name, "<<Redo>>", _text_redo)
+        # Alt-z, as a terminal sends it. Ours, not Tk's: Tk 9.0.2 never fires
+        # a virtual event of two keys, so it cannot be one of <<Redo>>'s.
+        bind(name, "<Key-Escape><Key-z>", _text_redo)
         for sequence, (goes_to, selects) in _TEXT_NAVIGATION.items():
             bind(name, sequence, _text_navigation(goes_to, selects))
         # text.tcl: sideways a page, the cursor left where it is.
@@ -11456,6 +11461,8 @@ class Text(_Drawable, XView, YView):
             # Turning it off does NOT throw the stack away: Tk keeps it, so
             # switching undo off and on again leaves the history intact.
             self._buffer.undo_enabled = self.getboolean(self._options["undo"])
+            if self.tk.focus is self:
+                self.tk.refresh_signal_keys()
         if "autoseparators" in given:
             self._buffer.auto_separators = self._auto_separators
         if "maxundo" in given:
@@ -11843,6 +11850,26 @@ class Text(_Drawable, XView, YView):
             return int(self._modified)
         self._set_modified(self.getboolean(arg))
         return None
+
+    def _claimed_signal_keys(self) -> set[str]:
+        """The tty's signal keys this Text needs while it has the focus.
+
+        Control-z, the suspend key, when ``<<Undo>>`` or ``<<Redo>>`` is on
+        it and ``-undo`` is true: undo is what a person typing in a Text
+        means by it, and suspend comes back the moment the focus leaves.
+        A Text without undo leaves suspend alone. TkCurses-5t48.
+        """
+        if not self.getboolean(self._options["undo"]):
+            return set()
+        return {
+            pattern.detail
+            for virtual in ("<<Undo>>", "<<Redo>>")
+            for pattern in self.tk.virtual_events.info(virtual)
+            if isinstance(pattern, EventPattern)
+            and pattern.type == "Key"
+            and pattern.modifiers == MOD_CTRL
+            and pattern.detail in SIGNAL_KEYS
+        }
 
     @property
     def _auto_separators(self) -> bool:
@@ -13226,6 +13253,24 @@ def _text_clear(event: Event) -> None:
 def _text_select_all(event: Event) -> None:
     """Select everything; the insert mark stays where it was."""
     event.widget.tag_add("sel", "1.0", "end")
+
+
+def _text_undo(event: Event) -> None:
+    """text.tcl's ``<<Undo>>``: separators either side, since the undo may
+    take the one on top of the stack, and nothing to undo is no error."""
+    text = event.widget
+    if text._auto_separators:
+        text.edit_separator()
+    with contextlib.suppress(TclError):
+        text.edit_undo()
+    if text._auto_separators:
+        text.edit_separator()
+
+
+def _text_redo(event: Event) -> None:
+    """text.tcl's ``<<Redo>>``, and Alt-z."""
+    with contextlib.suppress(TclError):
+        event.widget.edit_redo()
 
 
 def _text_paste_selection(event: Event) -> None:

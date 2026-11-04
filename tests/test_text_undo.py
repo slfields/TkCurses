@@ -34,7 +34,7 @@ from types import SimpleNamespace
 import pytest
 
 from tkcurses import Misc, TclError, Text
-from tkcurses._core.events import KeyEvent
+from tkcurses._core.events import MOD_CTRL, KeyEvent
 from tkcurses._core.geometry import Rect
 from tkcurses._core.panels import PanelStack
 
@@ -358,3 +358,119 @@ def test_autoseparators_can_be_turned_off_later(root):
     text.insert("1.0", "abc")
     text.delete("1.0")
     assert undo_all(text) == [""]
+
+
+# ------------------------------------------------------- the keys, TkCurses-5t48
+
+
+def control(text, key):
+    text._handle(KeyEvent(keysym=key, char="", modifiers=MOD_CTRL))
+
+
+def test_control_z_undoes_and_control_shift_z_redoes(root):
+    """tk.tcl's X11 keys, through text.tcl's ``<<Undo>>`` and ``<<Redo>>``.
+    Measured on Tk 9.0.2: ``ab`` typed, Control-z leaves nothing and
+    Control-Z puts it back."""
+    text = blank(root)
+    text.focus_set()
+    press(text, "a", "b")
+    control(text, "z")
+    assert text.get("1.0", "end-1c") == ""
+    control(text, "Z")
+    assert text.get("1.0", "end-1c") == "ab"
+
+
+def test_alt_z_redoes_as_a_terminal_sends_it(root):
+    """Escape, then ``z``: a binding of ours, since a terminal cannot send
+    Control-Shift-z and Tk never fires a two-key virtual event. The ``z`` is
+    not typed."""
+    text = blank(root)
+    text.focus_set()
+    press(text, "a", "b")
+    control(text, "z")
+    text._handle(KeyEvent(keysym="Escape", char="\x1b"))
+    text._handle(KeyEvent(keysym="z", char="z"))
+    assert text.get("1.0", "end-1c") == "ab"
+
+
+def test_nothing_to_undo_or_redo_from_the_keys_is_no_error(root):
+    """text.tcl catches both."""
+    text = blank(root, "abc")
+    text.focus_set()
+    control(text, "z")
+    control(text, "Z")
+    assert text.get("1.0", "end-1c") == "abc"
+
+
+def test_the_entries_bind_neither(root):
+    """Measured: Tk 9.0.2's Entry and TEntry have no ``<<Undo>>``."""
+    from tkcurses import Entry
+
+    Entry(root)
+    assert not root.bind_class("Entry", "<<Undo>>")
+    assert not root.bind_class("Entry", "<<Redo>>")
+
+
+def test_the_virtual_events_are_tks_less_the_lock_forms(root):
+    """A terminal sends Control-z as one byte whatever Caps Lock says."""
+    assert root.event_info("<<Undo>>") == ("<Control-Key-z>",)
+    assert root.event_info("<<Redo>>") == ("<Control-Key-Z>",)
+
+
+@pytest.fixture
+def claimed(root):
+    """What the terminal was last told to give up, as the tty sees it."""
+    told = [set()]
+    root.tk.input = SimpleNamespace(
+        claim_signal_keys=lambda keys: told.append(set(keys))
+    )
+    return told
+
+
+def test_control_z_is_taken_from_the_tty_only_while_a_text_can_use_it(root, claimed):
+    """Suspend is the tty's, and comes back the moment the focus leaves a
+    Text with ``-undo`` - or the Text's undo goes off."""
+    from tkcurses import Entry
+
+    text = blank(root)
+    other = Entry(root)
+    text.focus_set()
+    assert claimed[-1] == {"z"}
+    other.focus_set()
+    assert claimed[-1] == set()
+    text.focus_set()
+    text.configure(undo=False)
+    assert claimed[-1] == set()
+    text.configure(undo=True)
+    assert claimed[-1] == {"z"}
+
+
+def test_a_text_without_undo_leaves_suspend_alone(root, claimed):
+    text = Text(root)
+    text.focus_set()
+    assert claimed[-1] == set()
+
+
+def test_moving_undo_off_control_z_gives_suspend_back(root, claimed):
+    text = blank(root)
+    text.focus_set()
+    root.event_delete("<<Undo>>", "<Control-Key-z>")
+    try:
+        assert claimed[-1] == set()
+    finally:
+        root.event_add("<<Undo>>", "<Control-Key-z>")
+    assert claimed[-1] == {"z"}
+
+
+def test_only_control_z_takes_suspend(root, claimed):
+    """A ``z`` under another modifier is no signal key: Alt-z on
+    ``<<Undo>>`` instead of Control-z gives suspend back."""
+    text = blank(root)
+    text.focus_set()
+    root.event_delete("<<Undo>>", "<Control-Key-z>")
+    root.event_add("<<Undo>>", "<Alt-Key-z>")
+    try:
+        assert claimed[-1] == set()
+    finally:
+        root.event_delete("<<Undo>>", "<Alt-Key-z>")
+        root.event_add("<<Undo>>", "<Control-Key-z>")

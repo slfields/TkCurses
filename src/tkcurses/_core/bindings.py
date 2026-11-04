@@ -956,6 +956,8 @@ class VirtualEvents:
 
     def __init__(self) -> None:
         self._events: dict[str, list[EventPattern | PatternSequence]] = {}
+        #: Called after ``add`` or ``delete``, as BindingTable's is.
+        self.on_change: Callable[[], None] | None = None
 
     def add(self, virtual: str, *patterns: EventPattern | PatternSequence) -> None:
         """Make ``patterns`` raise ``virtual``, keeping any already added.
@@ -970,19 +972,22 @@ class VirtualEvents:
         for pattern in patterns:
             if pattern not in registered:
                 registered.append(pattern)
+        self._changed()
 
     def delete(self, virtual: str, *patterns: EventPattern | PatternSequence) -> None:
         """Stop ``patterns`` raising ``virtual``; with none given, remove all."""
         name = self._name(virtual)
         if not patterns:
             self._events.pop(name, None)
-            return
-        registered = self._events.get(name)
-        if registered is None:
-            return
-        self._events[name] = [p for p in registered if p not in patterns]
-        if not self._events[name]:
-            del self._events[name]
+        elif name in self._events:
+            self._events[name] = [p for p in self._events[name] if p not in patterns]
+            if not self._events[name]:
+                del self._events[name]
+        self._changed()
+
+    def _changed(self) -> None:
+        if self.on_change is not None:
+            self.on_change()
 
     def info(self, virtual: str) -> tuple[EventPattern | PatternSequence, ...]:
         """Physical patterns registered for ``virtual``."""
