@@ -561,3 +561,36 @@ def test_a_tag_still_grows_when_text_is_added_inside_it():
     buffer.tag_add("m", "1.0", "1.6")
     buffer.insert("1.3", "XYZ")
     assert [str(i) for i in buffer.tag_ranges("m")] == ["1.0", "1.9"]
+
+
+DELETE_TO_THE_END = [
+    ("a\nb\nc", "2.0", "end", None, "a\n", [], "1.1"),
+    ("a\nb\nc", "2.0", "9.9", None, "a\n", [], "1.1"),
+    ("a\nb\nc", "2.0", "3.end", None, "a\n\n", [], "2.0"),
+    ("a\nb\nc", "2.1", "end", None, "a\nb\n", [], "2.0"),
+    ("a\nb\nc", "1.0", "end", None, "\n", [], "1.0"),
+    ("a\nb\nc", "2.0", "end", ("1.0", "end"), "a\n", ["1.0", "1.1"], "1.1"),
+    ("a\nb\nc", "3.0", "end", ("1.0", "end"), "a\nb\n", ["1.0", "2.1"], "2.0"),
+    ("a\nb\n", "3.0", "end", None, "a\nb\n", [], "2.0"),
+    ("a\nb\n", "2.0", "end", None, "a\n", [], "1.1"),
+]
+
+
+@pytest.mark.parametrize(
+    ("body", "first", "last", "tag", "left", "tagged", "mark"), DELETE_TO_THE_END
+)
+def test_deleting_from_a_line_start_to_the_end_deletes_whole_lines(
+    body, first, last, tag, left, tagged, mark
+):
+    """Tk's DeleteIndexRange: the newline before the range goes too and
+    becomes the final one, losing its tags. Measured on Tk 9.0.2, with a
+    mark at 2.0. TkCurses-ydr6."""
+    buffer = TextBuffer()
+    buffer.insert("1.0", body)
+    if tag:
+        buffer.tag_add("t", *tag)
+    buffer.mark_set("m", "2.0")
+    buffer.delete(first, last)
+    assert buffer.get("1.0", "end") == left
+    assert [str(i) for i in buffer.tag_ranges("t")] == tagged
+    assert str(buffer.mark_index("m")) == mark

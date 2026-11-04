@@ -11049,8 +11049,13 @@ class Text(_Drawable, XView, YView):
         self._buffer: TextBuffer = (
             TextBuffer() if creator is None else creator._buffer.peer()
         )
-        self._top = 0
-        self._left = 0
+        # The view: its first row, kept as an index (see _top), and how far
+        # it is scrolled sideways (see _left).
+        self._top_row = 0
+        self._top_extra = 0
+        self._top_key: tuple[Any, ...] | None = None
+        self._left_value = 0
+        self._left_key: tuple[Any, ...] | None = None
         self._anchor: Index | None = None
         # tk::TextUpDownLine's Priv(prevPos) and Priv(textPosOrig): where Up
         # or Down last left the cursor, and the index whose column they keep.
@@ -11115,6 +11120,152 @@ class Text(_Drawable, XView, YView):
         it leaves the stack alone. Peers share it, as they share the stack.
         """
         return bool(self._buffer.shared["modified"])
+
+    # ------------------------------------------------------------- the view
+
+    @property
+    def _top(self) -> int:
+        """The display row at the top of the view.
+
+        Kept as an index, as Tk keeps it, and the row worked out from that
+        whenever the text or its layout has changed: a hidden mark at the
+        start of the top row, with left gravity, and how many rows of
+        spacing above that row's text the view starts. So an edit above the
+        view - by this widget, a peer or an undo - leaves the same text at
+        the top, as a resize or a change of wrapping does; text inserted at
+        the top's own index shows there; and a deletion across it takes the
+        view to where the deletion began. Measured on Tk 9.0.2, every one.
+        It used to be a row number, and the text slid under it.
+        TkCurses-ntu4.
+        """
+        key = self._view_key()
+        if key != self._top_key:
+            anchor = self._buffer.view_top()
+            if anchor is None:
+                self._top_key = key
+            else:
+                rows = self._display_lines()
+                # Set again, as Tk keeps the top it fills the view from:
+                # measured, a view pulled up by a deletion stays there when
+                # text is added below it, rather than going back down.
+                self._set_top(self._row_at_anchor(anchor, rows), rows)
+        return self._top_row
+
+    @_top.setter
+    def _top(self, row: int) -> None:
+        self._set_top(row, self._display_lines())
+
+    def _set_top(self, row: int, rows: list[tuple[int, int, int]]) -> None:
+        """Put the view's top at a row of ``rows``, the display rows now."""
+        row = max(0, min(row, len(rows) - 1))
+        first = self._group_bounds(rows, row)[0]
+        line, start, _ = rows[row]
+        self._buffer.view_top(Index(abs(line), start))
+        self._top_row, self._top_extra = row, row - first
+        self._top_key = self._view_key()
+        # Tk lays the view out again as it moves, and that is when the
+        # sideways scroll is bounded by what is now on screen: measured, a
+        # view scrolled 7 across, moved to the top where nothing is wider
+        # than it, and back down, comes back at 0.
+        self._clamp_left(rows)
+
+    def _view_key(self) -> tuple[Any, ...]:
+        """What the display rows are worked out from: the text, and how it
+        is laid out.
+
+        A tag's margins are the exception, held in tag ranges and tag
+        options that no version follows, so a Text with any works its top
+        out from the index at every reading: never equal to the last key.
+        """
+        return (
+            self._buffer.version,
+            self._view_size(),
+            self._wrap_mode(),
+            object() if self._margined else None,
+            *(
+                self._options[name]
+                for name in ("spacing1", "spacing2", "spacing3", "tabs", "tabstyle")
+            ),
+        )
+
+    @staticmethod
+    def _group_bounds(rows: list[tuple[int, int, int]], row: int) -> tuple[int, int]:
+        """The first and last of the rows that are one row of text and the
+        spacing around it, for the row at ``row``."""
+        line, start = abs(rows[row][0]), rows[row][1]
+        first = last = row
+        while first > 0 and (abs(rows[first - 1][0]), rows[first - 1][1]) == (
+            line,
+            start,
+        ):
+            first -= 1
+        while last + 1 < len(rows) and (abs(rows[last + 1][0]), rows[last + 1][1]) == (
+            line,
+            start,
+        ):
+            last += 1
+        return first, last
+
+    def _row_at_anchor(self, anchor: Index, rows: list[tuple[int, int, int]]) -> int:
+        """The top row, from where the anchor has got to: the row holding
+        it, the spacing above as before, and the view kept full."""
+        first, last = self._group_bounds(rows, self._row_of(anchor, rows))
+        row = min(first + self._top_extra, last)
+        return max(0, min(row, max(0, len(rows) - self._view_size()[1])))
+
+    @property
+    def _left(self) -> int:
+        """How many columns the view is scrolled sideways.
+
+        Never further than puts the end of the longest row IN VIEW at the
+        right edge, as Tk's: measured on Tk 9.0.2, a view at column 40 of a
+        line of 60 goes to 14 when the rows it shows are 30 long and to 0
+        when they are short, and stays there when the long line comes back.
+        It used to be measured over every line. Wrapped, always 0.
+        TkCurses-8tjr.
+        """
+        if (self._top, self._top_key) != self._left_key:
+            self._clamp_left(self._display_lines())
+        return self._left_value
+
+    @_left.setter
+    def _left(self, value: int) -> None:
+        self._left_value = value
+        self._left_key = None
+
+    def _clamp_left(self, rows: list[tuple[int, int, int]]) -> None:
+        """Bound the sideways scroll by the rows now in view."""
+        self._left_key = (self._top_row, self._top_key)
+        if self._wrap_mode() != "none":
+            self._left_value = 0
+        else:
+            room = max(0, self._widest_in_view(rows) - self._view_size()[0])
+            self._left_value = max(0, min(self._left_value, room))
+
+    def _widest_in_view(self, rows: list[tuple[int, int, int]] | None = None) -> int:
+        """The width of the widest row on screen, margin and tabs included.
+
+        ``rows`` are the display rows, when the caller has them and the top
+        is already worked out from them.
+        """
+        if rows is None:
+            self._top  # noqa: B018 - brings the top up to date first
+            rows = self._display_lines()
+        top = self._top_row
+        widest = 0
+        for line, start, stop in rows[top : top + self._view_size()[1]]:
+            number = abs(line)
+            text = self._row_text(number, start, stop)
+            left, _ = self._row_margins(number, start)
+            if "\t" in text:
+                text = render(
+                    text,
+                    start=left,
+                    stops=self._stops,
+                    style=str(self._options["tabstyle"]),
+                )
+            widest = max(widest, left + len(text))
+        return widest
 
     @property
     def _margined(self) -> bool:
@@ -12260,30 +12411,29 @@ class Text(_Drawable, XView, YView):
         """
         target = self._resolve(index)
         width, height = self._view_size()
+        first = self._top
         rows = self._display_lines()
         row = self._row_of(target, rows)
-        self._top = _see_offset(
-            self._top, row, height, min((height + 1) // 2, height - 1)
-        )
+        first = _see_offset(first, row, height, min((height + 1) // 2, height - 1))
+        self._set_top(max(0, min(first, max(0, len(rows) - height))), rows)
         if self._wrap_mode() == "none":
-            widest = max((len(line) for line in self._buffer.lines), default=0)
-            left = _see_offset(self._left, target.char, width, width // 2)
-            # Clamped as xview clamps it: the end of the longest line at the
-            # right edge, which leaves a cursor past it out of view, as Tk's.
-            self._left = min(left, max(0, widest - width))
-        self._top = max(0, min(self._top, max(0, len(rows) - height)))
-        self._left = max(0, self._left)
+            # Clamped as xview is, to the widest row now in view, which
+            # leaves a cursor past its end out of view, as Tk's.
+            left = _see_offset(self._left_value, target.char, width, width // 2)
+            self._left_value = max(0, left)
+            self._clamp_left(rows)
         self._redraw()
         # A scrollbar cannot know the view moved unless it is told, and see()
         # is the one thing that moves it without going through _scroll.
-        self._report_view()
+        self._report_view(rows)
 
     def _clamp_view(self) -> None:
-        """Keep the view inside the text after anything that could move it."""
-        rows = len(self._display_lines())
-        self._top = max(0, min(self._top, max(0, rows - 1)))
-        if self._wrap_mode() != "none":
-            self._left = 0
+        """Keep the view inside the text after anything that could move it.
+
+        Which reading it does: the top is worked out from its index, kept
+        inside the text, and the sideways scroll bounded, whenever either is
+        read after the text or its layout changed.
+        """
 
     def yview(self, *args: Any) -> tuple[float, float] | None:
         """Read or move the vertical view, in the shape Tk uses.
@@ -12308,12 +12458,9 @@ class Text(_Drawable, XView, YView):
         """Apply one Tk scrolling command to one axis."""
         view = self._view_size()
         span = view[1] if vertical else view[0]
-        total = (
-            len(self._display_lines())
-            if vertical
-            else max(1, max((len(line) for line in self._buffer.lines), default=1))
-        )
         current = self._top if vertical else self._left
+        rows = self._display_lines()
+        total = len(rows) if vertical else self._widest_in_view(rows)
         action = str(args[0])
         if action == "moveto":
             current = int(float(args[1]) * total)
@@ -12327,25 +12474,35 @@ class Text(_Drawable, XView, YView):
             raise TclError(f'bad option "{action}": must be moveto or scroll')
         limit = max(0, total - (span if vertical else 0))
         if vertical:
-            self._top = max(0, min(current, limit))
+            self._set_top(max(0, min(current, limit)), rows)
         elif self._wrap_mode() == "none":
-            self._left = max(0, min(current, max(0, total - span)))
+            self._left_value = max(0, min(current, max(0, total - span)))
+            self._left_key = (self._top_row, self._top_key)
         self._redraw()
-        self._report_view()
+        self._report_view(rows)
 
-    def _view_fractions(self) -> tuple[float, float]:
+    def _view_fractions(
+        self, rows: list[tuple[int, int, int]] | None = None
+    ) -> tuple[float, float]:
         """Where the vertical view is, as two fractions of the whole."""
-        total = max(1, len(self._display_lines()))
+        self._top  # noqa: B018 - brings the top up to date first
+        total = max(1, len(self._display_lines() if rows is None else rows))
         height = self._view_size()[1]
         return (
             min(1.0, self._top / total),
             min(1.0, (self._top + height) / total),
         )
 
-    def _horizontal_fractions(self) -> tuple[float, float]:
-        """Where the horizontal view is, as two fractions of the longest line."""
-        total = max(1, max((len(line) for line in self._buffer.lines), default=1))
+    def _horizontal_fractions(
+        self, rows: list[tuple[int, int, int]] | None = None
+    ) -> tuple[float, float]:
+        """Where the horizontal view is, as two fractions of the widest row
+        in view - (0, 1) when it fits, as in Tk."""
+        self._left  # noqa: B018 - bounds it by the rows in view first
+        total = self._widest_in_view(rows)
         width = self._view_size()[0]
+        if total <= width or self._wrap_mode() != "none":
+            return (0.0, 1.0)
         return (
             min(1.0, self._left / total),
             min(1.0, (self._left + width) / total),
@@ -12355,15 +12512,19 @@ class Text(_Drawable, XView, YView):
         """A resize changes how much is visible, so the scrollbar is retold."""
         self._report_view()
 
-    def _report_view(self) -> None:
-        """Tell the scrollbars where the view is, if anything is listening."""
+    def _report_view(self, rows: list[tuple[int, int, int]] | None = None) -> None:
+        """Tell the scrollbars where the view is, if anything is listening.
+
+        ``rows`` are the display rows, when the caller has just laid them
+        out and moved the view over them.
+        """
         for option, fractions in (
-            ("yscrollcommand", self._view_fractions()),
-            ("xscrollcommand", self._horizontal_fractions()),
+            ("yscrollcommand", self._view_fractions),
+            ("xscrollcommand", self._horizontal_fractions),
         ):
             command = self._options[option]
             if command is not None:
-                command(*fractions)
+                command(*fractions(rows))
 
     # -------------------------------------------------------------- painting
 

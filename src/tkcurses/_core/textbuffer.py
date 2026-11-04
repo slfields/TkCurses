@@ -14,6 +14,12 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Portions follow logic in Tk's C sources, each named beside the code that
+# follows it. Tcl and Tk are copyright the Regents of the University of
+# California, Sun Microsystems, Inc., Scriptics Corporation, ActiveState
+# Corporation, Apple Inc. and other parties, and are used under
+# the Tcl/Tk licence; see THIRD_PARTY_NOTICES.md.
 
 """The contents of a Text widget: lines, indices, marks and tags.
 
@@ -154,6 +160,22 @@ _PRIVATE_TAGS = ("sel",)
 #: Separates a private name from the view it belongs to, in the store. A NUL
 #: cannot appear in a mark or tag name a program gives, so no collision.
 _OWN = "\0"
+#: What every view's top-of-view mark begins with; see TextBuffer.view_top.
+_TOP = f"{_OWN}top{_OWN}"
+
+
+def _cut(ranges: list[tuple[int, int]], start: int, stop: int) -> list[tuple[int, int]]:
+    """A tag's ranges less ``start`` to ``stop``, splitting any it falls in."""
+    kept: list[tuple[int, int]] = []
+    for existing_start, existing_stop in ranges:
+        if existing_stop <= start or existing_start >= stop:
+            kept.append((existing_start, existing_stop))
+            continue
+        if existing_start < start:
+            kept.append((existing_start, start))
+        if existing_stop > stop:
+            kept.append((stop, existing_stop))
+    return _merge(kept)
 
 
 class _Store:
@@ -205,10 +227,44 @@ class _Store:
         self.shift(at, len(text))
 
     def delete(self, start: int, stop: int) -> None:
+        tops = {
+            key: self._top_after_delete(offset, start, stop)
+            for key, (offset, _) in self.marks.items()
+            if key.startswith(_TOP)
+        }
         self.record(_Edit(start, self.text[start:stop], inserted=False))
         self.text = self.text[:start] + self.text[stop:]
         self.version += 1
         self.shift(stop, -(stop - start), floor=start)
+        for key, offset in tops.items():
+            if offset is not None:
+                self.marks[key] = (offset, "left")
+
+    def _top_after_delete(self, top: int, start: int, stop: int) -> int | None:
+        """Where a view's top goes when a deletion ends on its line before
+        it, or None when it moves as a mark does.
+
+        Tk's DeleteIndexRange, in tkText.c, keeps the line number of the
+        deletion's END and takes the end's character off the top's - the old
+        line number, in the new text, so when the deletion spans lines the
+        view lands lines below where its text went. Measured on Tk 9.0.2: a view at 17.24
+        after deleting 2.3 to 17.10 is at 17.14, the start of whatever row
+        holds it, not 2.17. Every other deletion moves it as a mark with
+        left gravity: one across it leaves it where the deletion began.
+        """
+        text = self.text
+        if stop >= top:
+            return None
+        line = text.count("\n", 0, stop)
+        if text.count("\n", 0, top) != line or text.count("\n", 0, start) == line:
+            return None
+        char = (top - (text.rfind("\n", 0, top) + 1)) - (
+            stop - (text.rfind("\n", 0, stop) + 1)
+        )
+        after = text[:start] + text[stop:]
+        lines = after.split("\n")[:-1] or [""]
+        line = min(line, len(lines) - 1)
+        return sum(len(each) + 1 for each in lines[:line]) + min(char, len(lines[line]))
 
     def shift(self, at: int, distance: int, *, floor: int | None = None) -> None:
         """Move every mark and tag edge after an edit.
@@ -819,12 +875,26 @@ class TextBuffer:
         stop = start + 1 if last is None else self.offset_of(self.index(last))
         if stop < start:
             start, stop = stop, start
+        # tkText.c's DeleteIndexRange: a range from the start of a line through the
+        # final newline is whole lines, so the newline before it goes and
+        # becomes the final one, losing its tags. Measured on Tk 9.0.2,
+        # "a\nb\nc" less 2.0 to end is "a\n" rather than "a\n\n", and a tag
+        # over all of it ends at 1.1. Ours kept an empty last line - TkCurses-ydr6.
+        whole = stop >= len(self._text) and start > 0 and self._text[start - 1] == "\n"
+        # Before the clamp, so that a range wholly past the end, which Tk
+        # backs up to nothing, deletes nothing here too.
+        if whole:
+            start -= 1
         # An empty shell has no newline to keep, and this makes both -1.
         stop = min(stop, len(self._text) - 1)
         start = min(start, stop)
         if start == stop:
             return
         self._store.delete(self._global(start), self._global(stop))
+        if whole:
+            newline = self._global(len(self._text) - 1)
+            for name, ranges in self._store.tags.items():
+                self._store.tags[name] = _cut(ranges, newline, newline + 1)
 
     # ---------------------------------------------------------------- search
 
@@ -1087,6 +1157,31 @@ class TextBuffer:
         offset = self._global(self.offset_of(self.index(index)))
         self._store.marks[key] = (offset, gravity)
 
+    def view_top(self, index: Index | None = None) -> Index | None:
+        """Where the widget showing this view has the top of its own view:
+        a mark no command can name or list. Set it by passing ``index``.
+
+        Tk keeps its view as an index, and this is it. Left gravity, so text
+        inserted exactly at it goes after it, and it moves with the text as
+        every mark does - edits by peers and by undo included - but for one
+        deletion, which follows Tk's arithmetic instead; see
+        :meth:`_Store._top_after_delete`. None until it is first set.
+        """
+        key = f"{_TOP}{self._key}"
+        if index is not None:
+            offset = self._global(self.offset_of(self.index(index)))
+            self._store.marks[key] = (offset, "left")
+        entry = self._store.marks.get(key)
+        if entry is None:
+            return None
+        local = entry[0] - self._window()[0]
+        return self.index_of(max(0, min(local, len(self._text))))
+
+    @property
+    def version(self) -> int:
+        """A number that changes with every edit to the text, by any view."""
+        return self._store.version
+
     def mark_unset(self, *names: str) -> None:
         """Remove marks. Unknown names are ignored, as in Tk."""
         for name in names:
@@ -1178,17 +1273,7 @@ class TextBuffer:
         stop = start + 1 if last is None else self.offset_of(self.index(last))
         if stop < start:
             start, stop = stop, start
-        start, stop = self._global(start), self._global(stop)
-        kept: list[tuple[int, int]] = []
-        for existing_start, existing_stop in ranges:
-            if existing_stop <= start or existing_start >= stop:
-                kept.append((existing_start, existing_stop))
-                continue
-            if existing_start < start:
-                kept.append((existing_start, start))
-            if existing_stop > stop:
-                kept.append((stop, existing_stop))
-        self._store.tags[key] = _merge(kept)
+        self._store.tags[key] = _cut(ranges, self._global(start), self._global(stop))
 
     def tag_delete(self, *names: str) -> None:
         """Forget tags entirely, ranges and all."""

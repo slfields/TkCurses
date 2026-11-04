@@ -523,9 +523,11 @@ def test_a_peer_scrolled_past_what_is_left_is_brought_back(text):
     made.yview("scroll", 8, "units")
     assert made._top > 0
     text.delete("2.0", "end")
-    # Two lines are left - line1 and the one the final newline ends - and
-    # the view may start on the last of them, as it may anywhere.
-    assert made._top == 1
+    # One line is left - from a line's start to the end takes the newline
+    # before it too - and the view is on it, as Tk's is: measured on Tk
+    # 9.0.2, a view at 6.0 of ten lines is at 1.0 after deleting 2.0 to the
+    # end. TkCurses-ydr6.
+    assert made._top == 0
 
 
 def test_insert_set_at_end_stays_before_the_final_newline(root):

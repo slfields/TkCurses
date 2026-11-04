@@ -34,6 +34,7 @@ it. The scripts, as installed with Tcl 9.0.2 and Tk 9.0.2:
 | Tcl `word.tcl` | `tcl_wordBreakBefore`, `tcl_wordBreakAfter` | word boundaries (`_core/editing.py`) |
 | Tk `unix/tkUnixButton.c` (C) | `TkpDisplayButton` | the relief an indicatorless checkbutton or radiobutton is drawn in (`__init__.py`) |
 | Tk `generic/tkBind.c` (C) | `Tk_BindEvent`, `MatchPatterns`, the promotion lists, `IsBetterMatch`, `CountSpecialized` | multi-event binding sequences and how matches are ranked (`_core/bindings.py`) |
+| Tk `generic/tkText.c` (C) | `DeleteIndexRange` | where a Text's view goes when text is deleted, and a deletion to the end taking whole lines (`_core/textbuffer.py`) |
 
 The project documentation (`ARCHITECTURE.md`, `docs/`) also quotes Tk's
 manual pages and these scripts where it records a measurement. Tk's licence

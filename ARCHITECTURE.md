@@ -2589,8 +2589,8 @@ this section, each measured:
 - **`see` scrolls the least only near the view**: up to `max(3, height //
   3)` rows past it, `max(3, width // 3)` columns sideways. Further, it
   centres - the row `(height + 1) // 2` from the top, the column `width //
-  2` from the left - and sideways it never goes past the longest line's end
-  at the right edge. Measured at heights 1 to 18 and widths 9 to 30. A Text
+  2` from the left - and sideways it never goes past the end of the widest
+  row then in view at the right edge (see "A Text's view through an edit"). Measured at heights 1 to 18 and widths 9 to 30. A Text
   one row tall keeps the row in view, where Tk's pixel centring leaves it
   half out. Ours always scrolled the least.
 - **An `@x,y` outside the text area is clamped into it**: above it the top
@@ -2629,11 +2629,75 @@ does the same downwards. Something below the row the view shows - a
 partly scrolled line, perhaps - that a view kept in rows has nowhere to
 hold. The replay marks those five as expected to differ.
 
-Not done here, filed: Tk keeps its view on an index, so inserting above it
-leaves the same text at the top, where ours keeps a row number
-(`TkCurses-ntu4`); and Tk scrolls sideways over the longest line on
-screen, ours over the longest line there is (`TkCurses-8tjr`) - every
-recorded line is one length, so the corpus does not depend on it.
+### A Text's view through an edit
+
+Tk keeps a Text's view as an index - the start of its top display line -
+and works out what to draw from it. Ours kept a row number, so text put in
+or taken out above the view slid what it showed (`TkCurses-ntu4`). Now a
+hidden mark of each view's own holds the index (`TextBuffer.view_top`, never
+in `mark names`) and the row is worked out from it whenever the text or its
+layout has changed. Held to 300 runs recorded from Tk 9.0.2
+(`tests/support/record_text_view.py` → `text_view.json`), each scrolling a
+Text 16 by 4 - one unwrapped, one wrapped at a word - and editing it by
+itself and through a peer, with the top and `xview` after every step. All
+300 replay. Measured, and each a rule:
+
+- **The mark has left gravity**: text inserted exactly at the top shows
+  there; text inserted anywhere before it moves it on, in its own line too
+  (a view at 14.8, the second row of its line, is at 14.12 after four
+  characters go in at 14.0). A peer's edits and an undo's move it as any
+  edit does.
+- **A deletion across the top takes it to where the deletion began**, and
+  is then its row's start: 9.0 to 12.0 over a view at 11.0 is 9.0; 10.3 to
+  11.4 is 10.0.
+- **Except a deletion that ends on the top's line, before it, from an
+  earlier line**: `DeleteIndexRange`, in `tkText.c` (read in Tk 9.1a1's
+  source, after measuring), keeps the line number of the
+  deletion's END and takes its character off the top's - the old line
+  number, read in the new text. A view at 17.24, less 2.3 to 17.10, is at
+  17.14 - a row of whatever is line 17 now - not 2.17 where its text went.
+  So a view at 15.8, less 14.0 to 15.0, is at 15.0. It looks like a Tk
+  defect, and it is the rule (`_Store._top_after_delete`).
+- **A view left short is pulled up to fill, and stays up**: at 31.0 of
+  forty lines in four rows, deleting 33.0 to the end shows 29.0, and lines
+  added after that leave it there. Tk resets its top index; ours used to
+  keep drawing from the row it was clamped to and went back down.
+- **Resizing, rewrapping, tag margins and tabs** change the rows and leave
+  the top on its line - measured at width 7 (rows above it 27 to 38), tabs
+  of 30 (27 to 29) and a margin of 8 (24 to 32). Tag margins change the
+  rows without changing the text, so a Text with any recomputes its top
+  from the index at every reading rather than when its layout key changes.
+- **Sideways, the view goes as far as the widest row on screen**
+  (`TkCurses-8tjr`): the end of it at the right edge, margin and tabs
+  counted, and `xview` is a fraction of that width - `(0, 1)` when it fits.
+  At column 40 of a line of 60, moving to rows 30 wide takes it to 14, and
+  to short rows takes it to 0, where it stays when the long line comes
+  back. It is bounded whenever the view moves vertically, as Tk's layout
+  is, not only when read: by way of the top, a view comes back at 0. A
+  wrapped Text, even one with a space hanging past the edge, never scrolls
+  sideways and is `(0, 1)`; unwrapped again, it is at 0. Ours bounded it by
+  the longest line in the text and kept a wrapped Text's offset.
+
+A row of `spacing1` or `spacing3` is a row of its own here and part of its
+line's height in Tk, whose `yview scroll` never stops inside one. A view
+that starts in such spacing keeps its place in it, as the text Tk shows
+keeps its place.
+
+Left, and filed: Tk's `xview moveto` goes to a fraction of a pixel, part
+way across a character, which a cell cannot - the recorder moves to 0 and 1
+only. And `edit undo` puts the cursor at the change and the view on it,
+where ours leaves the cursor where it was (`TkCurses-2sbq`).
+
+### Deleting to the end of a Text
+
+A range from the start of a line through the final newline is whole lines
+to Tk's `DeleteIndexRange`: the newline before it goes too, and becomes the
+final one, losing its tags. Measured on Tk 9.0.2, `a\nb\nc` less `2.0` to
+`end` is `a\n`, a tag over all of it ends at 1.1, and a mark at 2.0 goes to
+1.1. Less `2.0` to `3.end` - short of the final newline - it is `a\n\n`;
+less `2.1` to `end`, `a\nb\n`; and a range wholly past the end deletes
+nothing. Ours left an empty last line, which put a view clamped to the end a
+line out (`TkCurses-ydr6`).
 
 ### Cell Structure
 
