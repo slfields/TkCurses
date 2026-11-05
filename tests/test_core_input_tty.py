@@ -571,7 +571,7 @@ def test_control_keys_reach_the_application(terminal, tmp_path, byte, keysym):
     term.run_source(_key_reporter(), workdir=tmp_path)
     term.wait_for_text("ready")
     term.send(byte)
-    term.wait_for_text(f"key={keysym} state=2")
+    term.wait_for_text(f"key={keysym} state=4")
 
 
 def test_control_c_still_raises_a_signal(terminal, tmp_path):
@@ -652,11 +652,11 @@ def test_binding_a_signal_key_takes_it_back_from_the_terminal(terminal, tmp_path
     )
     term.wait_for_text("ready")
     term.send(b"\x03")
-    term.wait_for_text("hits=c/2")
+    term.wait_for_text("hits=c/4")
     term.send(b"\x1c")
-    term.wait_for_text("hits=c/2 \\/2")
+    term.wait_for_text("hits=c/4 \\/4")
     term.send(b"\x1a")
-    term.wait_for_text("hits=c/2 \\/2 z/2")
+    term.wait_for_text("hits=c/4 \\/4 z/4")
     assert term.exit_status is None, "the application should have survived all three"
 
 
@@ -708,7 +708,7 @@ def test_one_signal_key_is_given_up_without_the_others(terminal, tmp_path):
     )
     term.wait_for_text("claimed=['c']")
     term.send(b"\x03")
-    term.wait_for_text("hits=c/2")
+    term.wait_for_text("hits=c/4")
     term.send(b"\x1c")
     assert term.wait_for_exit(timeout=10) != 0, "Control-backslash should still quit"
 
@@ -734,7 +734,7 @@ def test_unbinding_gives_the_signal_back(terminal, tmp_path):
     )
     term.wait_for_text("ready")
     term.send(b"\x03")
-    term.wait_for_text("hits=c/2")
+    term.wait_for_text("hits=c/4")
     term.send(b"u")
     term.wait_for_text("now=[]")
     term.send(b"\x03")

@@ -70,6 +70,7 @@ from tkcurses._core.attributes import (
     with_colors,
 )
 from tkcurses._core.bindings import (
+    MOD_ANY,
     EventPattern,
     PatternSequence,
     parse_sequence,
@@ -102,7 +103,10 @@ from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.editing import TextField, run_end, run_start
 from tkcurses._core.errors import TclError, TkCursesError
 from tkcurses._core.events import (
+    MOD_ALT,
+    MOD_BUTTONS,
     MOD_CTRL,
+    MOD_META,
     MOD_SHIFT,
     KeyEvent,
     MouseEvent,
@@ -441,6 +445,60 @@ _TRUE = frozenset({"1", "yes", "true", "on", "y", "t"})
 _FALSE = frozenset({"0", "no", "false", "off", "n", "f"})
 
 
+#: Tk's state bits for the modifiers ours keep, measured on Tk 9.0.2 with
+#: ``event generate`` and ``%s``: Shift 1, Control 4, Mod1 8 - which is Alt
+#: on X11, where a real Alt arrives - and Button1 to Button5 256 to 4096.
+#: A generated ``<Alt-...>`` or ``<Meta-...>`` reports Tk's own masks
+#: instead, 131072 and 65536, and those are matched as Alt and Meta too;
+#: ``state=8`` fires an ``<Alt-...>`` binding, measured. TkCurses-vnmk.
+_TK_SHIFT = 0x1
+_TK_CONTROL = 0x4
+_TK_MOD1 = 0x8
+_TK_META_MASK = 0x10000
+_TK_ALT_MASK = 0x20000
+_TK_BUTTONS = {MOD_BUTTONS[n]: 0x80 << n for n in range(1, 6)}
+
+
+def _tk_state(modifiers: int, *, generated: bool = False) -> int:
+    """Tk's state number for our modifier bits.
+
+    ``generated`` is for ``event_generate``, whose ``<Alt-...>`` and
+    ``<Meta-...>`` report Tk's virtual masks; a key from the terminal reports
+    Alt as Mod1, as a real X11 Alt does.
+    """
+    state = 0
+    if modifiers & MOD_SHIFT:
+        state |= _TK_SHIFT
+    if modifiers & MOD_CTRL:
+        state |= _TK_CONTROL
+    if modifiers & MOD_ALT:
+        state |= _TK_ALT_MASK if generated else _TK_MOD1
+    if modifiers & MOD_META:
+        state |= _TK_META_MASK
+    for ours, tks in _TK_BUTTONS.items():
+        if modifiers & ours:
+            state |= tks
+    return state
+
+
+def _modifiers_of(state: int) -> int:
+    """Our modifier bits for a Tk state number; bits we keep no modifier
+    for - Lock, Mod2 to Mod5 - are reported in ``%s`` and match nothing."""
+    modifiers = 0
+    if state & _TK_SHIFT:
+        modifiers |= MOD_SHIFT
+    if state & _TK_CONTROL:
+        modifiers |= MOD_CTRL
+    if state & (_TK_MOD1 | _TK_ALT_MASK):
+        modifiers |= MOD_ALT
+    if state & _TK_META_MASK:
+        modifiers |= MOD_META
+    for ours, tks in _TK_BUTTONS.items():
+        if state & tks:
+            modifiers |= ours
+    return modifiers
+
+
 class Event:
     """An event delivered to a binding callback.
 
@@ -462,9 +520,9 @@ class Event:
         keysym: Key name, such as ``Return`` or ``a``.
         keysym_num: Numeric form of the keysym, for printable keys.
         char: The character the key produced, empty if it produced none.
-        state: Modifier flags, as the ``MOD_*`` values in
-            :mod:`tkcurses._core.events`. tkinter reports X11's bitmask here;
-            the meanings are the same but the bit positions are not.
+        state: The modifiers held, as Tk's ``%s`` reports them: Shift 1,
+            Control 4, Alt 8 - X11's Mod1 - and buttons 1 to 5 held 256 to
+            4096. So ``event.state & 4`` is Control, as in tkinter.
         x, y: Position within the widget, in cells.
         x_root, y_root: Position on the screen, in cells.
         width, height: New size, for ``<Configure>``.
@@ -532,13 +590,13 @@ class Event:
             event.keycode = core.keycode
             event.keysym = core.keysym
             event.char = core.char
-            event.state = core.modifiers
+            event.state = _tk_state(core.modifiers)
             event.keysym_num = ord(core.char) if len(core.char) == 1 else 0
             event.x_root, event.y_root = widget.tk.pointer
         elif isinstance(core, MouseEvent):
             event.type = _MOUSE_EVENT_TYPES[core.state]
             event.num = core.button
-            event.state = core.modifiers
+            event.state = _tk_state(core.modifiers)
             event.x_root, event.y_root = core.x, core.y
             event.x = core.x - widget.winfo_rootx()
             event.y = core.y - widget.winfo_rooty()
@@ -1599,25 +1657,48 @@ class Misc:
         Keyword arguments set fields on the :class:`Event` the callbacks
         receive, so a test or a widget can raise ``<<Paste>>`` or replay a
         click without a terminal in the loop.
+
+        ``keysym=``, ``button=`` and ``state=`` also decide which bindings
+        run, as Tk's ``-keysym``, ``-button`` and ``-state`` do: each takes
+        the place of what the sequence said rather than adding to it.
+        Measured on Tk 9.0.2: ``<KeyPress>`` with ``keysym='Up', state=1``
+        runs ``<Shift-Key-Up>``; ``<Shift-KeyPress-Up>`` with ``state=0``
+        runs ``<Key-Up>``; ``<KeyPress-a>`` with ``keysym='b'`` runs
+        ``<Key-b>``; ``<ButtonPress-1>`` with ``button=3`` runs
+        ``<Button-3>``. ``state`` is Tk's number - see :class:`Event` - and
+        anything but an integer is refused as Tk refuses it. Ours used them
+        only to fill in the event. TkCurses-vnmk.
         """
         pattern = parse_sequence(sequence)
         if isinstance(pattern, PatternSequence):
             # Measured, Tk 9.0.2: event generate of a two-event sequence, or
             # of "ab", answers exactly this.
             raise TclError("only one event specification allowed")
+        button = kw.pop("button", None)
+        state = kw.pop("state", None)
         event = Event(widget=self, **kw)
         event.type = pattern.type
         if pattern.is_virtual:
+            if state is not None:
+                event.state = _tcl_integer(None, state)
             self._dispatch(event, [pattern])
             return
-        if pattern.type == "Key" and not event.keysym:
-            event.keysym = pattern.detail
-        if pattern.type.startswith("Button") and not event.num:
+        detail, modifiers = pattern.detail, pattern.modifiers & ~MOD_ANY
+        if pattern.type == "Key" and event.keysym:
+            detail = event.keysym
+        elif pattern.type == "Key":
+            event.keysym = detail
+        if pattern.type.startswith("Button"):
+            if button is not None:
+                detail = str(_tcl_integer(None, button))
             with contextlib.suppress(ValueError):
-                event.num = int(pattern.detail)
-        if not event.state:
-            event.state = pattern.modifiers
-        self._dispatch(event, [pattern])
+                event.num = int(detail)
+        if state is None:
+            event.state = _tk_state(modifiers, generated=True)
+        else:
+            event.state = _tcl_integer(None, state)
+            modifiers = _modifiers_of(event.state)
+        self._dispatch(event, [replace(pattern, detail=detail, modifiers=modifiers)])
 
     # ==================================================================
     # Event delivery
@@ -9100,7 +9181,7 @@ def _entry_keystroke(event: Event) -> str | None:
             entry._changed()
         return "break"
 
-    if keysym == "Delete" and not event.state & MOD_SHIFT:
+    if keysym == "Delete" and not event.state & _TK_SHIFT:
         # Shift-Delete is <<Cut>>, and Tk lets the virtual event have it:
         # measured, it cuts the selection and deletes nothing else.
         if not field.delete_selection():
@@ -12867,7 +12948,7 @@ def _text_key(event: Event) -> str | None:
     if keysym == "BackSpace":
         text._backspace()
         return "break"
-    if keysym == "Delete" and not event.state & MOD_SHIFT:
+    if keysym == "Delete" and not event.state & _TK_SHIFT:
         text._delete_forward()
         return "break"
     if keysym == "Return":
@@ -16331,9 +16412,9 @@ def _listbox_click(event: Event) -> None:
     index = listbox.nearest(event.y)
     listbox._dragging = True
     listbox._drag_y = event.y
-    if event.state & MOD_SHIFT:
+    if event.state & _TK_SHIFT:
         _listbox_begin_extend(listbox, index)
-    elif event.state & MOD_CTRL:
+    elif event.state & _TK_CONTROL:
         _listbox_begin_toggle(listbox, index)
     else:
         _listbox_begin_select(listbox, index, focus=True)
@@ -18315,7 +18396,7 @@ def _scale_key(event: Event) -> str | None:
     low, high = scale._range()
     step = abs(float(scale._options["resolution"])) or 1.0
     big = abs(float(scale._options["bigincrement"])) or abs(high - low) / 10 or step
-    if event.state & MOD_CTRL:
+    if event.state & _TK_CONTROL:
         step = big
     if high < low:
         step = -step

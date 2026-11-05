@@ -450,7 +450,8 @@ def test_a_key_event_becomes_a_tkinter_event(root):
     root.bind("<Control-Key-a>", seen.append)
     root._handle(KeyEvent(keycode=1, keysym="a", char="\x01", modifiers=MOD_CTRL))
     event = seen[0]
-    assert (event.keysym, event.keycode, event.state) == ("a", 1, MOD_CTRL)
+    # Tk's Control bit, 4, as tkinter reports it - not ours. TkCurses-vnmk.
+    assert (event.keysym, event.keycode, event.state) == ("a", 1, 4)
     assert event.widget is root
 
 

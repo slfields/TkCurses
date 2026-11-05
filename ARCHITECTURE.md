@@ -919,6 +919,43 @@ A key inside a sequence counts as bound for the terminal's signal keys, so
 `<Control-c><Control-c>` gets Control-C delivered as a key. Ctrl-S reaches the
 program because the input layer turns flow control (`IXON`) off.
 
+### An event's state, and `event_generate`'s options
+
+**`event.state` is Tk's number**, as tkinter reports `%s`: Shift 1, Control
+4, Mod1 8, Button1 to Button5 held 256 to 4096 - so `event.state & 4` is
+Control here as there. Internally the modifiers keep their own bits (`MOD_*`
+in `_core/events.py`, Control 0x02); `_tk_state` and `_modifiers_of`, in
+`__init__.py`, translate at the tkinter boundary, and nothing past it reads
+ours. They used to be what `event.state` held, so a tkinter program testing
+`& 4` for Control found Alt (`TkCurses-vnmk`).
+
+A key from the terminal reports Alt as Mod1, 8, which is how X11 reports a
+real Alt. A generated `<Alt-...>` or `<Meta-...>` reports Tk's own masks,
+131072 and 65536 - measured on Tk 9.0.2, `event generate . <Alt-KeyPress-a>`
+gives `%s` 131072 - and either, or 8, matches an `<Alt-...>` binding:
+measured, `state=8` fires one. Lock and Mod2 to Mod5 have no modifier here;
+a `state=` carrying them reports them in `%s` and matches nothing on them.
+
+**`keysym=`, `button=` and `state=` choose the bindings**, as Tk's
+`-keysym`, `-button` and `-state` do, each **replacing** what the sequence
+said rather than adding to it. Measured on Tk 9.0.2 with all of `<Key>`,
+`<Key-Up>`, `<Shift-Key-Up>`, `<Control-Key-Up>`, `<Key-b>`, `<Button-1>`,
+`<Button-3>` and `<Shift-Button-1>` bound on one Frame:
+
+| generated | runs | `%s` |
+|---|---|---|
+| `<KeyPress>`, `keysym='Up', state=1` | `<Shift-Key-Up>` | 1 |
+| `<Shift-KeyPress-Up>`, `state=0` | `<Key-Up>` | 0 |
+| `<Control-KeyPress-Up>`, `state=1` | `<Shift-Key-Up>` | 1 |
+| `<KeyPress-a>`, `keysym='b'` | `<Key-b>` | 0 |
+| `<ButtonPress-1>`, `button=3` | `<Button-3>` | 0 |
+| `<ButtonPress-1>`, `state=1` | `<Shift-Button-1>` | 1 |
+
+A `state` that is not an integer is refused with Tk's *expected integer but
+got "x"*; `"1"` is taken. Ours used to copy the three onto the event and
+match on the sequence alone, and refused `button=` outright, so tests built
+`<Shift-Key-Up>` by hand where a recorder's `-keysym Up -state 1` would do.
+
 ### Focus traversal: Tab, and F6 when Tab is spoken for
 
 Traversal lives on the `all` tag — the last tag consulted — so a widget that
