@@ -16,35 +16,135 @@ tk.Button(root, text="Quit", command=root.destroy).pack()
 root.mainloop()
 ```
 
-> **Status: pre-alpha, under active rebuild.** The public API is being
-> implemented against [ARCHITECTURE.md](ARCHITECTURE.md); most widgets are not
-> yet available.
+**Status: release candidate.** The first release candidate is
+[`v0.3.0rc1`](https://github.com/slfields/TkCurses/releases). The classic and
+themed widget sets, the dialogs and the curses module are in, and are measured
+against Tk 9.0.2 rather than written from its manual. What is still missing is
+listed [below](#known-gaps). See [CHANGELOG.md](CHANGELOG.md) for what each
+release contains.
+
+## Porting a tkinter program
+
+Change the import, and nothing else:
+
+```python
+import tkcurses as tk                     # was: import tkinter as tk
+from tkcurses import ttk, messagebox      # was: from tkinter import ttk, messagebox
+```
+
+Widgets are laid out in character cells, so a size given in pixels to tkinter
+is a size in cells here: a `Frame(width=40, height=10)` is 40 columns by 10
+rows.
+
+## What is there
+
+- **Classic widgets:** `Tk`, `Toplevel`, `Frame`, `Label`, `Button`,
+  `Checkbutton`, `Radiobutton`, `Entry`, `Spinbox`, `Scale`, `Scrollbar`,
+  `Listbox`, `Text` (with peers, tags, marks, undo and search), `Canvas`,
+  `Menu`, `Menubutton`, `OptionMenu`, `Message`, `LabelFrame` and
+  `PanedWindow`.
+- **Themed widgets (`tkcurses.ttk`):** the themed counterparts of the classic
+  set, plus `Notebook`, `Combobox`, `Treeview`, `Progressbar`, `Separator`,
+  `Sizegrip` and `LabeledScale`, with `Style` and themes.
+- **Geometry managers:** `pack`, `grid` and `place`, with Tk's negotiation and
+  propagation.
+- **Events and bindings:** Tk's binding rules, multi-event sequences
+  (`<Control-x><Control-s>`), virtual events, `event_generate`, focus
+  traversal, and the mouse - clicks, double and triple clicks, drags and the
+  wheel - in terminals that report it.
+- **Dialogs:** `messagebox`, `filedialog`, `simpledialog`, `colorchooser`,
+  `dialog`, `commondialog`, `scrolledtext` and `dnd`.
+- **Colour and images:** whatever colour depth the terminal has, from 8
+  colours to direct colour; `PhotoImage` and `BitmapImage`, reading PNG, GIF,
+  netpbm and XBM.
+- **Clipboard:** inside the application, and out to the desktop through OSC 52
+  or the desktop's own clipboard tool.
+- **`tkcurses.curses` and `tkcurses.panel`:** the curses API drawn on the same
+  screen, so one program can mix curses windows and tkinter widgets.
+
+## Known gaps
+
+Missing pieces are tracked as issues. The larger ones:
+
+- Some of Tk 9.0's options are refused by some widgets, both classic and
+  themed. Unknown options raise `TclError`, as Tk's do.
+- Some methods are missing: the Canvas tag and transform family, `Text.dump`,
+  `Text.count` and embedded windows, tear-off menus, the `Wm` icon family, the
+  `busy` family, and the geometry managers' method aliases.
+- `from tkcurses.ttk import *` leaves out `Button`, `Entry`, `Frame`,
+  `Notebook` and the other classic-named widgets, although
+  `from tkcurses import ttk` then `ttk.Button` works. This is to be fixed
+  before the final release.
+- tkinter's module-level `mainloop`, `TkVersion`, `TclVersion`, `EventType`,
+  `getint`/`getdouble`/`getboolean`, `image_names` and `image_types` do not
+  exist yet. Use `root.mainloop()`.
+- `<Enter>` and `<Leave>` are not delivered when the pointer crosses a widget.
 
 ## Requirements
 
-- Python 3.10+
-- A POSIX terminal with `curses` (standard library on Linux and macOS; Windows
-  needs `windows-curses`)
+- Python 3.10 or later; every release is tested on 3.10 to 3.14.
+- A POSIX system: Linux, where every release is tested. It should work on macOS,
+  but it is not tested there. **It does not work on Windows**, where Python has
+  no `termios`. It may work under WSL.
+- A terminal with curses. A mouse and colour are used when the terminal offers
+  them, and are not required.
+
+There are no runtime dependencies beyond the standard library.
 
 ## Installation
 
+The release candidate:
+
 ```bash
-pip install -e ".[dev]"
+pip install "tkcurses @ git+https://github.com/slfields/TkCurses@v0.3.0rc1"
 ```
+
+Or download the wheel attached to the
+[release](https://github.com/slfields/TkCurses/releases) and
+`pip install` it. TkCurses is not on PyPI.
+
+The latest development version, which `-U` keeps up to date - every commit
+has its own version, taken from git:
+
+```bash
+pip install -U git+https://github.com/slfields/TkCurses
+```
+
+Then try the demo:
+
+```bash
+tkcurses-demo
+```
+
+## Configuration
+
+Optional. An INI file, `~/.config/tkcurses/tkcurses.ini` (or under
+`$XDG_CONFIG_HOME`), with `/etc/tkcurses/tkcurses.ini` read first, and
+`TKCURSES_*` environment variables over both. It holds the colour depth, the
+escape delay, mouse reporting, Unicode or ASCII borders, the clipboard route and
+debug logging. Every setting is in [ARCHITECTURE.md](ARCHITECTURE.md) under
+*Runtime Configuration*.
 
 ## Development
 
 ```bash
-ruff check .        # lint
-mypy                # type-check (strict)
-pytest              # test
-pytest -m "not tty" # skip tests that drive a real pty
+pip install -e ".[dev]"
+ruff check .            # lint
+ruff format --check .   # formatting
+mypy                    # type-check (strict)
+pytest -n 4             # the full suite, in parallel
+pytest -m "not tty"     # skip the tests that drive a real pty
 ```
 
 Widgets are verified by rendering them in a real pseudo-terminal and asserting
 against the emulated screen, rather than by manual inspection. Tests marked
 `tty` fork a pty, run the application under it, and read the resulting
-character grid back through [pyte](https://github.com/selectel/pyte).
+character grid back through [pyte](https://github.com/selectel/pyte). What a
+test cannot see is checked by a person: the scenarios under `uat/`, with their
+checklists in `docs/UAT_*.md`.
+
+Releases are cut by pushing a `v*` tag, which runs the release workflow. See
+[CLAUDE.md](CLAUDE.md).
 
 ## Documentation
 

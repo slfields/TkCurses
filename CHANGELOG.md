@@ -1,0 +1,106 @@
+# Changelog
+
+All notable changes to TkCurses. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions are
+[PEP 440](https://peps.python.org/pep-0440/), taken from git tags.
+
+## [0.3.0rc1] - Unreleased
+
+The first release candidate, and the first release since TkCurses was rebuilt
+against [ARCHITECTURE.md](ARCHITECTURE.md). Behaviour is measured against
+Tk 9.0.2, and where Tk's manual is silent or wrong the measurement is recorded
+in ARCHITECTURE.md.
+
+### Added
+
+#### Foundations
+- `Misc`, `Wm`, `Tk` and `Toplevel`, with the event loop, timers (`after`),
+  `winfo_*` and `wm_*`, and the variable classes with `trace`.
+- Geometry managers `pack`, `grid` and `place`, with Tk's size negotiation and
+  propagation, and per-side `padx`/`pady`.
+- Window management without a window manager: windows stay inside the
+  terminal, can be dragged by their title and raised, and carry menubars.
+- A widget shows only inside its master, as X clips a window by its parent.
+
+#### Classic widgets
+- `Frame`, `Label`, `Button`, `Checkbutton`, `Radiobutton`, `Entry`,
+  `Spinbox`, `Scale`, `Scrollbar`, `Listbox`, `Text`, `Canvas`, `Menu`,
+  `Menubutton`, `OptionMenu`, `Message`, `LabelFrame` and `PanedWindow`.
+- Tk 9.0's options across them: reliefs, state and selection colours, focus
+  highlight rings, insertion-cursor options shown with the terminal's own
+  cursor, `-placeholder`, validation on every condition Tk has, and
+  `configure("option")` answering Tk's five-tuple.
+- `Text`: tags with gravity, marks, search, undo and redo grouped as Tk groups
+  them, tab stops including numeric alignment, peers with `-startline` and
+  `-endline`, and paging and views as Tk scrolls them.
+- `Listbox`: Tk's selection modes, keys, drag and `exportselection`.
+- `Menu`: accelerators bound from their shortcut text, and `-columnbreak`.
+
+#### Themed widgets (`tkcurses.ttk`)
+- The themed core widgets, plus `Notebook`, `Combobox`, `Treeview`,
+  `Progressbar`, `Separator`, `Sizegrip` and `LabeledScale`, with `Style` and
+  themes.
+- `-padding`, pane weights, and `identify()` answering the style element.
+- `Treeview`: tags, striping, the identify family, `bbox`, column stretch,
+  `-displaycolumns`, `-titleitems` and `-titlecolumns`, and sideways scrolling.
+
+#### Input
+- Tk's binding rules, multi-event sequences (`<Control-x><Control-s>`),
+  virtual events including the navigation and `<<Undo>>`/`<<Redo>>` events,
+  and `event_generate` with `keysym`, `button` and `state` as Tk takes them.
+- The mouse: clicks, double and triple clicks, shift- and control-clicks,
+  drags with autoscroll, the wheel, and auto-repeat while a button is held.
+- F6 and Shift-F6 move the focus. Ctrl-C copies a selection, and otherwise
+  asks the application to close instead of killing it.
+
+#### Display
+- Colour at whatever depth the terminal has, from 8 colours through 256 to
+  direct colour.
+- `PhotoImage` and `BitmapImage`, reading PNG (interlaced too), GIF, netpbm and
+  XBM, with averaging, dithering, perceptual colour matching and exact colour
+  past curses' 255-pair ceiling.
+- A screen that repairs itself after a resize. The terminal is restored
+  however a program exits.
+
+#### Everything else
+- Dialogs: `messagebox`, `filedialog`, `simpledialog`, `colorchooser`,
+  `dialog`, `commondialog`, `scrolledtext` and `dnd`.
+- The clipboard, and the system clipboard through OSC 52 or the desktop's own
+  tool. `PRIMARY` within the application.
+- `tkcurses.curses` and `tkcurses.panel`: the curses API on the same screen,
+  so curses windows and widgets can share a program.
+- Configuration from an INI file and `TKCURSES_*` environment variables.
+- `tkcurses-demo`.
+
+### Changed
+- The version comes from git, so every commit has its own and
+  `pip install -U git+https://github.com/slfields/TkCurses` upgrades. Before
+  this, every commit was 0.1.0 and an upgrade never replaced anything.
+- Development Status is 4 - Beta.
+- A pushed `v*` tag builds, checks and publishes a GitHub release. TkCurses is
+  not published to PyPI.
+
+### Known gaps
+- Some Tk 9.0 options are still refused by some classic and themed widgets.
+- Not yet implemented: the Canvas tag, find and transform methods; `Text.dump`,
+  `Text.count`, embedded windows and `tag_bind`; tear-off menus; the `Wm` icon
+  family; the `busy` family; `scan_mark`/`scan_dragto`; the geometry
+  managers' method aliases (`bbox`, `slaves`, `propagate` and the rest);
+  screen-distance suffixes such as `2c`.
+- `from tkcurses.ttk import *` omits `Button`, `Entry`, `Frame`, `Notebook`
+  and the other classic-named widgets. They are reachable as `ttk.Button` and
+  so on.
+- tkinter's module-level `mainloop`, `TkVersion`, `TclVersion`, `EventType`,
+  `getint`, `getdouble`, `getboolean`, `image_names` and `image_types` do not
+  exist.
+- `<Enter>` and `<Leave>` are not delivered when the pointer crosses a widget.
+- POSIX only: Windows cannot import it. Tested on Linux; macOS is untested.
+
+## [0.2.0] - 2026-01-18
+
+Phase 2 of the original codebase: the base widget classes, `Tk` and `Toplevel`,
+the variable classes and the panel stack. Superseded by the rebuild; it has no
+`Entry` or `Text`.
+
+[0.3.0rc1]: https://github.com/slfields/TkCurses/compare/v0.2.0...v0.3.0rc1
+[0.2.0]: https://github.com/slfields/TkCurses/releases/tag/v0.2.0
