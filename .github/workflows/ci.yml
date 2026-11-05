@@ -15,6 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # All of it: the version is counted from the last tag by
+          # setuptools-scm, and a shallow clone has no tags to count from.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -56,6 +60,10 @@ jobs:
             coverage: "--cov --cov-report=term-missing"
     steps:
       - uses: actions/checkout@v4
+        with:
+          # All of it: the version is counted from the last tag by
+          # setuptools-scm, and a shallow clone has no tags to count from.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -92,6 +100,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # All of it: the version is counted from the last tag by
+          # setuptools-scm, and a shallow clone has no tags to count from.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -99,6 +111,10 @@ jobs:
       - run: python -m build
       - name: Check metadata
         run: twine check dist/*
+      - name: An upgrade from git installs the new commit
+        # TkCurses-2q6o.1: install, commit, pip install -U, look for the
+        # commit's change in the installed copy.
+        run: python tests/support/check_upgrade.py
       - uses: actions/upload-artifact@v4
         with:
           name: distributions

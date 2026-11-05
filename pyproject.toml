@@ -1,10 +1,14 @@
 [build-system]
-requires = ["setuptools>=77.0", "wheel"]
+# setuptools-scm takes the version from git, so that every commit has its own.
+# A version written by hand stayed 0.1.0 through 330 commits, and pip, which
+# compares versions, answered every "pip install -U git+..." with the code it
+# already had. TkCurses-2q6o.1.
+requires = ["setuptools>=77.0", "setuptools-scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "tkcurses"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A tkinter-compatible API layer that renders to curses"
 readme = "README.md"
 license = "GPL-3.0-only"
@@ -43,6 +47,9 @@ test = [
     # us when we are wrong, which is exactly how the XBM bit order was
     # caught - so the tests skip rather than fail when it is absent.
     "pillow>=10.0",
+    # For tests/test_packaging.py, which asks it what a new commit's version
+    # is. The build itself gets it from [build-system], not from here.
+    "setuptools-scm>=8",
 ]
 dev = [
     "tkcurses[test]",
@@ -73,6 +80,13 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 tkcurses = ["py.typed"]
+
+# The version is the latest tag, and past it the next one with a .devN that
+# counts the commits since: 0.2.1.dev330+ge95dc81 on master after v0.2.0, so a
+# merge is always newer than what came before it. A tagged commit is its tag
+# alone. .git_archival.txt carries the same answer into a GitHub archive,
+# which has no .git to ask.
+[tool.setuptools_scm]
 
 # ---------------------------------------------------------------- pytest ----
 [tool.pytest.ini_options]

@@ -47,6 +47,7 @@ import contextlib
 # resolve against the wrong module. Measured, not theorised: it clobbers.
 import curses as _curses
 import functools
+import importlib.metadata
 import inspect
 import itertools
 import math
@@ -277,7 +278,14 @@ if TYPE_CHECKING:
     from tkcurses._core.layout import Layout
     from tkcurses._core.panels import Panel
 
-__version__ = "0.1.0"
+try:
+    # What the build recorded, which setuptools-scm took from git - so it
+    # changes with every commit instead of when someone remembers to.
+    __version__ = importlib.metadata.version("tkcurses")
+except importlib.metadata.PackageNotFoundError:  # pragma: no cover
+    # A source tree imported without ever being installed. Its version is
+    # git's to say, and git is not asked at import time.
+    __version__ = "0+unknown"
 __author__ = "Scott L. Fields"
 __copyright__ = "Copyright (C) 2026 Scott L. Fields"
 __license__ = "GPL-3.0-only"
