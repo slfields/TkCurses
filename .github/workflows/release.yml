@@ -1,0 +1,87 @@
+name: Release
+
+# A tag v* is a release: the whole CI suite at that commit, then a build whose
+# version must be exactly the tag's, then a GitHub release carrying the sdist
+# and wheel - a pre-release for an rc, alpha or beta. GitHub only, not PyPI
+# (TkCurses-2q6o.5). The decisions are in .github/scripts/release.py, where
+# tests/test_release_script.py can reach them without pushing a tag.
+#
+# Run by hand (Actions > Release > Run workflow) it is a dry run: everything
+# but the release itself, against a tag that need not exist yet - the build is
+# of the chosen ref, so the version check is expected to fail unless that ref
+# carries the tag. Use it to see the workflow work before the first real tag.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to rehearse, e.g. v0.3.0rc1"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Build and release
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      # Creating the release and uploading its files.
+      contents: write
+    env:
+      TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # setuptools-scm counts from the tag, and a shallow clone has none.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip build twine packaging
+      - run: python -m build
+      - name: Check metadata
+        run: twine check dist/*
+      - name: The distributions are the tag's version
+        # Skipped for a rehearsal of a tag that is not on this commit, which
+        # is the usual reason to rehearse.
+        if: github.event_name == 'push'
+        run: python .github/scripts/release.py check "$TAG" dist
+      - name: The wheel installs and runs
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/smoke/bin/python -I -c "
+          import tkcurses
+          from tkcurses import ttk, messagebox, filedialog, scrolledtext
+          assert tkcurses.Entry and tkcurses.Text and ttk.Treeview
+          print(tkcurses.__version__)"
+      - name: Release notes
+        run: |
+          python .github/scripts/release.py notes "$TAG" CHANGELOG.md > notes.md
+          echo "prerelease=$(python .github/scripts/release.py prerelease "$TAG")" >> "$GITHUB_ENV"
+          echo "--- notes for $TAG:"
+          cat notes.md
+      - name: Create the GitHub release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=(--title "TkCurses $TAG" --verify-tag)
+          if [ -s notes.md ]; then
+            flags+=(--notes-file notes.md)
+          else
+            flags+=(--generate-notes)
+          fi
+          if [ "$prerelease" = true ]; then
+            flags+=(--prerelease --latest=false)
+          fi
+          gh release create "$TAG" dist/* "${flags[@]}"

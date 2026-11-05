@@ -4,6 +4,8 @@ on:
   push:
     branches: [master]
   pull_request:
+  # The release workflow runs all of this before it builds a release.
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
