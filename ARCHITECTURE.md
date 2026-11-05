@@ -544,7 +544,7 @@ Column:   0        1 to width-2       width-1
 3. **Respect right edge**: Content must not exceed column `width-2`
 4. **Respect bottom edge**: Content must not exceed row `height-2`
 5. **Subwindows**: Use `derwin(height-2, width-2, 1, 1)` for content subwindows
-6. **Write through `_Drawable._write_line`**, not `addstr` or `insstr` directly.
+6. **Write through `BaseWidget._write_line`**, not `addstr` or `insstr` directly.
    It knows the two things curses will not do: it clips a write that would
    run past the right edge, which curses wraps onto the next row instead of
    dropping; and it uses `insstr` for the one cell where `addstr` refuses —
@@ -558,6 +558,43 @@ Column:   0        1 to width-2       width-1
    every row lost its border, and a Spinbox did the same with its second
    arrow. Both are `TkCurses-ego`. `_write_line` is the one place that knows
    which cell is which.
+
+### A widget shows only inside its master
+
+X clips every window by its parent's, and Tk inherits it: a label placed 6
+wide in a 5-wide frame shows 5 cells, and whatever is beside the frame stays
+visible. A widget's window here is the part of it that survives **every
+ancestor up to its toplevel**, and the screen (`Misc._visible_rect`,
+`TkCurses-wbov`). Before that it was clipped by the screen alone, and a
+shrunken ttk.Panedwindow pane's label covered the sash, handle and all.
+
+- **A toplevel is clipped only by the screen**, and its children are clipped
+  to the area **inside** its border - that border is the window manager's
+  frame, which nothing in the window can cover, and `place(x=0, y=0)` already
+  starts inside it. A frame's own border is not protected: as in X, a child
+  may cover it.
+- **A Menu is not clipped by its master** (`_clipped_by_master = False`). It
+  is a toplevel window in Tk, posted against the screen, and an OptionMenu
+  makes its menu a child of the button.
+- **The window may start inside the widget.** When the left or top of a
+  widget is clipped away, `_window_offset` records where its window begins,
+  and `_write_line` takes the widget's own coordinates and moves them into
+  the window, dropping what falls before its first cell. That applies at the
+  screen edge too, which had never shifted the drawing: a label placed at
+  `x=-3` showed its *first* five cells. A widget sliding along under its
+  container keeps the same window in the same place and is redrawn because
+  the offset changed.
+- **Geometry is untouched.** `winfo_x`, `winfo_width`, `winfo_ismapped` and
+  `winfo_viewable` report what the widget was given; one wholly outside its
+  master has no window and is still mapped and viewable.
+- **A click on the clipped-off part reaches what is underneath**, and the
+  terminal's cursor does not show there.
+
+Measured against Tk 9.0.2 with frames whose size could be read through the
+API: a 90-pixel child in a 50-pixel frame, and `winfo containing` at points
+over its overflow, which answered `.` between the frames and the sibling
+`.!frame2` over it - never the child. A child placed wholly outside its
+master answered `winfo ismapped` 1 and `winfo viewable` 1.
 
 ### Example: Bordered Toplevel (30×8)
 

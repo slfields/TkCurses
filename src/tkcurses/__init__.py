@@ -116,6 +116,7 @@ from tkcurses._core.events import Event as CoreEvent
 from tkcurses._core.geometry import (
     BORDER_WIDTH,
     Insets,
+    Point,
     Rect,
     Size,
     clamp,
@@ -1349,6 +1350,11 @@ class Misc:
     #: origins all stop at a toplevel, so the widget layer marks them here.
     _is_toplevel = False
 
+    #: False for a widget that is a window of its own in Tk, so that its
+    #: master does not clip it: a toplevel, and a Menu, which is posted
+    #: against the screen. See :meth:`_unclipped_part`.
+    _clipped_by_master = True
+
     #: State shared with every other widget in the same application.
     tk: Application
 
@@ -1423,6 +1429,10 @@ class Misc:
         self._layout_propagate = True
         #: The stacked window this widget draws into, once it has one.
         self._panel: Panel | None = None
+        #: Where that window starts within the widget, ``(x, y)``: nonzero
+        #: when the left or top of the widget is clipped away, by the screen
+        #: or by an ancestor. See :meth:`_visible_rect`.
+        self._window_offset = (0, 0)
         self._mapped = False
         self._takefocus = True
         self._takefocus_given = False
@@ -1961,10 +1971,17 @@ class Misc:
     def _focused_insert_cell(self) -> tuple[int, int] | None:
         """Where the terminal's cursor belongs: the focused widget's insert point.
 
-        None when nothing has the focus, or what has it takes no typing.
+        None when nothing has the focus, or what has it takes no typing - or
+        the insert point is in a part of the widget that is clipped away,
+        where Tk's own cursor would not show either.
         """
         focused = self.tk.focus
-        return None if focused is None else focused._insert_cell()
+        cell = None if focused is None else focused._insert_cell()
+        panel = getattr(focused, "_panel", None)
+        if cell is None or panel is None:
+            return cell
+        row, column = cell
+        return cell if panel.rect.contains_point(Point(column, row)) else None
 
     def _insert_cell(self) -> tuple[int, int] | None:
         """The screen cell, ``(row, column)``, where typing would go here.
@@ -2256,9 +2273,48 @@ class Misc:
         the whole application goes down with it. The panel therefore covers
         the visible part only, while the widget's own geometry is left alone,
         so winfo_x() still reports where it was actually put.
+
+        Nor does a widget show outside its master. X clips every window by
+        its parent's, so in Tk a label placed 6 wide in a 5-wide pane shows 5
+        cells and the pane's neighbour stays visible beside it; here it
+        covered the sash, handle and all. Every ancestor clips, up to the
+        enclosing toplevel, which only the screen does - TkCurses-wbov.
         """
         width, height = self._screen_size()
-        return self._screen_rect().intersection(Rect(0, 0, width, height))
+        return self._unclipped_part().intersection(Rect(0, 0, width, height))
+
+    def _unclipped_part(self) -> Rect:
+        """The part of this widget its ancestors leave showing, screen aside.
+
+        Also what a click can reach: Tk's ``winfo containing`` passes over
+        the part of a child its master clips away and finds whatever is
+        underneath, measured against Tk 9.0.2.
+        """
+        visible = self._screen_rect()
+        if self._is_toplevel or not self._clipped_by_master:
+            return visible
+        for ancestor in itertools.islice(self._ancestry(), 1, None):
+            if not isinstance(ancestor, BaseWidget):
+                # Only a widget has a window to clip by. The one Misc that is
+                # not one is a bare root, which only a model of a tree has.
+                break
+            visible = visible.intersection(ancestor._clip_rect())
+            if ancestor._is_toplevel or not ancestor._clipped_by_master:
+                break
+        return visible
+
+    def _clip_rect(self) -> Rect:
+        """The screen cells this widget's descendants may show in.
+
+        All of it, as in X: a child may cover its container's own border.
+        A toplevel keeps its border, because that border is the window
+        manager's frame, which no window inside it can draw over - and a
+        child placed at ``x=0`` already starts inside it.
+        """
+        rect = self._screen_rect()
+        if self._is_toplevel and self._border_drawn:
+            return content_rect(rect)
+        return rect
 
     def _request_size(self, width: int, height: int) -> None:
         """Declare the size this widget would like to be.
@@ -2660,11 +2716,7 @@ class Misc:
                 return hit
         if not self._mapped:
             return None
-        left, top = self.winfo_rootx(), self.winfo_rooty()
-        if (
-            left <= x < left + self.winfo_width()
-            and top <= y < top + self.winfo_height()
-        ):
+        if self._unclipped_part().contains_point(Point(x, y)):
             return self
         return None
 
@@ -3503,6 +3555,56 @@ class BaseWidget(Misc):
         """The curses window behind this widget, or None if it has no panel."""
         return None if self._panel is None else self._panel.window
 
+    def _write_line(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        row: int,
+        column: int,
+        text: str,
+        attribute: int,
+    ) -> None:
+        """Write ``text`` at a cell of this widget, clipped to its window.
+
+        Three things curses will not do for us. It wraps a write that runs past
+        the right edge onto the next row rather than dropping it, so anything
+        too wide has to be cut here; and it refuses a write that fills the
+        last cell of the last row, because that would scroll a window with
+        nowhere to scroll to - so that one cell is inserted instead, which
+        puts the character there without advancing. insstr rather than insch
+        because a box-drawing character is multibyte and does not fit in the
+        single chtype insch takes.
+
+        And the window may not start where the widget does. ``row`` and
+        ``column`` are the widget's own, and a widget whose left or top is
+        clipped away - by the screen or by its master - has a window holding
+        only the rest, so they are moved into it here and whatever lands
+        before its first cell is dropped. Only for the widget's own window:
+        a PanedWindow's sash proxy is drawn through this into a window of its
+        own, and is never clipped.
+        """
+        if window is self._window:
+            left, top = self._window_offset
+            row -= top
+            column -= left
+        rows, columns = dispatcher.call(window.getmaxyx)
+        text = _one_cell_each(text)
+        if column < 0:
+            text = text[-column:]
+            column = 0
+        if not 0 <= row < rows or not column < columns:
+            return
+        text = text[: columns - column]
+        if not text:
+            return
+        with contextlib.suppress(_curses.error):
+            if column + len(text) >= columns:
+                if text[:-1]:
+                    dispatcher.call(window.addstr, row, column, text[:-1], attribute)
+                dispatcher.call(window.insstr, row, columns - 1, text[-1], attribute)
+            else:
+                dispatcher.call(window.addstr, row, column, text, attribute)
+
     def _allocate(self, rect: Rect) -> None:
         """Give the widget the region a geometry manager decided on.
 
@@ -3612,9 +3714,12 @@ class BaseWidget(Misc):
         # ancestor moving relocates the panel without changing it.
         target = self._visible_rect()
         if target.is_empty:
-            # Entirely off screen. The widget keeps its geometry and gets its
-            # window back when it comes into view again.
+            # Entirely off screen, or outside its master. The widget keeps its
+            # geometry and gets its window back when it comes into view again.
             return self._drop_window()
+        offset = self._offset_of(target)
+        shifted = offset != self._window_offset
+        self._window_offset = offset
         current = self._panel.rect
         if (target.width, target.height) != (current.width, current.height):
             # Curses cannot resize a window in place, and replacing it is also
@@ -3626,7 +3731,17 @@ class BaseWidget(Misc):
             stack.move(self._panel, target.x, target.y)
             self._redraw()
             return True
+        if shifted:
+            # The same cells, showing a different part of the widget: one
+            # wider than its container, sliding along underneath it.
+            self._redraw()
+            return True
         return False
+
+    def _offset_of(self, visible: Rect) -> tuple[int, int]:
+        """Where a window covering ``visible`` starts within this widget."""
+        x, y = self._root_offset()
+        return visible.x - x, visible.y - y
 
     def _drop_window(self) -> bool:
         """Release this widget's window and say whether there was one."""
@@ -3757,6 +3872,7 @@ class BaseWidget(Misc):
         visible = self._visible_rect()
         if visible.is_empty:
             return
+        self._window_offset = self._offset_of(visible)
         if self._panel is None:
             self._panel = stack.new_panel(visible, userptr=self)
             # A panel goes on top of the stack when it is made, and windows
@@ -5991,9 +6107,7 @@ class Toplevel(BaseWidget, Wm):
             # A_NORMAL: the title had no attribute of its own before this
             # went through _write_line, and the border it sits in has none
             # either.
-            # Through the class: a Toplevel is a BaseWidget rather than a
-            # _Drawable, and _write_line is a static method on the latter.
-            _Drawable._write_line(dispatcher, window, 0, column, text, _curses.A_NORMAL)
+            self._write_line(dispatcher, window, 0, column, text, _curses.A_NORMAL)
 
     def _redraw_decoration(self) -> None:
         """Repaint the border and title after the window manager changed them."""
@@ -6465,58 +6579,17 @@ class _Drawable(Widget):
         style = self._border_style()
         attribute |= style.attr
         # The window can be smaller than the widget: one clipped by a screen
-        # edge gets only the part of itself that fits, because curses will
-        # not make a window that runs off the screen. Drawing the whole
-        # widget into it wraps the overflow onto the next row instead of
-        # losing it, which is a border that runs on into the line below.
-        rows, columns = dispatcher.call(window.getmaxyx)
+        # edge or by its master gets only the part of itself that shows.
+        # Every write goes through _write_line, which drops what falls
+        # outside it rather than letting curses wrap it onto the next row.
         right = width - 1
         self._write_line(dispatcher, window, 0, 0, style.top(width), attribute)
-        for row in range(1, min(height - 1, rows)):
+        for row in range(1, height - 1):
             self._write_line(dispatcher, window, row, 0, style.vertical, attribute)
-            if right < columns:
-                self._write_line(
-                    dispatcher, window, row, right, style.vertical, attribute
-                )
-        if height - 1 < rows:
-            self._write_line(
-                dispatcher, window, height - 1, 0, style.bottom(width), attribute
-            )
-
-    @staticmethod
-    def _write_line(
-        dispatcher: CursesDispatcher,
-        window: Any,
-        row: int,
-        column: int,
-        text: str,
-        attribute: int,
-    ) -> None:
-        """Write ``text`` at one position, clipped to what the window holds.
-
-        Two things curses will not do for us. It wraps a write that runs past
-        the right edge onto the next row rather than dropping it, so anything
-        too wide has to be cut here; and it refuses a write that fills the
-        last cell of the last row, because that would scroll a window with
-        nowhere to scroll to - so that one cell is inserted instead, which
-        puts the character there without advancing. insstr rather than insch
-        because a box-drawing character is multibyte and does not fit in the
-        single chtype insch takes.
-        """
-        rows, columns = dispatcher.call(window.getmaxyx)
-        if not 0 <= row < rows or not 0 <= column < columns:
-            return
-        text = _one_cell_each(text)
-        text = text[: columns - column]
-        if not text:
-            return
-        with contextlib.suppress(_curses.error):
-            if column + len(text) >= columns:
-                if text[:-1]:
-                    dispatcher.call(window.addstr, row, column, text[:-1], attribute)
-                dispatcher.call(window.insstr, row, columns - 1, text[-1], attribute)
-            else:
-                dispatcher.call(window.addstr, row, column, text, attribute)
+            self._write_line(dispatcher, window, row, right, style.vertical, attribute)
+        self._write_line(
+            dispatcher, window, height - 1, 0, style.bottom(width), attribute
+        )
 
 
 #: What a character that is not one printable cell is drawn as instead.
@@ -14567,6 +14640,8 @@ class Menu(_Drawable):
     that window, its cascades post beneath their labels, and the toplevel
     lays its children out in what is left.
     """
+
+    _clipped_by_master = False
 
     #: Entry kinds, and what each one accepts on top of the common options.
     #: -columnbreak on every kind but a separator, which refuses it - as Tk

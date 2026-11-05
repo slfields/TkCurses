@@ -50,7 +50,7 @@ def tree(app):
     button = tkcurses.Button(frame, name="button", text="Go")
     button.place(x=1, y=3, width=8)
     outside = tkcurses.Label(top, name="outside", text="kept")
-    outside.place(x=1, y=8, width=10)
+    outside.place(x=1, y=7, width=10)
     app.update_layout()
     return {
         "top": top,
