@@ -4,10 +4,10 @@ All notable changes to TkCurses. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions are
 [PEP 440](https://peps.python.org/pep-0440/), taken from git tags.
 
-## [0.3.0rc1] - Unreleased
+## [0.3.0rc1] - 2026-11-05
 
 The first release candidate, and the first release since TkCurses was rebuilt
-against [ARCHITECTURE.md](ARCHITECTURE.md). Behaviour is measured against
+against [ARCHITECTURE.md](https://github.com/slfields/TkCurses/blob/v0.3.0rc1/ARCHITECTURE.md). Behaviour is measured against
 Tk 9.0.2, and where Tk's manual is silent or wrong the measurement is recorded
 in ARCHITECTURE.md.
 

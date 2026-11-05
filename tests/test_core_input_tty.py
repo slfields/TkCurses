@@ -609,7 +609,21 @@ def test_control_c_still_raises_a_signal(terminal, tmp_path):
 
 
 SIGNAL_APP = """
+import sys
+
 import tkcurses
+
+# Not dumpable, so the SIGQUIT that Control-backslash sends kills without a
+# core. Dumping one took 20 times longer here (0.35s against 0.018s, through
+# systemd-coredump), and on a loaded CI runner long enough that the child
+# was neither reaped within 40s nor alive to run its 8s quit timer - which
+# is how test_one_signal_key_is_given_up_without_the_others failed on 3.14
+# and then 3.13 in consecutive runs. It also left a core dump on the
+# machine every time the suite ran. PR_SET_DUMPABLE is 4.
+if sys.platform.startswith("linux"):
+    import ctypes
+
+    ctypes.CDLL(None).prctl(4, 0, 0, 0, 0)
 
 root = tkcurses.Tk()
 buffer = root.tk.screen.buffer
