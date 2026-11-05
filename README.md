@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/tkcurses-logo.svg" alt="TkCurses" width="540">
+</p>
+
 # TkCurses
 
 A tkinter-compatible API layer that renders to curses.

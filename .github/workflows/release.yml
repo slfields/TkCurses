@@ -2,8 +2,9 @@ name: Release
 
 # A tag v* is a release: the whole CI suite at that commit, then a build whose
 # version must be exactly the tag's, then a GitHub release carrying the sdist
-# and wheel - a pre-release for an rc, alpha or beta. GitHub only, not PyPI
-# (TkCurses-2q6o.5). The decisions are in .github/scripts/release.py, where
+# and wheel and a zip of the documentation - a pre-release for an rc, alpha
+# or beta. GitHub only, not PyPI (TkCurses-2q6o.5, TkCurses-imii). The
+# decisions are in .github/scripts/release.py, where
 # tests/test_release_script.py can reach them without pushing a tag.
 #
 # Run by hand (Actions > Release > Run workflow) it is a dry run: everything
@@ -64,6 +65,15 @@ jobs:
           from tkcurses import ttk, messagebox, filedialog, scrolledtext
           assert tkcurses.Entry and tkcurses.Text and ttk.Treeview
           print(tkcurses.__version__)"
+      - name: The documentation, as a zip for the release
+        # The same site docs.yml publishes, so a private repository's
+        # release still carries its documentation (TkCurses-imii).
+        run: |
+          python -m pip install ".[docs]"
+          python -m sphinx -W --keep-going -b html docs docs/_build/html
+          version=$(python -c "import importlib.metadata as m; print(m.version('tkcurses'))")
+          mkdir -p release-extra
+          (cd docs/_build && mv html "tkcurses-docs-$version" && zip -qr "../../release-extra/tkcurses-docs-$version.zip" "tkcurses-docs-$version")
       - name: Release notes
         run: |
           python .github/scripts/release.py notes "$TAG" CHANGELOG.md > notes.md
@@ -84,4 +94,4 @@ jobs:
           if [ "$prerelease" = true ]; then
             flags+=(--prerelease --latest=false)
           fi
-          gh release create "$TAG" dist/* "${flags[@]}"
+          gh release create "$TAG" dist/* release-extra/* "${flags[@]}"

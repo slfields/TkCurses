@@ -1,7 +1,7 @@
 # Third-party notices
 
 TkCurses is free software under the **GNU General Public License, version 3
-only** — see [`LICENSE`](LICENSE). This file records the work of others that
+only** — see [`LICENSE`](https://github.com/slfields/TkCurses/blob/master/LICENSE). This file records the work of others that
 TkCurses builds on, what was taken from each and how, and the licence each is
 under. Both licences below are permissive and compatible with the GPL.
 
