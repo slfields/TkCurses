@@ -119,7 +119,13 @@ def test_every_commit_raises_the_version(clone):
 
 def test_a_tagged_commit_is_its_tag(clone):
     """A release is the tag alone - no .dev, no local part - which is what
-    PyPI requires and what a person pinning to it expects to see."""
+    PyPI requires and what a person pinning to it expects to see.
+
+    On a commit of its own: run on a commit that already carries a release
+    tag, which is exactly where the release workflow runs it, setuptools-scm
+    chose that tag over this one, and v0.3.0rc1's first release run failed
+    here on every Python version."""
+    git(clone, "commit", "--quiet", "--allow-empty", "-m", "to be tagged")
     git(clone, "tag", "v9.8.7rc1")
     assert str(scm_version(clone)) == "9.8.7rc1"
 
