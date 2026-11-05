@@ -67,12 +67,13 @@ def test_a_numeric_spinbox_starts_at_from(root):
     assert Spinbox(root, name="s", from_=2, to=8).get() == "2"
 
 
-def test_a_textvariable_wins_over_the_starting_value(root):
-    """An empty spinbox is filled in; one that already has contents is not."""
+def test_values_overwrite_a_textvariable(root):
+    """Measured on Tk 9.0.2: the first value wins, and is written to the
+    variable. This test asserted the opposite until TkCurses-fdl9."""
     variable = StringVar(root, "medium")
-    assert (
-        Spinbox(root, name="s", values=SIZES, textvariable=variable).get() == "medium"
-    )
+    spin = Spinbox(root, name="s", values=SIZES, textvariable=variable)
+    assert spin.get() == "small"
+    assert variable.get() == "small"
 
 
 # ------------------------------------------------------------------ stepping
@@ -180,10 +181,11 @@ def test_rubbish_typed_in_steps_back_onto_the_scale(root):
 
 
 def test_a_range_of_no_width_does_not_move(root):
-    """Tk's default from_ and to are both zero, and the arrows do nothing."""
+    """Tk's default from_ and to are both zero: it starts empty, and the
+    arrows do nothing. Measured on Tk 9.0.2."""
     spin = Spinbox(root, name="s")
     spin.invoke("buttonup")
-    assert spin.get() == "0"
+    assert spin.get() == ""
 
 
 def test_an_unknown_element_is_refused(root):
@@ -337,3 +339,127 @@ def test_the_text_area_stops_before_the_arrows(root):
     spin = laid_out(Spinbox(root, name="s", width=10), width=12)
     entry = laid_out(Entry(root, name="e", width=10), width=12)
     assert spin._text_area().width == entry._text_area().width - Spinbox._ARROW_WIDTH
+
+
+# ------------------------------------------------- what values, from and to
+#
+# What configuring values, from or to puts in the field, which Tk's manual
+# does not say. Every expectation below was measured with tkinter on Tk
+# 9.0.2 - TkCurses-fdl9, which began as a Spinbox() showing 0 where Tk's is
+# empty. Construction is the first configure, from no values and 0 to 0.
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ({}, ""),
+        ({"from_": 0, "to": 0}, ""),
+        ({"from_": 0, "to": 10}, "0"),
+        ({"to": 10}, "0"),
+        ({"from_": -5, "to": 0}, "-5"),
+        ({"from_": 2.5, "to": 10}, "2"),
+        ({"from_": 0, "to": 10, "format": "%05.2f"}, "00.00"),
+        ({"values": ()}, ""),
+        ({"values": ("a", "b")}, "a"),
+        ({"values": ("",)}, ""),
+        ({"values": ("a",), "from_": 0, "to": 10}, "a"),
+        ({"from_": 0, "to": 10, "state": "readonly"}, "0"),
+        ({"from_": 0, "to": 10, "state": "disabled"}, "0"),
+        (
+            {"from_": 0, "to": 10, "validate": "all", "validatecommand": lambda: False},
+            "0",
+        ),
+    ],
+)
+def test_a_new_spinbox_starts_as_tks_does(root, options, expected):
+    assert Spinbox(root, **options).get() == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("x", "0"), ("", "0"), ("5", "5"), ("50", "10")],
+)
+def test_a_range_overwrites_a_textvariable(root, value, expected):
+    """Its number clamped into the range, and the variable written too."""
+    variable = StringVar(root, value)
+    spin = Spinbox(root, textvariable=variable, from_=0, to=10)
+    assert spin.get() == expected
+    assert variable.get() == expected
+
+
+def test_no_range_leaves_a_textvariable_alone(root):
+    variable = StringVar(root, "")
+    assert Spinbox(root, textvariable=variable).get() == ""
+
+
+def configured(root, start, construct, change):
+    spin = Spinbox(root, **construct)
+    spin.delete(0, "end")
+    spin.insert(0, start)
+    spin.configure(**change)
+    return spin.get()
+
+
+@pytest.mark.parametrize(
+    ("start", "construct", "change", "expected"),
+    [
+        ("5", {"from_": 0, "to": 10}, {"to": 20}, "5"),
+        ("15", {"from_": 0, "to": 20}, {"to": 10}, "10"),
+        ("abc", {"from_": 0, "to": 10}, {"to": 20}, "0"),
+        ("5", {"from_": 0, "to": 10}, {"from_": 6}, "6"),
+        ("5", {"from_": 0, "to": 10}, {"from_": 0}, "5"),
+        ("abc", {"from_": 0, "to": 10}, {"from_": 0, "to": 10}, "abc"),
+        ("5", {"from_": 0, "to": 10, "format": "%05.2f"}, {"to": 20}, "05.00"),
+        ("5", {"from_": 0, "to": 10}, {"from_": 0, "to": 0}, "5"),
+        ("", {}, {"from_": 0, "to": 10}, "0"),
+        ("", {"from_": 0, "to": 10}, {"from_": 3, "to": 10}, "3"),
+        ("5.7", {"from_": 0, "to": 10}, {"to": 20}, "6"),
+        (" 5", {"from_": 0, "to": 10}, {"to": 20}, "5"),
+        ("5abc", {"from_": 0, "to": 10}, {"to": 20}, "5"),
+        ("05", {"from_": 0, "to": 10}, {"increment": 2}, "05"),
+        ("b", {"values": ("a", "b")}, {"values": ("a", "b", "c")}, "a"),
+        ("b", {"values": ("a", "b")}, {"values": ("a", "b")}, "a"),
+        ("z", {"values": ("a", "b")}, {"from_": 1, "to": 9}, "z"),
+        ("b", {"values": ("a", "b")}, {"values": ()}, "b"),
+        ("b", {"values": ("a", "b")}, {"values": (), "from_": 0, "to": 10}, "0"),
+        ("7", {"from_": 0, "to": 10}, {"values": ("",)}, ""),
+        ("0", {"from_": 0, "to": 10}, {"values": ("c", "d")}, "c"),
+    ],
+)
+def test_configure_sets_the_text_as_tks_does(root, start, construct, change, expected):
+    assert configured(root, start, construct, change) == expected
+
+
+def test_configure_through_cnf_counts_too(root):
+    spin = Spinbox(root, values=("a", "b"))
+    spin.delete(0, "end")
+    spin.insert(0, "b")
+    spin.configure({"values": ("c", "d")})
+    assert spin.get() == "c"
+
+
+@pytest.mark.parametrize(
+    "options", [{}, {"from_": 0, "to": 10}, {"from_": 3, "to": 10}, {"values": SIZES}]
+)
+def test_a_ttk_spinbox_starts_empty(root, options):
+    """Measured: ttk's never fills itself in, whatever it is given."""
+    from tkcurses import ttk
+
+    assert ttk.Spinbox(root, **options).get() == ""
+
+
+@pytest.mark.parametrize(
+    ("start", "construct", "change"),
+    [
+        ("b", {"values": ("a", "b")}, {"values": ("c", "d")}),
+        ("abc", {"from_": 0, "to": 10}, {"to": 20}),
+        ("50", {"from_": 0, "to": 10}, {"to": 20}),
+    ],
+)
+def test_a_ttk_spinbox_keeps_its_text_when_configured(root, start, construct, change):
+    from tkcurses import ttk
+
+    spin = ttk.Spinbox(root, **construct)
+    spin.insert(0, start)
+    spin.configure(**change)
+    assert spin.get() == start

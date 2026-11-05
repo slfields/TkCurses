@@ -46,6 +46,7 @@ import contextlib
 # facade the moment anybody imported it, and every reference below would
 # resolve against the wrong module. Measured, not theorised: it clobbers.
 import curses as _curses
+import enum
 import functools
 import importlib.metadata
 import inspect
@@ -325,6 +326,7 @@ __all__ = [
     "DOTBOX",
     "END",
     "EW",
+    "EXCEPTION",
     "EXTENDED",
     "FALSE",
     "FIRST",
@@ -356,6 +358,7 @@ __all__ = [
     "PROJECTING",
     "RADIOBUTTON",
     "RAISED",
+    "READABLE",
     "RIDGE",
     "RIGHT",
     "ROUND",
@@ -375,6 +378,7 @@ __all__ = [
     "UNITS",
     "VERTICAL",
     "WORD",
+    "WRITABLE",
     "YES",
     "BaseWidget",
     "BitmapImage",
@@ -386,6 +390,7 @@ __all__ = [
     "E",
     "Entry",
     "Event",
+    "EventType",
     "Frame",
     "Grid",
     "Image",
@@ -411,9 +416,11 @@ __all__ = [
     "Spinbox",
     "StringVar",
     "TclError",
+    "TclVersion",
     "Text",
     "Tk",
     "TkCursesError",
+    "TkVersion",
     "Toplevel",
     "Variable",
     "W",
@@ -427,6 +434,12 @@ __all__ = [
     "__copyright__",
     "__license__",
     "__version__",
+    "getboolean",
+    "getdouble",
+    "getint",
+    "image_names",
+    "image_types",
+    "mainloop",
 ]
 
 #: Cells per inch, used by ``winfo_pixels`` to convert screen distances such
@@ -508,6 +521,71 @@ def _modifiers_of(state: int) -> int:
     return modifiers
 
 
+class EventType(str, enum.Enum):
+    """What kind of event an :class:`Event` is: its ``type`` field.
+
+    tkinter's names and values, which are X11's event numbers as strings, so
+    ``event.type == EventType.KeyPress`` and ``event.type == "2"`` both hold
+    for a key, and ``str(event.type)`` is ``"2"``. ``Key`` and ``Button`` are
+    aliases of ``KeyPress`` and ``ButtonPress``, as in tkinter. Most of these
+    never happen in a terminal; they are here because a program may name
+    them. TkCurses-2q6o.10.
+    """
+
+    KeyPress = "2"
+    Key = KeyPress
+    KeyRelease = "3"
+    ButtonPress = "4"
+    Button = ButtonPress
+    ButtonRelease = "5"
+    Motion = "6"
+    Enter = "7"
+    Leave = "8"
+    FocusIn = "9"
+    FocusOut = "10"
+    Keymap = "11"
+    Expose = "12"
+    GraphicsExpose = "13"
+    NoExpose = "14"
+    Visibility = "15"
+    Create = "16"
+    Destroy = "17"
+    Unmap = "18"
+    Map = "19"
+    MapRequest = "20"
+    Reparent = "21"
+    Configure = "22"
+    ConfigureRequest = "23"
+    Gravity = "24"
+    ResizeRequest = "25"
+    Circulate = "26"
+    CirculateRequest = "27"
+    Property = "28"
+    SelectionClear = "29"
+    SelectionRequest = "30"
+    Selection = "31"
+    Colormap = "32"
+    ClientMessage = "33"
+    Mapping = "34"
+    VirtualEvent = "35"
+    Activate = "36"
+    Deactivate = "37"
+    MouseWheel = "38"
+
+    # tkinter's is a StrEnum from 3.11, whose str() is the value; a plain
+    # str-mixin Enum's is "EventType.KeyPress". format() follows str() once
+    # __str__ is overridden, on every version CI runs.
+    def __str__(self) -> str:
+        return str(self.value)
+
+
+def _event_type(pattern_type: str) -> EventType:
+    """The :class:`EventType` for a binding pattern's type name."""
+    if pattern_type == "Virtual":
+        return EventType.VirtualEvent
+    return EventType[pattern_type]
+
+
 class Event:
     """An event delivered to a binding callback.
 
@@ -560,7 +638,9 @@ class Event:
     def __init__(self, **fields: Any) -> None:
         """Create an event, defaulting every field the caller does not give."""
         self.widget: Any = None
-        self.type: str = "??"
+        #: An :class:`EventType`; ``"??"`` until something says otherwise, as
+        #: in tkinter.
+        self.type: EventType | str = "??"
         self.time: float = time.time()
         self.num: int = 0
         self.keycode: int = 0
@@ -588,14 +668,15 @@ class Event:
             if name not in ("type", "time") and getattr(self, name)
         }
         fields = " ".join(f"{name}={value!r}" for name, value in shown.items())
-        return f"<{self.type} event{' ' if fields else ''}{fields}>"
+        kind = getattr(self.type, "name", self.type)
+        return f"<{kind} event{' ' if fields else ''}{fields}>"
 
     @classmethod
     def _from_core(cls, core: CoreEvent, widget: Misc) -> Event:
         """Build the tkinter-facing event for one internal input event."""
         event = cls(widget=widget, time=core.time)
         if isinstance(core, KeyEvent):
-            event.type = "Key"
+            event.type = EventType.KeyPress
             event.keycode = core.keycode
             event.keysym = core.keysym
             event.char = core.char
@@ -613,7 +694,7 @@ class Event:
             # delta is derived rather than reported.
             event.delta = {4: 1, 5: -1}.get(core.button, 0)
         elif isinstance(core, ResizeEvent):
-            event.type = "Configure"
+            event.type = EventType.Configure
             event.width = core.width
             event.height = core.height
         return event
@@ -644,14 +725,14 @@ def _move_focus(widget: Misc, *, forwards: bool) -> None:
 
 
 #: tkinter's event type names for each mouse state the input layer reports.
-_MOUSE_EVENT_TYPES: dict[str, str] = {
-    "pressed": "ButtonPress",
-    "clicked": "ButtonPress",
-    "double": "ButtonPress",
-    "triple": "ButtonPress",
-    "released": "ButtonRelease",
-    "drag": "Motion",
-    "motion": "Motion",
+_MOUSE_EVENT_TYPES: dict[str, EventType] = {
+    "pressed": EventType.ButtonPress,
+    "clicked": EventType.ButtonPress,
+    "double": EventType.ButtonPress,
+    "triple": EventType.ButtonPress,
+    "released": EventType.ButtonRelease,
+    "drag": EventType.Motion,
+    "motion": EventType.Motion,
 }
 
 
@@ -1695,7 +1776,7 @@ class Misc:
         button = kw.pop("button", None)
         state = kw.pop("state", None)
         event = Event(widget=self, **kw)
-        event.type = pattern.type
+        event.type = _event_type(pattern.type)
         if pattern.is_virtual:
             if state is not None:
                 event.state = _tcl_integer(None, state)
@@ -3146,6 +3227,55 @@ def _get_default_root(what: str = "create a widget") -> Misc:
     if _default_root is None:
         raise TclError(f"No root window; create a Tk() before trying to {what}")
     return _default_root
+
+
+# ----------------------------------------------------------------------
+# tkinter's module-level names, TkCurses-2q6o.10
+# ----------------------------------------------------------------------
+
+#: The Tk and Tcl this library behaves as: it is measured against Tk 9.0.2.
+#: Floats, as tkinter's are, so ``TkVersion >= 8.6`` works.
+TkVersion = 9.0
+TclVersion = 9.0
+
+#: ``createfilehandler``'s masks, with tkinter's values.
+READABLE = 2
+WRITABLE = 4
+EXCEPTION = 8
+
+#: tkinter's are these two builtins, under these names.
+getint = int
+getdouble = float
+
+
+def getboolean(s: Any) -> bool:
+    """Parse a Tcl boolean, as :meth:`Misc.getboolean` does.
+
+    Raises:
+        ValueError: For anything that is not one, which is what tkinter's
+            module-level function raises where the method raises TclError.
+        TclError: If there is no root, as tkinter refuses without one.
+    """
+    root = _get_default_root("use getboolean()")
+    try:
+        return root.getboolean(s)
+    except TclError:
+        raise ValueError("invalid literal for getboolean()") from None
+
+
+def mainloop(n: int = 0) -> None:
+    """Run the default root's event loop, as ``Tk.mainloop`` does."""
+    _get_default_root("run the main loop").mainloop(n)
+
+
+def image_names() -> tuple[str, ...]:
+    """The default root's :meth:`Misc.image_names`."""
+    return _get_default_root("use image_names()").image_names()
+
+
+def image_types() -> tuple[str, ...]:
+    """The default root's :meth:`Misc.image_types`."""
+    return _get_default_root("use image_types()").image_types()
 
 
 # ======================================================================
@@ -10574,6 +10704,17 @@ class LabelFrame(Frame):
         return (row, column, text)
 
 
+#: A number at the start of a spinbox's text, as C's ``sscanf("%g")`` reads
+#: it for Tk: leading space allowed, and anything after the number ignored.
+_LEADING_NUMBER_RE = re.compile(r"\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
+
+
+def _leading_number(text: str) -> float | None:
+    """The number ``text`` starts with, or None if it does not start with one."""
+    found = _LEADING_NUMBER_RE.match(text)
+    return float(found.group()) if found else None
+
+
 class Spinbox(Entry):
     """An entry with a pair of arrows that step through a set of values.
 
@@ -10608,6 +10749,10 @@ class Spinbox(Entry):
         "increment": _tcl_float,
         "to": _tcl_float,
     }
+
+    #: Whether ``values``, ``from`` and ``to`` put something in the field -
+    #: see :meth:`_contents_from_options`. ttk's never do.
+    _options_set_contents: ClassVar[bool] = True
 
     _widget_options: ClassVar[dict[str, Any]] = {
         # The arrows: activebackground is stored only, since an arrow is not
@@ -10651,12 +10796,68 @@ class Spinbox(Entry):
         self._held_arrow: str | None = None
         self._repeated = 0
         super().__init__(master, cnf, name=name, **kw)
-        if not self._field.text:
-            # Straight into the field, not through _replace: that refuses a
-            # disabled widget, and a disabled spinbox showing nothing at all
-            # is worse than one showing a value it will not let you change.
-            self._field.text = self._first_value()
-            self._changed()
+        # Construction is the first configure, from Tk's defaults of no
+        # values and a range of 0 to 0.
+        self._contents_from_options(
+            values_given=bool(self._value_list()), old_range=(0.0, 0.0)
+        )
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """As Entry's, and ``values``, ``from`` and ``to`` may reset the text."""
+        old_range = self._range()
+        result = super().configure(cnf, **kw)
+        given = _given(cnf, kw)
+        if given:
+            self._contents_from_options(
+                values_given="values" in given, old_range=old_range
+            )
+        return result
+
+    config = configure
+
+    def _range(self) -> tuple[float, float]:
+        return float(self._options["from"]), float(self._options["to"])
+
+    def _contents_from_options(
+        self, *, values_given: bool, old_range: tuple[float, float]
+    ) -> None:
+        """Put in the field what configuring ``values``, ``from`` or ``to``
+        puts there in Tk, which is not documented and was measured on Tk
+        9.0.2 - TkCurses-fdl9:
+
+        - ``values`` given, and not empty: the first of them, even if it is
+          the same list and the field held another of its values.
+        - Otherwise, with no ``values``, ``from`` and ``to`` apart, and either
+          of them changed: the number the text starts with, clamped to the
+          range, in the spinbox's format. Text that does not start with one
+          is ``from``. So a spinbox with the default range of 0 to 0 starts
+          empty, and ``Spinbox(to=10)`` starts at ``0``.
+
+        Neither ``state`` nor the validator stops it, and a ``textvariable``
+        is overwritten: ``Spinbox(textvariable=StringVar(value="x"), to=10)``
+        holds ``0``. ttk's spinbox does none of it.
+        """
+        if not self._options_set_contents:
+            return
+        values = self._value_list()
+        if values:
+            if not values_given:
+                return
+            text = values[0]
+        else:
+            low, high = self._range()
+            if low == high or (low, high) == old_range:
+                return
+            number = _leading_number(self._field.text)
+            if number is None:
+                number = low
+            # Between the two ends whichever way round they are. Tk swaps a
+            # from above to, which this does not yet - TkCurses-fdl9.1.
+            text = self._number_text(min(max(number, min(low, high)), max(low, high)))
+        # Straight into the field, not through _replace: that refuses a
+        # disabled widget, and Tk's does not.
+        self._field.text = text
+        self._changed()
 
     # ------------------------------------------------------------- bindings
 
@@ -10718,13 +10919,6 @@ class Spinbox(Entry):
         if isinstance(values, str):
             return values.split()
         return [str(value) for value in values]
-
-    def _first_value(self) -> str:
-        """What an empty spinbox starts holding."""
-        values = self._value_list()
-        if values:
-            return values[0]
-        return self._number_text(float(self._options["from"]))
 
     def _number_text(self, value: float) -> str:
         """One number as text, honouring ``format`` if it was given.
@@ -14617,12 +14811,12 @@ def _canvas_mouse(event: Event) -> None:
         canvas._deliver(canvas._current, "<Leave>", event)
         canvas._current = found
         canvas._deliver(found, "<Enter>", event)
-    sequence = {
-        "ButtonPress": f"<Button-{event.num}>",
-        "ButtonRelease": f"<ButtonRelease-{event.num}>",
-        "Motion": "<Motion>",
-        "Double": f"<Double-Button-{event.num}>",
-    }.get(event.type, "")
+    sequences: dict[str, str] = {
+        EventType.ButtonPress: f"<Button-{event.num}>",
+        EventType.ButtonRelease: f"<ButtonRelease-{event.num}>",
+        EventType.Motion: "<Motion>",
+    }
+    sequence = sequences.get(event.type, "")
     if sequence:
         canvas._deliver(canvas._current, sequence, event)
 

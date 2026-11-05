@@ -421,6 +421,8 @@ def test_a_release_off_the_arrow_still_steps(root, clock):
 
 def test_a_ttk_spinbox_steps_on_the_press(root, clock):
     widget = laid_out(ttk.Spinbox(root, from_=0, to=99, width=10), 12, 3)
+    # A ttk spinbox starts empty, as Tk's does - TkCurses-fdl9.
+    widget.set("0")
     up, _ = widget._arrow_columns()
     press(widget, up, 1)
     assert widget.get() == "1"

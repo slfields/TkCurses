@@ -3068,6 +3068,9 @@ def test_clicking_a_spinbox_arrow_still_steps_it(root, cls):
     from tkcurses import _spinbox_click, _spinbox_release
 
     spin = cls(root, name="s", from_=0, to=9)
+    # A ttk spinbox starts empty, as Tk's does - TkCurses-fdl9.
+    spin.delete(0, "end")
+    spin.insert(0, "0")
     spin.place(x=0, y=0, width=12, height=3)
     root.update_layout()
     up, _down = spin._arrow_columns()

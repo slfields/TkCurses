@@ -146,7 +146,7 @@ def build(root, screen):
         return "break"
 
     def note_mouse(event):
-        state["mouse"] = f"{event.type} at {event.x},{event.y}"
+        state["mouse"] = f"{event.type.name} at {event.x},{event.y}"
         root.after_idle(report)
 
     def tap_the_decoder():

@@ -5136,6 +5136,31 @@ Entry with increment/decrement.
         [▼]
 ```
 
+**What `-values`, `-from` and `-to` put in the field is not in the manual**,
+and it was measured on Tk 9.0.2 through tkinter (`TkCurses-fdl9`).
+Construction counts as the first configure, starting from no values and a
+range of 0 to 0. The rule:
+
+- **`-values` given and not empty: the first value.** That holds even when the
+  list is the same one and the field held another of its values. An empty
+  list falls through to the range.
+- **Otherwise, with no values, `-from` ≠ `-to` and either of them changed:**
+  the number the text starts with, as `sscanf("%g")` reads it (`" 5"` and
+  `"5abc"` are 5), is clamped to the range and written in the spinbox's
+  format (`%05.2f` makes `05.00`). Text that does not start with a number
+  becomes `-from`.
+
+So `Spinbox()` starts **empty**. `Spinbox(to=10)` starts at `0`. Setting
+`-increment` alone changes nothing. `-state` and the validator do not stop
+it, and a `-textvariable` is overwritten and written to:
+`Spinbox(textvariable=StringVar(value="x"), to=10)` holds `0`, and so does
+the variable. `tests/test_spinbox.py` has the measured table.
+
+Two related differences remain. Tk swaps a `-from` that is above `-to`, where
+ours counts down (`TkCurses-fdl9.1`). Tk shows a fractional increment's
+decimals on every value, `1.0` and `2.0`, where ours strips them
+(`TkCurses-fdl9.2`).
+
 ---
 
 ### Menu Class
@@ -6057,6 +6082,12 @@ Open:   [Option 1       ▼]
 | `set(value)` | ✓ | Set value, unvalidated and regardless of state |
 
 Inherits from Entry.
+
+**It starts empty and keeps its text when `-values`, `-from` or `-to`
+change**, unlike the classic Spinbox above. Measured on Tk 9.0.2:
+`ttk.Spinbox(values=("a", "b"))` reads `""`, and so does
+`ttk.Spinbox(from_=3, to=10)`. The first step from empty goes to `-from` or
+the first value (`TkCurses-fdl9`).
 
 **`set` is not `delete` then `insert`, and the difference is all of it.**
 `ttk::spinbox set` and `ttk::combobox set` are one routine in Tk,

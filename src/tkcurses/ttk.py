@@ -5005,6 +5005,10 @@ class Spinbox(Widget, _EntryCommands, tkcurses.Spinbox):
     hierarchies agree; only the painting options differ, and those we keep.
     """
 
+    #: ttk's spinbox starts empty and keeps its text when values, from or
+    #: to change - measured on Tk 9.0.2, TkCurses-fdl9.
+    _options_set_contents = False
+
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
         "width": tkcurses._tcl_integer
     }

@@ -65,6 +65,10 @@ in ARCHITECTURE.md.
   however a program exits.
 
 #### Everything else
+- tkinter's module-level names: `mainloop`, `TkVersion`, `TclVersion`,
+  `EventType`, `getint`, `getdouble`, `getboolean`, `image_names`,
+  `image_types` and the file-handler masks. `from tkcurses import *` gives
+  everything `from tkinter import *` does except `Tcl` and `CallWrapper`.
 - Dialogs: `messagebox`, `filedialog`, `simpledialog`, `colorchooser`,
   `dialog`, `commondialog`, `scrolledtext` and `dnd`.
 - The clipboard, and the system clipboard through OSC 52 or the desktop's own
@@ -75,6 +79,12 @@ in ARCHITECTURE.md.
 - `tkcurses-demo`.
 
 ### Changed
+- A new `Spinbox()` starts empty, as Tk's does, rather than at `0`.
+  Configuring `values`, `from` or `to` sets its text as Tk's does, and a
+  `ttk.Spinbox` never fills itself in.
+- `Event.type` is an `EventType`, as tkinter's is: `event.type ==
+  EventType.KeyPress` holds for a key, and `str(event.type)` is `"2"`. It was
+  a string such as `"Key"`.
 - The version comes from git, so every commit has its own and
   `pip install -U git+https://github.com/slfields/TkCurses` upgrades. Before
   this, every commit was 0.1.0 and an upgrade never replaced anything.
@@ -89,9 +99,16 @@ in ARCHITECTURE.md.
   family; the `busy` family; `scan_mark`/`scan_dragto`; the geometry
   managers' method aliases (`bbox`, `slaves`, `propagate` and the rest);
   screen-distance suffixes such as `2c`.
-- tkinter's module-level `mainloop`, `TkVersion`, `TclVersion`, `EventType`,
-  `getint`, `getdouble`, `getboolean`, `image_names` and `image_types` do not
-  exist.
+- `tkinter.Tcl()` and `CallWrapper`: there is no Tcl interpreter here for
+  them to work with.
+- The option database matches an option's own name rather than Tk's database
+  name and class (`highlightThickness`, `HighlightThickness`), so an option
+  file written for Tk may not apply.
+- Invalid option values are stored instead of refused: Tk raises `TclError`
+  for 571 measured cases, booleans and `justify` among them, that are
+  accepted here.
+- `ttk.Checkbutton` over an empty variable draws the alternate indicator but
+  does not report the `alternate` state.
 - `<Enter>` and `<Leave>` are not delivered when the pointer crosses a widget.
 - POSIX only: Windows cannot import it. Tested on Linux; macOS is untested.
 

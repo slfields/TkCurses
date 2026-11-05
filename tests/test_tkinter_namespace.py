@@ -28,6 +28,7 @@ them precisely so that nothing drags in ``_tkinter`` at runtime.
 
 from __future__ import annotations
 
+import tkinter
 import tkinter.constants
 import tkinter.ttk
 
@@ -178,3 +179,193 @@ def test_setup_master_without_a_master_is_the_default_root(monkeypatch):
     monkeypatch.setattr(tkcurses, "_default_root", root)
     monkeypatch.setattr(tkcurses, "_support_default_root", True)
     assert tkcurses.ttk.setup_master() is root
+
+
+# ------------------------------------------------- module-level names
+#
+# tkinter.__all__ itself, apart from the two that are Tcl's machinery: Tcl()
+# is an interpreter without Tk and CallWrapper wraps Python callables for
+# one, and there is no interpreter here for either to talk to.
+# TkCurses-2q6o.10.
+
+NOT_PROVIDED = {"Tcl", "CallWrapper"}
+
+
+def tkinter_module_names() -> list[str]:
+    return sorted(set(tkinter.__all__) - NOT_PROVIDED)
+
+
+def test_the_fixture_finds_tkinters_names():
+    assert len(tkinter_module_names()) > 120
+    assert set(tkinter.__all__) >= NOT_PROVIDED, "an exclusion tkinter dropped"
+
+
+@pytest.mark.parametrize("name", tkinter_module_names())
+def test_every_tkinter_name_is_exported_by_a_star_import(name):
+    assert hasattr(tkcurses, name), f"tkcurses has no {name}"
+    assert name in tkcurses.__all__, f"{name} is bound but not in __all__"
+
+
+def test_everything_in_tkcurses_all_exists():
+    missing = [n for n in tkcurses.__all__ if not hasattr(tkcurses, n)]
+    assert not missing
+
+
+@pytest.mark.parametrize("name", ["READABLE", "WRITABLE", "EXCEPTION"])
+def test_the_file_handler_masks_are_tkinters(name):
+    assert getattr(tkcurses, name) == getattr(tkinter, name)
+
+
+def test_the_versions_are_the_tk_this_is_measured_against():
+    """Floats, as tkinter's are, so a ``TkVersion >= 8.6`` check passes."""
+    assert tkcurses.TkVersion == 9.0
+    assert tkcurses.TclVersion == 9.0
+    assert isinstance(tkcurses.TkVersion, float)
+
+
+def test_getint_and_getdouble_are_the_builtins_tkinters_are():
+    assert tkcurses.getint is tkinter.getint is int
+    assert tkcurses.getdouble is tkinter.getdouble is float
+
+
+@pytest.fixture
+def default_root(monkeypatch):
+    root = tkcurses.Misc()
+    monkeypatch.setattr(tkcurses, "_default_root", root)
+    monkeypatch.setattr(tkcurses, "_support_default_root", True)
+    return root
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"), [("yes", True), ("off", False), ("1", True), ("FALSE", False)]
+)
+def test_getboolean_parses_as_tcl_does(default_root, text, expected):
+    assert tkcurses.getboolean(text) is expected
+
+
+def test_getboolean_refuses_with_the_error_tkinters_function_raises(default_root):
+    """The method raises TclError; tkinter's function turns it into this."""
+    with pytest.raises(ValueError, match=r"^invalid literal for getboolean\(\)$"):
+        tkcurses.getboolean("maybe")
+
+
+@pytest.mark.parametrize(
+    ("name", "args"),
+    [
+        ("getboolean", ("1",)),
+        ("mainloop", ()),
+        ("image_names", ()),
+        ("image_types", ()),
+    ],
+)
+def test_the_functions_need_a_root_as_tkinters_do(monkeypatch, name, args):
+    monkeypatch.setattr(tkcurses, "_default_root", None)
+    with pytest.raises(tkcurses.TclError, match="No root window"):
+        getattr(tkcurses, name)(*args)
+
+
+def test_image_names_and_types_are_the_default_roots(default_root):
+    image = tkcurses.PhotoImage(master=default_root, width=1, height=1)
+    assert tkcurses.image_names() == default_root.image_names()
+    assert str(image) in tkcurses.image_names()
+    assert tkcurses.image_types() == ("bitmap", "photo")
+
+
+def test_mainloop_runs_the_default_roots_loop(monkeypatch):
+    class Root:
+        def mainloop(self, n=0):
+            ran.append(n)
+
+    ran: list[int] = []
+    monkeypatch.setattr(tkcurses, "_default_root", Root())
+    tkcurses.mainloop()
+    tkcurses.mainloop(3)
+    assert ran == [0, 3]
+
+
+# ------------------------------------------------------------ EventType
+
+
+def test_eventtype_has_tkinters_members_and_values():
+    theirs = {
+        name: member.value for name, member in tkinter.EventType.__members__.items()
+    }
+    ours = {
+        name: member.value for name, member in tkcurses.EventType.__members__.items()
+    }
+    assert ours == theirs
+
+
+@pytest.mark.parametrize("member", list(tkinter.EventType))
+def test_eventtype_reads_as_tkinters_does(member):
+    """str() and format() are the number, and it equals its own string."""
+    ours = tkcurses.EventType[member.name]
+    assert str(ours) == str(member)
+    assert f"{ours}" == f"{member}"
+    assert ours == member.value
+    assert repr(ours) == repr(member)
+
+
+def generated(widget, sequence, **kw):
+    seen = []
+    widget.bind(sequence, seen.append)
+    widget.event_generate(sequence, **kw)
+    (event,) = seen
+    return event
+
+
+@pytest.mark.parametrize(
+    ("sequence", "expected"),
+    [
+        ("<Key>", "KeyPress"),
+        ("<KeyPress-a>", "KeyPress"),
+        ("<Button-1>", "ButtonPress"),
+        ("<ButtonRelease-1>", "ButtonRelease"),
+        ("<Motion>", "Motion"),
+        ("<Configure>", "Configure"),
+        ("<FocusIn>", "FocusIn"),
+        ("<<Custom>>", "VirtualEvent"),
+    ],
+)
+def test_a_generated_events_type_is_tkinters(sequence, expected):
+    """Measured with tkinter on Tk 9.0.2: event_generate of each of these
+    hands the binding an EventType - KeyPress for <Key>, VirtualEvent for
+    <<Custom>> - so ``event.type == EventType.KeyPress`` holds."""
+    frame = tkcurses.Frame(tkcurses.Misc())
+    event = (
+        generated(frame, sequence, keysym="a")
+        if "Key" in sequence
+        else (generated(frame, sequence))
+    )
+    assert event.type is tkcurses.EventType[expected]
+    assert event.type == tkinter.EventType[expected]
+
+
+def test_a_keys_repr_names_its_type_as_tkinters_does():
+    frame = tkcurses.Frame(tkcurses.Misc())
+    assert repr(generated(frame, "<Key>", keysym="a")).startswith("<KeyPress event ")
+
+
+@pytest.mark.parametrize(
+    ("core", "expected"),
+    [
+        ("key", "KeyPress"),
+        ("pressed", "ButtonPress"),
+        ("double", "ButtonPress"),
+        ("released", "ButtonRelease"),
+        ("drag", "Motion"),
+        ("resize", "Configure"),
+    ],
+)
+def test_real_input_has_tkinters_types(core, expected):
+    """What the terminal reports, not only what event_generate makes."""
+    from tkcurses._core.events import KeyEvent, MouseEvent, ResizeEvent
+
+    widget = tkcurses.Frame(tkcurses.Misc())
+    if core == "key":
+        raw = KeyEvent(keysym="a", char="a")
+    elif core == "resize":
+        raw = ResizeEvent(width=3, height=4)
+    else:
+        raw = MouseEvent(state=core, button=1)
+    assert tkcurses.Event._from_core(raw, widget).type is tkcurses.EventType[expected]
