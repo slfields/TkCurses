@@ -71,10 +71,6 @@ Missing pieces are tracked as issues. The larger ones:
 - Some methods are missing: the Canvas tag and transform family, `Text.dump`,
   `Text.count` and embedded windows, tear-off menus, the `Wm` icon family, the
   `busy` family, and the geometry managers' method aliases.
-- `from tkcurses.ttk import *` leaves out `Button`, `Entry`, `Frame`,
-  `Notebook` and the other classic-named widgets, although
-  `from tkcurses import ttk` then `ttk.Button` works. This is to be fixed
-  before the final release.
 - tkinter's module-level `mainloop`, `TkVersion`, `TclVersion`, `EventType`,
   `getint`/`getdouble`/`getboolean`, `image_names` and `image_types` do not
   exist yet. Use `root.mainloop()`.

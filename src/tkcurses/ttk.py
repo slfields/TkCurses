@@ -70,6 +70,8 @@ import contextlib
 import curses
 import functools
 import math
+import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -88,17 +90,86 @@ if TYPE_CHECKING:
     from tkcurses import Event, Misc
     from tkcurses._core.paned import PaneOptions
 
+#: Everything tkinter.ttk's star-import gives, plus this module's themes. It
+#: listed nine names while the module had twenty-three of tkinter.ttk's
+#: twenty-five, so ``from tkcurses.ttk import *`` left out Button, Entry,
+#: Frame, Notebook and the rest of the commonest widgets - TkCurses-2q6o.9,
+#: and tests/test_tkinter_namespace.py now compares it with tkinter.ttk's.
 __all__ = [
     "THEMES",
+    "Button",
+    "Checkbutton",
     "Combobox",
+    "Entry",
+    "Frame",
+    "Label",
+    "LabelFrame",
+    "LabeledScale",
+    "Labelframe",
+    "Menubutton",
+    "Notebook",
+    "OptionMenu",
+    "PanedWindow",
+    "Panedwindow",
     "Progressbar",
+    "Radiobutton",
     "Scale",
+    "Scrollbar",
     "Separator",
     "Sizegrip",
+    "Spinbox",
     "Style",
     "Theme",
     "Treeview",
+    "setup_master",
+    "tclobjs_to_py",
 ]
+
+
+def setup_master(master: Misc | None = None) -> Misc:
+    """``master`` itself, or the default root when it is None.
+
+    As tkinter.ttk's, except that with no root yet this raises rather than
+    creating one: a root takes over the terminal, and here that is never a
+    side effect - see ``tkcurses._get_default_root``.
+    """
+    return tkcurses._get_default_root() if master is None else master
+
+
+def tclobjs_to_py(adict: dict[str, Any]) -> dict[str, Any]:
+    """Convert ``adict``'s values in place, as tkinter.ttk does, and return it.
+
+    tkinter turns the Tcl objects Tk hands back into Python values. Nothing
+    here is ever a Tcl object, so what is left of it is what tkinter does to
+    the Python values it is given, and that is kept so a program sees the
+    same result: a sequence that is not a string becomes a list whose items
+    are ints where they read as one and strings otherwise.
+
+    An empty tuple becomes ``""`` from Python 3.14 and is left alone before
+    it, because that is what each version's tkinter does - measured by CI,
+    whose 3.10, 3.11 and 3.13 jobs returned ``()`` where 3.14 returned ``""``.
+    A program expects the tkinter of the Python it runs on. Checked against
+    that interpreter's tkinter.ttk in the tests.
+    """
+    for option, value in adict.items():
+        if value and isinstance(value, Sequence) and not isinstance(value, str):
+            adict[option] = [_int_or_str(item) for item in value]
+        elif isinstance(value, tuple) and _EMPTY_TUPLE_IS_EMPTY_STRING:
+            adict[option] = ""
+    return adict
+
+
+#: Whether tkinter.ttk.tclobjs_to_py turns an empty tuple into "" - it does
+#: from 3.14 on. See :func:`tclobjs_to_py`.
+_EMPTY_TUPLE_IS_EMPTY_STRING = sys.version_info >= (3, 14)
+
+
+def _int_or_str(value: object) -> int | str:
+    text = str(value)
+    try:
+        return int(text)
+    except ValueError:
+        return text
 
 
 @dataclass(frozen=True)

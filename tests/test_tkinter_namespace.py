@@ -29,11 +29,13 @@ them precisely so that nothing drags in ``_tkinter`` at runtime.
 from __future__ import annotations
 
 import tkinter.constants
+import tkinter.ttk
 
 import pytest
 
 import tkcurses
 import tkcurses.constants
+import tkcurses.ttk
 
 
 def tkinter_constant_names() -> list[str]:
@@ -104,3 +106,75 @@ def test_cascade_is_tkinters_meaning_not_the_menu_glyph():
 
     assert glyph == "▸"
     assert glyph != tkcurses.CASCADE
+
+
+# --------------------------------------------------------------- ttk
+#
+# The same comparison for tkinter.ttk, which nothing made: its __all__ had
+# nine names while the module had twenty-three of tkinter.ttk's twenty-five,
+# so ``from tkcurses.ttk import *`` gave a program written for tkinter.ttk a
+# NameError on Button, Entry, Frame, Notebook... TkCurses-2q6o.9.
+
+
+def tkinter_ttk_names() -> list[str]:
+    return sorted(tkinter.ttk.__all__)
+
+
+def test_the_fixture_finds_ttks_names():
+    assert len(tkinter_ttk_names()) > 20
+
+
+@pytest.mark.parametrize("name", tkinter_ttk_names())
+def test_every_tkinter_ttk_name_is_exported_by_a_star_import(name):
+    assert hasattr(tkcurses.ttk, name), f"tkcurses.ttk has no {name}"
+    assert name in tkcurses.ttk.__all__, f"{name} is bound but not in __all__"
+
+
+def test_everything_in_ttks_all_exists():
+    """A name in __all__ that is not bound breaks the star-import outright."""
+    missing = [n for n in tkcurses.ttk.__all__ if not hasattr(tkcurses.ttk, n)]
+    assert not missing
+
+
+def test_a_star_import_gives_a_working_button():
+    scope: dict[str, object] = {}
+    exec("from tkcurses.ttk import *", scope)
+    assert scope["Button"] is tkcurses.ttk.Button
+    assert scope["Notebook"] is tkcurses.ttk.Notebook
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"a": ("1", "2", "x")},
+        {"a": ()},
+        {"a": ["7", 8]},
+        {"a": "1 2"},
+        {"a": 5, "b": ""},
+        {"a": (3.5, "b")},
+    ],
+)
+def test_tclobjs_to_py_does_to_python_values_what_tkinters_does(values):
+    """Nothing here is a Tcl object, so this is all of tkinter's conversion
+    that can apply - checked against tkinter.ttk's own function."""
+    assert tkcurses.ttk.tclobjs_to_py(dict(values)) == tkinter.ttk.tclobjs_to_py(
+        dict(values)
+    )
+
+
+def test_setup_master_returns_a_master_it_is_given():
+    sentinel = object()
+    assert tkcurses.ttk.setup_master(sentinel) is sentinel  # type: ignore[arg-type]
+
+
+def test_setup_master_without_a_root_refuses_rather_than_creating_one(monkeypatch):
+    monkeypatch.setattr(tkcurses, "_default_root", None)
+    with pytest.raises(tkcurses.TclError, match="No root window"):
+        tkcurses.ttk.setup_master()
+
+
+def test_setup_master_without_a_master_is_the_default_root(monkeypatch):
+    root = object()
+    monkeypatch.setattr(tkcurses, "_default_root", root)
+    monkeypatch.setattr(tkcurses, "_support_default_root", True)
+    assert tkcurses.ttk.setup_master() is root

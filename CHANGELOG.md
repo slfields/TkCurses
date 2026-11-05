@@ -41,6 +41,8 @@ in ARCHITECTURE.md.
   `Progressbar`, `Separator`, `Sizegrip` and `LabeledScale`, with `Style` and
   themes.
 - `-padding`, pane weights, and `identify()` answering the style element.
+- `from tkcurses.ttk import *` gives everything `from tkinter.ttk import *`
+  does, `setup_master` and `tclobjs_to_py` included.
 - `Treeview`: tags, striping, the identify family, `bbox`, column stretch,
   `-displaycolumns`, `-titleitems` and `-titlecolumns`, and sideways scrolling.
 
@@ -87,9 +89,6 @@ in ARCHITECTURE.md.
   family; the `busy` family; `scan_mark`/`scan_dragto`; the geometry
   managers' method aliases (`bbox`, `slaves`, `propagate` and the rest);
   screen-distance suffixes such as `2c`.
-- `from tkcurses.ttk import *` omits `Button`, `Entry`, `Frame`, `Notebook`
-  and the other classic-named widgets. They are reachable as `ttk.Button` and
-  so on.
 - tkinter's module-level `mainloop`, `TkVersion`, `TclVersion`, `EventType`,
   `getint`, `getdouble`, `getboolean`, `image_names` and `image_types` do not
   exist.
