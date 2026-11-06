@@ -6,6 +6,11 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+### Added
+- A guide to porting a tkinter program: sizes in cells, windows, fonts,
+  colours, the keyboard, the mouse, output and errors, with programs that
+  are run against the library on every documentation build.
+
 ### Changed
 - An unknown colour name is refused when it is set, with Tk's
   `unknown color name "x"`, for every widget colour option, a Text tag's
