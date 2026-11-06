@@ -6045,9 +6045,8 @@ class Tk(BaseWidget, Wm):
             self._held_reports.append(text)
         else:
             _write_to_stderr(text)
-        if screen is not None and screen.started:
-            with contextlib.suppress(_curses.error):
-                screen.repaint()
+        with contextlib.suppress(_curses.error):
+            self.tk.repaint()
 
     def _report_clipboard_kept_inside(self) -> None:
         """Say once, on the way out, that a copy never left this program.

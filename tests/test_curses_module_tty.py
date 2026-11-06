@@ -273,3 +273,67 @@ curses.wrapper(main)
     term.wait_for_text("KEY_UP")
     term.send(b"q")
     assert term.wait_for_exit(timeout=10) == 0
+
+
+CLEARED = """
+import tkcurses
+from tkcurses import curses
+
+root = tkcurses.Tk()
+tkcurses.Label(root, text='a widget').pack(side='bottom')
+
+def draw():
+    curses.initscr()
+    window = curses.newwin(3, 20, 1, 1)
+    window.clearok(True)
+    window.addstr(1, 1, 'curses text')
+    window.refresh()
+
+root.after(100, draw)
+root.after(6000, root.quit)
+root.mainloop()
+"""
+
+
+def test_clearok_repaints_the_widgets_beside_a_window(terminal, tmp_path):
+    """clearok asks for the whole screen to be painted again, and in an
+    application the widgets are part of the screen. Painting only the
+    curses half wiped them. TkCurses-wbpi."""
+    term = terminal(cols=40, rows=8)
+    term.run_source(CLEARED, workdir=tmp_path)
+    term.wait_for(
+        lambda t: t.contains("curses text") and t.contains("a widget"),
+        message="the window and the widget",
+    )
+    term.wait_for_idle()
+    assert term.contains("a widget"), term.describe()
+
+
+UNLOOPED = """
+import time
+
+import tkcurses
+from tkcurses import curses
+
+root = tkcurses.Tk()
+tkcurses.Label(root, text='a widget').pack(side='bottom')
+root.update()
+curses.initscr()
+window = curses.newwin(3, 20, 1, 1)
+window.clearok(True)
+window.addstr(1, 1, 'curses text')
+window.refresh()
+time.sleep(5)
+"""
+
+
+def test_clearok_puts_the_widgets_back_without_a_main_loop(terminal, tmp_path):
+    """The repaint sends the widgets itself, rather than leaving them to the
+    main loop's next pass - a program drawing with update() and no loop
+    has no next pass."""
+    term = terminal(cols=40, rows=8)
+    term.run_source(UNLOOPED, workdir=tmp_path)
+    term.wait_for(
+        lambda t: t.contains("curses text") and t.contains("a widget"),
+        message="the window and the widget",
+    )

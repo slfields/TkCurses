@@ -62,6 +62,45 @@ def test_the_display_survives_a_raising_callback(terminal, tmp_path):
     assert term.display == before, term.describe()
 
 
+WIDGETS = """
+import tkcurses
+
+root = tkcurses.Tk()
+tkcurses.Button(root, text='a button').pack()
+tkcurses.Label(root, text='a label').pack()
+
+def boom(event):
+    raise RuntimeError('the callback was supposed to fail')
+
+root.bind('<Key-b>', boom)
+root.bind('<Key-q>', lambda event: root.quit())
+root.after(6000, root.quit)
+root.mainloop()
+root.destroy()
+"""
+
+
+@pytest.mark.parametrize("stderr_to_terminal", [True, False])
+def test_the_widgets_survive_a_raising_callback(terminal, tmp_path, stderr_to_terminal):
+    """The repaint after a failure puts the widgets back as well.
+
+    They are drawn in curses panels of their own, above the cells the test
+    above writes into, and a repaint of those cells alone painted over every
+    one of them - with stderr redirected too, since the repaint happens
+    either way. TkCurses-wbpi.
+    """
+    term = terminal(cols=40, rows=12, stderr_to_terminal=stderr_to_terminal)
+    term.run_source(WIDGETS, workdir=tmp_path)
+    term.wait_for(
+        lambda t: t.contains("a button") and t.contains("a label"),
+        message="both widgets",
+    )
+    before = list(term.display)
+    term.send(b"b")
+    term.wait_for_idle()
+    assert term.display == before, term.describe()
+
+
 def test_the_application_survives_it_too(terminal, tmp_path):
     term = terminal(cols=40, rows=12, stderr_to_terminal=True)
     term.run_source(RAISER, workdir=tmp_path)

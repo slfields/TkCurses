@@ -4,6 +4,14 @@ All notable changes to TkCurses. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions are
 [PEP 440](https://peps.python.org/pep-0440/), taken from git tags.
 
+## [Unreleased]
+
+### Fixed
+- An exception in a callback no longer wipes the widgets off the screen. The
+  screen was repainted after it, but only the cells beneath the widgets, so
+  every widget vanished until the program ended. A curses window refreshed
+  after `clearok(True)` in a program that also has widgets did the same.
+
 ## [0.3.0rc1] - 2026-11-05
 
 The first release candidate, and the first release since TkCurses was rebuilt
@@ -118,5 +126,6 @@ Phase 2 of the original codebase: the base widget classes, `Tk` and `Toplevel`,
 the variable classes and the panel stack. Superseded by the rebuild; it has no
 `Entry` or `Text`.
 
+[Unreleased]: https://github.com/slfields/TkCurses/compare/v0.3.0rc1...HEAD
 [0.3.0rc1]: https://github.com/slfields/TkCurses/compare/v0.2.0...v0.3.0rc1
 [0.2.0]: https://github.com/slfields/TkCurses/releases/tag/v0.2.0

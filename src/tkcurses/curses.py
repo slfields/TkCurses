@@ -77,6 +77,8 @@ from tkcurses._core.screen import BLANK, CursesScreen, ScreenBuffer
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from tkcurses._core.application import Application
+
 __all__ = [
     "Window",
     "beep",
@@ -192,13 +194,8 @@ _stdscr: Window | None = None
 _owns_screen = False
 
 
-def _running_application_screen() -> CursesScreen | None:
-    """The screen a Tk application already has up, if one has.
-
-    This is what lets the two halves share a terminal rather than fight over
-    it: a curses window opened inside a running tkinter application draws
-    onto the same cells the widgets do, and one refresh paints both.
-    """
+def _running_application() -> Application | None:
+    """The running Tk application's shared state, if one is up."""
     # Imported here rather than at the top: tkcurses does not import this
     # module, but importing it from here at module level would depend on
     # which of the two was imported first.
@@ -207,8 +204,31 @@ def _running_application_screen() -> CursesScreen | None:
     root = tkcurses._active_root
     if root is None or not root.winfo_exists():
         return None
-    screen = root.tk.screen
+    return root.tk
+
+
+def _running_application_screen() -> CursesScreen | None:
+    """The screen a Tk application already has up, if one has.
+
+    This is what lets the two halves share a terminal rather than fight over
+    it: a curses window opened inside a running tkinter application draws
+    onto the same cells the widgets do, and one refresh paints both.
+    """
+    application = _running_application()
+    if application is None:
+        return None
+    screen = application.screen
     return screen if screen is not None and screen.started else None
+
+
+def _repaint() -> None:
+    """Paint the whole terminal again, the widgets included when it is an
+    application's - they are part of the screen a clearok asks for."""
+    application = None if _owns_screen else _running_application()
+    if application is not None:
+        application.repaint()
+    else:
+        _require_screen().repaint()
 
 
 def _require_screen() -> CursesScreen:
@@ -995,7 +1015,7 @@ class Window:
         self.noutrefresh()
         if self._clear_ok:
             self._clear_ok = False
-            _require_screen().repaint()
+            _repaint()
             return
         doupdate()
 

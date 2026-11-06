@@ -111,19 +111,12 @@ def main(argv: list[str] | None = None) -> int:
             application: the buffer still holds what it drew, so nothing is
             dirty and nothing would be sent.
 
-            Then the widget panels, which are real curses panels above
-            stdscr and have to be composited after anything that paints
-            stdscr.
+            The application's repaint puts the widget panels back over it,
+            since they are real curses panels above stdscr.
             """
             del event
             tpanel.update_panels()
-            screen = root.tk.screen
-            if screen is not None:
-                screen.repaint()
-            panels = root.tk.panels
-            if panels is not None:
-                panels.touch_all()
-                panels.update()
+            root.tk.repaint()
 
         def resized(event: Any = None) -> None:
             """Rebuild the curses half at the size the terminal now is.

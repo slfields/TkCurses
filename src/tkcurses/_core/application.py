@@ -421,6 +421,23 @@ class Application:
         if changed:
             self.refresh_signal_keys()
 
+    def repaint(self) -> None:
+        """Paint the whole terminal again: the cells, then the widgets.
+
+        For putting the screen right after something has written to the
+        terminal behind this library's back. The screen alone is not enough.
+        Its repaint covers the cells under the widgets, and every widget is
+        a curses panel above them, which curses then believes is already on
+        the terminal and never sends again - so a repaint of the cells alone
+        wiped every widget off the screen and left them off. TkCurses-wbpi.
+        """
+        if self.screen is None or not self.screen.started:
+            return
+        self.screen.repaint()
+        if self.panels is not None:
+            self.panels.touch_all()
+            self.panels.update()
+
     def refresh_signal_keys(self) -> None:
         """Take back from the tty exactly the signal keys something binds.
 
