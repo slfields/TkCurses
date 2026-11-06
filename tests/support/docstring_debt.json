@@ -12,10 +12,6 @@
     "tkcurses.filedialog.FileDialog.set_selection"
   ],
   "tracker_ids": [
-    "tkcurses.EventType",
-    "tkcurses.Misc.event_generate",
-    "tkcurses.Wm.wm_manage",
-    "tkcurses.XView",
     "tkcurses.ttk.Combobox.set",
     "tkcurses.ttk.Labelframe",
     "tkcurses.ttk.Panedwindow",
@@ -30,21 +26,18 @@
     "tkcurses.ttk.Treeview.xview"
   ],
   "private_names": [
-    "tkcurses.BaseWidget",
-    "tkcurses.Misc",
-    "tkcurses.Misc.configure",
-    "tkcurses.Misc.winfo_children",
-    "tkcurses.Variable",
-    "tkcurses.Wm",
-    "tkcurses.Wm.wm_protocol",
     "tkcurses.commondialog.Dialog.show",
     "tkcurses.ttk.Button",
+    "tkcurses.ttk.Combobox.set",
+    "tkcurses.ttk.LabeledScale",
+    "tkcurses.ttk.Spinbox.set",
+    "tkcurses.ttk.Style",
     "tkcurses.ttk.Treeview.tag_bind",
-    "tkcurses.ttk.Treeview.tag_configure"
+    "tkcurses.ttk.Treeview.tag_configure",
+    "tkcurses.ttk._EntryCommands.bbox",
+    "tkcurses.ttk.setup_master"
   ],
   "unmarked_extensions": [
-    "tkcurses.Misc.update_layout",
-    "tkcurses.Misc.winfo_colordepth",
     "tkcurses.colorchooser.Chooser.body",
     "tkcurses.colorchooser.Chooser.color",
     "tkcurses.colorchooser.Chooser.ok",

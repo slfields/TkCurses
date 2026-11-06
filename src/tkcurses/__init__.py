@@ -529,8 +529,10 @@ class EventType(str, enum.Enum):
     for a key, and ``str(event.type)`` is ``"2"``. ``Key`` and ``Button`` are
     aliases of ``KeyPress`` and ``ButtonPress``, as in tkinter. Most of these
     never happen in a terminal; they are here because a program may name
-    them. TkCurses-2q6o.10.
+    them.
     """
+
+    # TkCurses-2q6o.10.
 
     KeyPress = "2"
     Key = KeyPress
@@ -1416,24 +1418,26 @@ def _abandoning_on_failure(method: Callable[..., Any]) -> Callable[..., Any]:
 
 
 class Misc:
-    """Behaviour shared by every widget: bindings, focus, timers, queries.
+    """Behaviour shared by every widget, and the application: bindings,
+    focus, timers, the event loop, options, and the ``winfo`` queries.
 
-    tkinter's ``Misc`` is a mixin over a Tcl interpreter handle. Here the
-    equivalent shared state is an :class:`~tkcurses._core.application.Application`,
-    reached through ``self.tk`` — the same attribute name, so tkinter code
-    that pokes at it finds something there.
+    ``self.tk`` is there, as in tkinter, so code that reaches for it finds
+    something. It is the application rather than a Tcl interpreter, and has
+    no ``call`` or ``eval``.
 
-    Widget geometry is kept in ``_rect`` (position relative to the master) and
-    ``_requested`` (the size the widget asked for). This class only reads
-    them; the geometry managers and the window lifecycle set them, and until
-    they do every ``winfo`` query reports zeroes rather than failing.
-
-    ``_layout_manager`` is the manager laying out this widget's *children*,
-    which is a different thing from the manager that placed the widget itself
-    - that one is named by ``winfo_manager()``, and the container holding its
-    options is ``_manager_container``. A widget can be packed into its parent
-    while gridding its own children.
+    Differences from tkinter:
+        Every position and size a ``winfo`` method answers is in character
+        cells, not pixels.
     """
+
+    # self.tk is the _core.application.Application. Widget geometry is kept in
+    # _rect (position relative to the master) and _requested (the size the
+    # widget asked for); this class only reads them, and until the geometry
+    # managers set them every winfo query reports zeroes rather than failing.
+    # _layout_manager is the manager laying out this widget's children, which
+    # is different from the one that placed the widget itself - that is named
+    # by winfo_manager(), and the container holding its options is
+    # _manager_container.
 
     #: True for Tk and Toplevel. Bindings, focus history and coordinate
     #: origins all stop at a toplevel, so the widget layer marks them here.
@@ -1753,21 +1757,22 @@ class Misc:
     def event_generate(self, sequence: str, **kw: Any) -> None:
         """Deliver a synthetic event to this widget's bindings.
 
-        Keyword arguments set fields on the :class:`Event` the callbacks
-        receive, so a test or a widget can raise ``<<Paste>>`` or replay a
-        click without a terminal in the loop.
+        Keyword arguments set fields on the :class:`Event` the callbacks receive,
+        so a test or a widget can raise ``<<Paste>>`` or replay a click without a
+        terminal in the loop.
 
-        ``keysym=``, ``button=`` and ``state=`` also decide which bindings
-        run, as Tk's ``-keysym``, ``-button`` and ``-state`` do: each takes
-        the place of what the sequence said rather than adding to it.
-        Measured on Tk 9.0.2: ``<KeyPress>`` with ``keysym='Up', state=1``
-        runs ``<Shift-Key-Up>``; ``<Shift-KeyPress-Up>`` with ``state=0``
-        runs ``<Key-Up>``; ``<KeyPress-a>`` with ``keysym='b'`` runs
-        ``<Key-b>``; ``<ButtonPress-1>`` with ``button=3`` runs
-        ``<Button-3>``. ``state`` is Tk's number - see :class:`Event` - and
-        anything but an integer is refused as Tk refuses it. Ours used them
-        only to fill in the event. TkCurses-vnmk.
+        ``keysym=``, ``button=`` and ``state=`` also decide which bindings run,
+        as Tk's ``-keysym``, ``-button`` and ``-state`` do: each takes the place
+        of what the sequence said rather than adding to it. ``<KeyPress>`` with
+        ``keysym="Up", state=1`` runs a ``<Shift-Key-Up>`` binding. ``state`` is
+        Tk's number - see :class:`Event` - and anything but an integer is
+        refused, as Tk refuses it.
         """
+        # Measured on Tk 9.0.2: <KeyPress> with keysym='Up', state=1 runs
+        # <Shift-Key-Up>; <Shift-KeyPress-Up> with state=0 runs <Key-Up>;
+        # <KeyPress-a> with keysym='b' runs <Key-b>; <ButtonPress-1> with
+        # button=3 runs <Button-3>. Ours used them only to fill in the event.
+        # TkCurses-vnmk.
         pattern = parse_sequence(sequence)
         if isinstance(pattern, PatternSequence):
             # Measured, Tk 9.0.2: event generate of a two-event sequence, or
@@ -2430,11 +2435,14 @@ class Misc:
         self.tk.layout.invalidate(self)
 
     def update_layout(self) -> int:
-        """Lay out whatever is waiting, now. Returns containers laid out.
+        """Lay out whatever is waiting, now, and answer the containers laid out.
 
-        The main loop does this before drawing, so an application rarely
-        needs to. A test that wants to read geometry without running a loop
-        does.
+        The main loop does this before drawing, so an application rarely needs
+        to. A test that wants to read geometry without running a loop does.
+
+        TkCurses extension:
+            tkinter has no such method: in Tk, ``update_idletasks`` lays
+            widgets out, which here it does not.
         """
         return self.tk.layout.run()
 
@@ -2634,9 +2642,10 @@ class Misc:
     def winfo_children(self) -> list[Misc]:
         """This widget's children, in stacking order.
 
-        Not one whose creation failed, which stays in :attr:`children` as in
-        tkinter but has no window; see :meth:`_abandon`.
+        A child whose creation failed is not among them; as in tkinter it stays in
+        ``children``, without a window.
         """
+        # See _abandon.
         return [child for child in self.children.values() if not child._destroyed]
 
     def winfo_class(self) -> str:
@@ -2855,16 +2864,16 @@ class Misc:
         return (rgb[0] * 257, rgb[1] * 257, rgb[2] * 257)
 
     def winfo_colordepth(self) -> ColorDepth:
-        """How many colours this terminal has.
+        """How many colours this terminal has, as a :class:`ColorDepth`.
 
-        Not tkinter's - X has no equivalent question, because an X display
-        answers ``winfo_screendepth`` in bits per pixel and has the full
-        range either way. A terminal does not, and anything drawing a colour
-        ramp has to know which of the four tiers it is drawing on.
-        On a terminal with no colour at all this is :data:`ColorDepth.NONE`.
-        Before there is a screen to ask, it is :data:`ColorDepth.BASIC` - the
-        eight every colour terminal has, which is what colour resolution has
-        always assumed when it had nothing better to go on.
+        A terminal may have no colour, eight, sixteen, 256 or true colour, and
+        anything drawing a colour ramp has to know which. Before there is a
+        screen to ask, it is ``ColorDepth.BASIC``, the eight every colour
+        terminal has.
+
+        TkCurses extension:
+            X has no such question: ``winfo_screendepth`` answers in bits per
+            pixel, and a display has the full range either way.
         """
         colors = self.tk.colors
         return colors.depth if colors is not None else ColorDepth.BASIC
@@ -2943,7 +2952,14 @@ class Misc:
     # ==================================================================
 
     def update_idletasks(self) -> None:
-        """Run pending idle callbacks without touching input."""
+        """Run pending idle callbacks without touching input.
+
+        Differences from tkinter:
+            Widgets are not laid out: in Tk geometry is computed by idle
+            handlers, so ``update_idletasks`` followed by ``winfo_width`` gives
+            the width a widget will have. Here call :meth:`update` or
+            :meth:`update_layout` first.
+        """
         self.tk.timers.run_idle()
 
     def update(self) -> None:
@@ -3026,15 +3042,18 @@ class Misc:
     # ==================================================================
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
-        """Set widget options, or return them all when called with none.
+        """Set widget options, or report them.
 
-        tkinter returns a five-tuple per option describing its resource name,
-        class and default. Those come from Tcl's widget definitions, which do
-        not exist here, so the current values are returned instead.
+        With keyword arguments or a dictionary, sets them. Called with one option
+        name, answers that option's five-tuple, as tkinter does: name, database
+        name, database class, default, current value.
 
-        Asked for one option by name, it does answer the five-tuple: see
-        :meth:`_configure_query`.
+        Differences from tkinter:
+            Called with nothing, it answers every option's current value, where
+            tkinter answers every option's five-tuple.
         """
+        # Those five-tuples come from Tcl's widget definitions; the one-option
+        # form is answered by _configure_query.
         options = _given(cnf, kw)
         if not options:
             return dict(self._options)
@@ -3338,15 +3357,16 @@ _CHECKS_CACHE: dict[type, dict[str, Callable[[Any, Any], Any]]] = {}
 class BaseWidget(Misc):
     """A widget: a named node in the tree with a set of options.
 
-    Subclasses declare what they accept in ``_widget_options``, a mapping of
-    option name to default. The sets are merged down the inheritance chain, so
-    a widget lists only what it adds to the standard set below.
-
-    An option not in the merged set is an error, at construction and at
-    ``configure`` time alike. tkinter gets that from Tcl's widget definitions;
-    without them the check has to be explicit, and it is worth having — a
-    misspelled option that silently does nothing is a long afternoon.
+    An option the widget does not take is an error, when the widget is made
+    and when it is configured alike, as in tkinter - a misspelled option that
+    silently did nothing would be a long afternoon.
     """
+
+    # Subclasses declare what they accept in _widget_options, a mapping of
+    # option name to default. The sets are merged down the inheritance chain,
+    # so a widget lists only what it adds to the standard set. tkinter gets
+    # the check from Tcl's widget definitions; without them it has to be
+    # explicit.
 
     #: Tk's short spellings for this class's options. A *class* attribute and
     #: not a module constant, because the synonyms are per widget: measured on
@@ -4723,27 +4743,24 @@ _WM_ATTRIBUTES = ("-topmost", "-fullscreen")
 
 
 class Wm:
-    """Window manager methods for a toplevel.
+    """Window manager methods for the application and each toplevel.
 
-    There is no window manager. A terminal has one surface, no title bars, no
-    close buttons and no stacking policy beyond what this library imposes, so
-    every method here is the library doing for itself what an X11 window
-    manager would otherwise do.
+    There is no window manager: a terminal has one surface, no title bars and
+    no close buttons, so these are the library doing for itself what an X11
+    window manager would.
 
-    Two consequences run through the whole class. **A window is always
-    inside the terminal**, because there is nowhere for it to overflow to -
-    an invariant rather than a courtesy, held by routing every path that
-    moves or resizes a window through :meth:`_within_screen`, and
-    re-established by :meth:`_reposition_for_screen` when the terminal itself
-    changes size. And nothing raises ``WM_DELETE_WINDOW`` on its own: no user
-    gesture closes a window here, so an application that wants the protocol
-    must invoke it.
-
-    The invariant used to be only established, never maintained: the clamp
-    lived in ``_apply_geometry`` and so held against whatever the screen was
-    when geometry was last set. A window could then report a position its own
-    setter would refuse to produce.
+    Differences from tkinter:
+        A window is always inside the terminal, because there is nowhere for
+        it to overflow to. A position or size that would take it outside is
+        brought back in, and when the terminal is resized every window is
+        moved to stay within it.
     """
+
+    # Held by routing every path that moves or resizes a window through
+    # _within_screen, and re-established by _reposition_for_screen when the
+    # terminal changes size. The invariant used to be only established, never
+    # maintained: the clamp lived in _apply_geometry and so held against
+    # whatever the screen was when geometry was last set.
 
     if TYPE_CHECKING:
         # Supplied by the widget this is mixed into. Declared so the contract
@@ -4842,9 +4859,15 @@ class Wm:
     def wm_title(self, string: str | None = None) -> str:
         """Get or set the window's title.
 
-        A toplevel draws it centred on its top border, which is the only
-        title bar available. The root has nowhere to put one and keeps it as
-        a label only.
+        A toplevel draws it centred on its top border, which is the only title
+        bar there is. The main window has nowhere to put one and keeps it
+        without showing it.
+
+        Sample output:
+            # size: 40x8
+            top = tk.Toplevel(root)
+            top.title("Untitled - Notes")
+            top.geometry("26x4+1+1")
         """
         if string is not None:
             self._title = str(string)
@@ -5119,20 +5142,16 @@ class Wm:
     ) -> Any:
         """Register, query, or list window manager protocol handlers.
 
-        ``WM_DELETE_WINDOW`` is the one worth having, and **Ctrl-C raises
-        it**. A terminal has no close button, but it does have the gesture:
-        pressing Ctrl-C on an application that has not bound ``<Control-c>``
-        is a user saying "stop this", and :meth:`Tk.mainloop` delivers it
-        here. A handler may save, may ask, or may simply return and leave
-        the application running; with no handler the default is to close.
-
-        This docstring used to say that nothing raised it, "a terminal
-        offers no close button and no user gesture that means close this
-        window". The mechanism was right and the gesture had been missed.
-
-        An application may still invoke it directly - :meth:`_invoke_protocol`
-        from a key binding, and the dialogs do the same.
+        ``WM_DELETE_WINDOW`` is the one worth having, and **Ctrl-C raises it**.
+        A terminal has no close button, but it does have the gesture: Ctrl-C on
+        an application that has not bound ``<Control-c>`` is a person saying
+        "stop this", and :meth:`Tk.mainloop` delivers it here. A handler may
+        save, may ask, or may return and leave the application running; with no
+        handler the application closes.
         """
+        # This docstring used to say that nothing raised it. The mechanism was
+        # right and the gesture had been missed. The dialogs invoke it
+        # themselves through _invoke_protocol.
         if name is None:
             return tuple(self._protocols)
         if func is None:
@@ -5275,11 +5294,13 @@ class Wm:
         """Turn a managed widget into a toplevel.
 
         Raises:
-            TclError: Always, for now. It means taking a widget away from its
-                geometry manager and giving it a window of its own, and there
-                are no geometry managers yet to take it from. Tracked as
-                TkCurses-113.
+            TclError: Always.
+
+        Differences from tkinter:
+            Not available yet: taking a widget from its geometry manager and
+            giving it a window of its own is not implemented.
         """
+        # TkCurses-113.
         raise TclError(
             "wm_manage needs the geometry managers, which are not implemented "
             "yet (TkCurses-113)"
@@ -5323,16 +5344,20 @@ _active_root: Tk | None = None
 
 
 class Tk(BaseWidget, Wm):
-    """The root window, and the event loop that drives everything.
+    """The application: its main window, and the event loop that drives
+    everything.
 
-    Creating one initialises curses and takes over the terminal; destroying
-    one gives it back. Because that is process-global state rather than
-    something owned by the object, only one may be live at a time, and the
-    teardown path runs even when the application fails - a program that dies
-    with the terminal in raw mode leaves the user with an unusable shell.
+    Creating one takes over the terminal; destroying it gives the terminal
+    back, and that happens even when the application fails, so a program that
+    dies does not leave the shell unusable. Only one may exist at a time,
+    because the terminal is shared by the whole process.
 
-    tkinter's hierarchy is ``Tk(Misc, Wm)``. The window manager half arrives
-    with the Wm class; what is here is the root widget and the loop.
+    Sample output:
+        tk.Label(root, text="Hello from the main window").pack()
+
+    Differences from tkinter:
+        The main window is the whole terminal: its size is the terminal's,
+        and it has no title bar, so a title is kept and not shown.
     """
 
     _is_toplevel = True
@@ -5593,53 +5618,32 @@ class Tk(BaseWidget, Wm):
     def mainloop(self, n: int = 0) -> None:
         """Run until :meth:`quit` is called or the root is destroyed.
 
+        The terminal is given back however the loop ends - normal mode, the
+        cursor, the main screen, mouse reporting off - and before an exception
+        that ends it is reported, so the traceback appears where it can be read.
+
         Args:
-            n: Run at most this many passes, or unlimited when 0. tkinter
-                takes the same argument; it is what lets a test drive the
-                loop a step at a time.
+            n: Run at most this many passes, or unlimited when 0, as tkinter's
+                does; it is what lets a test drive the loop a step at a time.
 
-        **The terminal is given back however the loop ends**, and that is
-        not a nicety: curses has put the terminal in cbreak mode, hidden the
-        cursor, switched to the alternate screen and possibly turned mouse
-        reporting on. A program that exits without undoing those leaves the
-        shell unusable until ``reset``. This docstring claimed as much
-        before it was true - measured, Ctrl-C left every one of them set.
-
-        **An exception restores the terminal before it continues**, which
-        is the whole of the change here. It is not tidiness: whatever
-        printed that traceback is about to write it to a terminal that is
-        still on the alternate screen, where it will scroll past and vanish
-        the moment the screen is swapped back. Restoring first puts it
-        somewhere the user can actually read.
-
-        **Ctrl-C is a close request, not a crash.** It arrives as a signal
-        only when nothing bound ``<Control-c>`` - see
-        :meth:`~tkcurses._core.application.Application.refresh_signal_keys` -
-        and it is then delivered to ``WM_DELETE_WINDOW``, tkinter's own
-        protocol for "the user asked to close this window". A handler
-        registered with ``protocol()`` runs and decides: it may save, it may
-        ask, it may refuse and let the application carry on. With no
-        handler, the default is to close.
-
-        This is the one place TkCurses deliberately does NOT do what tkinter
-        does, and the reason is that the gesture does not mean the same
-        thing. A tkinter program is in a window, and Ctrl-C is typed at the
-        terminal that launched it - a developer interrupting from outside,
-        for whom a traceback is the right answer. A TkCurses program *is*
-        the terminal: Ctrl-C is typed at the application, by whoever is
-        using it, and it universally means "stop". Answering a user's
-        gesture with a Python traceback is not compatibility.
-
-        The mechanism was already here and unused. ``wm_protocol`` said of
-        ``WM_DELETE_WINDOW`` that "nothing raises it: a terminal offers no
-        close button and no user gesture that means close this window".
-        Ctrl-C is that gesture.
-
-        An application that wants the interrupt itself has three ways: bind
-        ``<Control-c>``, which takes the key from the tty entirely and never
-        makes a signal of it; register ``WM_DELETE_WINDOW`` and raise from
-        there; or install its own SIGINT handler.
+        Differences from tkinter:
+            **Ctrl-C closes the application rather than raising
+            KeyboardInterrupt.** A TkCurses program *is* the terminal, so Ctrl-C
+            is typed by whoever is using it and means "stop": it is delivered to
+            ``WM_DELETE_WINDOW``, the protocol for "the user asked to close
+            this window". A handler registered with :meth:`Wm.wm_protocol` runs and
+            decides - it may save, ask, or let the application carry on - and
+            with none the application closes. To have the interrupt itself, bind
+            ``<Control-c>``, which takes the key from the terminal entirely;
+            raise from a ``WM_DELETE_WINDOW`` handler; or install a SIGINT
+            handler.
         """
+        # This docstring once claimed the terminal was restored before it was
+        # true - measured, Ctrl-C left cbreak, the hidden cursor, the
+        # alternate screen and mouse reporting all set. Ctrl-C arrives as a
+        # signal only when nothing bound <Control-c>; see
+        # _core.application.Application. refresh_signal_keys. wm_protocol used
+        # to say nothing raised WM_DELETE_WINDOW; Ctrl-C is that gesture.
         self._running = True
         self.tk.quit_requested = False
         passes = 0
@@ -6099,16 +6103,25 @@ def _write_to_stderr(text: str) -> None:
 
 
 class Toplevel(BaseWidget, Wm):
-    """A window of its own, floating above the root.
+    """A window of its own, drawn over the main window.
 
-    tkinter leaves a toplevel's frame, title bar and placement to the window
-    manager. A terminal has none, so a toplevel here draws its own border and
-    chooses its own position, and both are its business rather than a
-    manager's: it is mapped the moment it is created and no geometry manager
-    ever places it.
+    A terminal has no window manager to give a window its frame, title bar
+    and place, so a toplevel draws its own border, with its title in it, and
+    chooses its own position. It appears the moment it is made; it is not
+    packed or gridded. :meth:`~Wm.wm_geometry` moves and sizes it, in cells.
 
-    tkinter's hierarchy is ``Toplevel(BaseWidget, Wm)``. The window manager
-    methods - title, geometry, protocol - arrive with the Wm class.
+    Sample output:
+        # size: 50x10
+        tk.Label(root, text="The main window").pack(anchor="w")
+        top = tk.Toplevel(root)
+        top.title("Settings")
+        top.geometry("24x6+10+3")
+        tk.Label(top, text="A second window").pack()
+        tk.Button(top, text="Close", command=top.destroy).pack()
+
+    Differences from tkinter:
+        A toplevel is always inside the terminal, and its title is drawn on
+        its top border.
     """
 
     _is_toplevel = True
@@ -6344,15 +6357,15 @@ def _toplevel_release(event: Event) -> Any:
 class Variable:
     """A value widgets can share and watch.
 
-    tkinter's variables live in the Tcl interpreter, which is what lets two
-    widgets bound to the same one stay in step and what makes a trace fire.
-    Here they live in the :class:`~tkcurses._core.application.Application`,
-    reached through the master, so the same sharing holds and two
-    applications in one process keep separate variables.
-
-    Attributes:
-        _default: The value a variable of this class starts with.
+    Two widgets given the same variable stay in step, and a trace added with
+    :meth:`trace_add` runs when it is written, read or unset. Variables belong
+    to the application, so two applications in one process keep separate
+    ones.
     """
+
+    # tkinter's variables live in the Tcl interpreter; these live in the
+    # _core.application.Application, reached through the master. _default is
+    # the value a variable of this class starts with.
 
     _default: Any = ""
 
@@ -6541,7 +6554,14 @@ _LEGACY_LETTERS = {name: letter for letter, name in _LEGACY_MODES.items()}
 
 
 class StringVar(Variable):
-    """A variable holding text."""
+    """A variable holding text.
+
+    Sample output:
+        name = tk.StringVar(value="Ada")
+        tk.Entry(root, textvariable=name).pack()
+        tk.Label(root, textvariable=name).pack()
+        name.set("Ada Lovelace")
+    """
 
     _default = ""
 
@@ -6618,14 +6638,16 @@ class BooleanVar(Variable):
 
 
 class XView:
-    """The horizontal half of Tk's scroll protocol. ``tkinter.XView``.
+    """The horizontal half of Tk's scroll protocol, as ``tkinter.XView``.
 
-    A widget supplies ``xview(*args)`` - the query and the ``moveto`` /
-    ``scroll`` forms a Scrollbar sends - and this adds the two named
-    spellings a program writes itself, which tkinter implements the same way:
-    thin wrappers over ``xview``. One definition here instead of one per
-    widget; TkCurses-019 found seven widgets with ``xview`` and without these.
+    A widget that scrolls sideways supplies ``xview(*args)`` - the query, and
+    the ``moveto`` and ``scroll`` forms a Scrollbar sends. This adds the two
+    spellings a program writes itself, :meth:`xview_moveto` and
+    :meth:`xview_scroll`.
     """
+
+    # One definition here instead of one per widget; TkCurses-019 found seven
+    # widgets with xview and without these.
 
     def xview(self, *args: Any) -> Any:  # pragma: no cover - always overridden
         """Query or move the horizontal view. Every user overrides this."""

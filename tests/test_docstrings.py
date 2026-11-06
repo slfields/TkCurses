@@ -206,3 +206,18 @@ def test_the_option_rules_catch_what_they_are_for(tmp_path, monkeypatch):
     assert "tkcurses.Scale:sliderlength" in found["unsampled_options"]
     # A shared option is sampled on the options page, not in the class.
     assert "tkcurses.Scale:relief" not in found["unsampled_options"]
+
+
+@pytest.mark.parametrize(
+    ("doc", "private"),
+    [
+        ("Calls _draw.", True),
+        ("Reads self._rect.", True),
+        ("See :func:`~tkcurses._core.canvas.compose`.", True),
+        ("Like tkinter's _tkinter module.", False),
+        ("A snake_case name.", False),
+        ("Dunder: __init__.", False),
+    ],
+)
+def test_a_private_name_is_found_however_it_is_reached(doc, private):
+    assert bool(docsurface.PRIVATE_NAME.search(doc)) is private

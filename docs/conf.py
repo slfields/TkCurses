@@ -55,6 +55,8 @@ extensions = [
     "sphinx.ext.intersphinx",
     "sphinx.ext.viewcode",
     "tkscreens",
+    # One entry per method, however many names it has.
+    "aliases",
 ]
 
 source_suffix = {".md": "markdown"}

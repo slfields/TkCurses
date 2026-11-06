@@ -174,9 +174,10 @@ NAMED_SAMPLE = re.compile(r"^\s*Sample output \((\w+(?:, \w+)*)\):\s*$", re.M)
 #: A tracker ID - maintainer history, not something a reader can follow.
 TRACKER_ID = re.compile(r"TkCurses-[a-z0-9]+(?:\.\d+)*")
 
-#: A private name: ``_draw``, ``self._rect``, ``_core``. A reader cannot use
-#: one, and the reference does not show them.
-PRIVATE_NAME = re.compile(r"(?<![\w.])_(?!tkinter\b)[a-z]\w*")
+#: A private name: ``_draw``, ``self._rect``, ``tkcurses._core``. A reader
+#: cannot use one, and the reference does not show them. Reached through a
+#: dot counts too; the first version did not, and missed all of those.
+PRIVATE_NAME = re.compile(r"(?<!\w)_(?!tkinter\b)[a-z]\w*")
 
 
 @dataclass(frozen=True)
