@@ -9,6 +9,8 @@ widgets/index
 ttk/index
 geometry
 images
+dialogs/index
+modules/index
 ```
 
 Every class and function TkCurses provides. It is being written module by
@@ -16,7 +18,8 @@ module; so far it covers [the application and what every widget
 has](core/index.md), the [standard options](options.md), the
 [classic widgets](widgets/index.md), the
 [themed widgets](ttk/index.md), the
-[geometry managers](geometry.md) and [images](images.md).
+[geometry managers](geometry.md), [images](images.md),
+[dialogs](dialogs/index.md) and [the other modules](modules/index.md).
 
 A method tkinter gives two names, such as `wm_title` and `title`, is
 described once, under the first, and says what else it is called.

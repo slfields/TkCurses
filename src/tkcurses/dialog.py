@@ -21,28 +21,26 @@
 # ActiveState Corporation, Apple Inc. and other parties, and are used under
 # the Tcl/Tk licence; see THIRD_PARTY_NOTICES.md.
 
-"""The classic Tk dialog: a message, a row of buttons, and which one was hit.
+"""The classic Tk dialog: a message, a row of buttons, and which one was
+pressed, as ``tkinter.dialog``.
 
-tkinter's ``dialog.Dialog`` is the oldest dialog it has, and it behaves
-unlike everything else in the library: *constructing* it puts the dialog on
-the screen and blocks, and the answer is left on the instance as ``num``, the
-index of the button that was pressed. ``destroy()`` does nothing, because by
-the time anyone could call it the window is already gone. All of that is
-kept, because code written against it depends on it.
+Sample output:
+    # size: 50x10
+    from tkcurses import dialog
+    dialog.Dialog(root, title="Quit", text="Quit without saving?",
+                  bitmap="", default=1, strings=("Quit", "Cancel"))
 
-The rules come from Tk's own ``dialog.tcl`` rather than from memory:
+Unlike the other dialogs, *making* a :class:`Dialog` shows it and waits,
+and the answer is left on it as ``num``: the index in ``strings`` of the
+button pressed, or -1 if the dialog was closed without one. ``default``
+is the index of the button Return presses, and moving the focus to
+another button moves Return with it; below zero, Return does nothing.
 
-- One button per entry in ``strings``, in order, and ``num`` is the index.
-- ``default`` is the index of the button Return presses. Below zero - which
-  is what an empty string means - there is no default and Return does
-  nothing, and the focus starts on the window rather than on a button.
-- Moving the focus between buttons moves what Return presses with it.
-- A dialog destroyed before a button is pressed gives **-1**.
-
-``bitmap`` is accepted and ignored. Tk draws one of its stock icons beside
-the message; a terminal has no bitmaps, and inventing a character to stand in
-for ``questhead`` would be a decoration the caller did not ask for.
+Differences from tkinter:
+    ``bitmap`` is accepted and not drawn: a terminal has no stock icons.
 """
+# The rules come from Tk's own dialog.tcl. destroy() does nothing, as in
+# tkinter, because by the time anyone could call it the window is gone.
 
 from __future__ import annotations
 

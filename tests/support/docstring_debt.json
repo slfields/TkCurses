@@ -1,42 +1,13 @@
 {
-  "undocumented": [
-    "tkcurses.filedialog.FileDialog.cancel_command",
-    "tkcurses.filedialog.FileDialog.dirs_double_event",
-    "tkcurses.filedialog.FileDialog.dirs_select_event",
-    "tkcurses.filedialog.FileDialog.files_double_event",
-    "tkcurses.filedialog.FileDialog.files_select_event",
-    "tkcurses.filedialog.FileDialog.get_filter",
-    "tkcurses.filedialog.FileDialog.get_selection",
-    "tkcurses.filedialog.FileDialog.ok_event",
-    "tkcurses.filedialog.FileDialog.set_filter",
-    "tkcurses.filedialog.FileDialog.set_selection"
-  ],
+  "undocumented": [],
   "tracker_ids": [],
-  "private_names": [
-    "tkcurses.commondialog.Dialog.show"
-  ],
+  "private_names": [],
   "unmarked_extensions": [
-    "tkcurses.colorchooser.Chooser.body",
-    "tkcurses.colorchooser.Chooser.color",
-    "tkcurses.colorchooser.Chooser.ok",
-    "tkcurses.colorchooser.Chooser.set_channel",
-    "tkcurses.commondialog.Dialog.body",
-    "tkcurses.commondialog.Dialog.finish",
-    "tkcurses.commondialog.fit",
-    "tkcurses.commondialog.restore_focus_grab",
-    "tkcurses.commondialog.take_focus_grab",
-    "tkcurses.constants",
     "tkcurses.curses",
-    "tkcurses.filedialog.Directory.dir_clicked",
-    "tkcurses.filedialog._NativeDialog.body",
-    "tkcurses.filedialog._NativeDialog.dir_clicked",
-    "tkcurses.filedialog._NativeDialog.ok",
     "tkcurses.panel"
   ],
   "unlisted_borrowed": [],
-  "no_sample": [
-    "tkcurses.scrolledtext.ScrolledText"
-  ],
+  "no_sample": [],
   "unmeasured_options": [],
   "unsampled_options": [],
   "undescribed_options": []

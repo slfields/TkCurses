@@ -15,21 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""A Text with its scrollbar already attached.
-
-Two widgets that nearly always appear together, packaged as one. It *is* a
-Text - every method a Text has, it has - with a Frame holding it and a
-Scrollbar down the right-hand side, already wired both ways: the text tells
-the bar where the view is, and the bar tells the text where to move it.
-
-The one awkward part is tkinter's, and it is kept because the alternative
-breaks code. A ScrolledText is a Text, so ``pack`` on it would pack the text
-*inside its own frame*, leaving the frame unmanaged and nothing on screen.
-tkinter solves this by copying the geometry methods off the frame onto the
-instance, so ``scrolled.pack()`` packs the frame and everything else reaches
-the text. It is a hack, tkinter calls it one, and it is the behaviour every
-caller is written against.
-"""
+"""A Text with a scrollbar beside it, as ``tkinter.scrolledtext``."""
 
 from __future__ import annotations
 
@@ -57,13 +43,26 @@ _GEOMETRY_METHODS = frozenset(
 
 
 class ScrolledText(tkcurses.Text):
-    """A text widget with a vertical scrollbar beside it.
+    """A text widget with a vertical scrollbar beside it, already connected.
+
+    Sample output:
+        from tkcurses import scrolledtext
+        text = scrolledtext.ScrolledText(root, width=30, height=6)
+        text.insert("end", "\\n".join(f"Line {n}" for n in range(1, 40)))
+        text.pack()
+
+    It is a :class:`~tkcurses.Text`, with every method one has. ``pack``,
+    ``grid`` and ``place`` place the frame holding the text and the bar, as
+    in tkinter, so ``text.pack()`` shows both.
 
     Attributes:
-        frame: The container holding the text and the bar. This is what a
-            geometry manager is given.
+        frame: The frame holding the text and the scrollbar.
         vbar: The scrollbar.
     """
+
+    # tkinter does this by copying the geometry methods off the frame onto the
+    # instance; it calls it a hack, and it is what every caller is written
+    # against.
 
     def __init__(self, master: Misc | None = None, **kw: Any) -> None:
         """

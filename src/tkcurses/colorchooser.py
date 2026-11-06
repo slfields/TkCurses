@@ -21,52 +21,38 @@
 # ActiveState Corporation, Apple Inc. and other parties, and are used under
 # the Tcl/Tk licence; see THIRD_PARTY_NOTICES.md.
 
-"""Choosing a colour, shaped the way Tk's chooser is shaped.
+"""Choosing a colour, as ``tkinter.colorchooser``.
 
-Read out of Tk's own ``clrpick.tcl`` rather than remembered: three colour
-bars, one per channel, each showing what the colour becomes as that channel
-varies and the other two stay put; three numeric entries taking 0-255, each
-applied on Return; a ``Selection:`` entry holding the ``#rrggbb``; a swatch
-of the result; OK and Cancel. There is no colour-name lookup anywhere in it,
-because there is none in Tk - though the ``Selection:`` entry takes a name
-just as Tk's does, since it hands whatever is typed to ``winfo_rgb``.
+Sample output:
+    # size: 60x20
+    from tkcurses import colorchooser
+    colorchooser.askcolor("#3366cc", title="Highlight colour")
 
-**What adapts is how many steps a bar has.** Tk draws sixteen, because an X
-display can show sixteen distinguishable intensities of one channel and
-several million besides. A terminal cannot promise that. Sixteen steps of red
-drawn on an eight-colour terminal are two appearances and fourteen repeats,
-which is a worse lie than showing two steps and meaning it. So the bar is
-drawn with exactly as many steps as the terminal has intensities to put in
-them - two at eight colours, six at 256, sixteen in direct colour - and every
-step really does look different from its neighbours.
+:func:`askcolor` answers a pair, ``((r, g, b), "#rrggbb")``, or
+``(None, None)`` if cancelled - so ``rgb, name = askcolor()`` works
+either way.
 
-The entries are unaffected: any value from 0 to 255 can be typed at any
-depth, and a colour the terminal cannot show is approximated when it is
-drawn, exactly as it would be anywhere else.
+The dialog is laid out as Tk's: a bar for each of red, green and blue,
+an entry beside each taking 0 to 255, a ``Selection:`` entry holding the
+colour as ``#rrggbb`` or a name, a swatch of the result, and OK and
+Cancel.
 
-**The bars are fixed scales, and this is a deliberate departure from Tk.**
-Tk draws each strip with the *other* two channels at their current values, so
-moving green repaints the red and blue strips - measured against Tk 9.0.2,
-where raising green from 0 to 255 turned the red strip from a black-to-red
-ramp into a green-to-yellow one. On an X display that is a live preview of
-several million colours. Here it is destructive: a bar has between two and
-six steps, and with the other two channels at mid intensity the whole red bar
-collapses to *one* colour at eight and sixteen colours - every step
-identical, the scale gone. Measured, not guessed.
+Differences from tkinter:
+    Each bar shows its own channel alone, from none to full, and does
+    not change. Tk's bars show the colour as their channel varies with
+    the other two held, which on a terminal with few colours can make a
+    whole bar one colour.
 
-So each bar is that channel alone, from nothing to full, and it never
-changes. What the cross-coupling was *for* - seeing the colour you are
-actually building - is the panel's job, and the panel does it without costing
-the bars their meaning.
-
-The return value is tkinter's, and it is a pair::
-
-    rgb, name = askcolor()
-
-``((r, g, b), "#rrggbb")`` when something was chosen, and ``(None, None)``
-when the dialog was cancelled - not None, which is what callers unpacking two
-values would trip over.
+    A bar has as many steps as the terminal can tell apart - two with
+    eight colours, six with 256, sixteen with direct colour - where Tk
+    draws sixteen. Any value can still be typed.
 """
+# Read out of Tk's own clrpick.tcl. There is no colour-name lookup in it
+# beyond what winfo_rgb does, as in Tk. The fixed scales were measured against
+# Tk 9.0.2, where raising green from 0 to 255 turned the red strip from a
+# black-to-red ramp into a green-to-yellow one; here, with the other channels
+# at mid intensity, the red bar collapsed to one colour at eight and sixteen
+# colours.
 
 from __future__ import annotations
 
@@ -136,7 +122,10 @@ def _nearest_step(levels: tuple[int, ...], value: int) -> int:
 
 
 class Chooser(Dialog):
-    """The colour chooser. tkinter's ``tk_chooseColor``, drawn from widgets."""
+    """The colour dialog behind :func:`askcolor`.
+
+    ``Chooser(color=..., title=...).show()`` answers the same pair.
+    """
 
     command: ClassVar[str | None] = "tk_chooseColor"
 
@@ -161,6 +150,12 @@ class Chooser(Dialog):
     # ------------------------------------------------------------- building
 
     def body(self, window: Toplevel) -> Misc | None:
+        """Fill the dialog in: the bars, entries, swatch and buttons.
+
+        TkCurses extension:
+            tkinter's colour dialog is the platform's; this is how the one here
+            is built. See :meth:`tkcurses.commondialog.Dialog.body`.
+        """
         self.levels = BAR_LEVELS[window.winfo_colordepth()]
         self.cells = max(1, BAR_WIDTH // len(self.levels))
         self._bar_cells = self.cells * len(self.levels)
@@ -306,7 +301,11 @@ class Chooser(Dialog):
 
     @property
     def color(self) -> str:
-        """The colour currently chosen, as ``#rrggbb``."""
+        """The colour chosen so far, as ``#rrggbb``.
+
+        TkCurses extension:
+            tkinter's dialog does not expose it.
+        """
         return _hex((self.rgb[0], self.rgb[1], self.rgb[2]))
 
     # -------------------------------------------------------------- handlers
@@ -369,22 +368,29 @@ class Chooser(Dialog):
         return True
 
     def set_channel(self, channel: str, value: int) -> None:
-        """Set one channel, clamped to 0-255, and redraw everything.
+        """Set one channel and redraw the dialog.
 
         Args:
             channel: ``"Red"``, ``"Green"`` or ``"Blue"``.
-            value: The intensity wanted; Tk clamps rather than refusing.
+            value: The intensity; outside 0 to 255 it is brought within, as Tk
+                does.
+
+        TkCurses extension:
+            tkinter's dialog does not expose it.
         """
         self.rgb[CHANNELS.index(channel)] = min(max(value, 0), 255)
         self._refresh()
 
     def ok(self) -> None:
-        """Answer with the colour shown.
+        """Answer with the colour shown, applying anything typed in the
+        ``Selection:`` entry first.
 
-        Anything typed into the Selection entry and not yet applied is
-        applied first. Tk answers with the last colour that was *committed*,
-        so a typed colour and a press of OK gets the colour before it - which
-        reads as the dialog ignoring what was typed.
+        TkCurses extension:
+            How the dialog here answers.
+
+        Differences from tkinter:
+            Tk answers with the last colour applied, so a colour typed and then
+            OK gets the one before it.
         """
         self._apply_selection()
         self.finish(self.color)

@@ -20,24 +20,21 @@
 # Used under the Python Software Foundation License Version 2; see
 # THIRD_PARTY_NOTICES.md for the licence and a summary of the changes.
 
-"""Dragging something from one widget to another, within one application.
+"""Dragging something from one widget to another within an application,
+as ``tkinter.dnd``.
 
-This is a protocol, not a feature: on its own it does nothing at all, and
-that is true of tkinter's version too - its own docstring opens "This is very
-preliminary". What it provides is the *coordination* of a drag, and both ends
-are the application's to write.
+This coordinates a drag; both ends are the application's to write, as
+in tkinter.
 
-**Starting one.** Bind a button press on whatever should be draggable, and
-from that callback call ``dnd_start(source, event)``. ``source`` is any
-object at all - it need not be a widget - and it is what the other end will
-be handed. A second drag while one is running is ignored rather than
-refused, which is what stops two bindings on the same press starting two.
+**Starting one.** Bind a button press on whatever can be dragged, and
+from that callback call ``dnd_start(source, event)``. ``source`` can be
+any object - it need not be a widget - and it is what the other end is
+handed. A second drag while one is running is ignored.
 
-**Receiving one.** As the pointer moves, the widget under it is asked for a
-``dnd_accept(source, event)`` attribute; if it has none, or returns None, its
-parent is asked, and so on up to the root. The first thing to return anything
-becomes the *target object* - which, again, need not be the widget. Then, as
-the pointer moves between targets:
+**Receiving one.** As the pointer moves, the widget under it is asked
+for a ``dnd_accept(source, event)`` method; if it has none, or that
+returns None, its master is asked, and so on up to the root. Whatever
+first answers becomes the target, and need not be the widget. Then:
 
 =============================  =======================================
 what happened                  what is called
@@ -49,25 +46,21 @@ released over a target         ``target.dnd_commit(source, event)``
 released anywhere              ``source.dnd_end(target, event)``
 =============================  =======================================
 
-``dnd_end`` is always called, whatever happened, which is what lets a source
-put itself back if nothing wanted it.
+``dnd_end`` is always called, so a source can put itself back if
+nothing took it. A drag needs a terminal that reports the mouse moving
+while a button is held; most do.
 
-**In a terminal**, this rests entirely on the terminal reporting motion while
-a button is held. Most do, and the library asks for it; one that refuses
-leaves a drag looking like a press and a release far apart, with nothing in
-between - the same limitation the Text widget's drag-selection has, and not
-one this module can do anything about.
-
-tkinter changes the pointer to a hand for the duration and puts it back
-afterwards. That is left out rather than imitated: a terminal draws no
-pointer for it to change, and a widget that has no ``cursor`` option - which
-a bare Misc has not - would refuse the request for a gesture nobody can see.
-
-tkinter's ``Icon`` and ``Tester`` demonstration classes are deliberately not
-here. They are built on ``Canvas.create_window``, which embeds a widget in a
-canvas and does not exist yet (TkCurses-aj1.16.1), and writing something
-different under the same names would be worse than not having them.
+Differences from tkinter:
+    The mouse pointer does not change during a drag: the pointer belongs
+    to the terminal. And tkinter's demonstration classes ``Icon`` and
+    ``Tester`` are not here, because they need
+    ``Canvas.create_window``, which is not available yet.
 """
+# tkinter's own docstring opens "This is very preliminary". Without motion
+# reports a drag looks like a press and a release far apart, the same
+# limitation the Text widget's drag-selection has. A bare Misc has no cursor
+# option, so imitating the hand cursor would refuse the request. create_window
+# is TkCurses-aj1.16.1.
 
 from __future__ import annotations
 

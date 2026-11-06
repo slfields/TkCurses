@@ -21,36 +21,43 @@
 # ActiveState Corporation, Apple Inc. and other parties, and are used under
 # the Tcl/Tk licence; see THIRD_PARTY_NOTICES.md.
 
-"""Message boxes: tell somebody something, or ask them a short question.
+"""Message boxes: tell somebody something, or ask a short question, as
+``tkinter.messagebox``.
 
-The eight functions here are what most applications ever use of the dialog
-modules, and their return values are a small trap: three of them hand back a
-string, four a boolean, and one a boolean *or* None. That is tkinter's
-design, kept exactly, because code says ``if askyesno(...)`` and would break
-on a string - every string is true.
+Sample output:
+    # size: 50x10
+    from tkcurses import messagebox
+    messagebox.askyesno("Unsaved changes", "Save the document before closing?")
 
-The button sets and what each dismissal means are Tk's, read out of its own
-``msgbox.tcl`` rather than remembered:
+Each function takes a title and a message, and the options ``parent``,
+``default`` - the button Return presses - and ``icon``. What they answer
+differs, and the difference matters because code writes
+``if askyesno(...)``: the ``show*`` functions answer ``"ok"`` and
+:func:`askquestion` the name of the button pressed, which are strings;
+:func:`askokcancel`, :func:`askyesno` and :func:`askretrycancel` answer
+True or False; and :func:`askyesnocancel` True, False or None.
 
-=================  ========================  ==========================
-``type``           buttons                   dismissing gives
-=================  ========================  ==========================
+Closing a box with Escape answers as its cancelling button does, so a
+caller never has a third case to handle:
+
+=================  ========================  ====================
+``type``           buttons                   Escape answers
+=================  ========================  ====================
 abortretryignore   Abort, Retry, Ignore      ``abort``
 ok                 OK                        ``ok``
 okcancel           OK, Cancel                ``cancel``
 retrycancel        Retry, Cancel             ``cancel``
 yesno              Yes, No                   ``no``
 yesnocancel        Yes, No, Cancel           ``cancel``
-=================  ========================  ==========================
+=================  ========================  ====================
 
-Dismissing a message box is not the same as pressing nothing: a ``yesno``
-box closed with Escape answers ``no``, and the caller is meant to be able to
-rely on that rather than handle a third case it did not ask for.
-
-``icon`` is accepted and ignored. Tk draws one of four stock pictures beside
-the message; a terminal has none. The icon is carried in the options so that
-anything reading them back sees what was asked for.
+Differences from tkinter:
+    ``icon`` is accepted and not drawn: Tk draws a stock picture beside
+    the message, and a terminal has none.
 """
+# The button sets and what each dismissal means are Tk's, read out of its own
+# msgbox.tcl rather than remembered. The icon is carried in the options so
+# that anything reading them back sees what was asked for.
 
 from __future__ import annotations
 
@@ -136,7 +143,11 @@ def _label(marked: str) -> tuple[str, int]:
 
 
 class Message(Dialog):
-    """A message box. The class tkinter's eight functions are built on."""
+    """A message box: the class the functions are built on.
+
+    ``Message(title=..., message=..., type="yesno").show()`` answers the
+    name of the button pressed.
+    """
 
     command: ClassVar[str | None] = "tk_messageBox"
 
@@ -163,6 +174,12 @@ class Message(Dialog):
         self.options["default"] = default
 
     def body(self, window: Toplevel) -> Misc | None:
+        """Fill the box in: the message and its buttons.
+
+        TkCurses extension:
+            tkinter's message box is the platform's; this is how the one here
+            is built. See :meth:`tkcurses.commondialog.Dialog.body`.
+        """
         message = str(self.options.get("message") or "")
         if message:
             tkcurses.Label(window, text=message, justify="left").pack(padx=1, pady=1)

@@ -15,20 +15,23 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Constants for TkCurses: tkinter's widget constants plus curses constants.
+"""tkinter's constants, as ``tkinter.constants``, and the curses ones.
 
-This module mirrors ``tkinter.constants`` name for name and value for value, so
-that ``from tkcurses.constants import *`` gives application code exactly the
-names ``from tkinter.constants import *`` would. The values are defined here
-rather than re-exported, because importing ``tkinter.constants`` would pull in
-the ``tkinter`` package and with it ``_tkinter``, which TkCurses does not
-require at runtime.
+``from tkcurses.constants import *`` gives the names
+``from tkinter.constants import *`` would, with the same values: ``END``,
+``LEFT``, ``BOTH``, ``HORIZONTAL`` and the rest.
 
-Curses constants are also exposed: attribute masks (``A_BOLD``), colours
-(``COLOR_RED``), and keys (``KEY_UP``) come straight from the ``curses``
-module. The alternate character set names (``ACS_ULCORNER`` and friends) are
-resolved lazily, because curses only defines them once a screen exists.
+TkCurses extension:
+    The curses constants are here as well: attributes such as
+    ``A_BOLD``, colours such as ``COLOR_RED``, keys such as ``KEY_UP``,
+    and the line-drawing characters such as ``ACS_ULCORNER``, which
+    exist only once the application has started.
 """
+
+# The values are defined here rather than re-exported, because importing
+# tkinter.constants would pull in the tkinter package and with it _tkinter,
+# which TkCurses does not require at runtime. The ACS_ names are resolved
+# lazily, because curses only defines them once a screen exists.
 
 from __future__ import annotations
 

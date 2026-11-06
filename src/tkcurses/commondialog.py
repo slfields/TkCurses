@@ -21,27 +21,21 @@
 # ActiveState Corporation, Apple Inc. and other parties, and are used under
 # the Tcl/Tk licence; see THIRD_PARTY_NOTICES.md.
 
-"""The base class the dialog modules are built on.
+"""The base class of the dialogs, as ``tkinter.commondialog``.
 
-tkinter's ``commondialog.Dialog`` is a thin wrapper round a *native* dialog:
-``show()`` hands the options to a Tcl command - ``tk_messageBox``,
-``tk_getOpenFile`` - and the platform puts a window on the screen. There is no
-native anything in a terminal, so the same class here has to build the dialog
-itself, out of the widgets the library already has.
+A dialog is made with a master and options, and :meth:`Dialog.show`
+puts it up, waits, and answers. The application keeps running
+underneath; it is the caller that waits.
 
-What survives from tkinter is the shape a caller sees, because that is what
-``messagebox``, ``filedialog`` and ``colorchooser`` are written against:
-construct with a master and some options, call ``show()``, get a value back.
-``_fixoptions`` and ``_fixresult`` are still the two hooks either side of it.
-What is new is :meth:`Dialog.body`, which a subclass fills in with the content
-of the window, and :meth:`Dialog.finish`, which it calls to close the dialog
-with an answer.
-
-``show()`` blocks. That is what a dialog is for - the caller wants the answer
-on the next line, not in a callback - and it is what tkinter does too. The
-event loop keeps running underneath, so the application is not frozen; it is
-the *caller* that waits, in ``wait_window``.
+Differences from tkinter:
+    tkinter's dialogs are the platform's, which ``show`` asks Tk for.
+    Here there are none to ask for, so each dialog is built from widgets:
+    a subclass fills the window in :meth:`Dialog.body` and answers with
+    :meth:`Dialog.finish`.
 """
+# The shape a caller sees survives from tkinter because messagebox, filedialog
+# and colorchooser are written against it; _fixoptions and _fixresult are
+# still the two hooks either side of show.
 
 from __future__ import annotations
 
@@ -64,17 +58,15 @@ MINIMUM_HEIGHT = 5
 
 
 def fit(window: Toplevel) -> None:
-    """Size a dialog to its content and centre it on the screen.
+    """Size a dialog to what it holds, within the screen, and centre it.
 
-    A terminal has no window manager to do either, and a dialog that needs
-    moving or resizing by hand is not a dialog. Clamped to the screen,
-    because a window curses will not make is worse than a small one: the
-    request is not a promise.
-
-    Shared rather than private, because all three dialog shapes need it -
-    this module's, simpledialog's Toplevel subclass, and SimpleDialog - and
-    they have no base class in common to inherit it from.
+    TkCurses extension:
+        The window manager does this in tkinter, and a terminal has none.
+        For a dialog of your own, call it once the widgets are in.
     """
+    # Shared rather than private, because all three dialog shapes need it -
+    # this module's, simpledialog's Toplevel subclass, and SimpleDialog - and
+    # they have no base class in common.
     if window.tk.layout.running:
         # A layout pass is already in progress, and update_layout refuses to
         # nest: it would return without laying anything out, and the
@@ -110,13 +102,13 @@ def fit(window: Toplevel) -> None:
 
 
 def take_focus_grab(window: Toplevel) -> tuple[Misc | None, Misc | None]:
-    """Give ``window`` the grab, and hand back what it displaced.
+    """Give ``window`` the keyboard and the grab, and answer what it took
+    them from, for :func:`restore_focus_grab`.
 
-    Tk keeps a stack of these - ``tk::SetFocusGrab`` and
-    ``tk::RestoreFocusGrab`` - because grab_release does not put anything
-    back: it releases, full stop. Without the pair, a dialog opened from
-    inside another leaves the outer one with no keyboard when it closes, and
-    the application looks wedged while a window is plainly sitting there.
+    TkCurses extension:
+        tkinter has these as Tk's ``tk::SetFocusGrab``, which it does not
+        expose. Without the pair, closing a dialog opened from another
+        would leave the first with no keyboard.
     """
     displaced = (window.tk.grab, window.tk.focus)
     window.grab_set()
@@ -126,7 +118,12 @@ def take_focus_grab(window: Toplevel) -> tuple[Misc | None, Misc | None]:
 def restore_focus_grab(
     window: Toplevel, displaced: tuple[Misc | None, Misc | None]
 ) -> None:
-    """Release ``window``'s grab and give back what :func:`take_focus_grab` took."""
+    """Release ``window``'s grab and give the keyboard and grab back to what
+    :func:`take_focus_grab` took them from.
+
+    TkCurses extension:
+        Tk's ``tk::RestoreFocusGrab``, which tkinter does not expose.
+    """
     grab, focus = displaced
     window.grab_release()
     if grab is not None and grab.winfo_exists():
@@ -174,14 +171,17 @@ class Dialog:
         return result
 
     def body(self, window: Toplevel) -> Misc | None:  # noqa: ARG002
-        """Fill the dialog in. Subclasses override this.
+        """Fill the dialog's window in. A subclass overrides this.
 
         Args:
-            window: The toplevel to build into, already titled and mapped.
+            window: The toplevel to build in, already titled and shown.
 
         Returns:
-            The widget that should have the keyboard, or None to leave the
-            focus on the window itself.
+            The widget that should have the keyboard, or None to leave it on
+            the window.
+
+        TkCurses extension:
+            tkinter's dialogs are the platform's and have no body to fill.
         """
         return None
 
@@ -191,19 +191,20 @@ class Dialog:
         """Put the dialog up, wait for an answer, and return it.
 
         Args:
-            **options: Options to add to the ones given at construction,
-                as tkinter's ``show`` does.
+            **options: Options to add to the ones given when it was made, as
+                tkinter's ``show`` takes.
 
         Returns:
-            Whatever :meth:`finish` was called with, passed through
-            ``_fixresult``. A dialog dismissed with Escape returns None.
+            What the dialog answered; None if it was closed with Escape.
 
         Raises:
-            TclError: If there is no master and no root window to fall back
-                on. Unlike tkinter, this will not start one: bringing curses
-                up reconfigures the terminal, which has to be something the
-                application asked for.
+            TclError: If there is no master and no root window.
+
+        Differences from tkinter:
+            With no root window it raises rather than making one: a root takes
+            over the terminal, which should never happen as a side effect.
         """
+        # What finish was called with, passed through _fixresult.
         self.options.update(options)
         self._fixoptions()
         master = self.master
@@ -217,7 +218,11 @@ class Dialog:
         return self._fixresult(master, self._result)
 
     def finish(self, result: Any = None) -> None:
-        """Close the dialog, and make ``result`` what ``show()`` returns."""
+        """Close the dialog, and make ``result`` what :meth:`show` answers.
+
+        TkCurses extension:
+            How a dialog built here answers; see :meth:`body`.
+        """
         self._result = result
         self._close()
 

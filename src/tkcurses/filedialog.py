@@ -15,33 +15,46 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Choosing a file: a browser, and the seven ways tkinter asks for one.
+"""Choosing a file or a directory, as ``tkinter.filedialog``.
 
-tkinter has two kinds of file dialog and this module has to be both.
-:class:`FileDialog` and its two subclasses are written in Python and drawn
-from ordinary widgets, so they come across almost unchanged. ``Open``,
-``SaveAs`` and ``Directory`` are wrappers round the *platform's* file chooser
-- ``tk_getOpenFile`` and friends - and a terminal has no platform chooser to
-wrap, so here they are built on the same browser as the others. The seven
-``ask*`` functions sit on top and are what almost everybody calls.
+Sample output:
+    # size: 60x24
+    import os, tempfile
+    from tkcurses import filedialog
+    folder = os.path.join(tempfile.gettempdir(), "tkcurses-sample", "project")
+    os.makedirs(os.path.join(folder, "docs"), exist_ok=True)
+    for name in ("notes.txt", "report.txt", "setup.py"):
+        open(os.path.join(folder, name), "w").close()
+    os.chdir(folder)
+    filedialog.askopenfilename(initialdir=".", title="Open")
 
-The browser is a directory on the left, the files in it on the right, the
-pattern above and the chosen path below. It behaves the way tkinter's does,
-including the parts that are easy to get wrong:
+Most programs call one of the ``ask*`` functions. :func:`askopenfilename`,
+:func:`asksaveasfilename` and :func:`askdirectory` answer a path, or
+``""`` when cancelled; :func:`askopenfile` and :func:`asksaveasfile`
+open the file and answer it, or None. They take tkinter's options:
+``parent``, ``title``, ``initialdir``, ``initialfile``, ``filetypes``,
+``defaultextension``, and for a directory ``mustexist``.
 
-- The directory list always begins with ``..``, so there is a way up even
-  from a directory whose name cannot be typed.
-- The pattern is applied with ``fnmatch`` to the *names*, not the paths.
-- Filtering a directory that cannot be read rings the bell and changes
-  nothing, rather than emptying the lists and leaving somebody stranded.
-- ``Open`` and ``SaveAs`` remember the directory and the file between calls,
-  in the options, which is what makes a second save start where the first
-  one did.
+The dialog shows the directory and pattern at the top, the directories
+on the left - always beginning with ``..``, for a way up - the files
+matching the pattern on the right, and the chosen path at the bottom.
+Return in the top box lists another directory or pattern; one that
+cannot be read rings the bell and changes nothing.
 
-The checks that separate the three are all in ``ok``: loading insists the
-file exists, saving insists its directory does and asks before overwriting,
-and the plain dialog checks nothing at all.
+:class:`FileDialog`, :class:`LoadFileDialog` and :class:`SaveFileDialog`
+are tkinter's older dialog classes, with the same browser. A load
+insists the file exists; a save insists its directory does, and asks
+before overwriting.
+
+Differences from tkinter:
+    ``Open``, ``SaveAs`` and ``Directory`` are the platform's own file
+    chooser in tkinter. A terminal has none, so here they are this
+    browser.
 """
+# The pattern is applied with fnmatch to the names, not the paths. Open and
+# SaveAs remember the directory and file between calls in their options, which
+# is what makes a second save start where the first one did. The checks that
+# separate the three FileDialog classes are all in ok_command.
 
 from __future__ import annotations
 
@@ -334,21 +347,27 @@ class FileDialog:
     # ------------------------------------------------------------- events
 
     def dirs_double_event(self, event: Event) -> None:  # noqa: ARG002
+        """A double click on a directory: list it."""
         self.filter_command()
 
     def dirs_select_event(self, event: Event) -> None:  # noqa: ARG002
+        """A click on a directory: move into it."""
         self.browser.enter_directory(str(self.browser.dirs.get("active")))
 
     def files_double_event(self, event: Event) -> None:  # noqa: ARG002
+        """A double click on a file: choose it."""
         self.ok_command()
 
     def files_select_event(self, event: Event) -> None:  # noqa: ARG002
+        """A click on a file: put it in the selection box."""
         self.browser.set_selection(str(self.browser.files.get("active")))
 
     def ok_event(self, event: Event) -> None:  # noqa: ARG002
+        """Return in the selection box: choose what it holds."""
         self.ok_command()
 
     def cancel_command(self, event: Event | None = None) -> None:  # noqa: ARG002
+        """Close the dialog, answering None."""
         self.quit()
 
     def filter_command(self, event: Event | None = None) -> None:  # noqa: ARG002
@@ -364,15 +383,19 @@ class FileDialog:
     # them on the dialog rather than on anything else
 
     def get_filter(self) -> tuple[str, str]:
+        """The directory and the pattern the top box holds, as a pair."""
         return self.browser.get_filter()
 
     def get_selection(self) -> str:
+        """The path in the selection box, with ``~`` expanded."""
         return self.browser.get_selection()
 
     def set_filter(self, dir: str, pat: str) -> None:
+        """Put a directory and a pattern in the top box."""
         self.browser.set_filter(dir, pat)
 
     def set_selection(self, file: str) -> None:
+        """Put a file name in the selection box, under the directory shown."""
         self.browser.set_selection(file)
 
 
@@ -449,6 +472,12 @@ class _NativeDialog(_CommonDialog):
         return result
 
     def body(self, window: Toplevel) -> Misc | None:
+        """Fill the dialog in with the browser and its buttons.
+
+        TkCurses extension:
+            tkinter's ``Open``, ``SaveAs`` and ``Directory`` are the platform's
+            chooser; this is how the one here is built.
+        """
         self.browser = _Browser(window, self.options.get("filetypes") or ())
         directory = str(self.options.get("initialdir") or os.curdir)
         pattern = _first_pattern(self.options.get("filetypes"))
@@ -487,11 +516,22 @@ class _NativeDialog(_CommonDialog):
         return self.browser.selection
 
     def dir_clicked(self, name: str) -> None:
-        """What one click on a directory does. Moving there, for a file."""
+        """What one click on a directory does: move into it.
+
+        TkCurses extension:
+            A hook of the browser here; :class:`Directory` chooses the
+            directory instead.
+        """
         self.browser.enter_directory(name)
 
     def ok(self) -> None:
-        """Answer, if what has been chosen passes this dialog's own check."""
+        """Answer with the chosen path, if it passes this dialog's check: a file
+        to open must exist, a file to save must be in a directory that does, and
+        a directory with ``mustexist`` must exist.
+
+        TkCurses extension:
+            How the chooser here answers; tkinter's is the platform's.
+        """
         chosen = self.browser.get_selection()
         if self.kind == "directory":
             if self.options.get("mustexist") and not os.path.isdir(chosen):
@@ -570,7 +610,11 @@ def _with_extension(path: str, extension: Any) -> str:
 
 
 class Open(_NativeDialog):
-    """Ask for a file to open."""
+    """Ask for a file to open: the dialog behind :func:`askopenfilename`.
+
+    ``Open(**options).show()`` answers the path, or ``""``. Shown again, it
+    starts where it last finished.
+    """
 
     command: ClassVar[str | None] = "tk_getOpenFile"
     kind: ClassVar[str] = "open"
@@ -585,26 +629,36 @@ class Open(_NativeDialog):
 
 
 class SaveAs(_NativeDialog):
-    """Ask for a file to save as."""
+    """Ask for a file to save as: the dialog behind :func:`asksaveasfilename`.
+
+    ``defaultextension`` is added to a name typed without one. Shown again,
+    it starts where it last finished.
+    """
 
     command: ClassVar[str | None] = "tk_getSaveFile"
     kind: ClassVar[str] = "save"
 
 
 class Directory(_NativeDialog):
-    """Ask for a directory."""
+    """Ask for a directory: the dialog behind :func:`askdirectory`.
+
+    With ``mustexist`` true, only a directory that exists is accepted.
+    """
 
     command: ClassVar[str | None] = "tk_chooseDirectory"
     kind: ClassVar[str] = "directory"
 
     def dir_clicked(self, name: str) -> None:
-        """Choose it, rather than move into it.
+        """Choose the directory clicked, rather than move into it. A double click
+        still moves into it.
 
-        A directory chooser is asking *which directory*, so the one clicked
-        belongs in the selection box - moving there instead would answer
-        with whatever was being looked at, which is not what was pointed at.
-        Double-click still descends, through the Filter binding.
+        TkCurses extension:
+            A hook of the browser here, which the file choosers use to move into
+            the directory.
         """
+        # A directory chooser is asking which directory, so the one clicked
+        # belongs in the selection box - moving there instead would answer
+        # with whatever was being looked at.
         if name == os.pardir:
             self.browser.enter_directory(name)
             self.browser.refresh()
@@ -634,7 +688,12 @@ def asksaveasfilename(**options: Any) -> str:
 
 
 def askopenfilenames(**options: Any) -> tuple[str, ...]:
-    """Ask for several files to open. Empty if cancelled."""
+    """Ask for several files to open. A tuple of paths; empty if cancelled.
+
+    Differences from tkinter:
+        Only one file can be chosen yet, so the tuple holds one path at
+        most.
+    """
     options["multiple"] = 1
     chosen = Open(**options).show()
     if not chosen:
@@ -651,7 +710,12 @@ def askopenfile(mode: str = "r", **options: Any) -> IO[Any] | None:
 
 
 def askopenfiles(mode: str = "r", **options: Any) -> list[IO[Any]]:
-    """Ask for several files to open, and open them all."""
+    """Ask for several files to open, and open them all. A list of files;
+    empty if cancelled.
+
+    Differences from tkinter:
+        Only one file can be chosen yet, as for :func:`askopenfilenames`.
+    """
     return [open(name, mode) for name in askopenfilenames(**options)]
 
 

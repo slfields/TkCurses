@@ -20,28 +20,28 @@
 # Used under the Python Software Foundation License Version 2; see
 # THIRD_PARTY_NOTICES.md for the licence and a summary of the changes.
 
-"""Asking for one value, and the base class for asking for several.
+"""Asking for one value, and the base class for asking for several, as
+``tkinter.simpledialog``.
 
-Three shapes, and tkinter gives them three different lives:
+Sample output:
+    # size: 50x13
+    from tkcurses import simpledialog
+    simpledialog.askinteger("Copies", "How many copies?", initialvalue=1)
 
-:class:`Dialog` is the one people subclass. It is a ``Toplevel`` whose
-*constructor* blocks: build it and the next line runs once the person has
-answered, with the answer on ``self.result``. Override ``body`` to put the
-fields in, ``validate`` to check them and ``apply`` to keep them.
+:func:`askstring`, :func:`askinteger` and :func:`askfloat` show one field
+and OK and Cancel, and answer what was typed - or None if cancelled,
+which is not the same as an empty string. They take ``initialvalue``,
+and the two for numbers ``minvalue`` and ``maxvalue``. A value they
+refuse leaves the dialog up, with the focus back in the field.
 
-:class:`SimpleDialog` is older and does it the other way round: constructing
-it puts the window up, and ``go()`` waits and returns the index of the button
-pressed.
+:class:`Dialog` is the one to subclass for several fields. Making one
+shows it and waits, and the next line runs once it is answered, with
+the answer on ``result``. Override ``body`` to add the fields,
+``validate`` to check them and ``apply`` to keep them.
 
-``askstring``, ``askinteger`` and ``askfloat`` are one field and two buttons,
-and they return None when cancelled - which is why they cannot simply return
-the text.
-
-The rule worth knowing is what a **bad value** does. ``ok`` asks ``validate``
-first, and if it refuses, the dialog *stays up* with the focus back in the
-field: it does not close, and it does not return anything. A prompt that
-accepted nonsense and returned it would be worse than one that never
-appeared, because the caller has no way to tell the two apart.
+:class:`SimpleDialog` is older: making one shows a message over a row of
+buttons, and :meth:`SimpleDialog.go` waits and answers the index of the
+button pressed.
 """
 
 from __future__ import annotations

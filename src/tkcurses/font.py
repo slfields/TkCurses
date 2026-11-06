@@ -15,36 +15,32 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Named fonts, for a device with one font.
+"""Named fonts, as ``tkinter.font``.
 
-A terminal's typeface and its size belong to whoever opened the terminal.
-Nothing here can change either, and a module that pretended otherwise would
-be the worst kind of compatibility: code that runs, reports success, and
-does nothing. So a Font here is honest about which of its six attributes
-survive.
+A widget's ``font`` option names a font, or is a :class:`Font`. On a
+terminal what a font can change is its weight, its slant and
+underlining; the typeface and the size are the terminal's.
+:meth:`Font.measure` is exact, in cells, so a widget laid out from it
+fits.
 
-============  ==========================================================
-attribute     what happens to it
-============  ==========================================================
-``family``    Reported as ``fixed`` and ignored. There is one typeface.
-``size``      Reported as ``1``, meaning one character cell. Setting it
-              is remembered and changes nothing.
-``weight``    **Real.** ``bold`` is drawn bold.
-``slant``     **Real** where the terminal has italics, which many do not
-              - and that is the terminal's business, not ours.
-``underline`` **Real.**
-``overstrike`` Remembered and ignored: curses has no strikeout.
-============  ==========================================================
+Sample output:
+    from tkcurses import font
+    for weight, slant in (("normal", "roman"), ("bold", "roman"),
+                          ("normal", "italic")):
+        tk.Label(root, text=f"{weight} {slant}",
+                 font=font.Font(weight=weight, slant=slant)).pack()
 
-What is genuinely useful here is :meth:`Font.measure`, which answers in
-cells and is exact rather than approximate - the whole difficulty of
-measuring text in a proportional font does not arise. A widget laid out from
-``measure`` will fit.
-
-Fonts are named, as they are in Tk, and a widget names one in its ``font``
-option. The name is looked up when the widget draws, so ``Label(font=bold)``
-with a Font object works the way it does in tkinter, through ``str()``.
+Differences from tkinter:
+    ``family`` is reported as ``fixed`` and ``size`` as 1, one cell,
+    whatever is set; both are remembered and change nothing.
+    ``overstrike`` is remembered and not drawn, curses having no way to
+    draw it. ``slant="italic"`` is drawn only where the terminal has
+    italics.
 """
+# Nothing here can change the typeface or size, and a module that pretended
+# otherwise would be the worst kind of compatibility: code that runs, reports
+# success and does nothing. The name is looked up when the widget draws, so
+# Label(font=bold) with a Font works through str().
 
 from __future__ import annotations
 
