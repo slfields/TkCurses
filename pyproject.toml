@@ -41,6 +41,9 @@ docs = [
     "sphinx>=8.0",
     "myst-parser>=4.0",
     "furo>=2024.8.6",
+    # The sample outputs are drawn by running each example in a terminal
+    # emulated by pyte, as the tests do - docs/_ext/tkscreens.py.
+    "pyte>=0.8",
 ]
 test = [
     "pytest>=7.0",

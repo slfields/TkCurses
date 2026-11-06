@@ -23,3 +23,26 @@ tkinter.
 
 Anything without either heading behaves as tkinter's does, and tkinter's
 own documentation also applies to it.
+
+**Sample output** shows an example and the screen it draws. Every widget
+has one, and so does every option that changes how a widget looks. Each
+example is the body of a program that starts with
+
+```python
+import tkcurses as tk
+from tkcurses import ttk
+root = tk.Tk()
+```
+
+and ends with `root.mainloop()`. The pictures are made by running the
+examples in a terminal each time this documentation is built, so they show
+what the version you are reading draws:
+
+```{tkcurses-sample}
+tk.Label(root, text="Name:").pack(side="left")
+tk.Entry(root, width=16).pack(side="left")
+tk.Button(root, text="OK").pack(side="left")
+```
+
+A terminal shows the colours it has, so yours may differ in shade from
+these, which are drawn with xterm's.

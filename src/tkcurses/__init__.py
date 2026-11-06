@@ -7505,6 +7505,14 @@ class Button(_TextWidget):
     by colour: ``|> OK <|`` when focused, and reversed while held down. A
     terminal cannot be relied on for colour, and a button nobody can see the
     focus on is a button nobody can use from the keyboard.
+
+    Sample output:
+        tk.Button(root, text="Save").pack()
+
+    Sample output:
+        # size: 80x5
+        for relief in ("raised", "sunken", "flat", "ridge", "solid", "groove"):
+            tk.Button(root, text=relief, relief=relief).pack(side="left")
     """
 
     #: The markers drawn either side of the text. Room for them is reserved

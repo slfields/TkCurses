@@ -44,6 +44,7 @@ RULES = (
     "private_names",
     "unmarked_extensions",
     "unlisted_borrowed",
+    "no_sample",
 )
 
 
@@ -109,6 +110,17 @@ def test_a_later_tkinter_method_is_tkinters(where, added):
         pytest.skip(f"tkinter has it from Python {added[0]}.{added[1]}")
     cls, name = where
     assert hasattr(getattr(tkinter, cls), name)
+
+
+def test_the_widgets_are_what_has_a_sample():
+    import tkcurses
+    import tkcurses.ttk
+
+    widgets = docsurface.widget_classes()
+    assert tkcurses.Button in widgets
+    assert tkcurses.ttk.Treeview in widgets
+    assert tkcurses.Widget not in widgets
+    assert tkcurses.Tk not in widgets
 
 
 def test_borrowed_methods_are_found():

@@ -29,6 +29,15 @@ with the user, 2026-11-05.
 from __future__ import annotations
 
 import importlib.metadata
+import sys
+from pathlib import Path
+
+# The project's own extensions: tkscreens draws each example's screen.
+sys.path.insert(0, str(Path(__file__).parent / "_ext"))
+# This checkout's library, ahead of any installed one: an editable install
+# made in another checkout otherwise wins, and the reference would describe
+# that one's docstrings - the trap CLAUDE.md records for the tests.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 project = "TkCurses"
 author = "Scott L. Fields"
@@ -45,6 +54,7 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.intersphinx",
     "sphinx.ext.viewcode",
+    "tkscreens",
 ]
 
 source_suffix = {".md": "markdown"}
@@ -67,6 +77,8 @@ napoleon_numpy_docstring = False
 napoleon_custom_sections = [
     ("Differences from tkinter", "notes_style"),
     ("TkCurses extension", "notes_style"),
+    # An example and the screen it draws, run at build time (TkCurses-imii.16).
+    ("Sample output", "notes_style"),
 ]
 
 intersphinx_mapping = {"python": ("https://docs.python.org/3", None)}
@@ -74,7 +86,9 @@ intersphinx_mapping = {"python": ("https://docs.python.org/3", None)}
 html_theme = "furo"
 html_title = f"TkCurses {release}"
 html_logo = "images/tkcurses-logo.svg"
-html_static_path: list[str] = []
+# The square icon, for the browser tab; the logo is a wide banner.
+html_favicon = "images/tkcurses-icon.svg"
+html_static_path = ["_static"]
 html_theme_options = {
     "sidebar_hide_name": True,
     "source_repository": "https://github.com/slfields/TkCurses/",

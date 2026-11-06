@@ -1,0 +1,15 @@
+/* Sample output (docs/_ext/tkscreens.py): the example's code, then the
+   screen it draws, as a terminal would show it - dark in either theme. */
+.tkcurses-sample-screen {
+  margin: 0.25rem 0 1.25rem;
+  overflow-x: auto;
+}
+.tkcurses-sample-screen svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  font-family: 'DejaVu Sans Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 14px;
+}

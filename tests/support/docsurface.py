@@ -32,6 +32,10 @@ The convention, which ``docs/reference/index.md`` explains to readers:
   classic widget has in tkinter must name it there.
 - API that tkinter does not have carries a ``TkCurses extension:``
   section - on the module, for a module that is one as a whole.
+- Every widget has a ``Sample output:`` section: an example the
+  documentation build runs, showing the screen it draws beside it
+  (``docs/_ext/tkscreens.py``). So does every option that changes how a
+  widget looks, wherever that option is described.
 
 The docstrings did not all keep it when it was written down, and the
 breaches as they stood are in ``docstring_debt.json``. The test lets that
@@ -88,6 +92,10 @@ LATER_TKINTER = {
 }
 
 EXTENSION_MARKER = "TkCurses extension:"
+#: An example the documentation build runs and shows the screen of
+#: (docs/_ext/tkscreens.py). Every widget has one - decided with the user,
+#: TkCurses-imii.16.
+SAMPLE_MARKER = "Sample output:"
 DIFFERENCES_MARKER = "Differences from tkinter:"
 
 DEBT = Path(__file__).with_name("docstring_debt.json")
@@ -251,6 +259,18 @@ def borrowed_methods() -> dict[type, list[str]]:
     return found
 
 
+def widget_classes() -> list[type]:
+    """The widgets tkinter has, as TkCurses provides them: everything that
+    draws, and so everything that has a sample to show."""
+    import tkcurses
+
+    return [
+        cls
+        for cls in class_counterparts()
+        if issubclass(cls, tkcurses.Widget) and cls is not tkcurses.Widget
+    ]
+
+
 def class_key(cls: type) -> str:
     return f"{cls.__module__}.{cls.__qualname__}"
 
@@ -285,6 +305,7 @@ def violations() -> dict[str, set[str]]:
         "private_names": set(),
         "unmarked_extensions": set(),
         "unlisted_borrowed": set(),
+        "no_sample": set(),
     }
     for item in tkinter_surface():
         doc = inspect.getdoc(item.obj) or ""
@@ -302,6 +323,9 @@ def violations() -> dict[str, set[str]]:
         doc = inspect.getdoc(_module(name)) or ""
         if section(doc, EXTENSION_MARKER) is None:
             found["unmarked_extensions"].add(name)
+    for cls in widget_classes():
+        if section(inspect.getdoc(cls) or "", SAMPLE_MARKER) is None:
+            found["no_sample"].add(class_key(cls))
     for cls, names in borrowed_methods().items():
         listed = section(inspect.getdoc(cls) or "", DIFFERENCES_MARKER) or ""
         for name in names:
