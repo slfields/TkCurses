@@ -19,9 +19,10 @@ root.mainloop()
 ```
 
 :::{note}
-This documentation is being written. The guides and the API reference arrive
-over the coming releases; the [changelog](about/changelog.md) lists what the
-library already does.
+This documentation is being written. Start with the
+[introduction](guide/introduction.md), which assumes no knowledge of tkinter.
+The other guides and the API reference arrive over the coming releases; the
+[changelog](about/changelog.md) lists what the library already does.
 :::
 
 ```{toctree}

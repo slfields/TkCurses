@@ -61,6 +61,13 @@ autodoc_member_order = "bysource"
 autodoc_typehints = "description"
 napoleon_google_docstring = True
 napoleon_numpy_docstring = False
+# The reference's own sections, which tests/test_docstrings.py holds every
+# docstring to (TkCurses-imii.3): how something differs from tkinter, and
+# what TkCurses has that tkinter does not.
+napoleon_custom_sections = [
+    ("Differences from tkinter", "notes_style"),
+    ("TkCurses extension", "notes_style"),
+]
 
 intersphinx_mapping = {"python": ("https://docs.python.org/3", None)}
 
