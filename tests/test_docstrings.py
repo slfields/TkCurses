@@ -45,6 +45,9 @@ RULES = (
     "unmarked_extensions",
     "unlisted_borrowed",
     "no_sample",
+    "unmeasured_options",
+    "unsampled_options",
+    "undescribed_options",
 )
 
 
@@ -145,3 +148,61 @@ def test_a_section_is_a_napoleon_section(doc, expected):
     assert docsurface.section(inspect.cleandoc(doc), "Differences from tkinter:") == (
         expected
     )
+
+
+def test_the_options_page_samples_are_found():
+    """A heading naming two options gives both their sample; a heading
+    with no sample under it gives none."""
+    sampled = docsurface.options_page_samples()
+    assert {"background", "relief", "padx", "pady"} <= sampled
+    assert "cursor" not in sampled
+
+
+@pytest.mark.parametrize(
+    ("doc", "expected"),
+    [
+        ("Sample output (relief):\n    x\n", ["relief"]),
+        ("Sample output (from, to):\n    x\n", ["from, to"]),
+        ("Sample output:\n    x\n", []),
+    ],
+)
+def test_a_sample_names_its_options(doc, expected):
+    assert docsurface.NAMED_SAMPLE.findall(doc) == expected
+
+
+def test_every_classic_option_was_measured():
+    """The measurement is of every option the widget takes: an option
+    added since is not silently left without a sample."""
+    import json
+
+    import tkcurses
+
+    measured = json.loads(docsurface.VISIBLE.read_text())
+    for name, options in measured.items():
+        assert set(options) == docsurface.widget_options(getattr(tkcurses, name))
+
+
+def test_the_option_rules_catch_what_they_are_for(tmp_path, monkeypatch):
+    """Each option rule fires on its own fault: an option not measured, a
+    measured one not named in the docstring, and one that shows - or would
+    not hold still to tell - without a sample."""
+    import json
+
+    import tkcurses
+
+    measured = json.loads(docsurface.VISIBLE.read_text())
+    scale = dict(measured["Scale"])
+    del scale["digits"]
+    scale["sliderlength"] = {"kind": "unsettled"}
+    fake = tmp_path / "visible.json"
+    fake.write_text(json.dumps({"Scale": scale}))
+    monkeypatch.setattr(docsurface, "VISIBLE", fake)
+    monkeypatch.setattr(tkcurses.Scale, "__doc__", "A scale, with a resolution.")
+
+    found = docsurface.violations()
+    assert "tkcurses.Scale:digits" in found["unmeasured_options"]
+    assert "tkcurses.Scale:showvalue" in found["undescribed_options"]
+    assert "tkcurses.Scale:resolution" not in found["undescribed_options"]
+    assert "tkcurses.Scale:sliderlength" in found["unsampled_options"]
+    # A shared option is sampled on the options page, not in the class.
+    assert "tkcurses.Scale:relief" not in found["unsampled_options"]

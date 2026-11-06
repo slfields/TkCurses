@@ -1,0 +1,3210 @@
+{
+ "Button": {
+  "activebackground": {
+   "kind": "visible",
+   "state": "active",
+   "value": "red"
+  },
+  "activeforeground": {
+   "kind": "visible",
+   "state": "active",
+   "value": "red"
+  },
+  "anchor": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "e"
+  },
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "command": {
+   "kind": "behaviour"
+  },
+  "compound": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "top"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "default": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "disabledforeground": {
+   "kind": "visible",
+   "state": "disabled",
+   "value": "red"
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "image": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "IMAGE"
+  },
+  "justify": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "right"
+  },
+  "overrelief": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "groove",
+    "sunken",
+    "raised",
+    "flat"
+   ]
+  },
+  "padx": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "pady": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "repeatdelay": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "repeatinterval": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "text": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Changed"
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "underline": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "wraplength": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "Canvas": {
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "closeenough": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "confine": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "insertbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "insertborderwidth": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "insertofftime": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "insertontime": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "insertwidth": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "offset": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "2,2"
+   ]
+  },
+  "padx": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "pady": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "scrollregion": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "0 0 40 20"
+   ]
+  },
+  "selectbackground": {
+   "kind": "invisible",
+   "state": "selected",
+   "tried": [
+    "red"
+   ]
+  },
+  "selectborderwidth": {
+   "kind": "invisible",
+   "state": "selected",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "selectforeground": {
+   "kind": "invisible",
+   "state": "selected",
+   "tried": [
+    "red"
+   ]
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "xscrollcommand": {
+   "kind": "behaviour"
+  },
+  "xscrollincrement": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "yscrollcommand": {
+   "kind": "behaviour"
+  },
+  "yscrollincrement": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  }
+ },
+ "Checkbutton": {
+  "activebackground": {
+   "kind": "visible",
+   "state": "active",
+   "value": "red"
+  },
+  "activeforeground": {
+   "kind": "visible",
+   "state": "active",
+   "value": "red"
+  },
+  "anchor": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "e"
+  },
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "command": {
+   "kind": "behaviour"
+  },
+  "compound": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "top"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "disabledforeground": {
+   "kind": "visible",
+   "state": "disabled",
+   "value": "red"
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "image": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "IMAGE"
+  },
+  "indicatoron": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "justify": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "right"
+  },
+  "offrelief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "offvalue": {
+   "kind": "behaviour"
+  },
+  "onvalue": {
+   "kind": "behaviour"
+  },
+  "overrelief": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "groove",
+    "sunken",
+    "raised",
+    "flat"
+   ]
+  },
+  "padx": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "pady": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "selectcolor": {
+   "kind": "visible",
+   "state": "selected",
+   "value": "red"
+  },
+  "selectimage": {
+   "kind": "unsettled"
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "text": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Changed"
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "tristateimage": {
+   "kind": "invisible",
+   "state": "tristate",
+   "tried": [
+    "IMAGE2"
+   ]
+  },
+  "tristatevalue": {
+   "kind": "behaviour"
+  },
+  "underline": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "variable": {
+   "kind": "behaviour"
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "wraplength": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "Entry": {
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "disabledbackground": {
+   "kind": "visible",
+   "state": "disabled",
+   "value": "red"
+  },
+  "disabledforeground": {
+   "kind": "visible",
+   "state": "disabled",
+   "value": "red"
+  },
+  "exportselection": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0
+   ]
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "insertbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "insertborderwidth": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "insertofftime": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "insertontime": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "insertwidth": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "invalidcommand": {
+   "kind": "behaviour"
+  },
+  "justify": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "right",
+    "center"
+   ]
+  },
+  "padx": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "pady": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "placeholder": {
+   "kind": "visible",
+   "state": "empty",
+   "value": "Changed"
+  },
+  "placeholderforeground": {
+   "kind": "visible",
+   "state": "empty",
+   "value": "red"
+  },
+  "readonlybackground": {
+   "kind": "visible",
+   "state": "readonly",
+   "value": "red"
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "selectbackground": {
+   "kind": "visible",
+   "state": "selected",
+   "value": "red"
+  },
+  "selectborderwidth": {
+   "kind": "invisible",
+   "state": "selected",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "selectforeground": {
+   "kind": "visible",
+   "state": "selected",
+   "value": "red"
+  },
+  "show": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "*"
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "validate": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "validatecommand": {
+   "kind": "behaviour"
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "xscrollcommand": {
+   "kind": "behaviour"
+  }
+ },
+ "Frame": {
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "colormap": {
+   "kind": "behaviour"
+  },
+  "container": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    1
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "padx": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "pady": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "tile": {
+   "kind": "behaviour"
+  },
+  "visual": {
+   "kind": "behaviour"
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "Label": {
+  "activebackground": {
+   "kind": "visible",
+   "state": "active",
+   "value": "red"
+  },
+  "activeforeground": {
+   "kind": "visible",
+   "state": "active",
+   "value": "red"
+  },
+  "anchor": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "e"
+  },
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "compound": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "top"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "disabledforeground": {
+   "kind": "visible",
+   "state": "disabled",
+   "value": "red"
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "image": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "IMAGE"
+  },
+  "justify": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "right"
+  },
+  "padx": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "pady": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "text": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Changed"
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "underline": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "wraplength": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "LabelFrame": {
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "colormap": {
+   "kind": "behaviour"
+  },
+  "container": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    1
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "height": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "labelanchor": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "s"
+  },
+  "labelwidget": {
+   "kind": "behaviour"
+  },
+  "padx": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "pady": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "sunken"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "text": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Changed"
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "tile": {
+   "kind": "behaviour"
+  },
+  "visual": {
+   "kind": "behaviour"
+  },
+  "width": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  }
+ },
+ "Listbox": {
+  "activestyle": {
+   "kind": "invisible",
+   "state": "active",
+   "tried": [
+    "none",
+    "dotbox"
+   ]
+  },
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "disabledforeground": {
+   "kind": "visible",
+   "state": "disabled",
+   "value": "red"
+  },
+  "exportselection": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0
+   ]
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "justify": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "right"
+  },
+  "listvariable": {
+   "kind": "behaviour"
+  },
+  "padx": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "pady": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "selectbackground": {
+   "kind": "visible",
+   "state": "selected",
+   "value": "red"
+  },
+  "selectborderwidth": {
+   "kind": "invisible",
+   "state": "selected",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "selectforeground": {
+   "kind": "visible",
+   "state": "selected",
+   "value": "red"
+  },
+  "selectmode": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "extended",
+    "single"
+   ]
+  },
+  "setgrid": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    1
+   ]
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "xscrollcommand": {
+   "kind": "behaviour"
+  },
+  "yscrollcommand": {
+   "kind": "behaviour"
+  }
+ },
+ "Menu": {
+  "activebackground": {
+   "kind": "visible",
+   "state": "active",
+   "value": "red"
+  },
+  "activeborderwidth": {
+   "kind": "invisible",
+   "state": "active",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "activeforeground": {
+   "kind": "visible",
+   "state": "active",
+   "value": "red"
+  },
+  "activerelief": {
+   "kind": "visible",
+   "state": "active",
+   "value": "sunken"
+  },
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "disabledforeground": {
+   "kind": "visible",
+   "state": "disabled",
+   "value": "red"
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "padx": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "pady": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "postcommand": {
+   "kind": "behaviour"
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "selectcolor": {
+   "kind": "invisible",
+   "state": "selected",
+   "tried": [
+    "red"
+   ]
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "tearoff": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "tearoffcommand": {
+   "kind": "behaviour"
+  },
+  "title": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Changed"
+   ]
+  },
+  "type": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "tearoff"
+   ]
+  }
+ },
+ "Menubutton": {
+  "activebackground": {
+   "kind": "visible",
+   "state": "active",
+   "value": "red"
+  },
+  "activeforeground": {
+   "kind": "visible",
+   "state": "active",
+   "value": "red"
+  },
+  "anchor": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "e"
+  },
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "compound": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "top"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "direction": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "right",
+    "above",
+    "left",
+    "flush"
+   ]
+  },
+  "disabledforeground": {
+   "kind": "visible",
+   "state": "disabled",
+   "value": "red"
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "image": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "IMAGE"
+  },
+  "indicatoron": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 1
+  },
+  "justify": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "right"
+  },
+  "menu": {
+   "kind": "behaviour"
+  },
+  "padx": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "pady": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "text": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Changed"
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "underline": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "wraplength": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "Message": {
+  "anchor": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "e"
+  },
+  "aspect": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "compound": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "top"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "image": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "IMAGE"
+  },
+  "justify": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "right"
+  },
+  "padx": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "pady": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "text": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Changed"
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "underline": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "wraplength": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "OptionMenu": {
+  "activebackground": {
+   "kind": "invisible",
+   "state": "active",
+   "tried": [
+    "red"
+   ]
+  },
+  "activeforeground": {
+   "kind": "invisible",
+   "state": "active",
+   "tried": [
+    "red"
+   ]
+  },
+  "anchor": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "e"
+  },
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "compound": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "top"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "direction": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "right",
+    "above",
+    "left",
+    "flush"
+   ]
+  },
+  "disabledforeground": {
+   "kind": "visible",
+   "state": "disabled",
+   "value": "red"
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "image": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "IMAGE"
+  },
+  "indicatoron": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "justify": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "right"
+   ]
+  },
+  "menu": {
+   "kind": "behaviour"
+  },
+  "padx": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "pady": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "text": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Changed"
+   ]
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "underline": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 9
+  },
+  "wraplength": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  }
+ },
+ "PanedWindow": {
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "handlepad": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "handlesize": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "opaqueresize": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "orient": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "vertical"
+  },
+  "padx": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "pady": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "proxybackground": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "red"
+   ]
+  },
+  "proxyborderwidth": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "proxyrelief": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "groove",
+    "sunken",
+    "raised"
+   ]
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "sashcursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "sashpad": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "sashrelief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "sunken"
+  },
+  "sashwidth": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "showhandle": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "Radiobutton": {
+  "activebackground": {
+   "kind": "visible",
+   "state": "active",
+   "value": "red"
+  },
+  "activeforeground": {
+   "kind": "visible",
+   "state": "active",
+   "value": "red"
+  },
+  "anchor": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "e"
+  },
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "command": {
+   "kind": "behaviour"
+  },
+  "compound": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "top"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "disabledforeground": {
+   "kind": "visible",
+   "state": "disabled",
+   "value": "red"
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "image": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "IMAGE"
+  },
+  "indicatoron": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "justify": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "right"
+  },
+  "offrelief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "overrelief": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "groove",
+    "sunken",
+    "raised",
+    "flat"
+   ]
+  },
+  "padx": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "pady": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "selectcolor": {
+   "kind": "visible",
+   "state": "selected",
+   "value": "red"
+  },
+  "selectimage": {
+   "kind": "unsettled"
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "text": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Changed"
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "tristateimage": {
+   "kind": "invisible",
+   "state": "tristate",
+   "tried": [
+    "IMAGE2"
+   ]
+  },
+  "tristatevalue": {
+   "kind": "behaviour"
+  },
+  "underline": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "value": {
+   "kind": "behaviour"
+  },
+  "variable": {
+   "kind": "behaviour"
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "wraplength": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "Scale": {
+  "activebackground": {
+   "kind": "visible",
+   "state": "active",
+   "value": "red"
+  },
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "bigincrement": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    2,
+    0.5,
+    5
+   ]
+  },
+  "borderwidth": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "command": {
+   "kind": "behaviour"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "digits": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "from": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 2
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "label": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Changed"
+  },
+  "length": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "orient": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "horizontal"
+  },
+  "padx": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "pady": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "repeatdelay": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "repeatinterval": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "resolution": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0.5
+  },
+  "showvalue": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "sliderlength": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "sliderrelief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "sunken"
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "tickinterval": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 2
+  },
+  "to": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 2
+  },
+  "troughcolor": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "variable": {
+   "kind": "behaviour"
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "Scrollbar": {
+  "activebackground": {
+   "kind": "visible",
+   "state": "active",
+   "value": "red"
+  },
+  "activerelief": {
+   "kind": "visible",
+   "state": "active",
+   "value": "sunken"
+  },
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "command": {
+   "kind": "behaviour"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "elementborderwidth": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "jump": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    1
+   ]
+  },
+  "orient": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "horizontal"
+  },
+  "padx": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "pady": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "repeatdelay": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "repeatinterval": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "troughcolor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "red"
+   ]
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "Spinbox": {
+  "activebackground": {
+   "kind": "invisible",
+   "state": "active",
+   "tried": [
+    "red"
+   ]
+  },
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "buttonbackground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "buttoncursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "buttondownrelief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "sunken"
+  },
+  "buttonuprelief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "sunken"
+  },
+  "command": {
+   "kind": "behaviour"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "disabledbackground": {
+   "kind": "visible",
+   "state": "disabled",
+   "value": "red"
+  },
+  "disabledforeground": {
+   "kind": "visible",
+   "state": "disabled",
+   "value": "red"
+  },
+  "exportselection": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0
+   ]
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "format": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "%05.1f"
+  },
+  "from": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 2
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "increment": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    2,
+    0.5,
+    5
+   ]
+  },
+  "insertbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "insertborderwidth": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "insertofftime": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "insertontime": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "insertwidth": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "invalidcommand": {
+   "kind": "behaviour"
+  },
+  "justify": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "right",
+    "center"
+   ]
+  },
+  "padx": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "pady": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "placeholder": {
+   "kind": "visible",
+   "state": "empty",
+   "value": "Changed"
+  },
+  "placeholderforeground": {
+   "kind": "visible",
+   "state": "empty",
+   "value": "red"
+  },
+  "readonlybackground": {
+   "kind": "visible",
+   "state": "readonly",
+   "value": "red"
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "repeatdelay": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "repeatinterval": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "selectbackground": {
+   "kind": "visible",
+   "state": "selected",
+   "value": "red"
+  },
+  "selectborderwidth": {
+   "kind": "invisible",
+   "state": "selected",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "selectforeground": {
+   "kind": "visible",
+   "state": "selected",
+   "value": "red"
+  },
+  "show": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "*"
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "to": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    2,
+    0.5,
+    5
+   ]
+  },
+  "validate": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "validatecommand": {
+   "kind": "behaviour"
+  },
+  "values": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "a b c"
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "wrap": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "none",
+    "word",
+    "char",
+    1,
+    0
+   ]
+  },
+  "xscrollcommand": {
+   "kind": "behaviour"
+  }
+ },
+ "Text": {
+  "autoseparators": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "blockcursor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    1
+   ]
+  },
+  "borderwidth": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "endline": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "exportselection": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "inactiveselectbackground": {
+   "kind": "visible",
+   "state": "unfocused",
+   "value": "red"
+  },
+  "insertbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "insertborderwidth": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "insertofftime": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "insertontime": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "insertunfocussed": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "hollow",
+    "solid"
+   ]
+  },
+  "insertwidth": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "maxundo": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "padx": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "pady": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "selectbackground": {
+   "kind": "visible",
+   "state": "selected",
+   "value": "red"
+  },
+  "selectborderwidth": {
+   "kind": "invisible",
+   "state": "selected",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "selectforeground": {
+   "kind": "visible",
+   "state": "selected",
+   "value": "red"
+  },
+  "setgrid": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    1
+   ]
+  },
+  "spacing1": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "spacing2": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "spacing3": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "startline": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "tabs": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "4"
+  },
+  "tabstyle": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "wordprocessor"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "undo": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "wrap": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "none"
+  },
+  "xscrollcommand": {
+   "kind": "behaviour"
+  },
+  "yscrollcommand": {
+   "kind": "behaviour"
+  }
+ }
+}

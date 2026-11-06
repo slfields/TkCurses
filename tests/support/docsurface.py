@@ -34,8 +34,12 @@ The convention, which ``docs/reference/index.md`` explains to readers:
   section - on the module, for a module that is one as a whole.
 - Every widget has a ``Sample output:`` section: an example the
   documentation build runs, showing the screen it draws beside it
-  (``docs/_ext/tkscreens.py``). So does every option that changes how a
-  widget looks, wherever that option is described.
+  (``docs/_ext/tkscreens.py``).
+- Every option a classic widget takes is named in its docstring. One that
+  changes the drawing - measured, ``visible_options.json`` - has a sample:
+  a widget's own option in a ``Sample output (name):`` section of its
+  docstring, and an option many widgets share (``COMMON_OPTIONS``) once,
+  under its heading on ``docs/reference/options.md``.
 
 The docstrings did not all keep it when it was written down, and the
 breaches as they stood are in ``docstring_debt.json``. The test lets that
@@ -99,6 +103,73 @@ SAMPLE_MARKER = "Sample output:"
 DIFFERENCES_MARKER = "Differences from tkinter:"
 
 DEBT = Path(__file__).with_name("docstring_debt.json")
+
+#: What each classic widget's options do to its drawing, measured by
+#: ``record_visible_options.py``.
+VISIBLE = Path(__file__).with_name("visible_options.json")
+
+#: Where the options many widgets share are described, once each, as Tk's
+#: own options(n) manual does - decided with the user, TkCurses-imii.5.
+OPTIONS_PAGE = Path(__file__).parents[2] / "docs" / "reference" / "options.md"
+
+#: Tk's standard options (options(n)), and the three every widget has with a
+#: meaning of its own - width, height and state - which the options page
+#: describes once with each widget's unit.
+COMMON_OPTIONS = frozenset(
+    {
+        "activebackground",
+        "activeborderwidth",
+        "activeforeground",
+        "anchor",
+        "background",
+        "bitmap",
+        "borderwidth",
+        "compound",
+        "cursor",
+        "disabledforeground",
+        "exportselection",
+        "font",
+        "foreground",
+        "highlightbackground",
+        "highlightcolor",
+        "highlightthickness",
+        "image",
+        "insertbackground",
+        "insertborderwidth",
+        "insertofftime",
+        "insertontime",
+        "insertwidth",
+        "jump",
+        "justify",
+        "orient",
+        "padx",
+        "pady",
+        "placeholder",
+        "placeholderforeground",
+        "relief",
+        "repeatdelay",
+        "repeatinterval",
+        "selectbackground",
+        "selectborderwidth",
+        "selectforeground",
+        "setgrid",
+        "takefocus",
+        "text",
+        "textvariable",
+        "troughcolor",
+        "underline",
+        "wraplength",
+        "xscrollcommand",
+        "yscrollcommand",
+        "width",
+        "height",
+        "state",
+    }
+)
+
+#: A sample for an option, or several: ``Sample output (relief):``,
+#: ``Sample output (from, to):``.
+NAMED_SAMPLE = re.compile(r"^\s*Sample output \((\w+(?:, \w+)*)\):\s*$", re.M)
 
 #: A tracker ID - maintainer history, not something a reader can follow.
 TRACKER_ID = re.compile(r"TkCurses-[a-z0-9]+(?:\.\d+)*")
@@ -259,6 +330,58 @@ def borrowed_methods() -> dict[type, list[str]]:
     return found
 
 
+def widget_options(cls: type) -> set[str]:
+    """Every option the widget takes."""
+    options: dict[str, Any] = {}
+    for klass in reversed(cls.__mro__):
+        options.update(vars(klass).get("_widget_options", {}) or {})
+    return set(options)
+
+
+def options_page_samples() -> set[str]:
+    """The options the options page has a sample for: each is a heading
+    ``### name`` with a ``{tkcurses-sample}`` block before the next one."""
+    if not OPTIONS_PAGE.exists():
+        return set()
+    sampled = set()
+    for block in re.split(r"^### ", OPTIONS_PAGE.read_text(), flags=re.M)[1:]:
+        names = block.split("\n", 1)[0].replace("`", "").split(",")
+        if "```{tkcurses-sample}" in block:
+            sampled.update(name.strip() for name in names)
+    return sampled
+
+
+def _check_options(found: dict[str, set[str]]) -> None:
+    """Every option of every classic widget is measured, described in its
+    class's docstring, and - where it changes the drawing - sampled."""
+    import tkcurses
+
+    measured = json.loads(VISIBLE.read_text())
+    on_page = options_page_samples()
+    for name, options in measured.items():
+        cls = getattr(tkcurses, name)
+        key = class_key(cls)
+        doc = inspect.getdoc(cls) or ""
+        named = {
+            name for names in NAMED_SAMPLE.findall(doc) for name in names.split(", ")
+        }
+        actual = widget_options(cls)
+        for option in sorted(actual ^ set(options)):
+            found["unmeasured_options"].add(f"{key}:{option}")
+        for option, entry in options.items():
+            if not re.search(rf"\b{re.escape(option)}\b", doc):
+                found["undescribed_options"].add(f"{key}:{option}")
+            # Unsettled is an option whose screens would not hold still
+            # long enough to compare: assume it shows.
+            if entry["kind"] not in ("visible", "unsettled"):
+                continue
+            sampled = (
+                option in on_page if option in COMMON_OPTIONS else (option in named)
+            )
+            if not sampled:
+                found["unsampled_options"].add(f"{key}:{option}")
+
+
 def widget_classes() -> list[type]:
     """The widgets tkinter has, as TkCurses provides them: everything that
     draws, and so everything that has a sample to show."""
@@ -306,6 +429,9 @@ def violations() -> dict[str, set[str]]:
         "unmarked_extensions": set(),
         "unlisted_borrowed": set(),
         "no_sample": set(),
+        "unmeasured_options": set(),
+        "unsampled_options": set(),
+        "undescribed_options": set(),
     }
     for item in tkinter_surface():
         doc = inspect.getdoc(item.obj) or ""
@@ -326,6 +452,7 @@ def violations() -> dict[str, set[str]]:
     for cls in widget_classes():
         if section(inspect.getdoc(cls) or "", SAMPLE_MARKER) is None:
             found["no_sample"].add(class_key(cls))
+    _check_options(found)
     for cls, names in borrowed_methods().items():
         listed = section(inspect.getdoc(cls) or "", DIFFERENCES_MARKER) or ""
         for name in names:

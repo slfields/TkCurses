@@ -4111,9 +4111,17 @@ class BaseWidget(Misc):
 class Pack:
     """Packing: place a widget against one edge of what space is left.
 
-    The mixin half of the pack manager. The arithmetic is in
-    :mod:`tkcurses._core.pack`; what is here is the tkinter-shaped API and the
-    checking that goes with it.
+    Each widget packed takes a strip along one side - ``top`` by default -
+    of whatever its parent has left, and the next one packed works in what
+    remains. ``fill`` stretches a widget across its strip and ``expand``
+    gives it a share of any room to spare. Sizes are in cells.
+
+    Sample output:
+        tk.Label(root, text="top", relief="solid").pack(side="top", fill="x")
+        tk.Label(root, text="left", relief="solid").pack(side="left",
+                                                          fill="y")
+        tk.Label(root, text="the rest", relief="solid").pack(expand=True,
+                                                              fill="both")
     """
 
     if TYPE_CHECKING:
@@ -4323,8 +4331,16 @@ def _check_pads(options: PackOptions | GridOptions, given: dict[str, Any]) -> No
 class Grid:
     """Gridding: place a widget in a row and a column.
 
-    The mixin half of the grid manager; the sizing is in
-    :mod:`tkcurses._core.grid`.
+    Each row is as tall as its tallest widget and each column as wide as
+    its widest, so widgets line up across the whole table. ``sticky`` says
+    which sides of its cell a widget clings to, and ``columnspan`` and
+    ``rowspan`` let it cover several. Sizes are in cells.
+
+    Sample output:
+        for row, label in enumerate(("Name", "Email address")):
+            tk.Label(root, text=label).grid(row=row, column=0, sticky="e")
+            tk.Entry(root, width=16).grid(row=row, column=1)
+        tk.Button(root, text="OK").grid(row=2, column=0, columnspan=2)
     """
 
     if TYPE_CHECKING:
@@ -4497,8 +4513,18 @@ def _grid_options(
 class Place:
     """Placing: put a widget at a position you choose.
 
-    The mixin half of the place manager; the arithmetic is in
-    :mod:`tkcurses._core.place`.
+    ``x`` and ``y`` are cells from the parent's top left corner, and
+    ``relx`` and ``rely`` fractions of its size; the two add up. ``anchor``
+    says which point of the widget goes there. Placed widgets may overlap,
+    and change nothing about how their parent is sized.
+
+    Sample output:
+        frame = tk.Frame(root, width=30, height=8, relief="groove")
+        frame.pack()
+        tk.Label(frame, text="x=1, y=1").place(x=1, y=1)
+        tk.Label(frame, text="centre", relief="solid").place(
+            relx=0.5, rely=0.5, anchor="center"
+        )
     """
 
     if TYPE_CHECKING:
@@ -6766,17 +6792,41 @@ def _one_cell_each(text: str) -> str:
 
 
 class Frame(_Drawable):
-    """A container, and the first widget that draws itself.
-
-    A frame is a rectangle of background with an optional border, and
-    somewhere to put other widgets. Everything interesting about it is
-    inherited - it is packed or gridded like anything else, and it lays its
-    own children out with a manager of their choosing - so what is added here
-    is only the painting.
+    """A container: a rectangle of background, an optional border, and
+    somewhere to put other widgets.
 
     Its size comes from its children unless ``width`` or ``height`` says
-    otherwise. Setting either fixes that dimension, which is how a frame is
-    made to hold a shape its contents would not produce on their own.
+    otherwise. Setting either, and turning off propagation, fixes that
+    dimension, which is how a frame is made to hold a shape its contents
+    would not produce on their own.
+
+    Sample output:
+        frame = tk.Frame(root, relief="groove", padx=1)
+        frame.pack()
+        tk.Label(frame, text="Inside a frame").pack()
+        tk.Button(frame, text="OK").pack()
+
+    Options:
+        class: The class name bindings and the option database know the frame
+            by. It cannot be changed once the frame is made.
+        colormap: An X colormap, in Tk. Checked as Tk checks it, and kept.
+        container: Whether another application's window is embedded in it.
+            Kept; nothing can be embedded in a terminal.
+        tile: Accepted and kept.
+        visual: An X visual, in Tk. Checked as Tk checks it, and kept.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``background``, ``borderwidth``, ``cursor``, ``foreground``, ``height``,
+    ``highlightbackground``, ``highlightcolor``, ``highlightthickness``,
+    ``padx``, ``pady``, ``relief``, ``takefocus``, ``width``.
+
+    Differences from tkinter:
+        ``class``, ``colormap``, ``container``, ``tile`` and ``visual`` are
+        about an X window and change nothing in a terminal; each is checked and
+        read back as Tk does. ``highlightbackground``, ``highlightcolor`` and
+        ``highlightthickness`` are accepted and draw nothing: the focus is shown
+        by markers instead. So is ``cursor``: the mouse pointer belongs to the
+        terminal.
     """
 
     #: ``width`` and ``height`` are cells; zero means "ask the children".
@@ -7482,12 +7532,28 @@ class _TextWidget(_Drawable):
 
 
 class Label(_TextWidget):
-    """A run of text.
+    """A run of text, or an image.
 
     Its size comes from the text unless ``width`` or ``height`` says
     otherwise, so a label is as wide as its longest line and as tall as it has
     lines. ``wraplength`` breaks the text at that many cells, at word
     boundaries where it can.
+
+    Sample output:
+        tk.Label(root, text="Hello, terminal").pack()
+
+    Standard options, described in :doc:`/reference/options`:
+    ``activebackground``, ``activeforeground``, ``anchor``, ``background``,
+    ``borderwidth``, ``compound``, ``cursor``, ``disabledforeground``,
+    ``font``, ``foreground``, ``height``, ``highlightbackground``,
+    ``highlightcolor``, ``highlightthickness``, ``image``, ``justify``,
+    ``padx``, ``pady``, ``relief``, ``state``, ``takefocus``, ``text``,
+    ``textvariable``, ``underline``, ``width``, ``wraplength``.
+
+    Differences from tkinter:
+        ``highlightbackground``, ``highlightcolor`` and ``highlightthickness``
+        are accepted and draw nothing: the focus is shown by markers instead. So
+        is ``cursor``: the mouse pointer belongs to the terminal.
     """
 
     _widget_options: ClassVar[dict[str, Any]] = dict(_STATE_COLOUR_OPTIONS)
@@ -7498,21 +7564,38 @@ class Button(_TextWidget):
 
     Invoked by a mouse click, by Return, or by the space bar when it has the
     focus - the three gestures a terminal offers. ``invoke()`` does the same
-    thing from code, which is how a dialog's default button is triggered by
-    something else entirely.
+    thing from code.
 
-    Focus and press are shown by markers either side of the text rather than
-    by colour: ``|> OK <|`` when focused, and reversed while held down. A
-    terminal cannot be relied on for colour, and a button nobody can see the
-    focus on is a button nobody can use from the keyboard.
+    Focus is shown by markers either side of the text, ``▶ OK ◀``, rather
+    than by colour alone, and the text reverses while the button is held
+    down. A terminal cannot be relied on for colour, and a button nobody can
+    see the focus on is a button nobody can use from the keyboard.
 
     Sample output:
         tk.Button(root, text="Save").pack()
 
-    Sample output:
-        # size: 80x5
-        for relief in ("raised", "sunken", "flat", "ridge", "solid", "groove"):
-            tk.Button(root, text=relief, relief=relief).pack(side="left")
+    Options:
+        command: Called with no arguments when the button is pressed.
+        default: ``normal``, ``active`` or ``disabled``: whether this is the
+            button Return presses in a dialog.
+        overrelief: The relief while the mouse is over the button; ``""``,
+            the default, leaves it unchanged.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``activebackground``, ``activeforeground``, ``anchor``, ``background``,
+    ``borderwidth``, ``compound``, ``cursor``, ``disabledforeground``,
+    ``font``, ``foreground``, ``height``, ``highlightbackground``,
+    ``highlightcolor``, ``highlightthickness``, ``image``, ``justify``,
+    ``padx``, ``pady``, ``relief``, ``repeatdelay``, ``repeatinterval``,
+    ``state``, ``takefocus``, ``text``, ``textvariable``, ``underline``,
+    ``width``, ``wraplength``.
+
+    Differences from tkinter:
+        ``default`` is accepted and not drawn: Tk rings the default button, and
+        here it looks like any other. ``highlightbackground``,
+        ``highlightcolor`` and ``highlightthickness`` are accepted and draw
+        nothing: the focus is shown by markers instead. So is ``cursor``: the
+        mouse pointer belongs to the terminal.
     """
 
     #: The markers drawn either side of the text. Room for them is reserved
@@ -8220,16 +8303,77 @@ class Checkbutton(_ChoiceWidget):
     ``variable`` against ``onvalue`` every time it paints. That is what makes
     two checkbuttons over one variable show the same tick, and what makes
     setting the variable from code move both of them. A checkbutton made
-    without a variable is given one, as tkinter's is - it works out of the
-    box at the cost of the caller having nothing to read.
+    without a variable is given one, as tkinter's is.
 
-    Tk's third state is drawn too. A variable holding neither value - the
-    "some of the selected files are read-only" case - shows ``[-]`` rather
-    than guessing, and a click from there turns the button on.
+    Tk's third state is drawn too. A variable holding ``tristatevalue`` - the
+    "some of the selected files are read-only" case - shows ``[-]``, and a
+    click from there turns the button on.
 
-    With ``indicatoron`` false there is no box at all: the text reverses
-    while the button is on, which is how a checkbutton is used as a toggle
-    in a toolbar.
+    Sample output:
+        choices = [tk.StringVar(value=v) for v in ("0", "1", "")]
+        for text, variable in zip(("Off", "On", "Mixed"), choices):
+            tk.Checkbutton(root, text=text, variable=variable).pack(anchor="w")
+
+    Options:
+        command: Called with no arguments each time the button is toggled.
+        indicatoron: Whether the box is drawn. Without it the text reverses
+            while the button is on, which is how a checkbutton is used as a
+            toggle in a toolbar.
+        offrelief: The relief while the button is off, when ``indicatoron`` is
+            false.
+        offvalue: The variable's value while the button is off; 0 by default.
+        onvalue: The variable's value while the button is on; 1 by default.
+        overrelief: The relief while the mouse is over the button.
+        selectcolor: The colour of the box's tick, or of the whole button
+            while it is on when there is no box.
+        selectimage: The image shown while the button is on, in place of
+            ``image``.
+        tristateimage: The image shown in the third state.
+        tristatevalue: The variable's value in the third state; ``""`` by
+            default.
+        variable: The variable holding the button's value.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``activebackground``, ``activeforeground``, ``anchor``, ``background``,
+    ``borderwidth``, ``compound``, ``cursor``, ``disabledforeground``,
+    ``font``, ``foreground``, ``height``, ``highlightbackground``,
+    ``highlightcolor``, ``highlightthickness``, ``image``, ``justify``,
+    ``padx``, ``pady``, ``relief``, ``state``, ``takefocus``, ``text``,
+    ``textvariable``, ``underline``, ``width``, ``wraplength``.
+
+    Differences from tkinter:
+        ``borderwidth`` is 0 by default rather than 1, so a button without a box
+        shows ``offrelief`` only once given a border. ``highlightbackground``,
+        ``highlightcolor`` and ``highlightthickness`` are accepted and draw
+        nothing: the focus is shown by markers instead. So is ``cursor``: the
+        mouse pointer belongs to the terminal.
+
+    Sample output (indicatoron):
+        for name in ("Bold", "Italic"):
+            button = tk.Checkbutton(root, text=name, indicatoron=0)
+            button.pack(side="left", padx=1)
+        button.select()
+
+    Sample output (offrelief):
+        for relief in ("raised", "groove"):
+            tk.Checkbutton(root, text=relief, indicatoron=0, borderwidth=1,
+                           offrelief=relief).pack(side="left", padx=1)
+
+    Sample output (selectcolor):
+        button = tk.Checkbutton(root, text="Ticked", selectcolor="green")
+        button.pack()
+        button.select()
+
+    Sample output (selectimage):
+        off = tk.PhotoImage(width=4, height=2)
+        off.put("grey", to=(0, 0, 4, 2))
+        on = tk.PhotoImage(width=4, height=2)
+        on.put("green", to=(0, 0, 4, 2))
+        for state in ("off", "on"):
+            button = tk.Checkbutton(root, text=state, image=off, selectimage=on,
+                                    compound="left")
+            button.pack(side="left", padx=1)
+        button.select()
     """
 
     _INDICATORS: ClassVar[dict[str, tuple[str, str]]] = {
@@ -8297,16 +8441,76 @@ class Radiobutton(_ChoiceWidget):
     together, and nothing has to turn the others off: they all repaint from
     the same variable and only one of them can match it.
 
-    Pressing one always selects it. There is no way to turn a radiobutton
-    off by clicking it, which is the difference from a checkbutton and the
-    reason the two are separate widgets; ``deselect`` exists for code that
-    wants a group with nothing chosen.
-
     A radiobutton made without a variable joins Tk's default group, named
     ``selectedButton``, along with every other one in the same application
-    that did the same. That is Tk's behaviour and it is worth keeping, but
-    it means two unrelated sets of choices both left without variables will
+    that did the same - so two sets of choices both left without variables
     fight over one value.
+
+    Sample output:
+        size = tk.StringVar(value="medium")
+        for name in ("small", "medium", "large"):
+            tk.Radiobutton(root, text=name, value=name, variable=size).pack(
+                anchor="w"
+            )
+
+    Options:
+        command: Called with no arguments when the button is selected.
+        indicatoron: Whether the round indicator is drawn. Without it the text
+            reverses while the button is on.
+        offrelief: The relief while the button is off, when ``indicatoron`` is
+            false.
+        overrelief: The relief while the mouse is over the button.
+        selectcolor: The colour of the indicator's dot, or of the whole button
+            while it is on when there is no indicator.
+        selectimage: The image shown while the button is on.
+        tristateimage: The image shown in the third state.
+        tristatevalue: The variable's value that shows the third state.
+        value: The variable's value while this button is the one chosen.
+        variable: The variable shared by the group.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``activebackground``, ``activeforeground``, ``anchor``, ``background``,
+    ``borderwidth``, ``compound``, ``cursor``, ``disabledforeground``,
+    ``font``, ``foreground``, ``height``, ``highlightbackground``,
+    ``highlightcolor``, ``highlightthickness``, ``image``, ``justify``,
+    ``padx``, ``pady``, ``relief``, ``state``, ``takefocus``, ``text``,
+    ``textvariable``, ``underline``, ``width``, ``wraplength``.
+
+    Differences from tkinter:
+        ``borderwidth`` is 0 by default rather than 1, so a button without an
+        indicator shows ``offrelief`` only once given a border.
+        ``highlightbackground``, ``highlightcolor`` and ``highlightthickness``
+        are accepted and draw nothing: the focus is shown by markers instead. So
+        is ``cursor``: the mouse pointer belongs to the terminal.
+
+    Sample output (indicatoron):
+        view = tk.StringVar(value="List")
+        for name in ("List", "Icons"):
+            tk.Radiobutton(root, text=name, value=name, variable=view,
+                           indicatoron=0).pack(side="left", padx=1)
+
+    Sample output (offrelief):
+        view = tk.StringVar(value="")
+        for relief in ("raised", "groove"):
+            tk.Radiobutton(root, text=relief, value=relief, variable=view,
+                           indicatoron=0, borderwidth=1,
+                           offrelief=relief).pack(side="left", padx=1)
+
+    Sample output (selectcolor):
+        choice = tk.StringVar(value="a")
+        tk.Radiobutton(root, text="Chosen", value="a", variable=choice,
+                       selectcolor="green").pack()
+
+    Sample output (selectimage):
+        off = tk.PhotoImage(width=4, height=2)
+        off.put("grey", to=(0, 0, 4, 2))
+        on = tk.PhotoImage(width=4, height=2)
+        on.put("green", to=(0, 0, 4, 2))
+        choice = tk.StringVar(value="on")
+        for name in ("off", "on"):
+            tk.Radiobutton(root, text=name, value=name, variable=choice,
+                           image=off, selectimage=on,
+                           compound="left").pack(side="left", padx=1)
     """
 
     _INDICATORS: ClassVar[dict[str, tuple[str, str]]] = {
@@ -8389,14 +8593,63 @@ def _same_value(left: Any, right: Any) -> bool:
 class Entry(_Drawable, XView):
     """A one-line text field.
 
-    The editing itself is :class:`~tkcurses._core.editing.TextField`; what is
-    here is the widget around it - options, key bindings, the cursor and
-    selection on screen, and keeping a ``textvariable`` in step both ways.
+    Typing, the arrow keys, Home and End, selection with the shifted keys or
+    the mouse, and cut, copy and paste all work as they do in Tk. A
+    ``textvariable`` is kept in step both ways.
 
     ``state`` has three values rather than two. ``readonly`` shows the text
     and lets it be selected and copied but refuses every edit, which is what
     a field displaying a computed value wants; ``disabled`` refuses the focus
     as well.
+
+    Sample output:
+        entry = tk.Entry(root, width=24)
+        entry.insert(0, "Some text to edit")
+        entry.pack()
+
+    Options:
+        disabledbackground: The background while ``state`` is ``disabled``.
+        invalidcommand: Called when ``validatecommand`` refuses a change.
+        readonlybackground: The background while ``state`` is ``readonly``.
+        show: A character to show in place of each one typed, for a password:
+            ``show="*"``.
+        validate: When ``validatecommand`` is asked: ``none``, ``focus``,
+            ``focusin``, ``focusout``, ``key`` or ``all``.
+        validatecommand: Asked whether a change may be made; returns true to
+            allow it.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``background``, ``borderwidth``, ``cursor``, ``disabledforeground``,
+    ``exportselection``, ``font``, ``foreground``, ``highlightbackground``,
+    ``highlightcolor``, ``highlightthickness``, ``insertbackground``,
+    ``insertborderwidth``, ``insertofftime``, ``insertontime``,
+    ``insertwidth``, ``justify``, ``padx``, ``pady``, ``placeholder``,
+    ``placeholderforeground``, ``relief``, ``selectbackground``,
+    ``selectborderwidth``, ``selectforeground``, ``state``, ``takefocus``,
+    ``textvariable``, ``width``, ``xscrollcommand``.
+
+    Differences from tkinter:
+        ``justify`` is accepted and not drawn: the text starts at the left
+        whatever it says. The insertion cursor is the terminal's own, so
+        ``insertbackground``, ``insertborderwidth``, ``insertofftime``,
+        ``insertontime`` and ``insertwidth`` draw nothing, and nor does
+        ``selectborderwidth``. ``highlightbackground``, ``highlightcolor`` and
+        ``highlightthickness`` are accepted and draw nothing: the focus is shown
+        by markers instead. So is ``cursor``: the mouse pointer belongs to the
+        terminal.
+
+    Sample output (disabledbackground, readonlybackground):
+        for state, colour in (("disabled", "red"), ("readonly", "blue")):
+            entry = tk.Entry(root, width=12)
+            entry.insert(0, state)
+            entry.configure(state=state, disabledbackground=colour,
+                            readonlybackground=colour)
+            entry.pack(side="left", padx=1)
+
+    Sample output (show):
+        password = tk.Entry(root, show="*")
+        password.insert(0, "secret")
+        password.pack()
     """
 
     #: Tk's validation pair carries short spellings on the classic Entry, and
@@ -8618,15 +8871,12 @@ class Entry(_Drawable, XView):
         """Insert ``string`` at ``index``, if the state and validator allow it.
 
         A programmatic edit is validated exactly as a keystroke is, and ignored
-        outright when the entry is ``disabled`` or ``readonly``. Both were
-        measured on real Tk, and this method did neither: a digits-only entry
-        sent ``insert(0, "x")`` ended up holding ``"x"``, with no callback to
-        tell the program its own validator had been bypassed. TkCurses-tvj.
-
-        An insert that would change nothing - an empty string - runs no
-        callback at all, which is also Tk's behaviour rather than an
-        optimisation.
+        outright when the entry is ``disabled`` or ``readonly``, as in Tk. An
+        insert that would change nothing - an empty string - runs no callback.
         """
+        # Both measured on real Tk, and this method once did neither: a digits-
+        # only entry sent insert(0, "x") ended up holding "x", with no callback
+        # to tell the program its validator had been bypassed. TkCurses-tvj.
         if not string:
             return
         where = self.index(index)
@@ -8652,12 +8902,10 @@ class Entry(_Drawable, XView):
         self._edit(lambda: self._field.delete(start, end), text[:start] + text[end:])
 
     def icursor(self, index: Any) -> None:
-        """Put the insertion cursor at ``index``, keeping any selection.
-
-        Measured on Tk 9.0.2: a selection survives ``icursor``. This dropped
-        it until TkCurses-elb, which mattered because ttk's own combobox pick
-        selects everything and then moves the cursor to the end.
-        """
+        """Put the insertion cursor at ``index``, keeping any selection."""
+        # Measured on Tk 9.0.2: a selection survives icursor. This dropped it
+        # until TkCurses-elb, which mattered because ttk's own combobox pick
+        # selects everything and then moves the cursor to the end.
         self._field.place_cursor(self.index(index))
         self._redraw()
 
@@ -8752,8 +9000,8 @@ class Entry(_Drawable, XView):
         """Select from ``start`` to ``end``, leaving the anchor where it is.
 
         A range given backwards or empty clears the selection, as Tk's does.
-        See :meth:`TextField.select_range`; TkCurses-bfy.
         """
+        # The field's own select_range does the work; TkCurses-bfy.
         self._field.select_range(self.index(start), self.index(end))
         self._claim_primary()
         self._redraw()
@@ -8810,32 +9058,28 @@ class Entry(_Drawable, XView):
     def xview(self, *args: Any) -> Any:
         """Report or move the view, as Tk's entry does.
 
-        With nothing it answers the pair of fractions a scrollbar wants; with
+        With no arguments it answers the pair of fractions a scrollbar wants:
+        the first and last characters in view, over the length of the text. With
         ``("moveto", fraction)`` or ``("scroll", count, "units"|"pages")`` it is
-        a scrollbar driving the entry. An index still works, because that is
-        what this used to take.
+        a scrollbar driving the entry, and an index scrolls that character to
+        the left edge.
 
-        It used to return the first visible character as an INT, which meant
-        -xscrollcommand could not be honoured and that this widget disagreed
-        with its own siblings: Text and Canvas already answer with fractions and
-        accept the scrollbar arguments, and so does real tkinter's Entry -
-        measured, ``xview()`` on a 10-wide entry holding 43 characters answers
-        ``(0.0, 0.023255813953488372)``. TkCurses-ale.
-
-        **Only the view moves.** It used to move the insertion cursor and so
-        drop the selection, which Tk's does not do - measured on Tk 9.0.2, an
-        entry 5 wide holding ``a``-``z`` with the cursor at 3:
-
-        * ``moveto f`` shows character ``f * length`` first, halves rounded up;
-        * ``scroll n units`` moves n characters, ``scroll n pages`` moves
-          ``n * max(1, width - 2)`` - 1 at widths 1 to 3, 3 at 5, 6 at 8;
-        * an index is shown first;
-        * every form stops at ``length - width``, so the last character sits
-          at the right edge, and a text shorter than the field never scrolls;
-        * the cursor stays at 3 and a selection survives.
-
-        TkCurses-i8s.
+        Only the view moves: the insertion cursor stays where it is, and a
+        selection survives. A unit is one character and a page is the width
+        less two, at least one; the view stops with the last character at the
+        right edge, and a text shorter than the field never scrolls.
         """
+        # It used to return the first visible character as an int, so
+        # -xscrollcommand could not be honoured; tkinter's Entry answers
+        # fractions - measured, xview() on a 10-wide entry holding 43 characters
+        # is (0.0, 0.023255813953488372). TkCurses-ale.
+        #
+        # It also used to move the insertion cursor and so drop the selection.
+        # Measured on Tk 9.0.2, an entry 5 wide holding a-z, the cursor at 3:
+        # moveto f shows character f * length first, halves rounded up; scroll n
+        # pages moves n * max(1, width - 2) - 1 at widths 1 to 3, 3 at 5, 6 at
+        # 8; every form stops at length - width; the cursor stays at 3 and a
+        # selection survives. TkCurses-i8s.
         if not args:
             return self._view_fractions()
         width = self._text_area().width
@@ -10022,10 +10266,38 @@ class Menubutton(_TextWidget):
     click, Return, the space bar, or Down. It is what sits in a toolbar where
     a menubar would be too much, and what :class:`OptionMenu` is built from.
 
-    ``direction`` says which side of the button the menu appears on. The menu
-    itself decides whether there is room - a menubutton near the bottom of the
-    terminal posts upwards whatever it was asked for, because a menu that
-    runs off the screen cannot be read.
+    The menu decides whether there is room for it where ``direction`` asks -
+    a menubutton near the bottom of the terminal posts upwards whatever it
+    was asked for, because a menu that runs off the screen cannot be read.
+
+    Sample output:
+        button = tk.Menubutton(root, text="File", relief="raised")
+        button["menu"] = tk.Menu(button)
+        button.pack()
+
+    Options:
+        direction: Where the menu appears: ``below``, ``above``, ``left``,
+            ``right`` or ``flush`` - over the button.
+        indicatoron: Whether a ``▾`` is drawn to show there is a menu.
+        menu: The Menu to post.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``activebackground``, ``activeforeground``, ``anchor``, ``background``,
+    ``borderwidth``, ``compound``, ``cursor``, ``disabledforeground``,
+    ``font``, ``foreground``, ``height``, ``highlightbackground``,
+    ``highlightcolor``, ``highlightthickness``, ``image``, ``justify``,
+    ``padx``, ``pady``, ``relief``, ``state``, ``takefocus``, ``text``,
+    ``textvariable``, ``underline``, ``width``, ``wraplength``.
+
+    Differences from tkinter:
+        ``highlightbackground``, ``highlightcolor`` and ``highlightthickness``
+        are accepted and draw nothing: the focus is shown by markers instead. So
+        is ``cursor``: the mouse pointer belongs to the terminal.
+
+    Sample output (indicatoron):
+        for on in (0, 1):
+            tk.Menubutton(root, text=f"indicatoron={on}", indicatoron=on,
+                          relief="raised").pack(side="left", padx=1)
     """
 
     #: Drawn at the right when ``indicatoron`` is true, so a menubutton can
@@ -10089,7 +10361,12 @@ class Menubutton(_TextWidget):
             return False
 
     def post_menu(self) -> None:
-        """Open the menu where ``direction`` says, if there is one."""
+        """Open the menu where ``direction`` says, if there is one.
+
+        TkCurses extension:
+            tkinter has no method for this: in Tk, only the menubutton's
+            own bindings post its menu.
+        """
         menu = self._options["menu"]
         if menu is None or self._disabled:
             return
@@ -10178,11 +10455,37 @@ class OptionMenu(Menubutton):
 
     The menu is built for you: one radiobutton entry per value, all sharing
     the variable, so choosing one both sets the variable and changes what the
-    button says. That is the whole widget - tkinter's is a Menubutton with a
-    constructor that does this, and so is this one.
+    button says. The menu is reachable as ``widget["menu"]``, which is how
+    code adds to it or replaces it afterwards.
 
-    The menu is reachable as ``widget["menu"]``, which is how tkinter code
-    adds to it or replaces it after the fact.
+    Sample output:
+        colour = tk.StringVar(value="Green")
+        tk.OptionMenu(root, colour, "Red", "Green", "Blue").pack()
+
+    Options:
+        direction: Where the menu appears, as for a Menubutton.
+        indicatoron: Whether the ``▾`` is drawn.
+        menu: The menu of values.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``activebackground``, ``activeforeground``, ``anchor``, ``background``,
+    ``borderwidth``, ``compound``, ``cursor``, ``disabledforeground``,
+    ``font``, ``foreground``, ``height``, ``highlightbackground``,
+    ``highlightcolor``, ``highlightthickness``, ``image``, ``justify``,
+    ``padx``, ``pady``, ``relief``, ``state``, ``takefocus``, ``text``,
+    ``textvariable``, ``underline``, ``width``, ``wraplength``.
+
+    Differences from tkinter:
+        The button shows its variable's value, so ``text`` is not drawn.
+        ``highlightbackground``, ``highlightcolor`` and ``highlightthickness``
+        are accepted and draw nothing: the focus is shown by markers instead. So
+        is ``cursor``: the mouse pointer belongs to the terminal.
+
+    Sample output (indicatoron):
+        choice = tk.StringVar(value="Medium")
+        menu = tk.OptionMenu(root, choice, "Small", "Medium", "Large")
+        menu.configure(indicatoron=0)
+        menu.pack()
     """
 
     def __init__(
@@ -10219,14 +10522,17 @@ class OptionMenu(Menubutton):
         self.set_menu(*choices)
 
     def set_menu(self, *values: Any, current: Any = None) -> None:
-        """Replace the choices, as ttk's OptionMenu does.
+        """Replace the choices, and choose ``current`` if it is given.
 
-        ``current`` is the only way the variable is written from here.
-        Building the menu does not touch it, which is what tkinter does: an
-        OptionMenu over an empty variable shows nothing until something is
-        chosen, and one over a variable that already holds a value leaves it
-        alone. Checked against Tk 9.0.2.
+        Building the menu does not touch the variable: an OptionMenu over an
+        empty variable shows nothing until something is chosen, and one over a
+        variable that already holds a value leaves it alone.
+
+        TkCurses extension:
+            The classic OptionMenu has no ``set_menu`` in tkinter; this is the
+            one ``ttk.OptionMenu`` has.
         """
+        # Checked against Tk 9.0.2.
         menu = self._options["menu"]
         menu.delete(0, "end")
         for choice in values:
@@ -10263,13 +10569,36 @@ class Message(_TextWidget):
     height. The default of 150 gives a block half again as wide as it is
     tall, which is roughly the shape of a paragraph.
 
-    ``width`` overrides the aspect, and ``wraplength`` overrides both - the
-    first because Tk says so, the second because a caller who has named an
-    exact wrap point has answered the question the aspect exists to guess at.
-
+    ``width`` overrides the aspect, and ``wraplength`` overrides both.
     Everything else - justification, anchoring, padding, the border - is a
-    Label's, because a Message is a Label that has made its mind up about one
-    thing.
+    Label's.
+
+    Sample output:
+        tk.Message(root, text="A message picks its own line length, "
+                   "aiming for a paragraph's shape.").pack()
+
+    Options:
+        aspect: The width the text aims for, as a percentage of its height.
+
+    Standard options, described in :doc:`/reference/options`: ``anchor``,
+    ``background``, ``borderwidth``, ``compound``, ``cursor``, ``font``,
+    ``foreground``, ``height``, ``highlightbackground``, ``highlightcolor``,
+    ``highlightthickness``, ``image``, ``justify``, ``padx``, ``pady``,
+    ``relief``, ``state``, ``takefocus``, ``text``, ``textvariable``,
+    ``underline``, ``width``, ``wraplength``.
+
+    Differences from tkinter:
+        ``highlightbackground``, ``highlightcolor`` and ``highlightthickness``
+        are accepted and draw nothing: the focus is shown by markers instead. So
+        is ``cursor``: the mouse pointer belongs to the terminal.
+
+    Sample output (aspect):
+        # size: 60x10
+        text = "The same words at three aspect ratios, narrow to wide."
+        for aspect in (100, 300, 900):
+            tk.Message(root, text=text, aspect=aspect, relief="solid").pack(
+                side="left", padx=1, anchor="n"
+            )
     """
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
@@ -10357,10 +10686,46 @@ class LabelFrame(Frame):
     line rather than inside the frame, so it costs no room: the children get
     exactly what they would have got from a plain frame of the same size.
 
-    ``labelanchor`` says where on the border the caption goes. Tk allows the
-    left and right edges too, with the text turned on its side; a terminal
-    cannot turn text on its side, so those anchors put the caption at the
-    nearest end of the top or bottom edge instead of pretending otherwise.
+    Sample output:
+        group = tk.LabelFrame(root, text="Options", padx=1)
+        group.pack()
+        tk.Checkbutton(group, text="Wrap lines").pack(anchor="w")
+        tk.Checkbutton(group, text="Show numbers").pack(anchor="w")
+
+    Options:
+        class: The class name, ``Labelframe`` unless given. It cannot be
+            changed once the frame is made.
+        colormap: An X colormap, in Tk. Checked as Tk checks it, and kept.
+        container: Whether another application's window is embedded in it.
+            Kept; nothing can be embedded in a terminal.
+        labelanchor: Where on the border the caption goes: ``nw``, ``n``,
+            ``ne`` along the top, ``sw``, ``s``, ``se`` along the bottom, or
+            ``wn``, ``w``, ``ws``, ``en``, ``e``, ``es`` on the sides.
+        labelwidget: A widget to use as the caption instead of ``text``.
+        tile: Accepted and kept.
+        visual: An X visual, in Tk. Checked as Tk checks it, and kept.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``background``, ``borderwidth``, ``cursor``, ``font``, ``foreground``,
+    ``height``, ``highlightbackground``, ``highlightcolor``,
+    ``highlightthickness``, ``padx``, ``pady``, ``relief``, ``takefocus``,
+    ``text``, ``textvariable``, ``width``.
+
+    Differences from tkinter:
+        Tk puts a caption anchored on the left or right edge on that edge,
+        turned on its side. A terminal cannot turn text, so those anchors put it
+        at the nearest end of the top or bottom edge instead. A ``labelwidget``
+        taller than the border sits over the border rather than pushing the
+        children down. ``highlightbackground``, ``highlightcolor`` and
+        ``highlightthickness`` are accepted and draw nothing: the focus is shown
+        by markers instead. So is ``cursor``: the mouse pointer belongs to the
+        terminal.
+
+    Sample output (labelanchor):
+        # size: 50x8
+        for anchor in ("nw", "n", "se"):
+            tk.LabelFrame(root, text=anchor, labelanchor=anchor, width=14,
+                          height=4).pack(side="left", padx=1)
     """
 
     #: Where each of Tk's twelve labelanchor values puts the caption here,
@@ -10739,8 +11104,76 @@ class Spinbox(Entry):
 
     ``readonly`` is the state that makes a spinbox a chooser rather than a
     field - the arrows still work, the keyboard cannot put anything else in.
-    That is the common use for the ``values`` form, and it is why stepping
-    checks for ``disabled`` rather than going through the editing path.
+
+    Sample output:
+        tk.Spinbox(root, from_=1, to=10, width=6).pack()
+
+    Options:
+        buttonbackground: The colour of the arrows.
+        buttoncursor: The mouse pointer over the arrows.
+        buttondownrelief: The relief of the down arrow.
+        buttonuprelief: The relief of the up arrow.
+        command: Called with no arguments when an arrow is used.
+        disabledbackground: The background while ``state`` is ``disabled``.
+        format: How a number is written, as ``%5.2f``.
+        from: The lowest value. Given as ``from_``, ``from`` being a Python
+            keyword.
+        increment: The step between values.
+        invalidcommand: Called when ``validatecommand`` refuses a change.
+        readonlybackground: The background while ``state`` is ``readonly``.
+        show: A character to show in place of each one typed.
+        to: The highest value.
+        validate: When ``validatecommand`` is asked, as for an Entry.
+        validatecommand: Asked whether a change may be made.
+        values: The values to step through, which take the place of ``from``,
+            ``to`` and ``increment``.
+        wrap: Whether stepping past one end comes round to the other.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``activebackground``, ``background``, ``borderwidth``, ``cursor``,
+    ``disabledforeground``, ``exportselection``, ``font``, ``foreground``,
+    ``highlightbackground``, ``highlightcolor``, ``highlightthickness``,
+    ``insertbackground``, ``insertborderwidth``, ``insertofftime``,
+    ``insertontime``, ``insertwidth``, ``justify``, ``padx``, ``pady``,
+    ``placeholder``, ``placeholderforeground``, ``relief``, ``repeatdelay``,
+    ``repeatinterval``, ``selectbackground``, ``selectborderwidth``,
+    ``selectforeground``, ``state``, ``takefocus``, ``textvariable``,
+    ``width``, ``xscrollcommand``.
+
+    Differences from tkinter:
+        ``select_adjust``, ``select_clear``, ``select_from``,
+        ``select_present``, ``select_range`` and ``select_to`` are here as on
+        an Entry; tkinter's Spinbox has only the ``selection_`` names.
+
+        ``justify`` is accepted and not drawn: the text starts at the left
+        whatever it says. ``buttoncursor`` changes nothing, the pointer being
+        the terminal's. The insertion cursor is the terminal's own, so
+        ``insertbackground``, ``insertborderwidth``, ``insertofftime``,
+        ``insertontime`` and ``insertwidth`` draw nothing, and nor does
+        ``selectborderwidth``. ``highlightbackground``, ``highlightcolor`` and
+        ``highlightthickness`` are accepted and draw nothing: the focus is shown
+        by markers instead. So is ``cursor``: the mouse pointer belongs to the
+        terminal.
+
+    Sample output (buttonbackground, buttonuprelief, buttondownrelief):
+        tk.Spinbox(root, from_=0, to=5, width=6, buttonbackground="blue",
+                   buttonuprelief="raised", buttondownrelief="sunken").pack()
+
+    Sample output (disabledbackground, readonlybackground):
+        for state, colour in (("disabled", "red"), ("readonly", "blue")):
+            tk.Spinbox(root, values=(state,), width=10, state=state,
+                       disabledbackground=colour,
+                       readonlybackground=colour).pack(side="left", padx=1)
+
+    Sample output (format, from):
+        tk.Spinbox(root, from_=2.5, to=10, increment=0.5, format="%06.2f",
+                   width=10).pack()
+
+    Sample output (values):
+        tk.Spinbox(root, values=("Small", "Medium", "Large"), width=10).pack()
+
+    Sample output (show):
+        tk.Spinbox(root, values=("1234",), show="*", width=8).pack()
     """
 
     #: The two arrows, drawn at the right-hand end of the field. Tk stacks
@@ -10958,11 +11391,13 @@ class Spinbox(Entry):
         self._changed()
 
     def bbox(self, index: Any) -> tuple[int, int, int, int]:
-        """The box of the character at ``index`` - see :meth:`Entry._char_bbox`.
+        """The box of the character at ``index``, as ``(x, y, width, height)``.
 
-        ``tk.Spinbox`` has this and ``tk.Entry`` does not: tkinter gives the
-        classic Entry only ``Misc.bbox``, the grid alias. TkCurses-52q.
+        Differences from tkinter:
+            ``tk.Spinbox`` has this and ``tk.Entry`` does not: tkinter gives the
+            classic Entry only the grid's ``bbox``.
         """
+        # TkCurses-52q.
         return self._char_bbox(index)
 
     # ------------------------------------------------------------- stepping
@@ -11299,25 +11734,90 @@ class _TagStyles(MutableMapping[str, dict[str, Any]]):
 class Text(_Drawable, XView, YView):
     """An editable block of text, with marks and tags.
 
-    The contents, the index arithmetic, the marks and the tag ranges are
-    :class:`~tkcurses._core.textbuffer.TextBuffer`; what is here is the widget
-    around it - options, key bindings, what the tags look like on screen, and
-    the two-directional scrolling that a Text needs and an Entry does not.
-
     Everything is addressed by index, written ``line.char`` with lines
     counting from 1. ``insert`` is the cursor, ``end`` is past everything, and
     ``sel.first``/``sel.last`` are the ends of the selection. Because Tk keeps
-    a newline at the end of the buffer that no edit can remove, ``end`` on a
+    a newline at the end of the text that no edit can remove, ``end`` on a
     one-line Text is ``2.0`` and ``get("1.0", "end")`` comes back with a
-    newline nobody typed. That surprises people, and it is kept, because
-    tkinter code depends on it.
+    newline nobody typed. That is kept, because tkinter code depends on it.
 
     ``wrap`` decides what a long line does: ``none`` scrolls sideways,
     ``char`` breaks wherever the width runs out, ``word`` at the last space
-    that fits. The distinction between a line in the buffer and a line on
-    screen runs through the whole widget - Up and Down move by *display*
-    lines, as they do in every editor, while ``insert linestart`` means the
-    beginning of the real line.
+    that fits. Up and Down move by *display* lines, as they do in every
+    editor, while ``insert linestart`` means the beginning of the real line.
+
+    Sample output:
+        # size: 40x8
+        text = tk.Text(root, width=30, height=4)
+        text.insert("1.0", "Some text, and some of it\\nin bold.")
+        text.tag_configure("strong", font="TkDefaultFont 10 bold")
+        text.tag_add("strong", "2.3", "2.7")
+        text.pack()
+
+    Options:
+        autoseparators: Whether undo groups edits by itself.
+        blockcursor: Whether the insertion cursor covers a whole character.
+        endline: The line after the last one shown, to show part of a text.
+        inactiveselectbackground: The selection's background while the text
+            does not have the focus.
+        insertunfocussed: How the insertion cursor looks without the focus:
+            ``none``, ``hollow`` or ``solid``.
+        maxundo: How many edits undo keeps; 0 is no limit.
+        spacing1: Space above each line of the text.
+        spacing2: Space between the display lines a wrapped line becomes.
+        spacing3: Space below each line of the text.
+        startline: The first line shown, to show part of a text.
+        tabs: Where tab stops are, and how text lines up on them: ``"8 20
+            right"``.
+        tabstyle: ``tabular``, or ``wordprocessor`` - each tab goes to the next
+            stop after the text before it.
+        undo: Whether edits can be undone.
+        wrap: ``none``, ``char`` or ``word``.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``background``, ``borderwidth``, ``cursor``, ``exportselection``,
+    ``font``, ``foreground``, ``height``, ``highlightbackground``,
+    ``highlightcolor``, ``highlightthickness``, ``insertbackground``,
+    ``insertborderwidth``, ``insertofftime``, ``insertontime``,
+    ``insertwidth``, ``padx``, ``pady``, ``relief``, ``selectbackground``,
+    ``selectborderwidth``, ``selectforeground``, ``setgrid``, ``state``,
+    ``takefocus``, ``width``, ``xscrollcommand``, ``yscrollcommand``.
+
+    Differences from tkinter:
+        The insertion cursor is the terminal's own, so ``blockcursor``,
+        ``insertunfocussed``, ``insertbackground``, ``insertborderwidth``,
+        ``insertofftime``, ``insertontime`` and ``insertwidth`` draw nothing,
+        and nor does ``selectborderwidth``. ``setgrid`` changes nothing, a
+        terminal being a grid already. ``highlightbackground``,
+        ``highlightcolor`` and ``highlightthickness`` are accepted and draw
+        nothing: the focus is shown by markers instead. So is ``cursor``: the
+        mouse pointer belongs to the terminal.
+
+    Sample output (spacing1, spacing2, spacing3):
+        # size: 40x12
+        text = tk.Text(root, width=14, height=9, wrap="word", spacing1=1,
+                       spacing2=1, spacing3=1)
+        text.insert("1.0", "A line long enough to wrap.\\nAnother.")
+        text.pack()
+
+    Sample output (tabs, tabstyle):
+        text = tk.Text(root, width=30, height=3, tabs="10 20 right",
+                       tabstyle="wordprocessor")
+        text.insert("1.0", "Name\\tQty\\tPrice\\nPears\\t4\\t1.20")
+        text.pack()
+
+    Sample output (wrap):
+        # size: 50x7
+        for wrap in ("char", "word"):
+            text = tk.Text(root, width=12, height=4, wrap=wrap)
+            text.insert("1.0", "Wrapped by character or by word")
+            text.pack(side="left", padx=1)
+
+    Sample output (inactiveselectbackground):
+        text = tk.Text(root, width=24, height=2, inactiveselectbackground="blue")
+        text.insert("1.0", "Selected, not focused")
+        text.tag_add("sel", "1.0", "1.8")
+        text.pack()
     """
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
@@ -11897,11 +12397,12 @@ class Text(_Drawable, XView, YView):
     def insert(self, index: Any, chars: str, *tags: str) -> None:
         """Insert text, optionally tagging everything inserted.
 
-        A disabled Text ignores it, silently, as Tk's does: "no insertions or
-        deletions are allowed", and measured on Tk 9.0.2 nothing is raised
-        either. The tkinter idiom for a read-only display is to set the state
-        to normal around the insert. TkCurses-aah.
+        A disabled Text ignores it, silently, as Tk's does. The usual way to
+        keep a Text read-only and still fill it is to set the state to
+        ``normal`` around the insert.
         """
+        # Tk's manual: "no insertions or deletions are allowed", and measured on
+        # Tk 9.0.2 nothing is raised either. TkCurses-aah.
         if not self._editable:
             return
         start = self._resolve(index)
@@ -11913,8 +12414,9 @@ class Text(_Drawable, XView, YView):
     def delete(self, first: Any, last: Any = None) -> None:
         """Delete a range, or one character from ``first``.
 
-        Ignored while disabled, as :meth:`insert` is. TkCurses-aah.
+        Ignored while disabled, as :meth:`insert` is.
         """
+        # TkCurses-aah.
         if not self._editable:
             return
         if last is None:
@@ -12003,19 +12505,19 @@ class Text(_Drawable, XView, YView):
     def bbox(self, index: Any) -> tuple[int, int, int, int] | None:
         """Where the character at ``index`` is, as ``(x, y, width, height)``.
 
-        One cell, so the size is usually ``1, 1``. None when the character
-        is not on screen, horizontally as well as vertically: a long line
-        scrolled sideways puts characters out of view without putting their
-        line out of view, and Tk returns None for those too.
+        One cell, so the size is usually ``1, 1``. None when the character is
+        not on screen, horizontally as well as vertically: a long line scrolled
+        sideways puts characters out of view without putting their line out of
+        view.
 
-        But for the last character of a row - the newline, or the space a
-        word wrap broke at - which Tk draws to the right edge of the view
-        wherever it is: its box runs from where it is, off to the left if
-        need be, to that edge, and past the edge it is a box of no width
-        on it. Measured on Tk 9.0.2; tk::TextScrollPages reads it, so a
-        cursor at the end of a line scrolled out of view to the right pages
-        to the right edge. TkCurses-5co5.
+        The last character of a row - the newline, or the space a word wrap
+        broke at - is the exception, because Tk draws it to the right edge of
+        the view: its box runs from where it is to that edge.
         """
+        # Measured on Tk 9.0.2: the box runs off to the left if need be, and
+        # past the edge it is a box of no width on it. tk::TextScrollPages reads
+        # it, so a cursor at the end of a line scrolled out of view to the right
+        # pages to the right edge. TkCurses-5co5.
         found = self._row_and_column(index)
         if found is None:
             return None
@@ -12125,33 +12627,31 @@ class Text(_Drawable, XView, YView):
         """Take back the most recent group of edits, and answer the ranges
         they changed, flat - Tk 9's ``edit undo``.
 
+        As each edit is taken back, the cursor of the Text that made it - this
+        one or a peer - goes to where it happened and is brought into view:
+        before text that went, after text that comes back.
+
+        With ``undo`` off this does nothing and raises nothing. A disabled Text
+        changes nothing, but still raises on an empty stack. ``()`` where
+        nothing is done, as tkinter answers ``""``.
+
         Raises:
             TclError: If there is nothing to undo, as tkinter does.
 
-        As each edit is taken back, the cursor of the Text that made it -
-        this one or a peer - goes to where it happened and is brought into
-        view: before text that went, after text that comes back. Measured on
-        Tk 9.0.2, where undoing an insertion of three lines at 1.0, made with
-        the cursor at 30.0, leaves the cursor at 1.0 and the view there; a
-        peer's edit undone here moves the peer's cursor and not this one's.
-        Ours left the cursor where it was and scrolled to it. TkCurses-2sbq.
-
-        With ``-undo false`` this does nothing at all and raises nothing,
-        which is also measured rather than assumed: Tk treats "undo is off"
-        and "undo is on but the stack is empty" as two different situations,
-        and only the second is an error.
-
-        A disabled Text changes nothing, but still raises on an empty stack,
-        as Tk's does (measured). **Deliberately unlike Tk**, the stack does
-        not move either: Tk 9.0.2's disabled undo pops the group while
-        refusing its edits, so the history no longer describes the text and a
-        later redo applies the same edit twice - "hello world" became "hello
-        world world". Copying that would copy a defect. TkCurses-aah. Nor
-        does the cursor move, and nothing is answered as changed, where Tk's
-        answers the ranges it refused and moves the cursor to them.
-
-        ``()`` where nothing is done, as tkinter answers ``""``.
+        Differences from tkinter:
+            A disabled Text keeps its undo history as it was. Tk 9.0.2 takes
+            the group off the stack while refusing its edits, so a later redo
+            applies the same edit twice, and answers the ranges it refused.
         """
+        # Measured on Tk 9.0.2: undoing an insertion of three lines at 1.0, made
+        # with the cursor at 30.0, leaves the cursor at 1.0 and the view there;
+        # a peer's edit undone here moves the peer's cursor and not this one's.
+        # Ours left the cursor where it was and scrolled to it. TkCurses-2sbq.
+        #
+        # Tk treats "undo is off" and "undo is on but the stack is empty" as two
+        # different situations, and only the second is an error. Tk's disabled
+        # undo turned "hello world" into "hello world world" after a redo;
+        # copying that would copy a defect. TkCurses-aah.
         if not self.getboolean(self._options["undo"]):
             return ()
         if not self._editable:
@@ -12258,10 +12758,11 @@ class Text(_Drawable, XView, YView):
     def mark_set(self, name: str, index: Any) -> None:
         """Put a mark at an index.
 
-        The view stays where it is, even for ``insert``, as Tk's does:
-        text.tcl's bindings call ``see`` themselves. Measured on Tk 9.0.2.
-        TkCurses-5co5.
+        The view stays where it is, even for ``insert``, as Tk's does: call
+        :meth:`see` to bring the mark into view.
         """
+        # text.tcl's bindings call see themselves. Measured on Tk 9.0.2.
+        # TkCurses-5co5.
         self._buffer.mark_set(name, self._resolve(index))
         self._redraw()
 
@@ -12819,14 +13320,16 @@ class Text(_Drawable, XView, YView):
         """Put an index on screen, as Tk does: the least scroll when it is
         near the view, and otherwise centred on it, each way.
 
-        Measured on Tk 9.0.2 at heights 1 to 18 and widths 9 to 30: an
-        index up to ``max(3, height // 3)`` rows past the view - or
-        ``max(3, width // 3)`` columns - is scrolled to the edge; further,
-        its row goes ``(height + 1) // 2`` from the top and its column
-        ``width // 2`` from the left. A Text one row tall is the exception:
-        Tk's centring in pixels leaves that row half in view, which in
-        cells is out of it, so here it stays in view. TkCurses-5co5.
+        An index up to a third of the height past the view - at least three
+        rows - is scrolled to the edge; one further away is centred. Columns
+        work the same way with the width.
         """
+        # Measured on Tk 9.0.2 at heights 1 to 18 and widths 9 to 30: up to
+        # max(3, height // 3) rows past, or max(3, width // 3) columns, goes to
+        # the edge; further, its row goes (height + 1) // 2 from the top and its
+        # column width // 2 from the left. A Text one row tall is the exception:
+        # Tk's centring in pixels leaves that row half in view, which in cells
+        # is out of it, so here it stays in view. TkCurses-5co5.
         target = self._resolve(index)
         width, height = self._view_size()
         first = self._top
@@ -13937,23 +14440,53 @@ class Canvas(_Drawable, XView, YView):
     treated one cell as one unit would draw every circle as a tall ellipse.
     This one is a plane of **half-cells** instead - ``▀`` and ``▄`` divide a
     cell across the middle, and each half is very nearly square - so a circle
-    is a circle. :mod:`tkcurses._core.canvas` does the drawing and the
-    folding of pixel pairs into cells.
+    is a circle.
 
-    Two coordinate systems therefore meet on this widget, and only one of
-    them is Tk's:
+    Sample output:
+        # size: 40x10
+        canvas = tk.Canvas(root, width=30, height=8)
+        canvas.create_rectangle(1, 1, 12, 12, outline="cyan")
+        canvas.create_oval(16, 1, 28, 13, fill="red")
+        canvas.create_text(15, 15, text="half-cells")
+        canvas.pack()
 
-    - ``width`` and ``height`` are in **cells**, like every other widget
-      here. Pixel dimensions have no cell equivalent and are left out rather
-      than accepted and ignored.
-    - Item coordinates are in **pixels**: one cell wide, half a cell tall. A
-      canvas 40 cells by 10 is a plane 40 pixels by 20.
+    Options:
+        closeenough: How near, in pixels, the mouse must be to an item to be
+            over it.
+        confine: Whether the view is kept within ``scrollregion``.
+        offset: Where stipple patterns start: ``x,y``, ``#x,y`` or a compass
+            point.
+        scrollregion: The area that can be scrolled to: ``"left top right
+            bottom"``.
+        xscrollincrement: The step a horizontal scroll moves by; 0 is a tenth
+            of the view.
+        yscrollincrement: The step a vertical scroll moves by.
 
-    Text is the one thing that cannot live on that plane: a glyph occupies a
-    whole cell. A text item therefore snaps to the nearest cell row, and
-    while it is on top nothing else can share those cells - which is what you
-    want for a label on a diagram, and worth knowing before putting one in
-    the middle of a drawing.
+    Standard options, described in :doc:`/reference/options`:
+    ``background``, ``borderwidth``, ``cursor``, ``foreground``, ``height``,
+    ``highlightbackground``, ``highlightcolor``, ``highlightthickness``,
+    ``insertbackground``, ``insertborderwidth``, ``insertofftime``,
+    ``insertontime``, ``insertwidth``, ``padx``, ``pady``, ``relief``,
+    ``selectbackground``, ``selectborderwidth``, ``selectforeground``,
+    ``state``, ``takefocus``, ``width``, ``xscrollcommand``,
+    ``yscrollcommand``.
+
+    Differences from tkinter:
+        Two coordinate systems meet on this widget, and only one of them is
+        Tk's. ``width`` and ``height`` are in **cells**, like every other
+        widget here. Item coordinates are in **pixels**: one cell wide, half a
+        cell tall, so a canvas 40 cells by 10 is a plane 40 pixels by 20.
+
+        Text is the one thing that cannot live on that plane: a glyph occupies
+        a whole cell. A text item snaps to the nearest cell row, and while it
+        is on top nothing else can share those cells.
+
+        The insertion cursor is the terminal's own, so ``insertbackground``,
+        ``insertborderwidth``, ``insertofftime``, ``insertontime`` and
+        ``insertwidth`` draw nothing, and nor does ``selectborderwidth``.
+        ``highlightbackground``, ``highlightcolor`` and ``highlightthickness``
+        are accepted and draw nothing: the focus is shown by markers instead. So
+        is ``cursor``: the mouse pointer belongs to the terminal.
     """
 
     #: What each kind of item accepts, on top of the options every item has.
@@ -14832,23 +15365,67 @@ def _canvas_mouse(event: Event) -> None:
 class Menu(_Drawable):
     """A list of things to choose, posted over everything else.
 
-    A menu is the one widget here that is placed against the *screen* rather
-    than inside its parent. It is not packed or gridded: it is **posted** at a
-    point - by :meth:`post`, by :meth:`tk_popup`, or by a menubar - and
-    :mod:`tkcurses._core.menus` works out where it actually fits. A menu with
-    no room below its point is drawn above it, one that would run off the
-    right is pulled left, and one taller than the screen scrolls rather than
-    being cut off.
+    A menu is the one widget placed against the *screen* rather than inside
+    its parent. It is not packed or gridded: it is **posted** at a point - by
+    ``post``, by ``tk_popup``, or by a menubar or a Menubutton - and placed
+    where it fits. A menu with no room below its point is drawn above it, one
+    that would run off the right is pulled left, and one taller than the
+    screen scrolls rather than being cut off.
 
-    While a menu is posted it holds the grab and the focus, so every key and
-    every click reaches it - including a click somewhere else, which is how it
-    knows to dismiss itself. Escape dismisses it too, and so does invoking
-    anything on it.
+    While a menu is posted every key and every click reaches it - including a
+    click somewhere else, which dismisses it. Escape dismisses it too, and so
+    does invoking anything on it.
 
     The same widget is also a **menubar** when a toplevel is given one
     through its ``menu`` option. It then draws in a row across the top of
     that window, its cascades post beneath their labels, and the toplevel
     lays its children out in what is left.
+
+    Sample output:
+        # size: 40x8
+        menu = tk.Menu(root)
+        menu.add_command(label="Open...")
+        menu.add_command(label="Save")
+        menu.add_separator()
+        menu.add_checkbutton(label="Word wrap")
+        menu.add_command(label="Quit")
+        menu.post(2, 1)
+
+    Options:
+        activerelief: The relief of the entry under the mouse or the
+            keyboard.
+        postcommand: Called just before the menu is posted, to bring its
+            entries up to date.
+        selectcolor: The colour of a check or radio entry's indicator while it
+            is on.
+        tearoff: Whether the menu starts with an entry that tears it off into
+            a window of its own.
+        tearoffcommand: Called when the menu is torn off.
+        title: The title of the window a torn-off menu becomes.
+        type: ``normal``, ``menubar`` or ``tearoff``.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``activebackground``, ``activeborderwidth``, ``activeforeground``,
+    ``background``, ``borderwidth``, ``cursor``, ``disabledforeground``,
+    ``font``, ``foreground``, ``highlightbackground``, ``highlightcolor``,
+    ``highlightthickness``, ``padx``, ``pady``, ``relief``, ``takefocus``.
+
+    Differences from tkinter:
+        A menu cannot be torn off: ``tearoff`` is kept and counted in the
+        indices as in Tk, and no tear-off line is drawn, so ``title`` has
+        nothing to name. ``activeborderwidth`` draws nothing; the active entry
+        is shown by its colours and ``activerelief``. ``highlightbackground``,
+        ``highlightcolor`` and ``highlightthickness`` are accepted and draw
+        nothing: the focus is shown by markers instead. So is ``cursor``: the
+        mouse pointer belongs to the terminal.
+
+    Sample output (activerelief):
+        # size: 40x7
+        menu = tk.Menu(root, activerelief="raised")
+        menu.add_command(label="Open...")
+        menu.add_command(label="Save")
+        menu.post(2, 1)
+        menu.activate(0)
     """
 
     _clipped_by_master = False
@@ -15151,11 +15728,14 @@ class Menu(_Drawable):
     def xposition(self, spec: Any) -> int:
         """The column an entry's column starts at, counted as yposition is.
 
-        0 in a menu of one column; in one laid out with ``-columnbreak``,
-        how far across its column begins. Tk answers in pixels and counts
-        the border; this counts cells from where the entries start, as
-        :meth:`yposition` does. TkCurses-aj1.13.1.
+        0 in a menu of one column; in one laid out with ``columnbreak``, how far
+        across its column begins.
+
+        Differences from tkinter:
+            Tk answers in pixels and counts the border; this counts cells from
+            where the entries start, as :meth:`yposition` does.
         """
+        # TkCurses-aj1.13.1.
         at = self.index(spec)
         return 0 if at is None else self._places()[at].x
 
@@ -15259,13 +15839,15 @@ class Menu(_Drawable):
     def bind_accelerators(self, target: Misc | None = None) -> list[str]:
         """Bind every entry's accelerator to the entry, submenus included.
 
-        **Not tkinter API** - a TkCurses addition, like ``winfo_colordepth``.
-        In Tk the accelerator is display only: its manual says the option
-        "does not actually set the corresponding binding", so an application
-        writes each shortcut twice, as text and as a binding, and the two
-        drift apart. This makes the binding from the text, read by
-        :func:`~tkcurses._core.menus.accelerator_sequence` - ``Ctrl+O``,
-        ``^S``, ``Alt+F4``, ``Ctrl+X Ctrl+S``.
+        In Tk the accelerator is display only - its manual says the option "does
+        not actually set the corresponding binding" - so a program writes each
+        shortcut twice, as text and as a binding, and the two drift apart. This
+        makes the binding from the text: ``Ctrl+O``, ``^S``, ``Alt+F4``,
+        ``Ctrl+X Ctrl+S``.
+
+        Each binding is added rather than replacing what is there, and runs the
+        entry it was made for even if entries are inserted before it later. A
+        disabled entry's shortcut does nothing, as choosing it would.
 
         Args:
             target: The widget to bind on. By default every widget, through
@@ -15279,11 +15861,11 @@ class Menu(_Drawable):
             ValueError: If an accelerator cannot be read, naming the entry -
                 before anything is bound, so it is all or nothing.
 
-        Each binding is added rather than replacing what is there, and runs
-        the entry by what it IS, not by its index: entries inserted
-        afterwards do not move it onto another. A disabled entry's shortcut
-        does nothing, as choosing it would. TkCurses-aj1.13.1.
+        TkCurses extension:
+            tkinter has no such method.
         """
+        # Read by _core.menus.accelerator_sequence. The binding runs the entry
+        # by what it is, not by its index. TkCurses-aj1.13.1.
         found: list[tuple[str, Menu, MenuEntry]] = []
         self._collect_accelerators(found, set())
         bind = target.bind if target is not None else self.bind_all
@@ -15878,7 +16460,7 @@ def _menu_motion(event: Event) -> None:
 
 
 class Listbox(_Drawable, XView, YView):
-    """A scrollable list of strings, one of which is selected.
+    """A scrollable list of strings, any of which may be selected.
 
     Four selection modes, as in Tk. ``browse`` - the default - keeps one item
     selected and moves it with the arrows; ``single`` selects only by click or
@@ -15889,6 +16471,35 @@ class Listbox(_Drawable, XView, YView):
     The distinction between active and selected is the one worth holding on
     to: the active item is where the keyboard is, and in every mode but
     browse it can be somewhere the selection is not.
+
+    Sample output:
+        fruit = tk.Listbox(root, height=4)
+        for name in ("Apples", "Pears", "Plums", "Quinces"):
+            fruit.insert("end", name)
+        fruit.selection_set(1)
+        fruit.pack()
+
+    Options:
+        activestyle: How the active item is marked: ``underline``, ``dotbox``
+            or ``none``.
+        listvariable: A variable holding the items, as a Tcl list. Changing
+            either changes the other.
+        selectmode: ``browse``, ``single``, ``multiple`` or ``extended``.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``background``, ``borderwidth``, ``cursor``, ``disabledforeground``,
+    ``exportselection``, ``font``, ``foreground``, ``height``,
+    ``highlightbackground``, ``highlightcolor``, ``highlightthickness``,
+    ``justify``, ``padx``, ``pady``, ``relief``, ``selectbackground``,
+    ``selectborderwidth``, ``selectforeground``, ``setgrid``, ``state``,
+    ``takefocus``, ``width``, ``xscrollcommand``, ``yscrollcommand``.
+
+    Differences from tkinter:
+        ``selectborderwidth`` draws nothing: a selection is shown by its
+        colours. ``setgrid`` changes nothing, a terminal being a grid already.
+        ``highlightbackground``, ``highlightcolor`` and ``highlightthickness``
+        are accepted and draw nothing: the focus is shown by markers instead. So
+        is ``cursor``: the mouse pointer belongs to the terminal.
     """
 
     _STATE_COLOURS: ClassVar[dict[str, tuple[str | None, str | None]]] = {
@@ -16109,12 +16720,11 @@ class Listbox(_Drawable, XView, YView):
     def insert(self, index: Any, *elements: str) -> None:
         """Insert items before ``index``; ``end`` appends.
 
-        Ignored while disabled, as Tk ignores it - measured on Tk 9.0.2, and
-        what ``listbox(n)`` says: *"items may not be inserted or deleted"*.
-        So are ``delete``, the ``selection`` commands and ``activate``; the
-        view still moves, and the ``listvariable`` still sets the items.
-        TkCurses-46ap.
+        Ignored while disabled, as Tk ignores it: "items may not be inserted or
+        deleted". So are ``delete``, the ``selection`` methods and ``activate``;
+        the view still moves, and the ``listvariable`` still sets the items.
         """
+        # Measured on Tk 9.0.2. TkCurses-46ap.
         if self._disabled:
             return
         at = len(self._items) if index in ("end", END) else self.index(index)
@@ -16222,22 +16832,17 @@ class Listbox(_Drawable, XView, YView):
     def nearest(self, y: int) -> int:
         """The item nearest row ``y`` **within this widget**.
 
-        Widget-relative, as Tk's is: "given a y-coordinate within the listbox
-        window". Measured on 9.0.2, ``nearest(0)`` is the first visible item
-        wherever the listbox sits on screen, and handing it a screen row
-        gives nonsense.
-
-        It used to subtract ``winfo_rooty()``, which made the tkinter idiom -
-        ``listbox.nearest(event.y)`` in a binding - answer with the first
-        item for every click, since the widget-relative y came out negative
-        and clamped. Nothing internal depended on it: the click handler works
-        the row out itself. TkCurses-9hr.
-
-        Outside the rows it is the nearest visible one - measured on Tk
-        9.0.2, a pointer below a four-row list scrolled to 2 gives 5, not
-        the last item - which is what a drag held past the edge selects to.
-        This used to give the last item. TkCurses-cpk9.
+        Widget-relative, as Tk's is, so ``listbox.nearest(event.y)`` in a
+        binding answers the item under the mouse. Outside the rows it is the
+        nearest visible one, which is what a drag held past the edge selects
+        to.
         """
+        # Measured on 9.0.2: nearest(0) is the first visible item wherever the
+        # listbox sits on screen. It used to subtract winfo_rooty(), which made
+        # nearest(event.y) answer the first item for every click. TkCurses-9hr.
+        #
+        # A pointer below a four-row list scrolled to 2 gives 5, not the last
+        # item; this used to give the last item. TkCurses-cpk9.
         area = self._text_area()
         row = max(0, min(y - area.y, area.height - 1))
         return max(0, min(max(0, len(self._items) - 1), self._top + row))
@@ -16251,12 +16856,12 @@ class Listbox(_Drawable, XView, YView):
     def selection_set(self, first: Any, last: Any = None) -> None:
         """Select from ``first`` to ``last`` inclusive, adding to what is.
 
-        Whatever ``selectmode`` says: measured on Tk 9.0.2,
-        ``selection_set(1, 4)`` then ``selection_set(0)`` is ``(0, 1, 2, 3,
-        4)`` in browse and single too. The mode belongs to the class bindings
-        (``listbox.tcl``), not to the widget command - TkCurses-xk41. Nor does
-        the command fire ``<<ListboxSelect>>``; a gesture does.
+        Whatever ``selectmode`` says: the mode belongs to the bindings, not to
+        this method, so ``selection_set(1, 4)`` then ``selection_set(0)``
+        selects 0 to 4 in browse and single too. It does not fire
+        ``<<ListboxSelect>>``; a gesture does.
         """
+        # Measured on Tk 9.0.2; the mode lives in listbox.tcl. TkCurses-xk41.
         if self._disabled:
             return
         self._selection |= set(self._index_range(first, last))
@@ -16310,10 +16915,11 @@ class Listbox(_Drawable, XView, YView):
     def activate(self, index: Any) -> None:
         """Make ``index`` the active item - where the keyboard is.
 
-        It does not scroll: in Tk the bindings that move the active item
-        call ``see`` themselves, and a program that calls ``activate`` keeps
-        its view. This used to scroll to it. TkCurses-cpk9.
+        It does not scroll: in Tk the bindings that move the active item call
+        :meth:`see` themselves, and a program that calls ``activate`` keeps its
+        view.
         """
+        # This used to scroll to it. TkCurses-cpk9.
         if self._disabled:
             return
         self._active = max(0, min(max(0, len(self._items) - 1), self.index(index)))
@@ -16366,12 +16972,13 @@ class Listbox(_Drawable, XView, YView):
     def see(self, index: Any) -> None:
         """Scroll so ``index`` is visible.
 
-        Measured on Tk 9.0.2 over every top row and index on 20 items at
-        heights 1 to 9: an item no more than a third of the height out of
-        view is brought to the nearest edge, and one further away is
-        centred - ``see(5)`` on four rows from the top puts 4 at the top,
-        where the nearest edge would have put 2. This used to scroll as little as possible. TkCurses-cpk9.
+        An item no more than a third of the height out of view is brought to
+        the nearest edge, and one further away is centred, as in Tk.
         """
+        # Measured on Tk 9.0.2 over every top row and index on 20 items at
+        # heights 1 to 9: see(5) on four rows from the top puts 4 at the top,
+        # where the nearest edge would have put 2. This used to scroll as little
+        # as possible. TkCurses-cpk9.
         position = self.index(index)
         height = self._text_area().height
         if height <= 0:
@@ -16417,20 +17024,17 @@ class Listbox(_Drawable, XView, YView):
     def xview(self, *args: Any) -> Any:
         """Report or move the horizontal view, in characters.
 
-        Missing outright until TkCurses-019, so a horizontal scrollbar could
-        not be attached to a listbox at all. Measured against Tk 9.0.2, a
-        10-wide listbox holding a 30-character item:
-
-        * ``xview()`` answers ``(0.0, 0.333...)`` - the offset and the
-          offset-plus-width, each over the WIDEST item.
-        * a unit is one character; a page is the width less two, never less
-          than one (8 at width 10, 18 at 20, 1 at 3).
-        * ``moveto`` rounds to the nearest character - 0.49 and 0.51 of 30
-          both land on 15 - and a bare index is a character offset. All three
-          are clamped so the widest item's end is the furthest you can go.
-
-        The width here is the text's, between the two selection markers.
+        ``xview()`` answers the first and last columns in view as fractions of
+        the widest item, which is what a horizontal scrollbar wants. A unit is
+        one character; a page is the width less two, at least one. ``moveto``
+        rounds to the nearest character, and a bare index is a character
+        offset. All of them stop with the widest item's end at the right edge.
         """
+        # Missing outright until TkCurses-019. Measured against Tk 9.0.2, a
+        # 10-wide listbox holding a 30-character item: xview() is (0.0,
+        # 0.333...); a page is 8 at width 10, 18 at 20, 1 at 3; moveto 0.49 and
+        # 0.51 of 30 both land on 15. The width here is the text's, between the
+        # two selection markers.
         if not args:
             return self._horizontal_fractions()
         width = self._body_width()
@@ -16950,16 +17554,63 @@ def _listbox_refresh(event: Event) -> None:
 class PanedWindow(_Drawable):
     """A container whose children are divided by sashes a person can drag.
 
-    It is the only widget here that is also a geometry manager: children are
-    added with :meth:`add` rather than packed or gridded, and
-    :class:`~tkcurses._core.paned.PanedLayout` arranges them. The difference
-    from pack is that the arrangement is *stateful* - a sash someone dragged
-    stays where they put it, and a later resize works from there rather than
-    starting again from what the children ask for.
+    Children are added with ``add`` rather than packed or gridded, and the
+    paned window arranges them. The difference from pack is that the
+    arrangement is *stateful* - a sash someone dragged stays where they put
+    it, and a later resize works from there rather than starting again from
+    what the children ask for.
 
     Drag a sash with the mouse, or move it with the arrows once the paned
     window has the focus: a terminal user with no mouse would otherwise have
     no way to resize a pane at all.
+
+    Sample output:
+        panes = tk.PanedWindow(root, width=30, height=5)
+        panes.pack()
+        panes.add(tk.Label(panes, text="Left"))
+        panes.add(tk.Label(panes, text="Right"))
+
+    Options:
+        handlepad: How far along the sash the handle is drawn.
+        handlesize: How long the handle is.
+        opaqueresize: Whether the panes follow a sash as it is dragged, or
+            move once it is let go.
+        proxybackground: The colour of the outline that shows where a sash
+            will go while it is dragged.
+        proxyborderwidth: The border of that outline.
+        proxyrelief: The relief of that outline.
+        sashcursor: The mouse pointer over a sash.
+        sashpad: Space either side of each sash.
+        sashrelief: The relief of each sash.
+        sashwidth: How wide each sash is.
+        showhandle: Whether each sash has a handle to grab.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``background``, ``borderwidth``, ``cursor``, ``foreground``, ``height``,
+    ``highlightbackground``, ``highlightcolor``, ``highlightthickness``,
+    ``orient``, ``padx``, ``pady``, ``relief``, ``takefocus``, ``width``.
+
+    Differences from tkinter:
+        ``proxyborderwidth`` and ``sashcursor`` are kept and read back and
+        change nothing: an outline is one cell, and the pointer is the
+        terminal's. ``highlightbackground``, ``highlightcolor`` and
+        ``highlightthickness`` are accepted and draw nothing: the focus is shown
+        by markers instead. So is ``cursor``: the mouse pointer belongs to the
+        terminal.
+
+    Sample output (sashrelief, sashwidth, sashpad):
+        panes = tk.PanedWindow(root, width=30, height=4, sashrelief="raised",
+                               sashwidth=3, sashpad=1)
+        panes.pack()
+        panes.add(tk.Label(panes, text="Left"))
+        panes.add(tk.Label(panes, text="Right"))
+
+    Sample output (showhandle, handlesize, handlepad):
+        panes = tk.PanedWindow(root, width=30, height=5, showhandle=1,
+                               handlesize=2, handlepad=1)
+        panes.pack()
+        panes.add(tk.Label(panes, text="Left"))
+        panes.add(tk.Label(panes, text="Right"))
     """
 
     #: The sash, drawn along the whole division.
@@ -17118,7 +17769,12 @@ class PanedWindow(_Drawable):
         self._manage(child)
 
     def insert(self, index: Any, child: Widget, **kw: Any) -> None:
-        """Add a pane at a position rather than at the end."""
+        """Add a pane at a position rather than at the end.
+
+        TkCurses extension:
+            tkinter's PanedWindow adds panes only with :meth:`add`, whose
+            ``before`` and ``after`` options do the same.
+        """
         self._paned.insert(
             self._pane_index(index), child, self._pane_options(kw, child)
         )
@@ -17528,13 +18184,50 @@ class Scrollbar(_Drawable):
     """A scroll control: arrows, a trough, and a thumb showing the view.
 
     A scrollbar holds no content of its own. It is told where the view is by
-    whatever it scrolls, through :meth:`set`, and it tells that thing to move
-    by calling its ``command``. Neither end knows anything else about the
-    other, which is why any widget with a ``yview`` can be scrolled by one.
+    whatever it scrolls, through ``set``, and it tells that thing to move by
+    calling its ``command``. Neither end knows anything else about the other,
+    which is why any widget with a ``yview`` can be scrolled by one::
+
+        bar = tk.Scrollbar(root, command=listbox.yview)
+        listbox.configure(yscrollcommand=bar.set)
 
     The command is called the way Tk calls it: ``("moveto", fraction)`` when
     the thumb is dragged, and ``("scroll", count, "units" | "pages")`` when an
     arrow or the trough is clicked.
+
+    Sample output:
+        items = tk.Listbox(root, height=5)
+        for n in range(20):
+            items.insert("end", f"Item {n}")
+        bar = tk.Scrollbar(root, command=items.yview)
+        items.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        items.pack(side="left")
+
+    Options:
+        activerelief: The relief of the part under the mouse.
+        command: Called to move the view, as above.
+        elementborderwidth: The border of the arrows and the thumb, in Tk.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``activebackground``, ``background``, ``borderwidth``, ``cursor``,
+    ``foreground``, ``highlightbackground``, ``highlightcolor``,
+    ``highlightthickness``, ``jump``, ``orient``, ``padx``, ``pady``,
+    ``relief``, ``repeatdelay``, ``repeatinterval``, ``takefocus``,
+    ``troughcolor``, ``width``.
+
+    Differences from tkinter:
+        ``elementborderwidth`` and ``troughcolor`` are kept and read back and
+        draw nothing: the arrows and the thumb are single characters.
+        ``highlightbackground``, ``highlightcolor`` and ``highlightthickness``
+        are accepted and draw nothing: the focus is shown by markers instead. So
+        is ``cursor``: the mouse pointer belongs to the terminal.
+
+    Sample output (activerelief):
+        bar = tk.Scrollbar(root, activerelief="sunken", width=3)
+        bar.pack(fill="y", expand=True)
+        bar.set(0.2, 0.5)
+        bar.activate("slider")
     """
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
@@ -17666,22 +18359,25 @@ class Scrollbar(_Drawable):
     def activate(self, index: str | None = None) -> str | None:
         """Mark one element active, or ask which one is.
 
-        Measured on Tk 9.0.2: only ``arrow1``, ``slider`` and ``arrow2`` can
-        be active. Any other name, a trough included, clears it rather than
-        raising, and asking with none active answers None.
-
-        The active element is drawn on ``activebackground``, when a program
-        gives one (TkCurses-gm66.4), and dim while ``activerelief`` is sunken,
-        which a press makes it (TkCurses-gm66.5). Tk's ``scrlbar.tcl`` also
-        activates the element under the pointer on ``<Enter>`` and
-        ``<Motion>``, which is not bound here.
+        Only ``arrow1``, ``slider`` and ``arrow2`` can be active. Any other name,
+        the trough included, clears it rather than raising, and asking with none
+        active answers None. The active element is drawn on
+        ``activebackground``, when one is given, and dim while ``activerelief``
+        is sunken, which a press makes it.
 
         Args:
             index: The element to make active. Omitted, nothing changes.
 
         Returns:
             The active element's name when asked, None when setting.
+
+        Differences from tkinter:
+            Tk activates the element under the mouse as it moves; here only a
+            press does.
         """
+        # Measured on Tk 9.0.2. activebackground: TkCurses-gm66.4; activerelief:
+        # TkCurses-gm66.5. Tk's scrlbar.tcl activates on <Enter> and <Motion>,
+        # which is not bound here.
         if index is None:
             return self._active_element or None
         self._active_element = index if index in ("arrow1", "slider", "arrow2") else ""
@@ -17950,27 +18646,78 @@ def _scrollbar_release(event: Event) -> None:
 class Scale(_Drawable):
     """A number chosen by sliding a handle along a trough.
 
-    The value is the widget's own, not the caller's, so ``get`` and ``set``
-    work with no variable at all; a ``variable`` makes it visible to other
-    widgets in the usual way, and the two are kept in step both directions.
-
-    ``from_`` sits at the left of a horizontal scale and at the *top* of a
-    vertical one, which is Tk's arrangement and the reason a vertical scale
-    counts downwards by default. Naming a ``to`` below ``from_`` reverses the
-    scale rather than failing - a volume control that runs 10 to 0 is a real
-    thing, and every conversion here works from the two ends rather than
-    assuming which is larger.
-
-    ``resolution`` is the step the value snaps to, measured from ``from_``.
-    Everything that moves the handle goes through that snap, so a scale with
-    a resolution of 5 cannot be left holding 7 by any route - including a
-    variable written from elsewhere.
+    The value is the widget's own, so ``get`` and ``set`` work with no
+    variable at all; a ``variable`` makes it visible to other widgets, and
+    the two are kept in step both ways. The arrow keys move the slider by
+    ``resolution``, and Control with them by ``bigincrement``.
 
     Focus is shown by caps at the ends of the trough, ``[`` and ``]``. Room
-    for them is reserved whether or not they are showing, so nothing moves
-    when the focus arrives; it is the same bargain Button makes with its
-    markers, and for the same reason - a terminal cannot be relied on for
-    colour.
+    for them is kept whether or not they are showing, so nothing moves when
+    the focus arrives.
+
+    Sample output:
+        volume = tk.Scale(root, from_=0, to=10, orient="horizontal")
+        volume.set(7)
+        volume.pack()
+
+    Options:
+        bigincrement: The large step, taken with Control and an arrow; 0 is a
+            tenth of the range.
+        command: Called with the new value, as a string, when it changes.
+        digits: How many significant digits the value is shown with; 0 picks
+            enough for ``resolution``.
+        from: The value at the left of a horizontal scale and at the top of a
+            vertical one. Given as ``from_``, ``from`` being a Python keyword.
+        label: Text shown beside the scale.
+        length: How long the scale is, in cells.
+        resolution: The step the value snaps to, measured from ``from``.
+        showvalue: Whether the value is shown beside the slider.
+        sliderlength: How long the slider is, in cells.
+        sliderrelief: The relief of the slider.
+        tickinterval: How far apart the numbers along the scale are; 0 shows
+            none.
+        to: The value at the other end. Below ``from``, the scale runs
+            backwards.
+        variable: A variable holding the value.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``activebackground``, ``background``, ``borderwidth``, ``cursor``,
+    ``font``, ``foreground``, ``highlightbackground``, ``highlightcolor``,
+    ``highlightthickness``, ``orient``, ``padx``, ``pady``, ``relief``,
+    ``repeatdelay``, ``repeatinterval``, ``state``, ``takefocus``,
+    ``troughcolor``, ``width``.
+
+    Differences from tkinter:
+        ``highlightbackground``, ``highlightcolor`` and ``highlightthickness``
+        are accepted and draw nothing: the focus is shown by markers instead. So
+        is ``cursor``: the mouse pointer belongs to the terminal.
+
+    Sample output (from, to):
+        tk.Scale(root, from_=100, to=0, orient="horizontal").pack()
+
+    Sample output (label):
+        tk.Scale(root, label="Volume", from_=0, to=10,
+                 orient="horizontal").pack()
+
+    Sample output (length, sliderlength):
+        tk.Scale(root, from_=0, to=10, orient="horizontal", length=30,
+                 sliderlength=4).pack()
+
+    Sample output (resolution, showvalue):
+        for show in (1, 0):
+            scale = tk.Scale(root, from_=0, to=1, resolution=0.25,
+                             showvalue=show, orient="horizontal")
+            scale.set(0.75)
+            scale.pack(pady=(0, 1))
+
+    Sample output (sliderrelief):
+        tk.Scale(root, from_=0, to=10, orient="horizontal",
+                 sliderrelief="sunken").pack()
+
+    Sample output (tickinterval):
+        # size: 40x8
+        tk.Scale(root, from_=0, to=10, tickinterval=5, length=30,
+                 orient="horizontal").pack()
     """
 
     #: Trough and handle, the same two glyphs a Scrollbar uses, because they

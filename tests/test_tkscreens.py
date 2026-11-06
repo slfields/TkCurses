@@ -78,7 +78,7 @@ def test_the_program_wraps_the_example():
     assert source.endswith("tk.Label(root).pack()\nroot.mainloop()\n")
 
 
-def test_a_section_becomes_the_directive():
+def test_a_section_becomes_a_heading_and_the_directive():
     lines = [
         "A button.",
         "",
@@ -94,24 +94,39 @@ def test_a_section_becomes_the_directive():
     assert lines == [
         "A button.",
         "",
-        "Sample output:",
-        "    .. tkcurses-sample::",
+        ".. rubric:: Sample output",
         "",
-        "        for n in range(2):",
+        ".. tkcurses-sample::",
         "",
-        "            tk.Button(root).pack()",
+        "    for n in range(2):",
+        "",
+        "        tk.Button(root).pack()",
+        "",
         "",
         "Args:",
         "    x: A thing.",
     ]
 
 
-def test_every_section_becomes_one():
-    lines = ["Sample output:", "    a()", "Sample output:", "    b()"]
+def test_a_named_sample_is_headed_with_its_option():
+    lines = ["Sample output (relief):", "    tk.Button(root, relief='groove').pack()"]
     tkscreens.expand_sections(lines)
-    assert lines.count("    .. tkcurses-sample::") == 2
-    assert "        a()" in lines
-    assert "        b()" in lines
+    assert lines[0] == ".. rubric:: Sample output: relief"
+    assert "    tk.Button(root, relief='groove').pack()" in lines
+
+
+def test_a_sample_may_name_several_options():
+    lines = ["Sample output (from, to):", "    tk.Scale(root, from_=5, to=1).pack()"]
+    tkscreens.expand_sections(lines)
+    assert lines[0] == ".. rubric:: Sample output: from, to"
+
+
+def test_every_section_becomes_one():
+    lines = ["Sample output:", "    a()", "Sample output (x):", "    b()"]
+    tkscreens.expand_sections(lines)
+    assert lines.count(".. tkcurses-sample::") == 2
+    assert "    a()" in lines
+    assert "    b()" in lines
 
 
 # -- the picture --------------------------------------------------------------
@@ -183,6 +198,16 @@ def test_raised_and_sunken_are_told_apart():
 
 def test_bold_is_bold():
     assert 'font-weight="bold"' in tkscreens.svg([[cell("a", bold=True)]], "t")
+
+
+def test_italic_and_overstrike_are_kept():
+    """A font's style is all a terminal keeps of it, so the picture shows
+    each one the terminal does."""
+    styled = cell("a")
+    styled.italics, styled.strikethrough, styled.underscore = True, True, True
+    out = tkscreens.svg([[styled]], "t")
+    assert 'font-style="italic"' in out
+    assert 'text-decoration="underline line-through"' in out
 
 
 def test_a_box_is_four_lines():

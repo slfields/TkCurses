@@ -61,11 +61,14 @@ ROOT = Path(__file__).resolve().parents[2]
 
 PRELUDE = "import tkcurses as tk\nfrom tkcurses import ttk\nroot = tk.Tk()\n"
 SECTION = "Sample output:"
+#: ``Sample output:``, or ``Sample output (relief):`` for an option's sample -
+#: ``Sample output (from, to):`` for one that shows several.
+SECTION_LINE = re.compile(r"Sample output(?: \((\w+(?:, \w+)*)\))?:")
 SIZE = re.compile(r"#\s*size:\s*(\d+)\s*x\s*(\d+)\s*$")
 DEFAULT_SIZE = (40, 10)
 
 #: Bumped when the drawing changes, so cached screens are drawn again.
-RENDERER_VERSION = "6"
+RENDERER_VERSION = "7"
 
 CELL_WIDTH = 8.4
 CELL_HEIGHT = 17
@@ -309,9 +312,12 @@ def _lines(segments: list[Segment]) -> list[str]:
 
 
 def _text(word: list[str], column: int, y: float, style: Any) -> str:
-    fg, bold, under = style
+    fg, bold, under, italic, strike = style
     attrs = ' font-weight="bold"' if bold else ""
-    attrs += ' text-decoration="underline"' if under else ""
+    attrs += ' font-style="italic"' if italic else ""
+    decorations = ["underline"] * under + ["line-through"] * strike
+    if decorations:
+        attrs += f' text-decoration="{" ".join(decorations)}"'
     text = html.escape("".join(word), quote=False)
     return (
         f'<text x="{column * CELL_WIDTH:g}" y="{y + CELL_HEIGHT * 0.76:g}" '
@@ -358,13 +364,19 @@ def svg(cells: list[list[Any]], title: str) -> str:
         y = r * CELL_HEIGHT
         word: list[str] = []
         start = 0
-        style: tuple[str, bool, bool] | None = None
+        style: tuple[str, bool, bool, bool, bool] | None = None
         for c, cell in enumerate([*row, None]):
             ch = " " if cell is None else (cell.data or " ")
             fg, _, bold, under = _style(cell) if cell is not None else ("", 0, 0, 0)
             x = c * CELL_WIDTH
             plain = cell is not None and ch not in _BOX and ch not in _BLOCKS
-            here = (fg, bool(bold), bool(under))
+            here = (
+                fg,
+                bool(bold),
+                bool(under),
+                bool(getattr(cell, "italics", False)),
+                bool(getattr(cell, "strikethrough", False)),
+            )
             # A word ends at a space, at a drawn character and at a change of
             # style; each is anchored to its own first cell, so a font whose
             # advance is not quite the cell's drifts by a word at most.
@@ -460,34 +472,43 @@ class SampleDirective(Directive):
 
 
 def expand_sections(lines: list[str]) -> None:
-    """Turn each ``Sample output:`` section into the directive, in place.
+    """Turn each ``Sample output:`` section into a heading and the directive,
+    in place, before napoleon reads the docstring.
 
-    Runs before napoleon, which then sees an ordinary section whose body
-    is a directive, and gives it its heading.
+    ``Sample output (relief):`` names the option the sample shows, and is
+    headed "Sample output: relief"; ``(from, to)`` names several. The body is already indented under the
+    section header, which is the indentation the directive needs, so it
+    moves across unchanged.
     """
     index = 0
     while index < len(lines):
         line = lines[index]
-        if line.strip() == SECTION:
-            indent = len(line) - len(line.lstrip())
-            end = index + 1
-            while end < len(lines) and (
-                not lines[end].strip()
-                or len(lines[end]) - len(lines[end].lstrip()) > indent
-            ):
-                end += 1
-            while end > index + 1 and not lines[end - 1].strip():
-                end -= 1
-            body = lines[index + 1 : end]
-            pad = " " * (indent + 4)
-            lines[index + 1 : end] = [
-                f"{pad}.. tkcurses-sample::",
-                "",
-                *(f"    {b}" if b.strip() else "" for b in body),
-            ]
-            index += 3 + len(body)
-        else:
+        match = SECTION_LINE.fullmatch(line.strip())
+        if not match:
             index += 1
+            continue
+        indent = len(line) - len(line.lstrip())
+        end = index + 1
+        while end < len(lines) and (
+            not lines[end].strip()
+            or len(lines[end]) - len(lines[end].lstrip()) > indent
+        ):
+            end += 1
+        while end > index + 1 and not lines[end - 1].strip():
+            end -= 1
+        body = lines[index + 1 : end]
+        pad = " " * indent
+        title = "Sample output" + (f": {match[1]}" if match[1] else "")
+        replacement = [
+            f"{pad}.. rubric:: {title}",
+            "",
+            f"{pad}.. tkcurses-sample::",
+            "",
+            *body,
+            "",
+        ]
+        lines[index:end] = replacement
+        index += len(replacement)
 
 
 def _process_docstring(*args: Any) -> None:

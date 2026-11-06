@@ -1,7 +1,18 @@
 # API reference
 
+```{toctree}
+:hidden:
+
+options
+widgets/index
+geometry
+images
+```
+
 Every class and function TkCurses provides. It is being written module by
-module.
+module; so far it covers the [standard options](options.md), the
+[classic widgets](widgets/index.md), the
+[geometry managers](geometry.md) and [images](images.md).
 
 ## How to read it
 
@@ -24,9 +35,16 @@ tkinter.
 Anything without either heading behaves as tkinter's does, and tkinter's
 own documentation also applies to it.
 
+A widget's own options are listed under **Options**. The options many
+widgets share - colours, borders, fonts - are described once, on
+[Standard options](options.md), and each widget lists which of them it
+takes.
+
 **Sample output** shows an example and the screen it draws. Every widget
-has one, and so does every option that changes how a widget looks. Each
-example is the body of a program that starts with
+has one, and so does every option that changes how a widget looks: on the
+widget's page as **Sample output: relief**, say, or on the standard
+options page for a shared one. Each example is the body of a program that
+starts with
 
 ```python
 import tkcurses as tk

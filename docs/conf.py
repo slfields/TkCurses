@@ -77,9 +77,11 @@ napoleon_numpy_docstring = False
 napoleon_custom_sections = [
     ("Differences from tkinter", "notes_style"),
     ("TkCurses extension", "notes_style"),
-    # An example and the screen it draws, run at build time (TkCurses-imii.16).
-    ("Sample output", "notes_style"),
+    # Each widget's own options, laid out as a function's arguments are.
+    ("Options", "params_style"),
 ]
+# "Sample output:" sections are turned into a heading and a run example by
+# docs/_ext/tkscreens.py itself, before napoleon reads the docstring.
 
 intersphinx_mapping = {"python": ("https://docs.python.org/3", None)}
 

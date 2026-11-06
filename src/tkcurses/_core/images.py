@@ -357,7 +357,12 @@ class Image:
         return len(self._pixels)
 
     def cell_height(self) -> int:
-        """Rows of terminal needed to show it, a lone pixel row rounding up."""
+        """Rows of terminal needed to show it: two pixel rows to a cell, a lone
+        pixel row rounding up.
+
+        TkCurses extension:
+            tkinter's images have no such method.
+        """
         return cells_tall(self.height())
 
     # ------------------------------------------------------------ options
@@ -423,27 +428,42 @@ class Image:
         return self._pixels[y][x]
 
     def rows(self) -> list[Row]:
-        """A copy of the pixels, row by row."""
+        """A copy of the pixels, row by row.
+
+        TkCurses extension:
+            tkinter's images have no such method.
+        """
         return [list(row) for row in self._pixels]
 
     def lit(
         self, region: tuple[int, int, int, int] | None = None
     ) -> dict[tuple[int, int], str]:
-        """Every pixel that paints, keyed by ``(x, y)``.
-
-        Exactly what :func:`~tkcurses._core.canvas.compose` takes, which is
-        the point of sharing the plane: a widget draws an image by composing
-        this, the same way a canvas draws a circle.
+        """Every pixel that paints, keyed by ``(x, y)`` - what a widget composes
+        to draw the image.
 
         Args:
             region: ``(x0, y0, x1, y1)`` in pixels, half-open, to limit the
-                result to. **A caller drawing into a window should pass the
-                part it can actually show.** Without it a 320x200 photograph
-                hands over 64,000 pixels and composes 32,000 cells on every
-                repaint, of which a 120x24 window keeps 9% - which is the
-                same fault TkCurses-g9w found in Text and Canvas, doing work
-                proportional to the content instead of to the window.
+                result to. Pass the part that can actually be shown: a large
+                picture otherwise hands over every pixel on every repaint.
+
+        TkCurses extension:
+            tkinter's images have no such method.
         """
+        # The docstring this replaced, with its measurements:
+        # Every pixel that paints, keyed by ``(x, y)``.
+        #
+        # Exactly what :func:`~tkcurses._core.canvas.compose` takes, which is
+        # the point of sharing the plane: a widget draws an image by composing
+        # this, the same way a canvas draws a circle.
+        #
+        # Args:
+        #     region: ``(x0, y0, x1, y1)`` in pixels, half-open, to limit the
+        #         result to. **A caller drawing into a window should pass the
+        #         part it can actually show.** Without it a 320x200 photograph
+        #         hands over 64,000 pixels and composes 32,000 cells on every
+        #         repaint, of which a 120x24 window keeps 9% - which is the
+        #         same fault TkCurses-g9w found in Text and Canvas, doing work
+        #         proportional to the content instead of to the window.
         if region is None:
             return {
                 (x, y): colour
@@ -524,6 +544,13 @@ class PhotoImage(Image):
         ...                    palette={"#": "cyan"})
         >>> photo.width(), photo.height(), photo.cell_height()
         (3, 2, 1)
+
+    Sample output:
+        picture = tk.PhotoImage(
+            data=["..rr..", ".rrrr.", "rryyrr", ".gggg."],
+            palette={"r": "red", "y": "yellow", "g": "green"},
+        )
+        tk.Label(root, image=picture).pack()
     """
 
     _type = "photo"
@@ -895,46 +922,62 @@ class PhotoImage(Image):
     def reduce(self, x: int, y: int | None = None) -> PhotoImage:
         """A copy averaged down by ``x`` across and ``y`` down.
 
-        The counterpart to :meth:`subsample`, which keeps every n-th pixel
-        and throws the rest away. Both are wanted: subsample is Tk's, it is
-        exact, and it is what a caller porting tkinter code reaches for -
-        but for fitting a photograph to a window it discards most of the
-        picture, and what survives is whichever pixels happened to land on
-        the grid.
-
-        Measured on the perl-Tk demo images, 320x200 reduced by six, scored
-        against a Lanczos reference computed in linear light *after*
-        quantising to the terminal palette - so this is the error a person
-        actually sees, against a resampling this code does not share any
-        arithmetic with:
-
-            picture      depth       subsample   reduce   better by
-            earth.gif    8 colours       25085    25363       -1%
-                         256              2293      494       78%
-                         truecolor        2106      260       88%
-            mickey.gif   8 colours       10969     9569       13%
-                         256              7405     1299       82%
-                         truecolor        7073      680       90%
-
-        Averaging wins decisively from 256 colours up, and mickey.gif is the
-        interesting case: flat cartoon colour with hard edges is where
-        dropping pixels should keep the palette intact and averaging should
-        muddy it, and it still loses by 90%.
-
-        **At eight colours it is a wash**, and on earth.gif fractionally
-        worse. With only eight colours to land on, a careful average and a
-        dropped pixel usually quantise to the same entry, and where they
-        differ it is a coin toss. The earlier version of this table claimed a
-        win at every depth; it was measured before :meth:`_average` worked in
-        linear light and against a reference built the same way, which
-        flattered it.
+        The counterpart to :meth:`subsample`, which keeps every n-th pixel and
+        throws the rest away. Subsample is Tk's and exact; for fitting a
+        photograph to a window, averaging keeps far more of the picture, from
+        256 colours up. At eight colours the two are much the same.
 
         A block that is more than half holes stays a hole, so a silhouette
         keeps its shape instead of growing a fringe of half-lit edges.
 
         Raises:
             TclError: If either factor is not positive.
+
+        TkCurses extension:
+            tkinter's images have no such method.
         """
+        # The docstring this replaced, with its measurements:
+        # A copy averaged down by ``x`` across and ``y`` down.
+        #
+        # The counterpart to :meth:`subsample`, which keeps every n-th pixel
+        # and throws the rest away. Both are wanted: subsample is Tk's, it is
+        # exact, and it is what a caller porting tkinter code reaches for -
+        # but for fitting a photograph to a window it discards most of the
+        # picture, and what survives is whichever pixels happened to land on
+        # the grid.
+        #
+        # Measured on the perl-Tk demo images, 320x200 reduced by six, scored
+        # against a Lanczos reference computed in linear light *after*
+        # quantising to the terminal palette - so this is the error a person
+        # actually sees, against a resampling this code does not share any
+        # arithmetic with:
+        #
+        #     picture      depth       subsample   reduce   better by
+        #     earth.gif    8 colours       25085    25363       -1%
+        #                  256              2293      494       78%
+        #                  truecolor        2106      260       88%
+        #     mickey.gif   8 colours       10969     9569       13%
+        #                  256              7405     1299       82%
+        #                  truecolor        7073      680       90%
+        #
+        # Averaging wins decisively from 256 colours up, and mickey.gif is the
+        # interesting case: flat cartoon colour with hard edges is where
+        # dropping pixels should keep the palette intact and averaging should
+        # muddy it, and it still loses by 90%.
+        #
+        # **At eight colours it is a wash**, and on earth.gif fractionally
+        # worse. With only eight colours to land on, a careful average and a
+        # dropped pixel usually quantise to the same entry, and where they
+        # differ it is a coin toss. The earlier version of this table claimed a
+        # win at every depth; it was measured before :meth:`_average` worked in
+        # linear light and against a reference built the same way, which
+        # flattered it.
+        #
+        # A block that is more than half holes stays a hole, so a silhouette
+        # keeps its shape instead of growing a fringe of half-lit edges.
+        #
+        # Raises:
+        #     TclError: If either factor is not positive.
         across, down = x, x if y is None else y
         if across <= 0 or down <= 0:
             raise TclError("reduce factors must be positive")
@@ -993,34 +1036,48 @@ class PhotoImage(Image):
         """A copy resampled to exactly ``width`` by ``height`` pixels.
 
         **The one to use when fitting a picture to a space.** :meth:`reduce`
-        takes a whole-number factor, so a picture lands on whatever size a
-        whole number happens to give rather than the size on offer. Measured
-        on mickey.gif, 320 pixels wide:
-
-            panel offered   reduce() delivers   width used
-                      120           106 cells          88%
-                      100            80 cells          80%
-                       90            80 cells          88%
-
-        A fifth of the width thrown away at a 100-cell panel, and with it a
-        fifth of the detail, for nothing but arithmetic.
-
-        It costs accuracy even at a size a whole number fits. An integer
-        factor covers exactly three input pixels where the true ratio might
-        be 3.019, so the sampling grid drifts across the picture and the
-        remainder is dropped. Scored perceptually on mickey at 106x66,
-        reduce() differed from a correct box filter by 16.16 - more than a
-        correct box filter differs from Lanczos, at 9.12.
-
-        Each output pixel is the average of the input it covers, weighted by
-        how much of each input pixel falls inside it, so the ratio need not
-        be whole. In linear light, like :meth:`reduce` - see
-        :func:`~tkcurses._core.colors.to_linear`. A block more than half hole
-        stays a hole, by the same rule and for the same reason.
+        takes a whole-number factor, so a picture lands on whatever size a whole
+        number happens to give rather than the size on offer. Each output pixel
+        here is the average of the input it covers, so the ratio need not be
+        whole. A block more than half hole stays a hole, as with :meth:`reduce`.
 
         Raises:
             TclError: If either dimension is not positive.
+
+        TkCurses extension:
+            tkinter's images have no such method.
         """
+        # The docstring this replaced, with its measurements:
+        # A copy resampled to exactly ``width`` by ``height`` pixels.
+        #
+        # **The one to use when fitting a picture to a space.** :meth:`reduce`
+        # takes a whole-number factor, so a picture lands on whatever size a
+        # whole number happens to give rather than the size on offer. Measured
+        # on mickey.gif, 320 pixels wide:
+        #
+        #     panel offered   reduce() delivers   width used
+        #               120           106 cells          88%
+        #               100            80 cells          80%
+        #                90            80 cells          88%
+        #
+        # A fifth of the width thrown away at a 100-cell panel, and with it a
+        # fifth of the detail, for nothing but arithmetic.
+        #
+        # It costs accuracy even at a size a whole number fits. An integer
+        # factor covers exactly three input pixels where the true ratio might
+        # be 3.019, so the sampling grid drifts across the picture and the
+        # remainder is dropped. Scored perceptually on mickey at 106x66,
+        # reduce() differed from a correct box filter by 16.16 - more than a
+        # correct box filter differs from Lanczos, at 9.12.
+        #
+        # Each output pixel is the average of the input it covers, weighted by
+        # how much of each input pixel falls inside it, so the ratio need not
+        # be whole. In linear light, like :meth:`reduce` - see
+        # :func:`~tkcurses._core.colors.to_linear`. A block more than half hole
+        # stays a hole, by the same rule and for the same reason.
+        #
+        # Raises:
+        #     TclError: If either dimension is not positive.
         if width <= 0 or height <= 0:
             raise TclError("resize needs a positive width and height")
         if not self._pixels or not self._pixels[0]:
@@ -1087,48 +1144,68 @@ class PhotoImage(Image):
     def quantize(self, colours: int) -> PhotoImage:
         """A copy using at most ``colours`` colours, chosen from this picture.
 
-        The counterpart to :meth:`dither`, and the difference between them is
-        *whose* palette is used. ``dither`` snaps every pixel to a colour the
-        terminal already has; this picks a small palette **out of the picture
-        itself**, which is only worth doing if those colours can then be
-        reproduced exactly.
+        Where :meth:`dither` snaps every pixel to a colour the terminal already
+        has, this picks a small palette out of the picture itself - which is only
+        worth doing where those colours can be shown exactly, on a terminal with
+        true colour. Snapped to a smaller palette afterwards, the two errors add
+        up and the picture is worse than not doing it at all.
 
-        That is the whole point, and it is easy to get backwards. A palette of
-        sixteen colours taken from the picture and then snapped to the 256
-        cube is *worse than not doing it at all*, because the two errors
-        stack. Measured, mean per-pixel error against the unquantised image,
-        with the distinct ``(fg, bg)`` pairs each needs:
-
-            picture   256 cube, shared   16 taken then snapped   16 exact
-            mickey    231 pairs  18.35   97 pairs  23.89         149 pairs  14.45
-            earth     230 pairs  14.34   102 pairs 16.32         143 pairs   7.50
-
-        So a small *exact* palette beats a large shared one on accuracy and
-        on pairs together - earth halves its error while using 87 fewer pairs
-        - and the same palette approximated is a regression. Use this where
-        the colours it picks will be shown as asked for.
-
-        Why pairs and not colours: a pair is a *combination* of foreground and
-        background, and there are only 255 of them on a screen. They do not
-        scale with the palette - earth.gif at full size is 253 colours but
-        8583 pairs - so :meth:`fit_pairs` is what sizes a palette to fit,
-        rather than arithmetic on this number.
-
-        Median cut, weighted by how many pixels each colour covers: split the
-        box with the widest spread along that channel, at the median pixel
-        rather than the median colour, so a colour covering half the picture
-        is not outvoted by a hundred stray ones. Holes stay holes.
-
-        Note:
-            An image already within ``colours`` comes back unchanged, so this
-            is safe to apply to flat art that never needed it.
+        An image already within ``colours`` comes back unchanged, so this is
+        safe to apply to flat art that never needed it. Holes stay holes.
 
         Args:
             colours: The most colours the result may use.
 
         Raises:
             TclError: If ``colours`` is not positive.
+
+        TkCurses extension:
+            tkinter's images have no such method.
         """
+        # The docstring this replaced, with its measurements:
+        # A copy using at most ``colours`` colours, chosen from this picture.
+        #
+        # The counterpart to :meth:`dither`, and the difference between them is
+        # *whose* palette is used. ``dither`` snaps every pixel to a colour the
+        # terminal already has; this picks a small palette **out of the picture
+        # itself**, which is only worth doing if those colours can then be
+        # reproduced exactly.
+        #
+        # That is the whole point, and it is easy to get backwards. A palette of
+        # sixteen colours taken from the picture and then snapped to the 256
+        # cube is *worse than not doing it at all*, because the two errors
+        # stack. Measured, mean per-pixel error against the unquantised image,
+        # with the distinct ``(fg, bg)`` pairs each needs:
+        #
+        #     picture   256 cube, shared   16 taken then snapped   16 exact
+        #     mickey    231 pairs  18.35   97 pairs  23.89         149 pairs  14.45
+        #     earth     230 pairs  14.34   102 pairs 16.32         143 pairs   7.50
+        #
+        # So a small *exact* palette beats a large shared one on accuracy and
+        # on pairs together - earth halves its error while using 87 fewer pairs
+        # - and the same palette approximated is a regression. Use this where
+        # the colours it picks will be shown as asked for.
+        #
+        # Why pairs and not colours: a pair is a *combination* of foreground and
+        # background, and there are only 255 of them on a screen. They do not
+        # scale with the palette - earth.gif at full size is 253 colours but
+        # 8583 pairs - so :meth:`fit_pairs` is what sizes a palette to fit,
+        # rather than arithmetic on this number.
+        #
+        # Median cut, weighted by how many pixels each colour covers: split the
+        # box with the widest spread along that channel, at the median pixel
+        # rather than the median colour, so a colour covering half the picture
+        # is not outvoted by a hundred stray ones. Holes stay holes.
+        #
+        # Note:
+        #     An image already within ``colours`` comes back unchanged, so this
+        #     is safe to apply to flat art that never needed it.
+        #
+        # Args:
+        #     colours: The most colours the result may use.
+        #
+        # Raises:
+        #     TclError: If ``colours`` is not positive.
         if colours <= 0:
             raise TclError("quantize needs a positive number of colours")
         counts: dict[str, int] = {}
@@ -1142,30 +1219,44 @@ class PhotoImage(Image):
         return self._mapped(_median_cut(counts, colours))
 
     def pairs_needed(self, depth: Any = None) -> int:
-        """How many distinct ``(fg, bg)`` combinations drawing this would take.
+        """How many distinct ``(fg, bg)`` colour pairs drawing this would take.
 
-        The number that actually matters, because a colour pair is what the
-        terminal runs out of - 255 of them, and a pair is a *combination*, so
-        this is not the colour count and does not track it. Measured,
-        earth.gif at full size is 253 colours and 8583 pairs.
-
-        **Counted as the terminal will resolve them, not as the picture
-        stores them.** Those are wildly different numbers wherever the
-        palette is small: mickey.gif at 120x38 holds 1862 distinct
-        combinations, and on an eight-colour terminal they land on 42.
-        Counting the stored colours made :meth:`fit_pairs` believe an
-        eight-colour terminal was 1800 pairs short and crush the picture to
-        five colours - throwing away three quarters of what that terminal
-        could actually have shown.
+        A terminal runs out of colour pairs - it has 255 - before it runs out of
+        colours, and a pair is a combination, so this is not the colour count.
+        It is counted as the terminal will show the picture, which on a terminal
+        with few colours is far fewer than the picture holds.
 
         Args:
-            depth: What the terminal can show. Defaults to whatever the
-                application's terminal reports, so the usual call takes no
-                argument at all.
+            depth: What the terminal can show. Defaults to what the
+                application's terminal reports.
 
-        Counted through the same :func:`~tkcurses._core.canvas.compose` that
-        draws the image, so it is the real demand rather than an estimate.
+        TkCurses extension:
+            tkinter's images have no such method.
         """
+        # The docstring this replaced, with its measurements:
+        # How many distinct ``(fg, bg)`` combinations drawing this would take.
+        #
+        # The number that actually matters, because a colour pair is what the
+        # terminal runs out of - 255 of them, and a pair is a *combination*, so
+        # this is not the colour count and does not track it. Measured,
+        # earth.gif at full size is 253 colours and 8583 pairs.
+        #
+        # **Counted as the terminal will resolve them, not as the picture
+        # stores them.** Those are wildly different numbers wherever the
+        # palette is small: mickey.gif at 120x38 holds 1862 distinct
+        # combinations, and on an eight-colour terminal they land on 42.
+        # Counting the stored colours made :meth:`fit_pairs` believe an
+        # eight-colour terminal was 1800 pairs short and crush the picture to
+        # five colours - throwing away three quarters of what that terminal
+        # could actually have shown.
+        #
+        # Args:
+        #     depth: What the terminal can show. Defaults to whatever the
+        #         application's terminal reports, so the usual call takes no
+        #         argument at all.
+        #
+        # Counted through the same :func:`~tkcurses._core.canvas.compose` that
+        # draws the image, so it is the real demand rather than an estimate.
         from tkcurses._core.canvas import compose
         from tkcurses._core.colors import ColorDepth, _resolve_rgb
 
@@ -1196,32 +1287,49 @@ class PhotoImage(Image):
     def fit_pairs(self, budget: int | None = None, depth: Any = None) -> PhotoImage:
         """A copy that can be drawn within ``budget`` colour pairs.
 
-        Reduces the palette - by the same median cut :meth:`quantize` uses -
-        only as far as it has to, and not at all if the picture already fits.
-        Small or flat art comes back untouched.
-
-        This exists because the palette size cannot be a constant. Measured
-        on two pictures at the same 53x33 size, a 32-colour palette needs 275
-        pairs on one and 304 on the other, both over the 255 ceiling, while
-        16 colours needs 149 and 143 and sits comfortably under. Which size
-        fits depends on the picture, on how large it is drawn, and on what
-        else is on screen - so it is found by asking rather than assumed.
-
-        **Grown one colour at a time rather than searched.** The first
-        version binary-searched the palette size and rebuilt the whole median
-        cut for each probe, which measured **8.7 seconds** on earth.gif - the
-        splits are identical every time, so they are now done once and the
-        pair count checked as the palette grows. The same call is 40ms.
+        Reduces the palette - by the same median cut :meth:`quantize` uses - only
+        as far as it has to, and not at all if the picture already fits. Small or
+        flat art comes back untouched.
 
         Args:
             budget: The most pairs the result may need. Defaults to what the
-                terminal has left right now, which is the honest number: an
-                image cannot assume the whole table, because widgets and text
-                have already taken some of it.
+                terminal has left right now: widgets and text have already taken
+                some of them.
 
         Raises:
             TclError: If ``budget`` is not positive.
+
+        TkCurses extension:
+            tkinter's images have no such method.
         """
+        # The docstring this replaced, with its measurements:
+        # A copy that can be drawn within ``budget`` colour pairs.
+        #
+        # Reduces the palette - by the same median cut :meth:`quantize` uses -
+        # only as far as it has to, and not at all if the picture already fits.
+        # Small or flat art comes back untouched.
+        #
+        # This exists because the palette size cannot be a constant. Measured
+        # on two pictures at the same 53x33 size, a 32-colour palette needs 275
+        # pairs on one and 304 on the other, both over the 255 ceiling, while
+        # 16 colours needs 149 and 143 and sits comfortably under. Which size
+        # fits depends on the picture, on how large it is drawn, and on what
+        # else is on screen - so it is found by asking rather than assumed.
+        #
+        # **Grown one colour at a time rather than searched.** The first
+        # version binary-searched the palette size and rebuilt the whole median
+        # cut for each probe, which measured **8.7 seconds** on earth.gif - the
+        # splits are identical every time, so they are now done once and the
+        # pair count checked as the palette grows. The same call is 40ms.
+        #
+        # Args:
+        #     budget: The most pairs the result may need. Defaults to what the
+        #         terminal has left right now, which is the honest number: an
+        #         image cannot assume the whole table, because widgets and text
+        #         have already taken some of it.
+        #
+        # Raises:
+        #     TclError: If ``budget`` is not positive.
         if budget is None:
             manager = getattr(self._tk, "colors", None)
             budget = getattr(manager, "remaining", 0) or _PAIR_CEILING
@@ -1262,68 +1370,85 @@ class PhotoImage(Image):
         return clone
 
     def dither(self, depth: Any = None) -> PhotoImage:
-        """A copy whose every pixel is a colour the terminal really has.
+        """A copy whose every pixel is a colour the terminal really has, with the
+        difference spread into its neighbours - Floyd-Steinberg error diffusion.
 
-        The palette is chosen for the terminal's depth, and the error each
-        pixel accumulates by being moved to the nearest available colour is
-        pushed into its neighbours - Floyd-Steinberg, the standard weights.
-        Over a few cells the eye averages them back to the colour that was
-        actually there.
-
-        This exists because a better *match* cannot help. ``#482424`` is 31%
-        of the perl-Tk mickey.gif, and the xterm-256 palette has nothing for
-        it: the 6x6x6 cube is empty between 0 and 95 while the grey ramp is
-        dense there, so a third of the picture becomes one flat neutral
-        grey. Plain RGB, redmean, a chroma penalty and CIE Lab all choose
-        that same grey, because it genuinely is the nearest colour there is.
-
-        **Whether this is an improvement depends on something a terminal
-        usually does not give you, so read this before reaching for it.**
-
-        Error diffusion trades colour accuracy for spatial noise, and it
-        only pays when the eye merges neighbouring pixels back together. It
-        does that on a monitor, where a pixel is a quarter of a millimetre.
-        A pixel here is half a character cell - tens of screen pixels - and
-        the eye merges nothing. You see the dither pattern itself.
-
-        Measured against the fitted source, over two photographs and a
-        gradient at two depths:
-
-            picture        depth      flat   dithered
-            mickey.gif     8         71.58      90.87
-            mickey.gif     256       29.15      30.05
-            earth.gif      8        126.70     120.65
-            earth.gif      256       18.95      24.67
-            gradient.png   8        149.57     151.47
-            gradient.png   256       29.29      34.60
-
-        Flat wins five of those six per-pixel, and every time at 256
-        colours. After a 3x3 blur the order reverses everywhere and by a
-        wide margin - on the gradient at 8 colours, 26.71 dithered against
-        140.29 flat.
-
-        Both sets are true and they disagree, because they assume different
-        viewers. The first is what a terminal shows.
-
-        So this is a tool and not a default. It is worth having for the case
-        where the cells really are small - a large image at a small font -
-        and :meth:`reduce` is the one that helps everywhere.
-
-        A person looking at the four side by side picked averaged-and-flat
-        as the best of them, which is what sent me back to measure without
-        the blur. The blurred number was the only one I had taken, and it
-        encoded an assumption about the viewer that I had never checked.
+        **A tool, not a default.** Dithering works when the eye merges
+        neighbouring pixels, and a pixel here is half a character cell: what
+        shows is usually the pattern. It is worth trying for a large image in a
+        small font; :meth:`reduce` is the one that helps everywhere. An image
+        already made of colours the terminal has comes back unchanged - at true
+        colour, every image does.
 
         Args:
-            depth: What the terminal can show. Defaults to whatever the
-                application's terminal reports, so the usual call takes no
-                argument at all.
+            depth: What the terminal can show. Defaults to what the
+                application's terminal reports.
 
-        Note:
-            Self-limiting. A pixel the palette holds exactly accumulates no
-            error, so an image already made of available colours comes back
-            unchanged - at truecolor, every image does.
+        TkCurses extension:
+            tkinter's images have no such method.
         """
+        # The docstring this replaced, with its measurements:
+        # A copy whose every pixel is a colour the terminal really has.
+        #
+        # The palette is chosen for the terminal's depth, and the error each
+        # pixel accumulates by being moved to the nearest available colour is
+        # pushed into its neighbours - Floyd-Steinberg, the standard weights.
+        # Over a few cells the eye averages them back to the colour that was
+        # actually there.
+        #
+        # This exists because a better *match* cannot help. ``#482424`` is 31%
+        # of the perl-Tk mickey.gif, and the xterm-256 palette has nothing for
+        # it: the 6x6x6 cube is empty between 0 and 95 while the grey ramp is
+        # dense there, so a third of the picture becomes one flat neutral
+        # grey. Plain RGB, redmean, a chroma penalty and CIE Lab all choose
+        # that same grey, because it genuinely is the nearest colour there is.
+        #
+        # **Whether this is an improvement depends on something a terminal
+        # usually does not give you, so read this before reaching for it.**
+        #
+        # Error diffusion trades colour accuracy for spatial noise, and it
+        # only pays when the eye merges neighbouring pixels back together. It
+        # does that on a monitor, where a pixel is a quarter of a millimetre.
+        # A pixel here is half a character cell - tens of screen pixels - and
+        # the eye merges nothing. You see the dither pattern itself.
+        #
+        # Measured against the fitted source, over two photographs and a
+        # gradient at two depths:
+        #
+        #     picture        depth      flat   dithered
+        #     mickey.gif     8         71.58      90.87
+        #     mickey.gif     256       29.15      30.05
+        #     earth.gif      8        126.70     120.65
+        #     earth.gif      256       18.95      24.67
+        #     gradient.png   8        149.57     151.47
+        #     gradient.png   256       29.29      34.60
+        #
+        # Flat wins five of those six per-pixel, and every time at 256
+        # colours. After a 3x3 blur the order reverses everywhere and by a
+        # wide margin - on the gradient at 8 colours, 26.71 dithered against
+        # 140.29 flat.
+        #
+        # Both sets are true and they disagree, because they assume different
+        # viewers. The first is what a terminal shows.
+        #
+        # So this is a tool and not a default. It is worth having for the case
+        # where the cells really are small - a large image at a small font -
+        # and :meth:`reduce` is the one that helps everywhere.
+        #
+        # A person looking at the four side by side picked averaged-and-flat
+        # as the best of them, which is what sent me back to measure without
+        # the blur. The blurred number was the only one I had taken, and it
+        # encoded an assumption about the viewer that I had never checked.
+        #
+        # Args:
+        #     depth: What the terminal can show. Defaults to whatever the
+        #         application's terminal reports, so the usual call takes no
+        #         argument at all.
+        #
+        # Note:
+        #     Self-limiting. A pixel the palette holds exactly accumulates no
+        #     error, so an image already made of available colours comes back
+        #     unchanged - at truecolor, every image does.
         from tkcurses._core.colors import ColorDepth, _resolve_rgb, rgb_of_number
 
         if depth is None:
@@ -1453,6 +1578,13 @@ class BitmapImage(Image):
     Raises:
         TclError: If ``data`` is XBM that cannot be parsed, which Tk reports
             as ``format error in bitmap data``.
+
+    Sample output:
+        arrow = tk.BitmapImage(foreground="cyan", data=(
+            "#define a_width 8\\n#define a_height 4\\n"
+            "static unsigned char a_bits[] = {0x18, 0x3c, 0x7e, 0xff};"
+        ))
+        tk.Label(root, image=arrow).pack()
     """
 
     _type = "bitmap"
