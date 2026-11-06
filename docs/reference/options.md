@@ -359,6 +359,48 @@ for state in ("normal", "active", "disabled"):
     tk.Button(root, text=state, state=state).pack(side="left", padx=1)
 ```
 
+## Themed widgets
+
+The [themed widgets](ttk/index.md) take most of their look from a
+[style](ttk/style.md) rather than from options of their own. These three
+are on most of them, as Tk's
+[ttk_widget manual](https://www.tcl-lang.org/man/tcl9.0/TkCmd/ttk_widget.html)
+describes them.
+
+### style
+
+The style the widget is drawn with. Each themed widget has one by
+default, named after its class - `TButton`, `TEntry` - and a style named
+with a dot before that, such as `Danger.TButton`, takes from it whatever
+it does not set itself.
+
+```{tkcurses-sample}
+style = ttk.Style()
+style.configure("Danger.TButton", foreground="red")
+ttk.Button(root, text="Keep").pack(side="left", padx=1)
+ttk.Button(root, text="Delete", style="Danger.TButton").pack(side="left", padx=1)
+```
+
+### padding
+
+Space between the widget's border and what it holds, in cells. One
+number is every side; two are across and up and down; four are left,
+top, right and bottom. A themed Label, Button, Checkbutton, Radiobutton
+or Menubutton does not grow by it yet, as tkinter's does.
+
+```{tkcurses-sample}
+for padding in (0, 1, "3 0"):
+    frame = ttk.Frame(root, relief="solid", padding=padding)
+    ttk.Label(frame, text=f"{padding}").pack()
+    frame.pack(side="left", padx=1)
+```
+
+### class
+
+The widget's class, which its style and bindings are named after:
+`TButton` for a themed button. Give it as `class_` when the widget is
+made; tkinter refuses to change it afterwards.
+
 ## Behaviour
 
 These change what a widget does rather than how it looks.

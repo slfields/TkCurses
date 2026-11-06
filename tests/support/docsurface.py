@@ -104,9 +104,15 @@ DIFFERENCES_MARKER = "Differences from tkinter:"
 
 DEBT = Path(__file__).with_name("docstring_debt.json")
 
-#: What each classic widget's options do to its drawing, measured by
-#: ``record_visible_options.py``.
+#: What each widget's options do to its drawing, measured by
+#: ``record_visible_options.py``. Themed widgets are under ``ttk.Button``.
 VISIBLE = Path(__file__).with_name("visible_options.json")
+
+#: The options Tk's own themed widgets have, recorded from Tk by
+#: ``record_tk_ttk_options.py``. A themed widget is documented with these,
+#: not with every option it accepts: it inherits the classic widget's too,
+#: and those are not part of its interface (TkCurses-jo7l).
+TK_TTK_OPTIONS = Path(__file__).with_name("tk_ttk_options.json")
 
 #: Where the options many widgets share are described, once each, as Tk's
 #: own options(n) manual does - decided with the user, TkCurses-imii.5.
@@ -166,6 +172,10 @@ COMMON_OPTIONS = frozenset(
         "state",
     }
 )
+
+#: The options most themed widgets share, described once on the options
+#: page as ttk_widget(n) describes them, beside the standard ones.
+THEMED_OPTIONS = frozenset({"class", "style", "padding"})
 
 #: A sample for an option, or several: ``Sample output (relief):``,
 #: ``Sample output (from, to):``.
@@ -353,20 +363,26 @@ def options_page_samples() -> set[str]:
 
 
 def _check_options(found: dict[str, set[str]]) -> None:
-    """Every option of every classic widget is measured, described in its
-    class's docstring, and - where it changes the drawing - sampled."""
+    """Every option of every widget is measured, described in its class's
+    docstring, and - where it changes the drawing - sampled. A themed
+    widget's options are the ones Tk's has; one TkCurses lacks is measured
+    as ``missing`` and has to be described all the same."""
     import tkcurses
+    from tkcurses import ttk
 
     measured = json.loads(VISIBLE.read_text())
+    tk_ttk = json.loads(TK_TTK_OPTIONS.read_text())
     on_page = options_page_samples()
     for name, options in measured.items():
-        cls = getattr(tkcurses, name)
+        themed = name.startswith("ttk.")
+        cls = getattr(ttk, name[4:]) if themed else getattr(tkcurses, name)
+        shared = COMMON_OPTIONS | THEMED_OPTIONS if themed else COMMON_OPTIONS
         key = class_key(cls)
         doc = inspect.getdoc(cls) or ""
         named = {
             name for names in NAMED_SAMPLE.findall(doc) for name in names.split(", ")
         }
-        actual = widget_options(cls)
+        actual = set(tk_ttk[name[4:]]) if themed else widget_options(cls)
         for option in sorted(actual ^ set(options)):
             found["unmeasured_options"].add(f"{key}:{option}")
         for option, entry in options.items():
@@ -376,9 +392,7 @@ def _check_options(found: dict[str, set[str]]) -> None:
             # long enough to compare: assume it shows.
             if entry["kind"] not in ("visible", "unsettled"):
                 continue
-            sampled = (
-                option in on_page if option in COMMON_OPTIONS else (option in named)
-            )
+            sampled = option in on_page if option in shared else option in named
             if not sampled:
                 found["unsampled_options"].add(f"{key}:{option}")
 

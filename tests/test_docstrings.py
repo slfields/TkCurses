@@ -37,6 +37,7 @@ import sys
 import pytest
 
 from tests.support import docsurface
+from tests.support.docsurface import class_key
 
 RULES = (
     "undocumented",
@@ -178,8 +179,58 @@ def test_every_classic_option_was_measured():
     import tkcurses
 
     measured = json.loads(docsurface.VISIBLE.read_text())
-    for name, options in measured.items():
+    classic = {k: v for k, v in measured.items() if not k.startswith("ttk.")}
+    assert classic
+    for name, options in classic.items():
         assert set(options) == docsurface.widget_options(getattr(tkcurses, name))
+
+
+def test_every_themed_widget_was_measured_against_tks_options():
+    """Each themed widget is measured for the options Tk's has - not every
+    option it accepts here, which includes the classic widget's."""
+    import json
+
+    from tkcurses import ttk
+
+    measured = json.loads(docsurface.VISIBLE.read_text())
+    tk_has = json.loads(docsurface.TK_TTK_OPTIONS.read_text())
+    themed = {k[4:]: v for k, v in measured.items() if k.startswith("ttk.")}
+    assert set(themed) == set(tk_has)
+    assert {class_key(c) for c in docsurface.widget_classes()} >= {
+        f"tkcurses.ttk.{name}" for name in tk_has
+    }
+    for name, options in themed.items():
+        assert set(options) == set(tk_has[name])
+        for option, entry in options.items():
+            accepted = option in docsurface.widget_options(getattr(ttk, name))
+            assert (entry["kind"] == "missing") is not accepted, (name, option)
+
+
+def test_the_themed_option_rules(tmp_path, monkeypatch):
+    """A themed widget is held to Tk's options: one it inherits from the
+    classic widget is not asked for, one Tk has and it lacks must still be
+    described, and the themed options are sampled on the options page."""
+    import json
+
+    from tkcurses import ttk
+
+    measured = json.loads(docsurface.VISIBLE.read_text())
+    bar = dict(measured["ttk.Progressbar"])
+    fake = tmp_path / "visible.json"
+    fake.write_text(json.dumps({"ttk.Progressbar": bar}))
+    monkeypatch.setattr(docsurface, "VISIBLE", fake)
+    monkeypatch.setattr(ttk.Progressbar, "__doc__", "A bar, with a length.")
+
+    found = docsurface.violations()
+    assert bar["phase"] == {"kind": "missing"}
+    assert "tkcurses.ttk.Progressbar:phase" in found["undescribed_options"]
+    assert "tkcurses.ttk.Progressbar:length" not in found["undescribed_options"]
+    assert "tkcurses.ttk.Progressbar:length" in found["unsampled_options"]
+    assert "tkcurses.ttk.Progressbar:style" not in found["unsampled_options"]
+    assert not found["unmeasured_options"]
+    # Inherited from the classic Frame, which tkinter's Progressbar lacks.
+    assert "relief" in docsurface.widget_options(ttk.Progressbar)
+    assert not any(":relief" in key for rule in found.values() for key in rule)
 
 
 def test_the_option_rules_catch_what_they_are_for(tmp_path, monkeypatch):

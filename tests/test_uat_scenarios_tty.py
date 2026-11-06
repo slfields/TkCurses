@@ -431,8 +431,16 @@ def test_scenario_39_a_hanging_indent_reshapes_the_paragraph(uat_terminal):
     first_plain = len(plain[0].rstrip())
 
     term.send(b"\x07")  # Ctrl-G, hanging indent
-    term.wait_for_text("hanging indent")
-    term.wait_for_idle()
+    # Wait for the paragraph itself, not only the status line: the two are
+    # not promised to arrive in one frame, and on Python 3.12 in CI the
+    # status came first and the rows were read before they reflowed.
+    term.wait_for(
+        lambda t: (
+            t.contains("hanging indent")
+            and len(rows := paragraph_rows()) > 1
+            and rows[1].startswith(" ")
+        )
+    )
     hung = paragraph_rows()
     assert hung, "the paragraph should still be on screen"
 

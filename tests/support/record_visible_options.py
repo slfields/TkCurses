@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Which options change what a classic widget draws, measured.
+"""Which options change what a widget draws, measured.
 
 The API reference shows a sample for every option that visibly changes a
 widget (TkCurses-imii.5). "Visibly" is measured here rather than judged:
@@ -28,6 +28,13 @@ colour and attributes included.
 Run from the repository root::
 
     python3 tests/support/record_visible_options.py
+
+The themed widgets are measured too, under ``ttk.Button`` and so on, but
+only for the options Tk's own ttk widget has - ``tk_ttk_options.json``,
+recorded from Tk by ``record_tk_ttk_options.py``. TkCurses's accept the
+classic widget's as well, and those are not part of the themed widget's
+interface (TkCurses-jo7l). An option Tk has and TkCurses lacks is
+``missing``.
 
 It writes ``visible_options.json`` beside itself, which
 ``tests/test_docstrings.py`` holds the documentation to. Each option is one
@@ -63,6 +70,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from tests.support.terminal import TerminalHarness  # noqa: E402
 
 OUT = Path(__file__).with_name("visible_options.json")
+TK_TTK = Path(__file__).with_name("tk_ttk_options.json")
 COLS, ROWS = 50, 16
 
 #: How each widget is made, and what it is given to show.
@@ -105,6 +113,58 @@ BASES = {
         "tk.PanedWindow(root, **kw)",
         "w.add(tk.Label(w, text='left')); w.add(tk.Label(w, text='right'))",
     ),
+    "ttk.Button": ("ttk.Button(root, **{'text': 'Sample', **kw})", ""),
+    "ttk.Checkbutton": ("ttk.Checkbutton(root, **{'text': 'Sample', **kw})", ""),
+    "ttk.Radiobutton": (
+        "ttk.Radiobutton(root, **{'text': 'Sample', 'value': 1, **kw})",
+        "",
+    ),
+    "ttk.Label": ("ttk.Label(root, **{'text': 'Sample', **kw})", ""),
+    "ttk.Menubutton": ("ttk.Menubutton(root, **{'text': 'Sample', **kw})", ""),
+    "ttk.OptionMenu": (
+        "ttk.OptionMenu(root, tk.StringVar(root), 'one', 'one', 'two')",
+        "w.configure(**kw)",
+    ),
+    "ttk.Entry": ("ttk.Entry(root, **kw)", "w.insert(0, 'Sample text')"),
+    "ttk.Combobox": (
+        "ttk.Combobox(root, **{'values': ('one', 'two'), **kw})",
+        "w.insert(0, 'Sample text')",
+    ),
+    "ttk.Spinbox": (
+        "ttk.Spinbox(root, **{'from_': 0, 'to': 10, **kw})",
+        "w.insert(0, '3')",
+    ),
+    "ttk.Scale": ("ttk.Scale(root, **{'from_': 0, 'to': 10, 'value': 3, **kw})", ""),
+    "ttk.LabeledScale": ("ttk.LabeledScale(root, **kw)", ""),
+    "ttk.Progressbar": ("ttk.Progressbar(root, **{'value': 40, **kw})", ""),
+    "ttk.Scrollbar": ("ttk.Scrollbar(root, **kw)", "w.set(0.2, 0.5)"),
+    "ttk.Separator": ("ttk.Separator(root, **kw)", "FILL"),
+    "ttk.Sizegrip": ("ttk.Sizegrip(root, **kw)", ""),
+    "ttk.Frame": ("ttk.Frame(root, **{'width': 12, 'height': 4, **kw})", ""),
+    "ttk.Labelframe": (
+        "ttk.Labelframe(root, **{'text': 'Group', **kw})",
+        "ttk.Label(w, text='inside').pack()",
+    ),
+    "ttk.Panedwindow": (
+        "ttk.Panedwindow(root, **{'orient': 'horizontal', **kw})",
+        "w.add(ttk.Label(w, text='left')); w.add(ttk.Label(w, text='right'))",
+    ),
+    "ttk.Notebook": (
+        "ttk.Notebook(root, **kw)",
+        # Given a size: one packed plainly asks for none (TkCurses-bell).
+        "w.pack(padx=1, pady=1, fill='both', expand=1);"
+        " w.add(ttk.Label(w, text='first page'), text='One');"
+        " w.add(ttk.Label(w, text='second'), text='Two')",
+    ),
+    "ttk.Treeview": (
+        "ttk.Treeview(root, **{'columns': ('size',), 'height': 4, **kw})",
+        # Given a width: one packed plainly asks for none (TkCurses-9v9j).
+        "w.pack(padx=1, pady=1, fill='x');"
+        " w.heading('#0', text='Name'); w.heading('size', text='Size');"
+        " top = w.insert('', 'end', text='Folder', open=True);"
+        " w.insert(top, 'end', text='File', values=('3',));"
+        " w.insert('', 'end', text='Other', values=('9',))",
+    ),
     # A menu dropped down, which is where nearly all of its options show; a
     # menu bar draws only its colours and font.
     "Menu": (
@@ -124,6 +184,26 @@ BEHAVIOUR = {
     # what changed is the state, not how a state is drawn.
     "onvalue", "offvalue", "value", "tristatevalue",
 }  # fmt: skip
+
+#: Except where the value is what the widget draws: a themed Scale's slider
+#: and a Progressbar's bar.
+DRAWN_VALUES = {("ttk.Scale", "value"), ("ttk.Progressbar", "value")}
+
+#: Values for an option whose meaning, and so whose values, depend on the
+#: widget.
+WIDGET_VALUES: dict[tuple[str, str], list[object]] = {
+    ("ttk.Treeview", "show"): ["tree", "headings"],
+    ("ttk.Treeview", "columns"): [("size", "kind"), ()],
+    ("ttk.Treeview", "displaycolumns"): [(), "#all"],
+    ("ttk.Treeview", "titlecolumns"): [1],
+    ("ttk.Treeview", "titleitems"): [1],
+    ("ttk.Progressbar", "mode"): ["indeterminate"],
+    ("ttk.Progressbar", "maximum"): [50, 200],
+    ("ttk.Progressbar", "value"): [70, 0],
+    ("ttk.Scale", "value"): [8, 0],
+    ("ttk.Progressbar", "length"): [5, 30],
+    ("ttk.Scale", "length"): [5, 30],
+}
 
 #: The state an option shows in, by its name; anything else is drawn plain.
 SETUPS = {
@@ -185,7 +265,7 @@ def setup_for(option: str) -> str:
 BOOLEANS = {
     "indicatoron", "showvalue", "showhandle", "opaqueresize", "exportselection",
     "setgrid", "takefocus", "undo", "autoseparators", "blockcursor", "jump",
-    "container", "tearoff",
+    "container", "tearoff", "striped",
 }  # fmt: skip
 
 #: Content an option needs before it can show: alignment needs room to move
@@ -272,6 +352,9 @@ def candidates(option: str, default: object) -> list[object]:
         values = ["normal", "tearoff"]
     elif name in ("class",):
         values = ["Special"]
+    elif name == "style":
+        # A style derived from the widget's own, made by the program.
+        values = ["SAMPLE_STYLE"]
     elif name == "scrollregion":
         values = ["0 0 40 20"]
     elif name in ("offset",):
@@ -288,8 +371,17 @@ def candidates(option: str, default: object) -> list[object]:
 PROGRAM = r"""
 import json, sys, time, traceback
 import tkcurses as tk
+from tkcurses import ttk
 root = tk.Tk()
 spec = json.loads(open(sys.argv[1]).read())
+# A themed widget's "style" is tried as a style of its own class that
+# changes the colours, so that a style it takes is a style that shows.
+probe = eval(spec["make"], {"tk": tk, "ttk": ttk, "root": root, "kw": {}})
+sample_style = "Sample." + probe.winfo_class()
+ttk.Style(root).configure(
+    sample_style, foreground="red", background="blue", fieldbackground="blue"
+)
+probe.destroy()
 image = tk.PhotoImage(master=root, data=["#.#", ".#."], palette={"#": "cyan"})
 image2 = tk.PhotoImage(master=root, data=["##.", ".##"], palette={"#": "red"})
 state = {"step": -1}
@@ -298,12 +390,14 @@ def build(kw, setup):
     for child in root.winfo_children():
         child.destroy()
     root.configure(menu="")
-    images = {"IMAGE": image, "IMAGE2": image2}
+    images = {"IMAGE": image, "IMAGE2": image2, "SAMPLE_STYLE": sample_style}
     kw = {k: images.get(v, v) if isinstance(v, str) else v for k, v in kw.items()}
-    w = eval(spec["make"], {"tk": tk, "root": root, "kw": kw})
-    if spec["after"]:
-        exec(spec["after"], {"tk": tk, "root": root, "w": w, "kw": kw})
-    if w.winfo_class() != "Menu":
+    w = eval(spec["make"], {"tk": tk, "ttk": ttk, "root": root, "kw": kw})
+    if spec["after"] == "FILL":
+        w.pack(padx=1, pady=1, fill="x")
+    elif spec["after"]:
+        exec(spec["after"], {"tk": tk, "ttk": ttk, "root": root, "w": w, "kw": kw})
+    if w.winfo_class() != "Menu" and not w.winfo_manager():
         w.pack(padx=1, pady=1)
     if setup:
         exec(setup, {"w": w})
@@ -347,22 +441,29 @@ def _cell(term: TerminalHarness, row: int, column: int) -> tuple[object, ...]:
 def measure(widget: str) -> dict[str, object]:
     """Every option of one widget, measured."""
     import tkcurses
+    from tkcurses import ttk
 
     make, after = BASES[widget]
-    probe = tkcurses.Tk.__new__(tkcurses.Tk)  # never shown; only for keys()
-    del probe
-    cls = getattr(tkcurses, widget)
+    themed = widget.startswith("ttk.")
+    cls = getattr(ttk, widget[4:]) if themed else getattr(tkcurses, widget)
     options: dict[str, object] = {}
     for klass in reversed(cls.__mro__):
         options.update(vars(klass).get("_widget_options", {}) or {})
+    result: dict[str, object] = {}
+    if themed:
+        tk_has = set(json.loads(TK_TTK.read_text())[widget[4:]])
+        for option in sorted(tk_has - set(options)):
+            result[option] = {"kind": "missing"}
+        options = {k: v for k, v in options.items() if k in tk_has}
     variants: list[tuple[dict[str, object], str]] = []
     plan: dict[str, list[tuple[int, int, object, str]]] = {}
-    result: dict[str, object] = {}
     for option in sorted(options):
-        if option in BEHAVIOUR:
+        if option in BEHAVIOUR and (widget, option) not in DRAWN_VALUES:
             result[option] = {"kind": "behaviour"}
             continue
-        values = candidates(option, options[option])
+        values = WIDGET_VALUES.get((widget, option)) or candidates(
+            option, options[option]
+        )
         if not values:
             result[option] = {"kind": "behaviour"}
             continue

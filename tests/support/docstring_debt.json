@@ -11,31 +11,9 @@
     "tkcurses.filedialog.FileDialog.set_filter",
     "tkcurses.filedialog.FileDialog.set_selection"
   ],
-  "tracker_ids": [
-    "tkcurses.ttk.Combobox.set",
-    "tkcurses.ttk.Labelframe",
-    "tkcurses.ttk.Panedwindow",
-    "tkcurses.ttk.Panedwindow.insert",
-    "tkcurses.ttk.Panedwindow.pane",
-    "tkcurses.ttk.Progressbar.destroy",
-    "tkcurses.ttk.Treeview.detach",
-    "tkcurses.ttk.Treeview.identify_column",
-    "tkcurses.ttk.Treeview.identify_element",
-    "tkcurses.ttk.Treeview.identify_region",
-    "tkcurses.ttk.Treeview.index",
-    "tkcurses.ttk.Treeview.xview"
-  ],
+  "tracker_ids": [],
   "private_names": [
-    "tkcurses.commondialog.Dialog.show",
-    "tkcurses.ttk.Button",
-    "tkcurses.ttk.Combobox.set",
-    "tkcurses.ttk.LabeledScale",
-    "tkcurses.ttk.Spinbox.set",
-    "tkcurses.ttk.Style",
-    "tkcurses.ttk.Treeview.tag_bind",
-    "tkcurses.ttk.Treeview.tag_configure",
-    "tkcurses.ttk._EntryCommands.bbox",
-    "tkcurses.ttk.setup_master"
+    "tkcurses.commondialog.Dialog.show"
   ],
   "unmarked_extensions": [
     "tkcurses.colorchooser.Chooser.body",
@@ -53,43 +31,11 @@
     "tkcurses.filedialog._NativeDialog.body",
     "tkcurses.filedialog._NativeDialog.dir_clicked",
     "tkcurses.filedialog._NativeDialog.ok",
-    "tkcurses.panel",
-    "tkcurses.ttk.Style.glyphs",
-    "tkcurses.ttk.Theme"
+    "tkcurses.panel"
   ],
-  "unlisted_borrowed": [
-    "tkcurses.ttk.Button.flash",
-    "tkcurses.ttk.Checkbutton.deselect",
-    "tkcurses.ttk.Checkbutton.flash",
-    "tkcurses.ttk.Checkbutton.select",
-    "tkcurses.ttk.Checkbutton.toggle",
-    "tkcurses.ttk.Radiobutton.deselect",
-    "tkcurses.ttk.Radiobutton.flash",
-    "tkcurses.ttk.Radiobutton.select",
-    "tkcurses.ttk.Spinbox.invoke"
-  ],
+  "unlisted_borrowed": [],
   "no_sample": [
-    "tkcurses.scrolledtext.ScrolledText",
-    "tkcurses.ttk.Button",
-    "tkcurses.ttk.Checkbutton",
-    "tkcurses.ttk.Combobox",
-    "tkcurses.ttk.Entry",
-    "tkcurses.ttk.Frame",
-    "tkcurses.ttk.Label",
-    "tkcurses.ttk.LabeledScale",
-    "tkcurses.ttk.Labelframe",
-    "tkcurses.ttk.Menubutton",
-    "tkcurses.ttk.Notebook",
-    "tkcurses.ttk.OptionMenu",
-    "tkcurses.ttk.Panedwindow",
-    "tkcurses.ttk.Progressbar",
-    "tkcurses.ttk.Radiobutton",
-    "tkcurses.ttk.Scale",
-    "tkcurses.ttk.Scrollbar",
-    "tkcurses.ttk.Separator",
-    "tkcurses.ttk.Sizegrip",
-    "tkcurses.ttk.Spinbox",
-    "tkcurses.ttk.Treeview"
+    "tkcurses.scrolledtext.ScrolledText"
   ],
   "unmeasured_options": [],
   "unsampled_options": [],

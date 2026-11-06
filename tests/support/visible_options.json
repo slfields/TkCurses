@@ -3206,5 +3206,1602 @@
   "yscrollcommand": {
    "kind": "behaviour"
   }
+ },
+ "ttk.Button": {
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "command": {
+   "kind": "behaviour"
+  },
+  "compound": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "top"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "default": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "image": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "IMAGE"
+  },
+  "justify": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "right"
+  },
+  "padding": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "text": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Changed"
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "underline": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "ttk.Checkbutton": {
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "command": {
+   "kind": "behaviour"
+  },
+  "compound": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "top"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "image": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "IMAGE"
+  },
+  "justify": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "right"
+  },
+  "offvalue": {
+   "kind": "behaviour"
+  },
+  "onvalue": {
+   "kind": "behaviour"
+  },
+  "padding": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "text": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Changed"
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "underline": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "variable": {
+   "kind": "behaviour"
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "ttk.Combobox": {
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "exportselection": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0
+   ]
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "height": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "invalidcommand": {
+   "kind": "behaviour"
+  },
+  "justify": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "right",
+    "center"
+   ]
+  },
+  "placeholder": {
+   "kind": "visible",
+   "state": "empty",
+   "value": "Changed"
+  },
+  "placeholderforeground": {
+   "kind": "visible",
+   "state": "empty",
+   "value": "red"
+  },
+  "postcommand": {
+   "kind": "behaviour"
+  },
+  "show": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "*"
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "validate": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "validatecommand": {
+   "kind": "behaviour"
+  },
+  "values": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "a b c"
+   ]
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "xscrollcommand": {
+   "kind": "behaviour"
+  }
+ },
+ "ttk.Entry": {
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "exportselection": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0
+   ]
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "invalidcommand": {
+   "kind": "behaviour"
+  },
+  "justify": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "right",
+    "center"
+   ]
+  },
+  "placeholder": {
+   "kind": "visible",
+   "state": "empty",
+   "value": "Changed"
+  },
+  "placeholderforeground": {
+   "kind": "visible",
+   "state": "empty",
+   "value": "red"
+  },
+  "show": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "*"
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "validate": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "validatecommand": {
+   "kind": "behaviour"
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "xscrollcommand": {
+   "kind": "behaviour"
+  }
+ },
+ "ttk.Frame": {
+  "borderwidth": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "padding": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "ttk.Label": {
+  "anchor": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "e"
+  },
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "compound": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "top"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "image": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "IMAGE"
+  },
+  "justify": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "right"
+  },
+  "padding": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "text": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Changed"
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "underline": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "wraplength": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "ttk.LabeledScale": {
+  "borderwidth": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "height": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "padding": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "style": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "SAMPLE_STYLE"
+   ]
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "width": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  }
+ },
+ "ttk.Labelframe": {
+  "borderwidth": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "height": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "labelanchor": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "s"
+  },
+  "labelwidget": {
+   "kind": "behaviour"
+  },
+  "padding": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "sunken"
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "text": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Changed"
+  },
+  "underline": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    2
+   ]
+  },
+  "width": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  }
+ },
+ "ttk.Menubutton": {
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "compound": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "top"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "direction": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "right",
+    "above",
+    "left",
+    "flush"
+   ]
+  },
+  "image": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "IMAGE"
+  },
+  "justify": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "right"
+  },
+  "menu": {
+   "kind": "behaviour"
+  },
+  "padding": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "text": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Changed"
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "underline": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "ttk.Notebook": {
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "height": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "padding": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 9
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "width": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  }
+ },
+ "ttk.OptionMenu": {
+  "class": {
+   "kind": "refused",
+   "tried": [
+    "'Special': error: attempt to change read-only option"
+   ]
+  },
+  "compound": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "top"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "direction": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "right",
+    "above",
+    "left",
+    "flush"
+   ]
+  },
+  "image": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "IMAGE"
+  },
+  "justify": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "right"
+   ]
+  },
+  "menu": {
+   "kind": "behaviour"
+  },
+  "padding": {
+   "kind": "missing"
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "text": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Changed"
+   ]
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "underline": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 9
+  }
+ },
+ "ttk.Panedwindow": {
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "orient": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "vertical"
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "ttk.Progressbar": {
+  "anchor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "e",
+    "s",
+    "nw"
+   ]
+  },
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "font": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "TkDefaultFont 10 bold",
+    "TkFixedFont 10 underline"
+   ]
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "justify": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "right"
+  },
+  "length": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 5
+  },
+  "maximum": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 50
+  },
+  "mode": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "indeterminate"
+  },
+  "orient": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "vertical"
+  },
+  "phase": {
+   "kind": "missing"
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "text": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Changed"
+  },
+  "value": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 70
+  },
+  "variable": {
+   "kind": "behaviour"
+  },
+  "wraplength": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "ttk.Radiobutton": {
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "command": {
+   "kind": "behaviour"
+  },
+  "compound": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "top"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "image": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "IMAGE"
+  },
+  "justify": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "right"
+  },
+  "padding": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "text": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Changed"
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "underline": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "value": {
+   "kind": "behaviour"
+  },
+  "variable": {
+   "kind": "behaviour"
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
+ "ttk.Scale": {
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "command": {
+   "kind": "behaviour"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "from": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 2
+  },
+  "length": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 5
+  },
+  "orient": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "vertical"
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "to": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 2
+  },
+  "value": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 8
+  },
+  "variable": {
+   "kind": "behaviour"
+  }
+ },
+ "ttk.Scrollbar": {
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "command": {
+   "kind": "behaviour"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "orient": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "horizontal"
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  }
+ },
+ "ttk.Separator": {
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "orient": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "vertical"
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  }
+ },
+ "ttk.Sizegrip": {
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  }
+ },
+ "ttk.Spinbox": {
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "command": {
+   "kind": "behaviour"
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "exportselection": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0
+   ]
+  },
+  "font": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "TkDefaultFont 10 bold"
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "format": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "%05.1f"
+   ]
+  },
+  "from": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    2,
+    0.5,
+    5
+   ]
+  },
+  "increment": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    2,
+    0.5,
+    5
+   ]
+  },
+  "invalidcommand": {
+   "kind": "behaviour"
+  },
+  "justify": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "right",
+    "center"
+   ]
+  },
+  "placeholder": {
+   "kind": "visible",
+   "state": "empty",
+   "value": "Changed"
+  },
+  "placeholderforeground": {
+   "kind": "visible",
+   "state": "empty",
+   "value": "red"
+  },
+  "show": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "*"
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "textvariable": {
+   "kind": "behaviour"
+  },
+  "to": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    2,
+    0.5,
+    5
+   ]
+  },
+  "validate": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "validatecommand": {
+   "kind": "behaviour"
+  },
+  "values": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "a b c"
+   ]
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "wrap": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "none",
+    "word",
+    "char",
+    1,
+    0
+   ]
+  },
+  "xscrollcommand": {
+   "kind": "behaviour"
+  }
+ },
+ "ttk.Treeview": {
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "columns": {
+   "kind": "visible",
+   "state": "plain",
+   "value": [
+    "size",
+    "kind"
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "displaycolumns": {
+   "kind": "visible",
+   "state": "plain",
+   "value": []
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "padding": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "selectmode": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "single"
+   ]
+  },
+  "selecttype": {
+   "kind": "missing"
+  },
+  "show": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "tree"
+  },
+  "striped": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    1
+   ]
+  },
+  "style": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "SAMPLE_STYLE"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "titlecolumns": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    1
+   ]
+  },
+  "titleitems": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    1
+   ]
+  },
+  "xscrollcommand": {
+   "kind": "behaviour"
+  },
+  "yscrollcommand": {
+   "kind": "behaviour"
+  }
  }
 }

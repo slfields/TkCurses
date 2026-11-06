@@ -21,47 +21,17 @@
 # ActiveState Corporation, Apple Inc. and other parties, and are used under
 # the Tcl/Tk licence; see THIRD_PARTY_NOTICES.md.
 
-"""Themed widgets, and the style database they draw from.
+"""Themed widgets, and the style database they draw from, as
+``tkinter.ttk``.
 
-ttk is not a second set of widgets that happen to look different. It is the
-same widgets with their appearance lifted out into a database that can be
-changed from one place, and a state model - disabled, active, focus, pressed
-- that the appearance is resolved against. This module is that database;
-the widgets that consume it follow.
+A themed widget's look comes from a style rather than from its own
+options, so one :class:`Style` call changes every widget that uses that
+style, and a theme changes them all.
 
-Every rule below was measured against real ttk on Tk 9.0 rather than
-remembered, because two of them are not what they look like.
-
-**A style name inherits through its dots.** ``Danger.TButton`` falls back to
-``TButton`` for anything it does not set itself, and the walk goes all the
-way: ``A.B.C.TDeep`` finds ``TDeep``. A widget with no ``style`` option of
-its own uses its class name, which is why ``TButton`` is where a button
-looks.
-
-**Resolution is two passes, not one.** Every style in the chain is checked
-for a matching ``map`` entry *first*, and only then does the chain get walked
-again for a ``configure`` value. So a base style's ``map`` beats a derived
-style's ``configure`` - measured, and the opposite of what an interleaved
-walk would do.
-
-**Map entries match in the order they were given**, first full match winning,
-rather than most-specific-first. ``[("disabled", "focus", "both"),
-("disabled", "plain")]`` answers ``both`` when both states are set and
-``plain`` when only ``disabled`` is - because the first entry did not match,
-not because the second was more specific.
-
-A state spec is every element of an entry but the last, each one a state name
-or a negated ``!name``; the last element is the value. An entry matches when
-every element of its spec does.
-
-**The themes are not tkinter's.** Real ttk offers ``clam``, ``alt``,
-``default`` and ``classic``, which are about pixels: bevels, shading,
-gradients. None of that means anything on a character grid, and what does
-vary here is which glyphs a border is drawn with. So the themes are the six
-in ARCHITECTURE.md - ``default``, ``ascii``, ``dos``, ``rounded``, ``double``
-and ``minimal`` - and :meth:`Style.theme_names` answers with those. That is a
-deliberate departure, recorded rather than hidden; ``default`` is in both
-lists, so ``theme_use("default")`` means the same thing either way.
+Differences from tkinter:
+    The themes are TkCurses's own; see :class:`Style`. And the themed
+    widgets also take the options of the classic widget each is built on
+    here, which tkinter's refuse.
 """
 
 from __future__ import annotations
@@ -127,12 +97,13 @@ __all__ = [
 
 
 def setup_master(master: Misc | None = None) -> Misc:
-    """``master`` itself, or the default root when it is None.
+    """``master``, or the default root when it is None.
 
-    As tkinter.ttk's, except that with no root yet this raises rather than
-    creating one: a root takes over the terminal, and here that is never a
-    side effect - see ``tkcurses._get_default_root``.
+    Differences from tkinter:
+        With no root yet it raises rather than making one: a root takes over
+        the terminal, which should never happen as a side effect.
     """
+    # tkcurses._get_default_root.
     return tkcurses._get_default_root() if master is None else master
 
 
@@ -211,14 +182,17 @@ MISSING = ""
 
 @dataclass
 class Theme:
-    """One theme's style database.
+    """One theme's settings: the border characters and the style database.
+
+    TkCurses extension:
+        tkinter has no such class: its themes live in Tk.
 
     Attributes:
-        name: What ``theme_use`` is called with.
-        glyphs: The characters a box is drawn with under this theme.
-        settings: Per style name, the options ``configure`` recorded.
-        states: Per style name and option, the ``map`` entries in the order
-            they were given - order decides which one wins.
+        name: What :meth:`Style.theme_use` is called with.
+        glyphs: The characters a border is drawn with under this theme.
+        settings: Per style, the options :meth:`Style.configure` set.
+        states: Per style and option, the :meth:`Style.map` entries, in the
+            order they were given - the order decides which one wins.
     """
 
     name: str
@@ -316,12 +290,30 @@ def state_matches(spec: tuple[str, ...], states: frozenset[str]) -> bool:
 class Style:
     """The style database, as ``ttk.Style``.
 
-    Every instance in one application talks to the same database, which is
-    what makes ``ttk.Style().configure(...)`` in one place change widgets
-    made in another. tkinter gets that by talking to the interpreter; here
-    the database lives on the :class:`~tkcurses._core.application.Application`
-    the widgets already share.
+    Every ``Style()`` in an application reads and writes the same database,
+    so ``Style().configure("TButton", foreground="red")`` anywhere changes
+    every button that uses ``TButton``.
+
+    A style named with dots inherits through them: ``Danger.TButton`` takes
+    what it does not set from ``TButton``. :meth:`map` gives values for
+    states - ``style.map("TButton", foreground=[("disabled", "grey")])`` -
+    and its entries are tried in the order given, the first that matches
+    winning. A ``map`` value from any style in the chain is used before a
+    ``configure`` value from any.
+
+    Differences from tkinter:
+        The themes are TkCurses's own - ``default``, ``ascii``, ``dos``,
+        ``rounded``, ``double`` and ``minimal`` - which differ in the
+        characters borders are drawn with. tkinter's ``clam``, ``alt`` and
+        ``classic`` are about shading that a terminal cannot draw.
+        ``theme_use("default")`` means the same in both.
     """
+
+    # The database lives on the _core.application.Application the widgets
+    # share; tkinter gets the sharing by talking to the interpreter. The
+    # resolution rules were measured against real ttk on Tk 9.0: a base
+    # style's map beats a derived style's configure, the opposite of an
+    # interleaved walk.
 
     def __init__(self, master: Misc | None = None) -> None:
         """
@@ -461,10 +453,11 @@ class Style:
         self._restyle()
 
     def glyphs(self) -> Glyphs:
-        """The characters the theme in use draws boxes with.
+        """The characters the theme in use draws borders with.
 
-        Not tkinter API. It is how a widget asks what a border looks like
-        now, which on a terminal is the whole of what a theme changes.
+        TkCurses extension:
+            tkinter has no such method. On a terminal, which characters draw a
+            border is most of what a theme changes.
         """
         return self._theme.glyphs
 
@@ -623,22 +616,24 @@ def _state_option_flags(value: str) -> list[str]:
 
 
 class Widget:
-    """What every themed widget adds to an ordinary one.
+    """What every themed widget has: a style, and a set of state flags.
 
-    A mixin rather than a base of its own, combined with whichever tkcurses
-    widget already draws the thing: ``class Button(Widget, tkcurses.Button)``.
-    That reuses the drawing and the behaviour, and adds the two things ttk is
-    actually about - a set of state flags, and an appearance resolved from the
-    style database against them.
+    The flags - ``active``, ``disabled``, ``focus``, ``pressed``,
+    ``selected``, ``background``, ``readonly``, ``alternate``, ``invalid``
+    and ``hover`` - are what a style's :meth:`Style.map` entries are
+    matched against. :meth:`state` sets and reads them and :meth:`instate`
+    tests them.
 
-    **A themed widget does not inherit the classic widget's bindings**, and
-    that is deliberate rather than an oversight. Measured against Tk 9.0:
-    ``ttk.Button`` has bindtags ``('.!button2', 'TButton', '.', 'all')`` -
-    ``Button`` is not among them. Binding tags name one class, so a widget
-    reporting ``TButton`` gets what is bound to ``TButton`` and nothing that
-    was bound to ``Button``. Each themed widget therefore installs its own
-    class bindings under its own name, exactly as ttk does.
+    A themed widget does not take the classic widget's class bindings: a
+    ``ttk.Button`` reports ``TButton``, and gets what is bound to
+    ``TButton``.
     """
+
+    # A mixin combined with whichever tkcurses widget already draws the thing:
+    # class Button(Widget, tkcurses.Button). Measured against Tk 9.0:
+    # ttk.Button has bindtags ('.!button2', 'TButton', '.', 'all'), so each
+    # themed widget installs its own class bindings under its own name,
+    # exactly as ttk does.
 
     #: What :meth:`winfo_class` answers, and so which tag the widget's class
     #: bindings and its default style are found under. Every subclass sets it.
@@ -1032,11 +1027,28 @@ MINIMUM_SIZE = 3
 
 
 class Separator(Widget, tkcurses.Frame):
-    """A line, and nothing else. ``ttk.Separator``.
+    """A line between groups of widgets, as ``ttk.Separator``.
 
-    Drawn with the theme's rail characters, so it matches the borders around
-    it: ``─`` under the default theme, ``-`` under ascii, ``═`` under double.
+    Drawn with the theme's border characters, so it matches the borders
+    around it. Pack or grid it to fill the way it runs.
+
+    Sample output:
+        ttk.Label(root, text="Above").pack()
+        ttk.Separator(root).pack(fill="x", padx=2)
+        ttk.Label(root, text="Below").pack()
+
+    Standard options, described in :doc:`/reference/options`: ``class``,
+    ``cursor``, ``orient``, ``style`` and ``takefocus``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic widget it is built on - ``relief``, ``background`` and
+        ``borderwidth`` among them. tkinter refuses them as unknown
+        options, so a program that uses one runs only on TkCurses.
     """
+
+    # The rail characters: ─ under the default theme, - under ascii, ═ under
+    # double.
 
     _ttk_class = "TSeparator"
 
@@ -1121,22 +1133,38 @@ class Separator(Widget, tkcurses.Frame):
 
 
 class Sizegrip(Widget, tkcurses.Frame):
-    """The corner grip, as ``ttk.Sizegrip``. Drag it to resize the window.
+    """A grip in a window's corner to drag it larger or smaller, as
+    ``ttk.Sizegrip``.
 
-    Which window matters, and getting that wrong is what this was at first.
-    A grip resizes **the toplevel it is in** - ``winfo_toplevel()`` - exactly
-    as Tk's does. This library has its own windows: a ``Toplevel`` has a
-    geometry, sits in a z-ordered stack, and redraws when it changes size, so
-    dragging its corner is a real operation and not a pretence.
+    It resizes the :class:`~tkcurses.Toplevel` it is in, as far as
+    ``resizable`` allows.
 
-    The exception is the root window, whose size *is* the terminal's. Nothing
-    an application draws can change that, so a grip on the root is a mark
-    and nothing more. That is a statement about one window rather than about
-    terminals, which is the distinction the first version of this missed.
+    Sample output:
+        window = tk.Toplevel(root)
+        window.geometry("24x6+4+1")
+        ttk.Label(window, text="Drag the corner").pack()
+        ttk.Sizegrip(window).pack(side="bottom", anchor="se")
 
-    ``wm_resizable`` is honoured per axis, as Tk honours it: a window locked
-    in one direction grows only in the other.
+    Standard options, described in :doc:`/reference/options`: ``class``,
+    ``cursor``, ``style`` and ``takefocus``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic widget it is built on - ``relief``, ``background`` and
+        ``borderwidth`` among them. tkinter refuses them as unknown
+        options, so a program that uses one runs only on TkCurses.
+
+        The main window's size is the terminal's, which a program cannot
+        change, so a grip in it is drawn and does nothing.
     """
+
+    # A grip resizes the toplevel it is in - winfo_toplevel() - exactly as
+    # Tk's does. This library has its own windows: a Toplevel has a geometry,
+    # sits in a z-ordered stack and redraws when it changes size, so dragging
+    # its corner is a real operation. The exception is the root, whose size is
+    # the terminal's - a statement about one window rather than about
+    # terminals, which is the distinction the first version of this missed.
+    # wm_resizable is honoured per axis.
 
     _ttk_class = "TSizegrip"
 
@@ -1259,23 +1287,61 @@ def _sizegrip_release(event: Event) -> None:
 
 
 class Progressbar(Widget, tkcurses.Frame):
-    """A bar showing how far along something is. ``ttk.Progressbar``.
+    """A bar showing how far along something is, as ``ttk.Progressbar``.
 
-    Three behaviours here are not what they look like, and all three were
-    measured against Tk 9.0 rather than assumed:
+    In ``determinate`` mode the bar is filled in proportion to ``value``
+    over ``maximum``. In ``indeterminate`` mode a block moves back and forth
+    to show that something is happening; :meth:`start` moves it on a timer
+    and :meth:`stop` stops it.
 
-    **step() wraps in determinate mode and does not in indeterminate.**
-    Determinate is ``(value + amount) % maximum`` - stepping 30 from 90 with
-    a maximum of 100 lands on 20. Indeterminate just accumulates: 30, 60, 90,
-    120, 270, without bound. The bar still has somewhere to draw, because the
-    indeterminate *display* is the value taken modulo a there-and-back cycle.
+    :meth:`step` adds to ``value``, and in determinate mode comes round to 0
+    at ``maximum``. Setting ``value`` directly does not, and :meth:`stop`
+    sets it back to 0.
 
-    **Setting value directly does not wrap.** ``configure(value=150)`` on a
-    bar whose maximum is 100 leaves it at 150. Only ``step`` wraps.
+    Sample output:
+        ttk.Progressbar(root, length=30, value=60).pack(pady=1)
+        ttk.Progressbar(root, length=30, value=60, text="60%").pack()
 
-    **stop() resets value to zero**, as well as cancelling the timer. It is
-    not a pause.
+    Options:
+        length: How long the bar is, in cells.
+        maximum: The value at which the bar is full; 100 by default.
+        mode: ``determinate``, the default, or ``indeterminate``.
+        phase: Not available yet.
+        value: How far along: the bar is filled ``value / maximum`` of its
+            length.
+        variable: A variable holding the value.
+
+    Standard options, described in :doc:`/reference/options`: ``anchor``,
+    ``class``, ``cursor``, ``font``, ``foreground``, ``justify``,
+    ``orient``, ``style``, ``takefocus``, ``text`` and ``wraplength``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic widget it is built on - ``relief``, ``background`` and
+        ``borderwidth`` among them. tkinter refuses them as unknown
+        options, so a program that uses one runs only on TkCurses.
+
+        ``phase``, which Tk counts up while the bar is running for a
+        theme to animate with, is not available yet.
+
+    Sample output (length, maximum, value):
+        ttk.Progressbar(root, length=10, maximum=10, value=5).pack(pady=1)
+        ttk.Progressbar(root, length=30, maximum=10, value=5).pack()
+        ttk.Progressbar(root, length=30, maximum=100, value=5).pack(pady=1)
+
+    Sample output (mode):
+        bar = ttk.Progressbar(root, mode="indeterminate", length=30)
+        bar.pack(pady=1)
+        bar.step(20)
     """
+
+    # All three measured against Tk 9.0. step() wraps in determinate mode and
+    # not in indeterminate: determinate is (value + amount) % maximum -
+    # stepping 30 from 90 with a maximum of 100 lands on 20 - and
+    # indeterminate accumulates without bound, its display being the value
+    # taken modulo a there-and-back cycle. configure(value=150) on a bar whose
+    # maximum is 100 leaves it at 150. stop() resets value to zero as well as
+    # cancelling the timer; it is not a pause.
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
         "length": tkcurses._signed_distance
@@ -1413,15 +1479,13 @@ class Progressbar(Widget, tkcurses.Frame):
         self.configure(value=0.0)
 
     def destroy(self) -> None:
-        """Forget the timer handle. Misc.destroy cancels the timer itself.
-
-        This used to cancel by hand, and the tick below used to begin with a
-        winfo_exists() guard, because a callback scheduled on a widget went
-        on firing after the widget was destroyed. That was TkCurses-khq, and
-        it was the framework's fault rather than this widget's: every widget
-        that schedules anything needed the same pair, and only this one had
-        it. destroy() now drops a widget's pending callbacks, as Tk does.
-        """
+        """Destroy the bar, stopping it if it is running."""
+        # Forgets the timer handle; Misc.destroy cancels the timer itself.
+        # This used to cancel by hand, and the tick began with a
+        # winfo_exists() guard, because a callback scheduled on a widget went
+        # on firing after the widget was destroyed - TkCurses-khq, the
+        # framework's fault rather than this widget's. destroy() now drops a
+        # widget's pending callbacks, as Tk does.
         self._timer = None
         super().destroy()
 
@@ -1625,36 +1689,74 @@ class _EntryCommands(tkcurses.Entry):
         return verdict
 
     def bbox(self, index: Any) -> tuple[int, int, int, int]:
-        """The box of the character at ``index`` - see
-        :meth:`tkcurses.Entry._char_bbox`."""
+        """The box of the character at ``index``: ``(x, y, width, height)`` in
+        cells, relative to the widget.
+
+        Past the last character it answers the last character's box, and in an
+        empty entry a box of width 0 at the start. A character scrolled out of
+        view has a box outside the widget.
+        """
+        # Entry._char_bbox, which the classic Entry keeps private because in
+        # tkinter its bbox is Misc.bbox, the grid alias. Measured on Tk 9.0.2.
         return self._char_bbox(index)
 
 
 class Combobox(Widget, _EntryCommands):
-    """An entry with a list of values to choose from. ``ttk.Combobox``.
+    """An entry with a list of values to choose from, as
+    ``ttk.Combobox``.
 
-    Three behaviours were measured against Tk 9.0.2 rather than assumed, and
-    the first is the one most likely to be got wrong.
+    :meth:`current` answers the index of the text among ``values``, or -1
+    when it is not one of them. ``height`` is how many values the list shows
+    at once.
 
-    **Neither set() nor current() fires ``<<ComboboxSelected>>``.** Measured
-    with a binding installed and ``update()`` pumped: the event never
-    arrives. It fires when a person picks from the dropdown, and at no other
-    time. It is a *gesture*, not a value change - so an application that
-    watches it to learn the value has changed will miss every programmatic
-    change, in Tk exactly as here.
+    ``<<ComboboxSelected>>`` is sent when a person chooses from the list, and
+    only then: not on :meth:`set` or :meth:`current`, in tkinter as here.
 
-    **current() answers -1 when the text is not one of the values**, not 0
-    and not None; and ``set()`` to a listed value moves it to that index,
-    while ``set()`` to anything else leaves it -1. Reconfiguring ``values``
-    keeps the index if the current text is still in the new list.
+    Sample output:
+        box = ttk.Combobox(root, values=("small", "medium", "large"), width=12)
+        box.set("medium")
+        box.pack()
 
-    **The dropdown is a window of its own.** In Tk it is an
-    ``overrideredirect`` toplevel of class ``ComboboxPopdown`` holding a
-    listbox whose height is the combobox's ``height``. It is the same here,
-    which makes it the case ARCHITECTURE.md's "Window Management" section
-    describes: no decoration, so the widget places it rather than handing it
-    to anything else.
+    Options:
+        invalidcommand: Called when ``validatecommand`` refuses a change.
+        postcommand: Called with no arguments just before the list is shown,
+            to fill in ``values``.
+        show: A character to show in place of each one typed, for a
+            password: ``show="*"``.
+        validate: When ``validatecommand`` is asked: ``none``, ``focus``,
+            ``focusin``, ``focusout``, ``key`` or ``all``.
+        validatecommand: Asked whether a change may be made; returns true to
+            allow it.
+        values: The values in the list.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``background``, ``class``, ``cursor``, ``exportselection``, ``font``,
+    ``foreground``, ``height``, ``justify``, ``placeholder``,
+    ``placeholderforeground``, ``state``, ``style``, ``takefocus``,
+    ``textvariable``, ``width`` and ``xscrollcommand``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic :class:`~tkcurses.Entry` - ``relief``, ``borderwidth``
+        and ``highlightthickness`` among them. tkinter refuses them as
+        unknown options, so a program that uses one runs only on
+        TkCurses.
+
+    Sample output (show):
+        pin = ttk.Combobox(root, show="*", values=("1234", "0000"), width=10)
+        pin.set("1234")
+        pin.pack()
     """
+
+    # Measured against Tk 9.0.2: neither set() nor current() fires
+    # <<ComboboxSelected>>, with a binding installed and update() pumped.
+    # current() answers -1, not 0 or None, for text not among the values;
+    # set() to a listed value moves it to that index; reconfiguring values
+    # keeps the index if the text is still in the new list. The dropdown is a
+    # window of its own: in Tk an overrideredirect toplevel of class
+    # ComboboxPopdown holding a listbox whose height is the combobox's height,
+    # and the same here - the case ARCHITECTURE.md's "Window Management"
+    # section describes.
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
         "width": tkcurses._tcl_integer
@@ -1791,13 +1893,15 @@ class Combobox(Widget, _EntryCommands):
     __getitem__ = cget
 
     def set(self, value: str) -> None:
-        """Replace the text. Does not fire ``<<ComboboxSelected>>``.
+        """Replace the text with ``value``.
 
-        Unvalidated and ungated by state, as Tk's is - see
-        :meth:`Entry._set_value`. This was ``delete`` then ``insert`` until
-        TkCurses-elb, so a refusing validatecommand was asked twice and kept
-        the old text, and a disabled combobox could not be set at all.
+        Not validated, and allowed whatever the ``state``, as in tkinter. It does
+        not send ``<<ComboboxSelected>>``, which only a choice from the list does.
         """
+        # Done in one step by Entry._set_value. This was delete then insert
+        # until TkCurses-elb, so a refusing validatecommand was asked twice
+        # and kept the old text, and a disabled combobox could not be set at
+        # all.
         self._set_value(value)
 
     def current(self, newindex: int | None = None) -> int | None:
@@ -2083,26 +2187,42 @@ class _Tab:
 
 
 class Notebook(Widget, tkcurses.Frame):
-    """Pages behind a row of tabs. ``ttk.Notebook``.
+    """Pages behind a row of tabs, as ``ttk.Notebook``.
 
-    Measured against Tk 9.0.2, and the first of these is worth holding
-    beside the Combobox:
+    Each page is a widget added with :meth:`add`, and only the selected one
+    is shown. ``<<NotebookTabChanged>>`` is sent when the selected page
+    changes, by a person or by :meth:`select`.
 
-    **``<<NotebookTabChanged>>`` fires on a programmatic ``select()``**,
-    where ``<<ComboboxSelected>>`` fires only on a gesture. They are not one
-    convention, and guessing from the other gets it wrong either way. It
-    fires on a *change*: selecting the tab already selected fires nothing.
+    :meth:`hide` takes a tab out of the row and keeps the page;
+    :meth:`forget` removes it.
 
-    **``hide`` is not ``forget``.** A hidden tab stays in ``tabs()`` and in
-    ``index("end")`` - it stops being shown, not being managed - and
-    ``add``-ing its child again un-hides it in place rather than appending a
-    second copy. ``forget`` is the one that removes.
+    Sample output:
+        book = ttk.Notebook(root)
+        book.add(ttk.Label(book, text="General settings"), text="General")
+        book.add(ttk.Label(book, text="Advanced settings"), text="Advanced")
+        book.pack(fill="both", expand=True)
 
-    On a character grid the strip is a single row of labels drawn with the
-    theme's glyphs, and only the selected child occupies the space below it.
-    ``image``, ``compound`` and ``underline`` are accepted and ignored, as
-    everywhere else in this cycle: they describe pixels.
+    Standard options, described in :doc:`/reference/options`: ``class``,
+    ``cursor``, ``height``, ``padding``, ``style``, ``takefocus`` and
+    ``width``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic widget it is built on - ``relief``, ``background`` and
+        ``borderwidth`` among them. tkinter refuses them as unknown
+        options, so a program that uses one runs only on TkCurses.
+
+        A tab's ``image``, ``compound`` and ``underline`` are accepted
+        and not drawn. And it does not yet ask for the size its pages
+        need: pack it with ``fill``, or grid it with ``sticky``, as the
+        sample does.
     """
+
+    # Measured against Tk 9.0.2: <<NotebookTabChanged>> fires on a
+    # programmatic select(), where <<ComboboxSelected>> fires only on a
+    # gesture, and only on a change - selecting the selected tab fires
+    # nothing. A hidden tab stays in tabs() and index("end"), and add-ing its
+    # child again un-hides it in place rather than appending a second copy.
 
     _ttk_class = "TNotebook"
 
@@ -2655,34 +2775,91 @@ def _displayed(columns: Any, displaycolumns: Any) -> list[str]:
 
 
 class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
-    """A hierarchy of rows, with columns. ``ttk.Treeview``.
+    """Rows in a hierarchy, with columns, as ``ttk.Treeview``.
 
-    **It reports ``Treeview``, not ``TTreeview``.** Measured: it is the one
-    themed widget without the T, and since binding tags name one class, a
-    widget reporting the wrong name gets no class bindings at all. That trap
-    has bitten five times in this library; this is the widget where the
-    spelling itself is the trap.
+    The first column, ``#0``, is the tree: each row's ``text``, indented by
+    its depth, with ``▾`` or ``▸`` on a row that has children. The data
+    columns follow, named by ``columns``. Rows are added with
+    :meth:`insert` and changed with :meth:`item`. ``height`` is how many rows
+    it shows.
 
-    **The event rules are per widget, not per library.** Three widgets in
-    this cycle answer differently, and none can be guessed from another:
+    Column widths are in cells. ``<<TreeviewSelect>>`` is sent whenever
+    :meth:`selection_set` is called, and when a person selects a row;
+    ``<<TreeviewOpen>>`` and ``<<TreeviewClose>>`` only when a person opens
+    or closes one.
 
-    =========================  =============================================
-    ``<<ComboboxSelected>>``   never on ``set()`` - a gesture only
-    ``<<NotebookTabChanged>>`` on ``select()``, but only on a real change
-    ``<<TreeviewSelect>>``     on ``selection_set()`` **every time**, a
-                               no-op selection included
-    ``<<TreeviewOpen>>``       never on ``item(open=True)`` - a gesture only
-    =========================  =============================================
+    Sample output:
+        tree = ttk.Treeview(root, columns=("size",), height=5)
+        tree.heading("#0", text="Name")
+        tree.heading("size", text="Size")
+        tree.column("size", width=8)
+        docs = tree.insert("", "end", text="Documents", open=True)
+        tree.insert(docs, "end", text="report.txt", values=("12 KB",))
+        tree.insert(docs, "end", text="notes.md", values=("3 KB",))
+        tree.insert("", "end", text="Music")
+        tree.pack(fill="both", expand=True)
 
-    **``detach`` is not ``delete``.** A detached item leaves the tree and
-    ``exists()`` still answers True for it; ``move`` puts it back. Only
-    ``delete`` makes it stop existing.
+    Options:
+        columns: The data columns' names, in order.
+        displaycolumns: Which data columns are shown, and in what order:
+            names or indexes, or ``#all``.
+        selectmode: ``extended``, the default, to select several rows,
+            ``browse`` for one, or ``none``.
+        selecttype: Not available yet.
+        show: Which parts are shown: ``tree`` for column ``#0``,
+            ``headings`` for the heading row, or both - the default - as
+            ``"tree headings"``.
+        striped: Whether every other row is drawn in the
+            ``stripedbackground`` a tag or the style gives.
+        titlecolumns: How many columns, counting ``#0``, stay in place when
+            the rest scroll sideways.
+        titleitems: How many rows at the top stay in place when the rest
+            scroll.
 
-    On a character grid a row is one line, indented by its depth, with a
-    marker on a branch that can be opened. Column widths are cells rather
-    than pixels; ``image``, ``imageanchor`` and ``height`` describe pixels
-    and are accepted and ignored.
+    Standard options, described in :doc:`/reference/options`: ``class``,
+    ``cursor``, ``height``, ``padding``, ``style``, ``takefocus``,
+    ``xscrollcommand`` and ``yscrollcommand``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic widget it is built on - ``relief``, ``background`` and
+        ``borderwidth`` among them. tkinter refuses them as unknown
+        options, so a program that uses one runs only on TkCurses.
+
+        ``selecttype``, which selects cells rather than rows, is not
+        available yet.
+
+        A row's ``image`` and a tag's ``image``, ``imageanchor`` and
+        ``font`` are accepted and not drawn.
+
+        Not yet sized as tkinter's is: it asks for no width, and
+        ``height`` counts the border and headings as well as the rows.
+        Pack it with ``fill``, or grid it with ``sticky``, as the
+        samples do.
+
+    Sample output (columns, displaycolumns):
+        # size: 40x6
+        tree = ttk.Treeview(root, columns=("size", "kind"), displaycolumns=("kind",), height=2)
+        tree.heading("#0", text="Name")
+        tree.heading("kind", text="Kind")
+        tree.insert("", "end", text="report.txt", values=("12 KB", "text"))
+        tree.pack(fill="both", expand=True)
+
+    Sample output (show):
+        # size: 40x6
+        tree = ttk.Treeview(root, columns=("size",), show="headings", height=2)
+        tree.heading("size", text="Size")
+        tree.insert("", "end", text="report.txt", values=("12 KB",))
+        tree.pack(fill="both", expand=True)
     """
+
+    # It reports Treeview, not TTreeview - the one themed widget without the
+    # T, and binding tags name one class, so a wrong name gets no class
+    # bindings at all. Event rules are per widget: <<ComboboxSelected>> never
+    # on set(); <<NotebookTabChanged>> on select() but only on a change;
+    # <<TreeviewSelect>> on selection_set() every time, a no-op included;
+    # <<TreeviewOpen>> never on item(open=True). detach is not delete: a
+    # detached item still exists() and move puts it back.
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
         "height": tkcurses._signed_distance
@@ -2888,19 +3065,16 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
             self._focus = ""
 
     def detach(self, *items: str) -> None:
-        """Take rows out of the tree, keeping them in existence.
+        """Take rows out of the tree without deleting them.
 
-        Not ``delete``: ``exists()`` still answers True afterwards, and
-        ``move`` puts the row back. Measured against Tk, which is the same.
-
-        **A detached row reports no parent.** Measured, ``parent()`` answers
-        ``""`` in Tk once a row is detached, which is indistinguishable from a
-        row at the top level - Tk's own quirk, and ``detached`` is what tells
-        the two apart. This kept the old parent until TkCurses-67u, which made
-        the difference reachable: ``set_children`` detaches whatever it omits,
-        so a program could see a row that was no longer among its parent's
-        children while still naming that parent.
+        A detached row still :meth:`exists`, and :meth:`move` puts it back.
+        :meth:`parent` answers ``""`` for it, as for a row at the top level, as
+        in tkinter.
         """
+        # Measured against Tk. This kept the old parent until TkCurses-67u,
+        # which made the difference reachable: set_children detaches whatever
+        # it omits, so a program could see a row no longer among its parent's
+        # children while still naming that parent.
         for iid in items:
             item = self._items.get(iid)
             if item is None:
@@ -2935,15 +3109,12 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         return self._items[item].parent
 
     def index(self, item: str) -> int:
-        """Where ``item`` sits among its siblings.
-
-        **Zero for a detached row**, which is what Tk answers - measured. A
-        detached row is in nobody's children list, and asking the list where
-        it was raised a bare ``ValueError`` out of ``list.index``: not a
-        :class:`TclError`, so not something a caller could catch by name, and
-        not a number either. ``detach`` could always reach it; TkCurses-67u
-        made it ordinary, because ``set_children`` detaches what it omits.
+        """Where ``item`` sits among its siblings; 0 for a detached row, as in
+        tkinter.
         """
+        # Measured. Asking a detached row's list raised a bare ValueError out
+        # of list.index - not a TclError, and not a number. TkCurses-67u made
+        # it ordinary, because set_children detaches what it omits.
         entry = self._items[item]
         siblings = self._children_of(entry.parent)
         return siblings.index(item) if item in siblings else 0
@@ -3109,20 +3280,17 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
     # ---------------------------------------------------------------- tags
 
     def tag_configure(self, tagname: str, option: str | None = None, **kw: Any) -> Any:
-        """Query or set the options of one tag.
+        """Query or set one tag's options.
 
-        Three forms, all measured against real ttk:
+        ``tag_configure("warn")`` answers every option, ``""`` for each one never
+        set; ``tag_configure("warn", "background")`` answers that one; and
+        ``tag_configure("warn", background="red")`` sets it.
 
-        * ``tag_configure("warn")`` - every option, with ``""`` for each one
-          never set.
-        * ``tag_configure("warn", "background")`` - that option's value, or
-          ``""``.
-        * ``tag_configure("warn", background="red")`` - sets, returns None.
-
-        **Naming a tag here creates it**, which is not a detail: Tk decides
-        priority between tags by CREATION ORDER, so the order these calls
-        happen in is what decides who wins. See :meth:`_tag_value`.
+        Naming a tag creates it, and that order matters: where a row has two
+        tags that set the same option, the one created first wins, as in Tk.
         """
+        # All three forms measured against real ttk. The priority is
+        # _tag_value's.
         if kw and not tkcurses._given(None, kw):
             return None  # every option None, which tkinter drops
         kw = tkcurses._given(None, kw)
@@ -3154,21 +3322,18 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
     def tag_bind(
         self, tagname: str, sequence: str | None = None, callback: Any = None
     ) -> None:
-        """Bind an event for every row carrying a tag.
+        """Bind ``callback`` to ``sequence`` on every row that has ``tagname``.
 
-        Returns None in all three forms, which is what tkinter does - measured,
-        including the form that looks like a query. So there is nothing here to
-        read the bindings back with, and nothing in tkinter to match if there
-        were; the form without a callback is a query and changes nothing.
-
-        **The binding goes on the widget, and the dispatcher picks the row.**
-        A tag is not a window, so there is nothing for the binding table to
-        hang a tag binding on. One ordinary ``bind`` per sequence is installed
-        instead - ``add="+"``, so it joins rather than displaces whatever the
-        program bound itself - and :func:`_treeview_tag_event` decides which
-        row the event belongs to and runs that row's tags. Which row depends
-        on the event type; see :data:`_POINTER_TAG_EVENTS`.
+        A mouse event goes to the row under the pointer, a key to the focused
+        row. Without a callback it changes nothing, and like tkinter's it
+        returns None in every form.
         """
+        # Measured, including the form that looks like a query. A tag is not a
+        # window, so there is nothing for the binding table to hang a tag
+        # binding on: one ordinary bind per sequence is installed instead,
+        # add="+", and _treeview_tag_event decides which row the event belongs
+        # to and runs that row's tags - which row depends on the event type;
+        # see _POINTER_TAG_EVENTS.
         if sequence is None or callback is None:
             return None
         self._tag_bindings.setdefault(tagname, {})[sequence] = callback
@@ -3374,17 +3539,16 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
     def xview(self, *args: Any) -> Any:
         """Report or move the horizontal view, as a scrollbar expects.
 
-        The same contract as :meth:`yview`, in cells: ``("moveto", fraction)``,
-        ``("scroll", count, "units"|"pages")`` or a bare offset. Measured on
-        Tk 9.0.2, where the unit is a pixel: one unit moves one, one page moves
-        the width of the part that scrolls, and ``xview(50)`` puts offset 50 at
-        the left edge. Columns that fit the tree - the usual case, since they
-        stretch to fill it - leave nothing to scroll, and the view stays
-        ``(0.0, 1.0)``.
-
-        Until TkCurses-xe9.6 a tree here never scrolled sideways, and columns
-        wider than it were clipped where they could not be reached.
+        The same forms as :meth:`yview`, in cells: ``("moveto", fraction)``,
+        ``("scroll", count, "units")`` or ``("scroll", count, "pages")``, or an
+        offset. With nothing, the fractions in view. Columns that fit - the
+        usual case, since they stretch to fill the tree - leave nothing to
+        scroll.
         """
+        # Measured on Tk 9.0.2, where the unit is a pixel: one unit moves one,
+        # one page moves the width of the part that scrolls, and xview(50)
+        # puts offset 50 at the left edge. Until TkCurses-xe9.6 a tree never
+        # scrolled sideways, and columns wider than it were clipped.
         if not args:
             return self._x_fractions()
         extent = self._scrolled_width()
@@ -3712,24 +3876,19 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         return self._in_view(" ".join(pieces), width)
 
     def identify_column(self, x: int) -> str:
-        """The display column identifier at ``x``, or ``""`` outside them all.
+        """The display column at ``x``: ``"#0"`` for the tree, then ``"#1"``,
+        ``"#2"`` and so on, or ``""`` past the last.
 
-        ``"#0"`` for the tree column, then ``"#1"`` for the first data column
-        and so on - Tk's display identifiers, not our internal names, measured:
-        ``identify_column`` on a tree with columns ``("a","b")`` answers
-        ``"#1"`` and ``"#2"``, never ``"a"``.
+        Display columns, as in tkinter, not the names in ``columns``.
 
-        Two edges differ from Tk and both are measured and recorded:
-
-        * The single cell that JOINS one column to the next belongs to the
-          column on its left. Tk's columns abut, so it has no such cell; the
-          gap is an artefact of drawing a character grid, and leaving it
-          answering ``""`` would make one cell in every gap unclickable.
-        * Past the last column this answers ``""``. Tk's columns stretch to
-          the widget's edge, and so do ours since TkCurses-a01 - the spans
-          grew and this followed with no change here - so that only happens
-          now when no column is stretchable, or the columns overflow.
+        Differences from tkinter:
+            The one cell between two columns belongs to the column on its left.
+            Tk's columns touch; here a cell separates them.
         """
+        # Measured: identify_column on a tree with columns ("a", "b") answers
+        # "#1" and "#2", never "a". Past the last column answers "" - Tk's
+        # columns stretch to the edge and so do ours since TkCurses-a01, so
+        # that happens only when no column stretches, or the columns overflow.
         area = self._rows_area()
         if not 0 <= x - area.x < area.width:
             return ""
@@ -3761,16 +3920,15 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         return self._row_at(y) or ""
 
     def identify_region(self, x: int, y: int) -> str:
-        """Which part of the tree is at ``(x, y)``.
+        """Which part of the tree is at ``(x, y)``: ``"heading"``, ``"tree"``,
+        ``"cell"`` or ``"nothing"``.
 
-        One of ``"heading"``, ``"tree"``, ``"cell"`` or ``"nothing"``.
-
-        **Never ``"separator"``**, and that is decided rather than overlooked.
-        Tk documents separator as the space between two column headings, for
-        dragging a column's width; this widget draws no separators and offers
-        no such drag, so returning it would name something that is not there.
-        A caller testing for it will simply never match. TkCurses-p9h.
+        Differences from tkinter:
+            Never ``"separator"``, the edge of a heading Tk lets a person drag to
+            resize a column: there is no such edge here.
         """
+        # Decided rather than overlooked: returning it would name something
+        # that is not there. TkCurses-p9h.
         area = self._rows_area()
         if not area.contains_point(Point(x, y)):
             return "nothing"
@@ -3784,18 +3942,17 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         return "tree" if column == TREE_COLUMN else "cell"
 
     def identify_element(self, x: int, y: int) -> str:
-        """The style element at ``(x, y)`` - always ``""`` here.
+        """The style element at ``(x, y)``.
 
-        Tk answers the name of a themed element: ``padding``, ``text``,
-        ``image``. Those names come from Tk's element tree, which this library
-        does not have - its themes are glyph sets, not layouts of named
-        elements - and Tk documents no fixed set of return values either, so
-        nothing portable can be written against them.
-
-        Present and empty rather than absent, because ``identify`` dispatches
-        to it and a caller asking politely deserves an answer rather than an
-        AttributeError. TkCurses-p9h.
+        Differences from tkinter:
+            Always ``""``. Tk names an element of the theme's layout -
+            ``padding``, ``text``, ``image`` - and the themes here have no such
+            elements.
         """
+        # Tk documents no fixed set of return values either, so nothing
+        # portable can be written against them. Present and empty rather than
+        # absent, because identify dispatches to it. TkCurses-p9h;
+        # TkCurses-at9 tracks naming them.
         del x, y
         return ""
 
@@ -4297,28 +4454,40 @@ LABEL_BELOW = "bottom"
 
 
 class LabeledScale(Widget, tkcurses.Frame):
-    """A scale with its value written beside it. ``ttk.LabeledScale``.
+    """A :class:`Scale` with its value written above it, as
+    ``ttk.LabeledScale``.
 
-    **It is a composite, not a widget class.** Measured: ``winfo_class()``
-    answers ``TFrame``, because that is what it is - a frame holding a
-    ``.label`` and a ``.scale``, both reachable and both ordinary widgets.
-    Nothing is bound to a class called ``TLabeledScale``, here or in Tk.
+    ``ttk.LabeledScale(master, variable=None, from_=0, to=10, compound="top")``.
+    It is a :class:`Frame` holding a :class:`Label` and a :class:`Scale`,
+    reachable as ``.label`` and ``.scale``; ``compound`` puts the label
+    ``top`` or ``bottom``. :attr:`value` reads and sets the value.
 
-    **Constructing it overwrites the variable you pass.** Measured against
-    Tk 9.0.2, and it is in tkinter's own source as ``self._variable.set(
-    from_)``: a variable holding 5, handed to a scale running from 2, comes
-    back holding 2. Surprising enough to be worth stating, and copied rather
-    than corrected - a program written against tkinter would see the same
-    thing there, and a library that quietly disagreed would be the harder
-    one to reason about.
+    Making one sets the variable to ``from_``, whatever it held, as tkinter's
+    does.
 
-    ``compound`` decides which side the label goes, ``"top"`` by default, and
-    is a constructor argument rather than an option, again as Tk has it.
+    Sample output:
+        ttk.LabeledScale(root, from_=0, to=10).pack(fill="x", padx=2)
 
-    Its halves are a :class:`Label` and a :class:`Scale` - the themed ones,
-    so they draw from the style database and report ``TLabel`` and
-    ``TScale``, as Tk's do.
+    Standard options, described in :doc:`/reference/options`:
+    ``borderwidth``, ``class``, ``cursor``, ``height``, ``padding``,
+    ``relief``, ``style``, ``takefocus`` and ``width``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic widget it is built on - ``background``,
+        ``highlightthickness`` and ``padx`` among them. tkinter refuses
+        them as unknown options, so a program that uses one runs only on
+        TkCurses.
     """
+
+    # It is a composite, not a widget class: winfo_class() answers TFrame,
+    # here and in Tk, and nothing is bound to a class called TLabeledScale.
+    # Constructing it overwrites the variable passed - measured against Tk
+    # 9.0.2, and in tkinter's own source as self._variable.set(from_): a
+    # variable holding 5, handed to a scale running from 2, comes back holding
+    # 2. Copied rather than corrected, because a program written against
+    # tkinter sees the same there. compound is a constructor argument rather
+    # than an option, again as Tk has it.
 
     _ttk_class = "TFrame"
 
@@ -4409,25 +4578,43 @@ class LabeledScale(Widget, tkcurses.Frame):
 
 
 class OptionMenu(Widget, tkcurses.OptionMenu):
-    """A menubutton whose menu is built from a list. ``ttk.OptionMenu``.
+    """A menubutton whose menu chooses one of a list of values, as
+    ``ttk.OptionMenu``.
 
-    **It reports ``TMenubutton``.** Measured: like ``LabeledScale`` being a
-    ``TFrame``, this is a menubutton with a constructor that fills its menu
-    rather than a widget class of its own. Fourth naming case in this cycle,
-    after ``Treeview`` without its T and ``TFrame`` for the labeled scale -
-    the T-prefix is a convention with exceptions, not a rule, and each one
-    matters because a widget reporting the wrong class gets no bindings.
+    ``ttk.OptionMenu(master, variable, default, *values, command=None)``:
+    ``default`` is the value shown first, and may be None to show nothing
+    until a value is chosen. :meth:`set_menu` replaces the values.
 
-    It differs from the classic ``OptionMenu`` in three measured ways, all
-    of them in the constructor rather than the behaviour:
+    Sample output:
+        colour = tk.StringVar()
+        ttk.OptionMenu(root, colour, "red", "red", "green", "blue").pack()
 
-    * The first value is ``default`` and **may be None**, which leaves the
-      button blank while the menu still holds every value. The classic one
-      refuses to be built with nothing to show.
-    * ``set_menu(default, *values)`` takes the default first and
-      positionally, where the classic takes it as a keyword.
-    * Built with no values at all it is accepted, not refused.
+    Options:
+        direction: Where the menu appears, as for a :class:`Menubutton`.
+        menu: The Menu holding the values, made by the widget.
+
+    Standard options, described in :doc:`/reference/options`: ``class``,
+    ``compound``, ``cursor``, ``image``, ``justify``, ``state``, ``style``,
+    ``takefocus``, ``text``, ``textvariable``, ``underline`` and ``width``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic :class:`~tkcurses.OptionMenu` - ``relief``,
+        ``background`` and ``borderwidth`` among them. tkinter refuses
+        them as unknown options, so a program that uses one runs only on
+        TkCurses.
+
+        ``padding`` is not available yet.
     """
+
+    # It reports TMenubutton: like LabeledScale being a TFrame, it is a
+    # menubutton with a constructor that fills its menu rather than a widget
+    # class of its own. It differs from the classic OptionMenu in three
+    # measured ways, all in the constructor: the first value is default and
+    # may be None, which leaves the button blank while the menu still holds
+    # every value (the classic one refuses to be built with nothing to show);
+    # set_menu takes the default first and positionally; and with no values at
+    # all it is accepted, not refused.
 
     _ttk_class = "TMenubutton"
 
@@ -4502,12 +4689,29 @@ def _chosen(widget: OptionMenu, value: Any) -> Callable[[], None]:
 
 
 class Label(Widget, tkcurses.Label):
-    """Text drawn from the style database. ``ttk.Label``.
+    """Text or an image, drawn from the theme, as ``ttk.Label``.
 
-    A themed Label over the classic one. Nothing is bound to ``TLabel`` - a
-    label answers no gestures - so the class-binding trap that catches the
-    interactive widgets does not arise here.
+    Sample output:
+        ttk.Label(root, text="Ready").pack()
+        ttk.Label(root, text="Disk almost full", foreground="red").pack()
+
+    Standard options, described in :doc:`/reference/options`: ``anchor``,
+    ``background``, ``borderwidth``, ``class``, ``compound``, ``cursor``,
+    ``font``, ``foreground``, ``image``, ``justify``, ``padding``,
+    ``relief``, ``state``, ``style``, ``takefocus``, ``text``,
+    ``textvariable``, ``underline``, ``width`` and ``wraplength``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic :class:`~tkcurses.Label` - ``activebackground``,
+        ``highlightthickness`` and ``padx`` among them. tkinter refuses
+        them as unknown options, so a program that uses one runs only on
+        TkCurses.
     """
+
+    # Nothing is bound to TLabel - a label answers no gestures - so the
+    # class-binding trap that catches the interactive widgets does not arise
+    # here.
 
     #: ttk's label family keeps ``width`` unchecked - ``width="abc"`` reads
     #: back ``abc`` on Tk 9.0.2 - so drawing reads it with a fallback.
@@ -4525,24 +4729,49 @@ class Label(Widget, tkcurses.Label):
 
 
 class Scale(Widget, tkcurses.Scale):
-    """A value chosen by sliding, drawn from the style database. ``ttk.Scale``.
+    """A value chosen by sliding, drawn from the theme, as ``ttk.Scale``.
 
-    Three measured differences from the classic ``Scale``, all of them worth
-    knowing because code written against one behaves differently under the
-    other:
+    Unlike the classic Scale it is horizontal by default, takes its value as
+    an option, and shows only the slider: no number, label or ticks. A
+    :class:`LabeledScale` writes the value beside it.
 
-    * **It is horizontal by default.** The classic one is vertical. A
-      composite built on the wrong default draws nothing at all on a single
-      row, which is how this was first noticed.
-    * **It has a ``value`` option**, which the classic takes only through
-      ``set()``.
-    * **It leaves a variable alone.** Handed a variable holding 7, it shows
-      7 - where ``LabeledScale`` overwrites it with ``from_``, as tkinter's
-      own source does.
+    Sample output:
+        ttk.Scale(root, from_=0, to=100, value=30, length=30).pack(pady=1)
+        ttk.Scale(root, from_=0, to=100, value=70, length=30).pack()
 
-    It shows no number of its own: ttk's scale is the slider and nothing
-    else, and anything wanting a number beside it uses ``LabeledScale``.
+    Options:
+        command: Called with the new value, as a string, when it changes.
+        from: The value at the left of a horizontal scale and the top of a
+            vertical one. Given as ``from_``, ``from`` being a Python
+            keyword.
+        length: How long the scale is, in cells.
+        to: The value at the other end.
+        value: The value; the slider is drawn where it falls between
+            ``from`` and ``to``.
+        variable: A variable holding the value. One given with a value keeps
+            it.
+
+    Standard options, described in :doc:`/reference/options`: ``class``,
+    ``cursor``, ``orient``, ``state``, ``style`` and ``takefocus``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic :class:`~tkcurses.Scale` - ``relief``, ``background``
+        and ``borderwidth`` among them. tkinter refuses them as unknown
+        options, so a program that uses one runs only on TkCurses.
+
+    Sample output (from, to, value, length):
+        ttk.Scale(root, from_=0, to=10, value=5, length=12).pack(pady=1)
+        ttk.Scale(root, from_=0, to=10, value=5, length=30).pack()
+        ttk.Scale(root, from_=0, to=100, value=5, length=30).pack(pady=1)
     """
+
+    # Three measured differences from the classic Scale: horizontal by default
+    # (a composite built on the wrong default draws nothing at all on a single
+    # row, which is how this was first noticed); a value option, which the
+    # classic takes only through set(); and it leaves a variable alone -
+    # handed a variable holding 7 it shows 7, where LabeledScale overwrites it
+    # with from_, as tkinter's own source does.
 
     _ttk_class = "TScale"
 
@@ -4590,13 +4819,25 @@ class Scale(Widget, tkcurses.Scale):
 
 
 class Frame(Widget, tkcurses.Frame):
-    """A container with a themed border. ``ttk.Frame``.
+    """A container, drawn from the theme, as ``ttk.Frame``.
 
-    The least behaviour of any themed widget: a region, a border taken from
-    the style, and children laid out in it. Nothing is bound to ``TFrame``.
+    ``padding`` keeps its children that far inside the border.
 
-    ``padding`` is accepted and **not yet honoured** - see the note on
-    :class:`Labelframe`.
+    Sample output:
+        frame = ttk.Frame(root, relief="solid", padding=1)
+        ttk.Label(frame, text="Inside a frame").pack()
+        frame.pack(pady=1)
+
+    Standard options, described in :doc:`/reference/options`:
+    ``borderwidth``, ``class``, ``cursor``, ``height``, ``padding``,
+    ``relief``, ``style``, ``takefocus`` and ``width``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic widget it is built on - ``background``,
+        ``highlightthickness`` and ``padx`` among them. tkinter refuses
+        them as unknown options, so a program that uses one runs only on
+        TkCurses.
     """
 
     _ttk_class = "TFrame"
@@ -4610,23 +4851,44 @@ class Frame(Widget, tkcurses.Frame):
 
 
 class Labelframe(Widget, tkcurses.LabelFrame):
-    """A frame with a caption in its border. ``ttk.Labelframe``.
+    """A frame with a caption in its border, as ``ttk.Labelframe``.
 
-    Spelled both ways, as in tkinter: ``Labelframe`` is the class and
-    ``LabelFrame`` is a second name for the same one. Measured against ttk
-    9.0, where ``ttk.LabelFrame is ttk.Labelframe`` is True - they are one
-    class, not two implementations, so this is an assignment rather than a
-    subclass and the two can never drift apart.
+    ``ttk.LabelFrame`` is another name for it, as in tkinter.
 
-    ``underline`` is a ttk addition the classic widget does not have;
-    ``labelanchor``, ``text`` and ``labelwidget`` come from the classic one.
+    Sample output:
+        group = ttk.Labelframe(root, text="Network", padding=1)
+        ttk.Checkbutton(group, text="Use a proxy").pack(anchor="w")
+        ttk.Checkbutton(group, text="Work offline").pack(anchor="w")
+        group.pack(pady=1)
 
-    **``padding`` is accepted and does nothing yet.** It is declared because
-    the option surface is compared against real ttk's and a missing option is
-    a test failure, and it is inert because no themed widget here honours it -
-    ``Notebook``, ``Treeview`` and ``LabeledScale`` declare it the same way.
-    Saying so rather than leaving it to be discovered: ``TkCurses-avy``.
+    Options:
+        labelanchor: Where on the border the caption goes: ``nw``, ``n``,
+            ``ne`` along the top, ``sw``, ``s``, ``se`` along the bottom, or
+            ``wn``, ``w``, ``ws``, ``en``, ``e``, ``es`` on the sides.
+        labelwidget: A widget to use as the caption instead of ``text``.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``borderwidth``, ``class``, ``cursor``, ``height``, ``padding``,
+    ``relief``, ``style``, ``takefocus``, ``text``, ``underline`` and
+    ``width``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic :class:`~tkcurses.LabelFrame` - ``background``, ``font``
+        and ``highlightthickness`` among them. tkinter refuses them as
+        unknown options, so a program that uses one runs only on
+        TkCurses.
+
+    Sample output (labelanchor):
+        for anchor in ("nw", "n", "ne"):
+            group = ttk.Labelframe(root, text=anchor, labelanchor=anchor, width=10, height=3)
+            group.pack(side="left", padx=1)
     """
+
+    # Spelled both ways as in tkinter, where ttk.LabelFrame is ttk.Labelframe
+    # is True on ttk 9.0 - one class, so this is an assignment rather than a
+    # subclass and the two cannot drift apart. underline is a ttk addition the
+    # classic widget lacks.
 
     _ttk_class = "TLabelframe"
 
@@ -4650,34 +4912,37 @@ LabelFrame = Labelframe
 
 
 class Panedwindow(Widget, tkcurses.PanedWindow):
-    """Panes with draggable sashes between them. ``ttk.Panedwindow``.
+    """Panes side by side or one above another, with a sash between
+    each to drag, as ``ttk.Panedwindow``.
 
-    The one themed widget whose tkinter counterpart is also built on the
-    classic one - measured, ``ttk.Panedwindow.__mro__`` begins
-    ``Panedwindow, Widget, PanedWindow`` - so the shape here is the shape
-    real ttk uses, rather than a convenience.
+    ``ttk.PanedWindow`` is another name for it. Panes are added with
+    :meth:`add` or :meth:`insert`, each with a ``weight``: space the window
+    gains or loses is shared among the panes in proportion to their weights,
+    and a pane of weight 0 keeps its size.
 
-    It drops sixteen of the classic widget's options, all of them about
-    drawing the sash by hand: ``sashwidth``, ``sashrelief``, ``sashpad``,
-    ``sashcursor``, ``showhandle``, ``handlepad``, ``handlesize``, the
-    ``proxy*`` three, ``opaqueresize``, and the colours. Under ttk a sash is
-    the theme's business. They are still accepted here, because every themed
-    widget in this module is deliberately wider than ttk rather than
-    narrower - see ``test_a_themed_widget_is_wider_than_ttk_on_purpose``.
+    Sample output:
+        panes = ttk.Panedwindow(root, orient="horizontal")
+        panes.add(ttk.Label(panes, text="Folders"), weight=1)
+        panes.add(ttk.Label(panes, text="Files"), weight=2)
+        panes.pack(fill="both", expand=True)
 
-    It adds two methods the classic widget has no counterpart for,
-    :meth:`pane` and :meth:`sashpos`, and one pane option, ``weight``.
+    Standard options, described in :doc:`/reference/options`: ``class``,
+    ``cursor``, ``height``, ``orient``, ``style``, ``takefocus`` and
+    ``width``.
 
-    **``weight`` is stored and reported, and does not yet change the
-    layout.** ttk gives surplus space to panes in proportion to their
-    weights, with ``weight=0`` meaning "do not resize"; the layout underneath
-    spreads surplus evenly across every pane instead, which is what the
-    classic widget documents and what its tests assert. Honouring weight
-    means a weighted distribution that the two widgets cannot share, so it is
-    its own piece of work rather than something smuggled in here:
-    ``TkCurses-2v2``. Until then ``pane(index)`` answers what was set, so
-    code that round-trips a weight sees what it wrote.
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic :class:`~tkcurses.PanedWindow` - ``relief``,
+        ``background`` and ``borderwidth`` among them. tkinter refuses
+        them as unknown options, so a program that uses one runs only on
+        TkCurses.
     """
+
+    # ttk.Panedwindow.__mro__ begins Panedwindow, Widget, PanedWindow on Tk
+    # 9.0, so building it on the classic widget is the shape real ttk uses. It
+    # drops sixteen of the classic widget's options, all about drawing the
+    # sash by hand. It adds pane() and sashpos(), and the pane option weight,
+    # which lays panes out since TkCurses-2v2.
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
         "height": tkcurses._tcl_integer,
@@ -4760,22 +5025,21 @@ class Panedwindow(Widget, tkcurses.PanedWindow):
         super().add(child, **kw)
 
     def insert(self, index: Any, child: tkcurses.Widget, **kw: Any) -> None:
-        """Add a pane at a position.
-
-        The first argument is named ``index`` and tkinter's ttk names it
-        ``pos``. Positionally they are the same; a caller writing
-        ``insert(pos=0, ...)`` would differ. It follows the classic widget
-        here because overriding with a different name is a typing error - the
-        base promises a parameter called ``index`` and callers may use it -
-        and the two spellings cannot both be right. Same shape as
-        ``TkCurses-y5q``, where we report ``from_`` and tkinter reports
-        ``from``.
+        """Add a pane before position ``index``.
 
         Args:
-            index: Index to insert before, or ``"end"``.
+            index: The position to insert before, or ``"end"``.
             child: The widget to put in it.
-            **kw: ``weight``, plus the pane options the classic widget takes.
+            **kw: Pane options: ``weight``.
+
+        Differences from tkinter:
+            The first parameter is called ``index`` where tkinter's is ``pos``.
+            Given by position, as it usually is, they are the same.
         """
+        # It follows the classic widget, because overriding with a different
+        # name is a typing error - the base promises a parameter called index
+        # and callers may use it. Same shape as TkCurses-y5q, where we report
+        # from_ and tkinter reports from.
         kw = tkcurses._given(None, kw)
         super().insert(index, child, **kw)
 
@@ -4788,21 +5052,21 @@ class Panedwindow(Widget, tkcurses.PanedWindow):
 
         Args:
             index: Which pane, by position or by widget.
-            option: One option to read, by name - ``pane(child, "weight")``.
-                It was refused here with a TypeError until TkCurses-kopw.
+            option: One option to read, by name: ``pane(child, "weight")``.
             **kw: Options to set; omit them to read instead.
 
         Returns:
-            Reading: a dict of the pane's ttk options. Measured against ttk
-            9.0, that is ``{'weight': N}`` and nothing else. With ``option``,
+            Reading every option, a dict: ``{"weight": N}``. With ``option``,
             that one value.
 
         Raises:
-            TclError: For an ``option`` a ttk pane does not have. Measured on
-                Tk 9.0.2, that is every name but ``weight`` - ``minsize``
-                included - as ``unknown option "-minsize"``, and the name is
-                taken as given: ``"-weight"`` is ``unknown option "--weight"``.
+            TclError: For an option a pane does not have, which is every name
+                but ``weight``, as in tkinter.
         """
+        # Measured against ttk 9.0.2: minsize is unknown option "-minsize",
+        # and the name is taken as given, so "-weight" is unknown option
+        # "--weight". option= was refused with a TypeError until
+        # TkCurses-kopw.
         if option is not None:
             current = self.pane(index)
             if option not in current:
@@ -4853,16 +5117,42 @@ PanedWindow = Panedwindow
 
 
 class Button(Widget, tkcurses.Button):
-    """A button drawn from the style database. ``ttk.Button``.
+    """A button drawn from the theme, as ``ttk.Button``.
 
-    Measured against Tk 9.0, its bindtags are
-    ``('.!button', 'TButton', '.', 'all')`` - ``Button`` is not among them, so
-    none of the classic button's class bindings reach it and it installs its
-    own. The classic widget's ``_install_class_bindings`` binds under
-    ``winfo_class()``, which answers ``TButton`` here, so inheriting it is
-    enough: the six binds land on the themed tag. It did not always - see the
-    commit that stopped it hardcoding the name.
+    It looks the way its style says - ``TButton`` unless given another - so
+    one ``Style().configure("TButton", ...)`` changes every button at once.
+
+    Sample output:
+        ttk.Button(root, text="Save").pack(side="left", padx=1)
+        ttk.Button(root, text="Cancel").pack(side="left", padx=1)
+        ttk.Button(root, text="Help", state="disabled").pack(side="left", padx=1)
+
+    Options:
+        command: Called with no arguments when the button is pressed.
+        default: ``normal``, ``active`` or ``disabled``: whether this is the
+            button Return presses in a dialog.
+
+    Standard options, described in :doc:`/reference/options`: ``class``,
+    ``compound``, ``cursor``, ``image``, ``justify``, ``padding``,
+    ``state``, ``style``, ``takefocus``, ``text``, ``textvariable``,
+    ``underline`` and ``width``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic :class:`~tkcurses.Button` - ``relief``, ``background``
+        and ``borderwidth`` among them. tkinter refuses them as unknown
+        options, so a program that uses one runs only on TkCurses.
+
+        It has :meth:`flash`, which in tkinter only the classic Button
+        has.
     """
+
+    # Its bindtags are ('.!button', 'TButton', '.', 'all') on Tk 9.0 - Button
+    # is not among them, so none of the classic button's class bindings reach
+    # it and it installs its own. The classic widget's _install_class_bindings
+    # binds under winfo_class(), which answers TButton here, so inheriting it
+    # is enough: the six binds land on the themed tag. It did not always - see
+    # the commit that stopped it hardcoding the name.
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
         "width": tkcurses._unchecked
@@ -4876,16 +5166,46 @@ class Button(Widget, tkcurses.Button):
 
 
 class Checkbutton(Widget, tkcurses.Checkbutton):
-    """A box that remembers whether it is ticked. ``ttk.Checkbutton``.
+    """A box that is ticked or not, drawn from the theme, as
+    ``ttk.Checkbutton``.
 
-    ``onvalue`` and ``offvalue`` are ``1`` and ``0``, the same as the classic
-    widget's - measured, rather than assumed either way, because the issue
-    that asked for this widget suspected ttk of differing and it does not.
+    As with the classic widget, the tick comes from comparing ``variable``
+    with ``onvalue``, so two checkbuttons over one variable always agree. One
+    made without a variable is given one.
 
-    Bindings come from ``_ChoiceWidget``, which already binds under
-    ``winfo_class()``: the space bar and not Return, so that Return still
-    reaches a dialog's default button from wherever the focus is.
+    Sample output:
+        for text, value in (("Off", 0), ("On", 1)):
+            ttk.Checkbutton(root, text=text, variable=tk.IntVar(value=value)).pack(anchor="w")
+
+    Options:
+        command: Called with no arguments each time the button is toggled.
+        offvalue: The variable's value while the button is off; 0 by
+            default.
+        onvalue: The variable's value while the button is on; 1 by default.
+        variable: The variable holding the button's value.
+
+    Standard options, described in :doc:`/reference/options`: ``class``,
+    ``compound``, ``cursor``, ``image``, ``justify``, ``padding``,
+    ``state``, ``style``, ``takefocus``, ``text``, ``textvariable``,
+    ``underline`` and ``width``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic :class:`~tkcurses.Checkbutton` - ``relief``,
+        ``background`` and ``borderwidth`` among them. tkinter refuses
+        them as unknown options, so a program that uses one runs only on
+        TkCurses.
+
+        It has :meth:`deselect`, :meth:`flash`, :meth:`select` and
+        :meth:`toggle`, which in tkinter only the classic Checkbutton
+        has.
     """
+
+    # onvalue and offvalue are 1 and 0, the same as the classic widget's -
+    # measured, because the issue that asked for this widget suspected ttk of
+    # differing and it does not. Bindings come from _ChoiceWidget, which binds
+    # under winfo_class(): the space bar and not Return, so that Return still
+    # reaches a dialog's default button from wherever the focus is.
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
         "width": tkcurses._unchecked
@@ -4905,15 +5225,43 @@ class Checkbutton(Widget, tkcurses.Checkbutton):
 
 
 class Radiobutton(Widget, tkcurses.Radiobutton):
-    """One of a set, where choosing it unchooses the others.
-    ``ttk.Radiobutton``.
+    """One of a set, where choosing it unchooses the others, drawn from
+    the theme, as ``ttk.Radiobutton``.
 
-    Its default variable is ``selectedButton``, shared by every radiobutton
-    that is not given one - the same name the classic widget defaults to.
-    Measured: ttk reports it fully qualified as ``::selectedButton`` and the
-    classic one as ``selectedButton``, which is the same global under Tcl's
-    namespace rules rather than a difference.
+    Each button of a set shares one ``variable`` and has its own ``value``;
+    the button whose value the variable holds is the one chosen.
+
+    Sample output:
+        size = tk.StringVar(value="medium")
+        for text in ("small", "medium", "large"):
+            ttk.Radiobutton(root, text=text, value=text, variable=size).pack(anchor="w")
+
+    Options:
+        command: Called with no arguments when the button is chosen.
+        value: The value the variable holds while this button is chosen.
+        variable: The variable the set shares; ``selectedButton`` unless
+            given, as in tkinter.
+
+    Standard options, described in :doc:`/reference/options`: ``class``,
+    ``compound``, ``cursor``, ``image``, ``justify``, ``padding``,
+    ``state``, ``style``, ``takefocus``, ``text``, ``textvariable``,
+    ``underline`` and ``width``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic :class:`~tkcurses.Radiobutton` - ``relief``,
+        ``background`` and ``borderwidth`` among them. tkinter refuses
+        them as unknown options, so a program that uses one runs only on
+        TkCurses.
+
+        It has :meth:`deselect`, :meth:`flash` and :meth:`select`, which
+        in tkinter only the classic Radiobutton has.
     """
+
+    # Its default variable is selectedButton, shared by every radiobutton that
+    # is not given one - the same name the classic widget defaults to. ttk
+    # reports it fully qualified as ::selectedButton and the classic one as
+    # selectedButton, which is the same global under Tcl's namespace rules.
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
         "width": tkcurses._unchecked
@@ -4943,9 +5291,33 @@ class Radiobutton(Widget, tkcurses.Radiobutton):
 
 
 class Menubutton(Widget, tkcurses.Menubutton):
-    """A button that opens a menu. ``ttk.Menubutton``.
+    """A button that opens a menu, drawn from the theme, as
+    ``ttk.Menubutton``.
 
-    ``direction`` defaults to ``below``, as ttk's does.
+    Sample output:
+        button = ttk.Menubutton(root, text="View")
+        menu = tk.Menu(button)
+        menu.add_command(label="Zoom in")
+        menu.add_command(label="Zoom out")
+        button["menu"] = menu
+        button.pack()
+
+    Options:
+        direction: Where the menu appears: ``below``, the default,
+            ``above``, ``left``, ``right`` or ``flush`` - over the button.
+        menu: The Menu to post.
+
+    Standard options, described in :doc:`/reference/options`: ``class``,
+    ``compound``, ``cursor``, ``image``, ``justify``, ``padding``,
+    ``state``, ``style``, ``takefocus``, ``text``, ``textvariable``,
+    ``underline`` and ``width``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic :class:`~tkcurses.Menubutton` - ``relief``,
+        ``background`` and ``borderwidth`` among them. tkinter refuses
+        them as unknown options, so a program that uses one runs only on
+        TkCurses.
     """
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
@@ -4964,19 +5336,50 @@ class Menubutton(Widget, tkcurses.Menubutton):
 
 
 class Entry(Widget, _EntryCommands):
-    """A one-line text field drawn from the style. ``ttk.Entry``.
+    """A one-line text field, drawn from the theme, as ``ttk.Entry``.
 
-    ``validate``, ``validatecommand`` and ``invalidcommand`` come from the
-    classic widget, with ttk's own rules where they differ - no validation of
-    a ``textvariable`` write, errors handed to the caller, validation left on
-    after a callback edits the entry, and the ``invalid`` state. Those, and
-    ``validate()`` and ``bbox()``, are in :class:`_EntryCommands`.
+    A ``validatecommand`` that refuses a change leaves the entry in the
+    ``invalid`` state, which a style can map to a colour.
 
-    ttk drops the long list of classic colour and insertion-cursor options -
-    ``bd``, ``bg``, ``disabledbackground``, ``insertwidth`` and the rest. They
-    are still accepted, as everywhere in this module: wider than ttk on
-    purpose.
+    Sample output:
+        name = ttk.Entry(root, width=20)
+        name.insert(0, "Ada Lovelace")
+        name.pack(pady=1)
+        ttk.Entry(root, width=20, placeholder="Email").pack()
+
+    Options:
+        invalidcommand: Called when ``validatecommand`` refuses a change.
+        show: A character to show in place of each one typed, for a
+            password: ``show="*"``.
+        validate: When ``validatecommand`` is asked: ``none``, ``focus``,
+            ``focusin``, ``focusout``, ``key`` or ``all``.
+        validatecommand: Asked whether a change may be made; returns true to
+            allow it.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``background``, ``class``, ``cursor``, ``exportselection``, ``font``,
+    ``foreground``, ``justify``, ``placeholder``, ``placeholderforeground``,
+    ``state``, ``style``, ``takefocus``, ``textvariable``, ``width`` and
+    ``xscrollcommand``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic :class:`~tkcurses.Entry` - ``relief``, ``borderwidth``
+        and ``highlightthickness`` among them. tkinter refuses them as
+        unknown options, so a program that uses one runs only on
+        TkCurses.
+
+    Sample output (show):
+        password = ttk.Entry(root, show="*", width=16)
+        password.insert(0, "secret")
+        password.pack()
     """
+
+    # validate, validatecommand and invalidcommand come from the classic
+    # widget, with ttk's own rules where they differ - no validation of a
+    # textvariable write, errors handed to the caller, validation left on
+    # after a callback edits the entry, and the invalid state. Those,
+    # validate() and bbox() are in _EntryCommands.
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
         "width": tkcurses._tcl_integer
@@ -4991,19 +5394,64 @@ class Entry(Widget, _EntryCommands):
 
 
 class Spinbox(Widget, _EntryCommands, tkcurses.Spinbox):
-    """An entry with a value you can step. ``ttk.Spinbox``.
+    """An entry whose value can be stepped with arrows, as
+    ``ttk.Spinbox``.
 
-    **ttk's Spinbox is an Entry, not the classic Spinbox**, which is what the
-    issue behind this widget warned to check. Measured on Tk 9.0,
-    ``ttk.Spinbox.__mro__`` begins ``Spinbox, Entry, Widget, Entry`` - it is
-    built on ``ttk.Entry``, and against the classic Spinbox it adds ``show``
-    while dropping twenty-eight options, nearly all of them about painting the
-    little buttons ttk draws from the theme instead.
+    It steps through ``values`` if it has them, and otherwise from ``from``
+    to ``to`` by ``increment``. :meth:`set` puts any text in it, checked
+    against neither.
 
-    Here the classic Spinbox already subclasses the classic Entry, so the same
-    relationship holds underneath and ``show`` comes with it. The two
-    hierarchies agree; only the painting options differ, and those we keep.
+    Sample output:
+        spin = ttk.Spinbox(root, from_=1, to=10, width=6)
+        spin.set(3)
+        spin.pack()
+
+    Options:
+        command: Called with no arguments when an arrow is used.
+        format: How a number is written, as ``%5.2f``.
+        from: The lowest value. Given as ``from_``, ``from`` being a Python
+            keyword.
+        increment: The step between values.
+        invalidcommand: Called when ``validatecommand`` refuses a change.
+        show: A character to show in place of each one typed, for a
+            password: ``show="*"``.
+        to: The highest value.
+        validate: When ``validatecommand`` is asked: ``none``, ``focus``,
+            ``focusin``, ``focusout``, ``key`` or ``all``.
+        validatecommand: Asked whether a change may be made; returns true to
+            allow it.
+        values: The values to step through, which take the place of
+            ``from``, ``to`` and ``increment``.
+        wrap: Whether stepping past one end comes round to the other.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``background``, ``class``, ``cursor``, ``exportselection``, ``font``,
+    ``foreground``, ``justify``, ``placeholder``, ``placeholderforeground``,
+    ``state``, ``style``, ``takefocus``, ``textvariable``, ``width`` and
+    ``xscrollcommand``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic :class:`~tkcurses.Spinbox` - ``relief``, ``borderwidth``
+        and ``activebackground`` among them. tkinter refuses them as
+        unknown options, so a program that uses one runs only on
+        TkCurses.
+
+        It has :meth:`invoke`, which in tkinter only the classic Spinbox
+        has.
+
+    Sample output (show):
+        code = ttk.Spinbox(root, show="*", from_=0, to=9999, width=8)
+        code.set(1234)
+        code.pack()
     """
+
+    # ttk's Spinbox is an Entry, not the classic Spinbox: on Tk 9.0
+    # ttk.Spinbox.__mro__ begins Spinbox, Entry, Widget, Entry, and against
+    # the classic Spinbox it adds show while dropping twenty-eight options,
+    # nearly all about painting the arrows. Here the classic Spinbox already
+    # subclasses the classic Entry, so the same relationship holds underneath
+    # and show comes with it.
 
     #: ttk's spinbox starts empty and keeps its text when values, from or
     #: to change - measured on Tk 9.0.2, TkCurses-fdl9.
@@ -5035,21 +5483,43 @@ class Spinbox(Widget, _EntryCommands, tkcurses.Spinbox):
     def set(self, value: Any) -> None:
         """Make ``value`` the spinbox's text.
 
-        Taken as given: not checked against ``from_``/``to`` or ``values``,
-        not validated, and not refused by ``readonly`` or ``disabled`` -
-        measured, ``set(99)`` on a 0-10 spinbox reads back ``"99"`` in Tk.
-        See :meth:`Entry._set_value` for the rest of what Tk does here.
+        Taken as given, as in tkinter: not checked against ``from``, ``to`` or
+        ``values``, not validated, and allowed whatever the ``state`` -
+        ``set(99)`` on a spinbox from 0 to 10 reads back ``"99"``.
         """
+        # Measured on Tk 9.0.2. Entry._set_value does the rest of what Tk does
+        # here.
         self._set_value(value)
 
 
 class Scrollbar(Widget, tkcurses.Scrollbar):
-    """A themed scrollbar. ``ttk.Scrollbar``.
+    """A scrollbar drawn from the theme, as ``ttk.Scrollbar``.
 
-    The simplest of the three: ttk adds only ``class`` and ``style``, both from
-    the mixin, and drops the seven classic appearance options -
-    ``activebackground``, ``activerelief``, ``background`` and the rest - which
-    a theme decides instead.
+    Connected to a widget the same way as the classic one: the scrollbar's
+    ``command`` is the widget's ``yview`` or ``xview``, and the widget's
+    ``yscrollcommand`` or ``xscrollcommand`` is the scrollbar's :meth:`set`.
+
+    Sample output:
+        text = tk.Text(root, width=30, height=6)
+        bar = ttk.Scrollbar(root, command=text.yview)
+        text.configure(yscrollcommand=bar.set)
+        text.insert("end", "\\n".join(f"line {n}" for n in range(1, 30)))
+        bar.pack(side="right", fill="y")
+        text.pack(side="left")
+
+    Options:
+        command: Called to move the view when the scrollbar is used, with
+            the arguments ``yview`` and ``xview`` take.
+
+    Standard options, described in :doc:`/reference/options`: ``class``,
+    ``cursor``, ``orient``, ``style`` and ``takefocus``.
+
+    Differences from tkinter:
+        It also takes options tkinter's does not, which it has from the
+        classic :class:`~tkcurses.Scrollbar` - ``relief``,
+        ``background`` and ``borderwidth`` among them. tkinter refuses
+        them as unknown options, so a program that uses one runs only on
+        TkCurses.
     """
 
     _ttk_class = "TScrollbar"
