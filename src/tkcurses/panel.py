@@ -15,23 +15,37 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Stacked windows, the way ``curses.panel`` does them.
+"""Windows stacked in front of one another, as ``curses.panel``.
 
-A curses window has no idea what is in front of it. Refresh two overlapping
-windows in the wrong order and the wrong one is on top, and there is nothing
-in curses proper to stop you - which is what ``curses.panel`` is for. It adds
-one thing: an order, bottom to top, and an :func:`update_panels` that
-refreshes every panel in it.
+Sample output:
+    from tkcurses import curses, panel
+    stdscr = curses.initscr()
+    panels = []
+    for n, (y, x) in enumerate(((1, 2), (3, 10), (5, 18))):
+        win = curses.newwin(4, 18, y, x)
+        win.box()
+        win.addstr(1, 2, f"Panel {n + 1}")
+        panels.append(panel.new_panel(win))
+    panels[0].top()
+    panel.update_panels()
+    curses.doupdate()
 
-This is that, over the windows :mod:`tkcurses.curses` makes.
+Put each window in a panel with :func:`new_panel`; the newest is in
+front. :meth:`Panel.top`, :meth:`Panel.bottom`, :meth:`Panel.hide` and
+:meth:`Panel.show` change the order, and :func:`update_panels` followed
+by :func:`tkcurses.curses.doupdate` puts the screen right, whatever
+order the windows were written in.
 
-It does not reuse :class:`~tkcurses._core.panels.PanelStack`, which the
-widgets stack themselves with, and the reason is a difference in what each
-owns. That one creates its own windows from a rectangle and hands the
-ordering to real curses panels; this one is handed a window that is already
-a cell buffer and has to do the ordering itself. Sharing the code would mean
-one class doing both, badly.
+TkCurses extension:
+    tkinter has no such module. This is the standard library's
+    ``curses.panel``, for the windows :mod:`tkcurses.curses` makes.
 """
+# A curses window has no idea what is in front of it; this adds an order,
+# bottom to top. It does not reuse the PanelStack the widgets stack themselves
+# with, because of what each owns: that one creates its own windows from a
+# rectangle and hands the ordering to real curses panels, while this one is
+# handed a window that is already a cell buffer and has to do the ordering
+# itself.
 
 from __future__ import annotations
 
@@ -171,27 +185,23 @@ def bottom_panel() -> Panel | None:
 def update_panels() -> None:
     """Copy every visible panel onto the screen, back to front.
 
-    Three steps, and the first is the one that makes a stack a stack.
-
-    Anywhere a panel has been hidden or moved away from is put back from the
-    window behind everything - which is ``stdscr``, the background a curses
-    program draws on. Without it a hidden panel stays on the screen, which is
-    what the standard library was measured doing the other way: hide the top
-    panel and what was under it comes back.
-
-    That step is skipped when :mod:`tkcurses.curses` attached to a screen a
-    tkinter application already had up. There stdscr is a blank window and
-    the widgets are the background, so restoring from it would paint blanks
-    over them - measured, it wiped the widget half of the demo off the screen
-    on a resize. An application that owns the background repaints its own.
-
-    Then every visible panel is copied, back to front, whole rather than only
-    what changed in it - a panel that has not been written to since the last
-    update still has to be copied if something in front of it moved.
-
-    As in curses this stops short of painting; :func:`tkcurses.curses.doupdate`
+    Where a panel has been hidden or moved away from is first put back from
+    ``stdscr``, the window behind everything, so a hidden panel leaves the
+    screen. Then every visible panel is copied whole, since one not written
+    to still has to be copied if something in front of it moved. As in
+    curses this stops short of painting: :func:`tkcurses.curses.doupdate`
     does that.
+
+    Differences from curses:
+        When a tkinter application owns the screen, the widgets are the
+        background rather than ``stdscr``, and the first step is left to
+        the application.
     """
+    # Measured: the standard library puts back what a hidden panel covered,
+    # and without the first step a hidden panel stays on the screen. Skipped
+    # when tkcurses.curses attached to an application's screen, where stdscr
+    # is a blank window: restoring from it wiped the widget half of the demo
+    # off the screen on a resize.
     from tkcurses import curses as _tkcurses
 
     # stdscr is the background only when this process started the screen.

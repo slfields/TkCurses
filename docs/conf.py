@@ -79,6 +79,8 @@ napoleon_numpy_docstring = False
 napoleon_custom_sections = [
     ("Differences from tkinter", "notes_style"),
     ("TkCurses extension", "notes_style"),
+    # tkcurses.curses and tkcurses.panel follow the standard library, not tkinter.
+    ("Differences from curses", "notes_style"),
     # Each widget's own options, laid out as a function's arguments are.
     ("Options", "params_style"),
 ]

@@ -13,6 +13,11 @@ styles, and chooses the theme; `Widget` is what every themed widget has.
 .. autoclass:: tkcurses.ttk.Theme
    :members:
 
+.. autoclass:: tkcurses.ttk.Glyphs
+
+.. autodata:: tkcurses.ttk.THEMES
+   :no-value:
+
 .. autofunction:: tkcurses.ttk.setup_master
 
 .. autofunction:: tkcurses.ttk.tclobjs_to_py

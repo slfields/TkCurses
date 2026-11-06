@@ -15,42 +15,55 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""The curses API, drawn on the same screen the widgets use.
+"""The curses API, on the same screen as the widgets.
 
-The project's premise has two halves. A tkinter program runs on this layer;
-this module is so that a curses program can too, and so that the two can be
-the same program - a curses application that opens a tkinter dialog, or a
-tkinter application with one pane drawn the old way.
+Sample output:
+    from tkcurses import curses
+    tk.Button(root, text="A widget").pack(side="bottom", pady=1)
+    stdscr = curses.initscr()
+    win = curses.newwin(5, 26, 1, 7)
+    win.box()
+    win.addstr(1, 2, "A curses window", curses.A_BOLD)
+    win.addstr(3, 2, "on the same screen")
+    win.refresh()
 
-**This is not a reimplementation of curses.** The backend already is curses.
-What this is, is a facade over :class:`~tkcurses._core.screen.CursesScreen`
-and :class:`~tkcurses._core.screen.ScreenBuffer` that presents them the way
-curses presents them, so a curses program gets this layer's double-buffered
-painting, its resize handling and its colour depth detection without being
-written any differently.
+Import it in place of the standard library's: ``from tkcurses import
+curses``. A curses program then runs as it did, and can also use
+widgets - a tkinter application with one area drawn the curses way, or
+a curses program that opens a dialog.
 
-Anything not defined here is forwarded to the standard library's curses, so
-every constant - ``A_BOLD``, ``KEY_UP``, ``COLOR_RED``, ``ACS_HLINE``,
-``error`` - is available under the name it always had, and stays current with
-whatever Python provides. The cost of that convenience is that a function
-this module has not wrapped operates on the real terminal directly rather
-than through the buffer; the ones that matter are wrapped.
+:func:`initscr` and :func:`wrapper` start it, as in curses. If a tkinter
+application already has the screen up, they share it, and :func:`endwin`
+leaves the application's screen running. A window keeps its own cells
+and appears when it is refreshed, so the usual rule holds: the window
+refreshed last is the one on top. :mod:`tkcurses.panel` keeps several in
+order.
 
-Two corrections to what ARCHITECTURE.md specified, both of which the colour
-cycle established:
+Every constant - ``A_BOLD``, ``KEY_UP``, ``COLOR_RED``, ``ACS_HLINE``,
+``error`` - is the standard library's, under the same name.
 
-``has_colors()`` and ``can_change_color()`` were to answer True always. They
-do not. A terminal has one of five colour depths and a vt100 has none, so
-both delegate to the real curses and tell the truth. A curses program asks
-those questions precisely so it can draw differently, and a compatibility
-layer that lies to it is worse than one that is missing.
+Differences from curses:
+    A function not listed here is the standard library's own, and acts
+    on the terminal directly rather than through this library. The ones
+    a program draws and reads keys with are all here.
 
-Importing this module is safe for the rest of the package, and that took
-arranging. ``tkcurses.curses`` is a submodule, so importing it makes Python
-bind it as the attribute ``curses`` on the ``tkcurses`` package - which is
-``tkcurses/__init__.py``'s own global namespace. That module now imports the
-standard library as ``_curses`` for exactly this reason.
+    ``idlok``, ``idcok``, ``immedok`` and the subwindow ``sync`` calls
+    are accepted and do nothing, and ``setscrreg`` is not honoured yet;
+    each says so below.
+
+TkCurses extension:
+    tkinter has no such module.
 """
+# This is a facade over the screen and cell buffer the widgets draw on, not a
+# reimplementation of curses - the backend already is curses - so a curses
+# program gets the double-buffered painting, resize handling and colour depth
+# detection without being written differently. Two corrections to what
+# ARCHITECTURE.md specified: has_colors() and can_change_color() were to
+# answer True always, and they delegate and tell the truth, because a program
+# asks precisely so it can draw differently. Importing this module is safe for
+# the rest of the package only because tkcurses/__init__.py imports the
+# standard library as _curses: importing the submodule binds the attribute
+# "curses" on the package, which is __init__'s own global namespace.
 
 from __future__ import annotations
 
@@ -313,19 +326,15 @@ def start_color() -> None:
 
 
 def has_colors() -> bool:
-    """Whether this terminal has colour at all.
-
-    Not always True, whatever the specification said. A vt100 has none, and a
-    program asks this so it can draw differently.
-    """
+    """Whether this terminal has colour at all. A vt100 has none."""
+    # Not always True, whatever the specification said: a program asks this so
+    # it can draw differently.
     return bool(CursesDispatcher.get().call(_curses.has_colors))
 
 
 def can_change_color() -> bool:
-    """Whether this terminal's palette entries can be redefined.
-
-    Not always True either, and for the same reason.
-    """
+    """Whether this terminal's palette entries can be redefined."""
+    # Not always True either, for the same reason as has_colors.
     return bool(CursesDispatcher.get().call(_curses.can_change_color))
 
 
@@ -477,19 +486,17 @@ def mouseinterval(interval: int) -> Any:
 
 
 class Window:
-    """A curses window over a :class:`ScreenBuffer`.
+    """A curses window. Made by :func:`initscr`, :func:`newwin`,
+    :meth:`subwin` and :meth:`derwin`, not directly.
 
-    The storage model is curses' own, which is what makes the behaviour
-    match. A window has cells of its own; writing into it changes nothing on
+    A window has cells of its own, and writing into it changes nothing on
     the terminal until :meth:`noutrefresh` copies them to the screen and
     :func:`doupdate` paints it. So two overlapping windows do not overwrite
-    one another as they are written - whichever refreshed last is the one you
-    see, which is exactly the rule a curses program is written against.
+    one another as they are written: whichever refreshed last is the one
+    seen, as in curses.
 
-    A subwindow does not get storage of its own: it shares its parent's, at
-    an offset, so writing into the child shows through the parent. That too
-    is curses, and it is the reason subwindows are useful rather than merely
-    convenient.
+    A subwindow shares its parent's cells, at an offset, so what is written
+    into one shows in the other.
     """
 
     def __init__(
@@ -900,14 +907,16 @@ class Window:
         A zero or an omitted side means the default for that side, which is
         what lets ``border(0, 0, 0, 0)`` mean a plain box.
 
-        The defaults are the box-drawing characters the widgets use, not
-        ``ACS_VLINE`` and its relatives. Two reasons, and the second is the
-        one that decided it: the ACS constants do not exist until initscr has
-        run, so a window drawn before there is a screen would fail on them;
-        and this layer writes characters into a cell buffer rather than
-        handing codes to curses, which is the same reason the widgets draw
-        their borders this way.
+        Differences from curses:
+            The defaults are the box-drawing characters the widgets use, not
+            ``ACS_VLINE`` and its relatives. On a terminal that shows Unicode
+            they look the same.
         """
+        # Two reasons, and the second decided it: the ACS constants do not
+        # exist until initscr has run, so a window drawn before there is a
+        # screen would fail on them; and this layer writes characters into a
+        # cell buffer rather than handing codes to curses, which is the same
+        # reason the widgets draw their borders this way.
         given = list(sides) + [0] * (8 - len(sides))
         parts = [
             self._one_char(value) if value else default
@@ -1013,13 +1022,19 @@ class Window:
                 self._touched.pop(row, None)
 
     def touch_region(self, y: int, x: int, height: int, width: int) -> None:
-        """Mark a rectangle for copying at the next refresh.
+        """Mark a rectangle of the window for copying at the next refresh.
 
-        Not one of curses' own, and here for one caller: :mod:`tkcurses.panel`
-        has to put the background back where a panel was hidden or moved
-        away from, and the only thing that can is the window behind it -
-        copied over just that rectangle, not the whole of it.
+        Args:
+            y, x: The rectangle's top left, within the window.
+            height, width: Its size.
+
+        TkCurses extension:
+            curses has no such call. :func:`tkcurses.panel.update_panels` uses
+            it to put back what a hidden panel covered.
         """
+        # The only thing that can restore the background where a panel was
+        # hidden or moved away from is the window behind it - copied over just
+        # that rectangle, not the whole of it.
         for row in range(max(0, y), min(self._height, y + height)):
             first, last = max(0, x), min(self._width, x + width) - 1
             if first <= last:
@@ -1072,7 +1087,9 @@ class Window:
     def setscrreg(self, top: int, bottom: int) -> None:
         """Set the rows scrolling affects.
 
-        Recorded and not yet honoured: :meth:`scroll` moves the whole window.
+        Differences from curses:
+            Accepted and not honoured yet: :meth:`scroll` moves the whole
+            window.
         """
         del top, bottom
 
@@ -1169,7 +1186,11 @@ class Window:
         return "".join(typed).encode()
 
     def instr_at_cursor(self) -> bytes:
-        """The rest of the cursor's row. Not curses; convenient in tests."""
+        """The rest of the cursor's row, from the cursor.
+
+        TkCurses extension:
+            curses has no such call; it is :meth:`instr` at the cursor.
+        """
         return self._read(self._cursor_y, self._cursor_x, self._width).encode()
 
     def __repr__(self) -> str:

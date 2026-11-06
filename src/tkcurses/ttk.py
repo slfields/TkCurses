@@ -149,6 +149,10 @@ class Glyphs:
 
     Nine, in the order a border is assembled: four corners, two rails, and
     the three tee pieces a table or a notebook needs where lines meet.
+
+    TkCurses extension:
+        On a terminal a theme is the characters its boxes are drawn with;
+        Tk's themes are drawn in pixels and have nothing like it.
     """
 
     top_left: str
@@ -162,9 +166,15 @@ class Glyphs:
     cross: str = "┼"
 
 
-#: The themes, and what each one draws with. These replace tkinter's
-#: clam/alt/default/classic, which describe bevels and shading that a
-#: character grid has no way to show. See the module docstring.
+# These replace tkinter's clam/alt/default/classic, which describe bevels
+# and shading that a character grid has no way to show.
+#: The themes, by name, and the characters each draws boxes with:
+#: ``default``, ``ascii``, ``dos``, ``rounded``, ``double`` and ``minimal``.
+#: :meth:`Style.theme_use` chooses one.
+#:
+#: TkCurses extension:
+#:     tkinter's themes are ``clam``, ``alt``, ``default`` and ``classic``,
+#:     and it has no table of them.
 THEMES: dict[str, Glyphs] = {
     "default": Glyphs("┌", "┐", "└", "┘", "─", "│"),
     "ascii": Glyphs("+", "+", "+", "+", "-", "|", "+", "+", "+"),

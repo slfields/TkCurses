@@ -259,6 +259,59 @@ def test_the_option_rules_catch_what_they_are_for(tmp_path, monkeypatch):
     assert "tkcurses.Scale:relief" not in found["unsampled_options"]
 
 
+def test_the_text_rules_reach_past_tkinters_api(monkeypatch):
+    """Tracker IDs, private names and missing docstrings are found in an
+    extension, in a module that is an extension whole, and in the comment
+    documenting module data - not only in tkinter's API."""
+    import tkcurses
+    import tkcurses.curses
+    import tkcurses.panel
+
+    monkeypatch.setattr(
+        tkcurses.curses.Window.setscrreg, "__doc__", "Ignored, TkCurses-z4pz."
+    )
+    monkeypatch.setattr(tkcurses.panel.update_panels, "__doc__", "Calls _restore.")
+    monkeypatch.setattr(tkcurses.curses.Window.is_linetouched, "__doc__", None)
+    monkeypatch.setattr(tkcurses.Misc.winfo_colordepth, "__doc__", "See _depth.")
+
+    found = docsurface.violations()
+    assert "tkcurses.curses.Window.setscrreg" in found["tracker_ids"]
+    assert "tkcurses.panel.update_panels" in found["private_names"]
+    assert "tkcurses.curses.Window.is_linetouched" in found["undocumented"]
+    assert "tkcurses.Misc.winfo_colordepth" in found["private_names"]
+
+
+def test_module_data_is_read_as_autodoc_reads_it():
+    source = (
+        "#: A table.\n"
+        "#:\n"
+        "#: TkCurses extension:\n"
+        "#:     Not tkinter's.\n"
+        "TABLE: dict[str, int] = {}\n"
+        "# Only a comment.\n"
+        "PLAIN = 1\n"
+        "#: Private, so not documented API.\n"
+        "_HIDDEN = 2\n"
+    )
+    docs = docsurface.data_docs(source)
+    assert docs == {"TABLE": "A table.\n\nTkCurses extension:\n    Not tkinter's."}
+
+
+def test_data_the_reference_shows_is_held_to_the_marker(monkeypatch):
+    """Data shown with autodata is an extension when tkinter's module
+    lacks it, and needs the marker; data no page shows is not checked."""
+    monkeypatch.setattr(
+        docsurface,
+        "documented_data",
+        lambda: iter(
+            [("tkcurses.ttk.THEMES", "The themes."), ("tkcurses.ttk.STEP", "")]
+        ),
+    )
+    found = docsurface.violations()
+    assert "tkcurses.ttk.THEMES" in found["unmarked_extensions"]
+    assert "tkcurses.ttk.STEP" not in found["unmarked_extensions"]
+
+
 @pytest.mark.parametrize(
     ("doc", "private"),
     [

@@ -24,14 +24,17 @@ place for the truth to live, and it goes stale silently.
 
 The convention, which ``docs/reference/index.md`` explains to readers:
 
-- Every class, method and function TkCurses provides from tkinter's API
-  has a docstring, written for someone using the library: no tracker IDs
-  and no private names, which belong in comments and ARCHITECTURE.md.
+- Every class, method and function TkCurses provides has a docstring,
+  written for someone using the library: no tracker IDs and no private
+  names, which belong in comments and ARCHITECTURE.md. That holds for
+  tkinter's API, for the extensions and for the ``#:`` comments that
+  document module data.
 - Where it behaves differently from tkinter, a ``Differences from
   tkinter:`` section says how. A ttk class that has a method only the
   classic widget has in tkinter must name it there.
 - API that tkinter does not have carries a ``TkCurses extension:``
-  section - on the module, for a module that is one as a whole.
+  section - on the module, for a module that is one as a whole. Module
+  data counts when a reference page shows it with ``autodata``.
 - Every widget has a ``Sample output:`` section: an example the
   documentation build runs, showing the screen it draws beside it
   (``docs/_ext/tkscreens.py``).
@@ -50,6 +53,7 @@ list shrink and never grow. Rewrite it, after fixing some, with::
 
 from __future__ import annotations
 
+import ast
 import importlib
 import inspect
 import json
@@ -117,6 +121,7 @@ TK_TTK_OPTIONS = Path(__file__).with_name("tk_ttk_options.json")
 #: Where the options many widgets share are described, once each, as Tk's
 #: own options(n) manual does - decided with the user, TkCurses-imii.5.
 OPTIONS_PAGE = Path(__file__).parents[2] / "docs" / "reference" / "options.md"
+REFERENCE = OPTIONS_PAGE.parent
 
 #: Tk's standard options (options(n)), and the three every widget has with a
 #: meaning of its own - width, height and state - which the options page
@@ -315,6 +320,67 @@ def extensions() -> Iterator[Item]:
                 yield Item(key, obj)
 
 
+def extension_module_members() -> Iterator[Item]:
+    """The classes, methods and functions of the modules that are
+    extensions whole. They need no marker of their own, and are held to
+    the rest of the convention like anything else."""
+    for name in EXTENSION_MODULES:
+        module = _module(name)
+        for attr in _public_names(module):
+            obj = getattr(module, attr, None)
+            if not _documentable(obj) or getattr(obj, "__module__", None) != name:
+                continue
+            yield Item(_key(obj), obj)
+            if inspect.isclass(obj):
+                for key, value in vars(obj).items():
+                    if key.startswith("_"):
+                        continue
+                    if inspect.isfunction(value) or isinstance(value, property):
+                        yield Item(f"{name}.{obj.__qualname__}.{key}", value)
+
+
+def data_docs(source: str) -> dict[str, str]:
+    """Module data and its documentation: each public name assigned at the
+    top of ``source`` under a run of ``#:`` comment lines, as autodoc
+    reads them."""
+    lines = source.splitlines()
+    found = {}
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+        elif isinstance(node, ast.AnnAssign):
+            target = node.target
+        else:
+            continue
+        if not isinstance(target, ast.Name) or target.id.startswith("_"):
+            continue
+        comment: list[str] = []
+        row = node.lineno - 2
+        while row >= 0 and lines[row].lstrip().startswith("#:"):
+            comment.insert(0, lines[row].lstrip()[2:].removeprefix(" "))
+            row -= 1
+        if comment:
+            found[target.id] = "\n".join(comment)
+    return found
+
+
+def documented_data() -> Iterator[tuple[str, str]]:
+    """Every documented piece of module data, as its key and its text."""
+    modules = [ours for ours, _ in COUNTERPARTS] + list(EXTENSION_MODULES)
+    for name in dict.fromkeys(modules):
+        source = inspect.getsource(_module(name))
+        for attr, doc in data_docs(source).items():
+            yield f"{name}.{attr}", doc
+
+
+def reference_data() -> set[str]:
+    """The module data a reference page shows, by ``autodata``."""
+    shown: set[str] = set()
+    for page in REFERENCE.rglob("*.md"):
+        shown.update(re.findall(r"^\.\. autodata:: (\S+)", page.read_text(), re.M))
+    return shown
+
+
 def borrowed_methods() -> dict[type, list[str]]:
     """Methods a class has that tkinter's own version of it lacks, because
     it inherits them from another class tkinter does have them on - a
@@ -448,18 +514,32 @@ def violations() -> dict[str, set[str]]:
         "unsampled_options": set(),
         "undescribed_options": set(),
     }
-    for item in tkinter_surface():
-        doc = inspect.getdoc(item.obj) or ""
+    texts = [
+        (item.key, inspect.getdoc(item.obj) or "")
+        for item in (*tkinter_surface(), *extensions(), *extension_module_members())
+    ]
+    for key, doc in texts:
         if not doc.strip():
-            found["undocumented"].add(item.key)
+            found["undocumented"].add(key)
+    for key, doc in [*texts, *documented_data()]:
         if TRACKER_ID.search(doc):
-            found["tracker_ids"].add(item.key)
+            found["tracker_ids"].add(key)
         if PRIVATE_NAME.search(doc):
-            found["private_names"].add(item.key)
+            found["private_names"].add(key)
     for item in extensions():
         doc = inspect.getdoc(item.obj) or ""
         if section(doc, EXTENSION_MARKER) is None:
             found["unmarked_extensions"].add(item.key)
+    counterpart = dict(COUNTERPARTS)
+    data = dict(documented_data())
+    for key in reference_data():
+        module, attr = key.rsplit(".", 1)
+        if module in EXTENSION_MODULES or module not in counterpart:
+            continue
+        if hasattr(_module(counterpart[module]), attr):
+            continue
+        if section(data.get(key, ""), EXTENSION_MARKER) is None:
+            found["unmarked_extensions"].add(key)
     for name in EXTENSION_MODULES:
         doc = inspect.getdoc(_module(name)) or ""
         if section(doc, EXTENSION_MARKER) is None:

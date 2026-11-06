@@ -2,10 +2,7 @@
   "undocumented": [],
   "tracker_ids": [],
   "private_names": [],
-  "unmarked_extensions": [
-    "tkcurses.curses",
-    "tkcurses.panel"
-  ],
+  "unmarked_extensions": [],
   "unlisted_borrowed": [],
   "no_sample": [],
   "unmeasured_options": [],

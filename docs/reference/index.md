@@ -13,13 +13,13 @@ dialogs/index
 modules/index
 ```
 
-Every class and function TkCurses provides. It is being written module by
-module; so far it covers [the application and what every widget
-has](core/index.md), the [standard options](options.md), the
+Every class and function TkCurses provides: [the application and what
+every widget has](core/index.md), the [standard options](options.md), the
 [classic widgets](widgets/index.md), the
 [themed widgets](ttk/index.md), the
 [geometry managers](geometry.md), [images](images.md),
-[dialogs](dialogs/index.md) and [the other modules](modules/index.md).
+[dialogs](dialogs/index.md) and [the other modules](modules/index.md),
+among them `curses` and `panel`.
 
 A method tkinter gives two names, such as `wm_title` and `title`, is
 described once, under the first, and says what else it is called.
@@ -27,7 +27,7 @@ described once, under the first, and says what else it is called.
 ## How to read it
 
 TkCurses follows tkinter's API, so most of what it provides is documented
-the way tkinter's is: what a class or method does and what it takes. Two
+the way tkinter's is: what a class or method does and what it takes. Three
 headings mark where it is not the same.
 
 **Differences from tkinter** says where TkCurses behaves differently from
@@ -42,7 +42,11 @@ tkinter.
 `tkcurses.curses` and `tkcurses.panel` modules, and a few methods such as
 `winfo_colordepth`. A program that uses one runs only on TkCurses.
 
-Anything without either heading behaves as tkinter's does, and tkinter's
+**Differences from curses** is the same as the first heading for those
+two modules, which follow the standard library's `curses` and
+`curses.panel` rather than tkinter.
+
+Anything without one of these headings behaves as tkinter's does, and tkinter's
 own documentation also applies to it.
 
 A widget's own options are listed under **Options**. The options many
