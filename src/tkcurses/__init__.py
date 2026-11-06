@@ -902,6 +902,13 @@ def _screen_distance(widget: Any, value: Any) -> int:
     return max(0, _signed_distance(widget, value))
 
 
+#: A Text tag's options that name a colour.
+_TAG_COLOUR_OPTIONS = frozenset({"background", "foreground", "lmargincolor"})
+
+#: A Canvas item's options that name a colour; "" is none, a hollow shape.
+_ITEM_COLOUR_OPTIONS = frozenset({"fill", "outline"})
+
+
 def _colour_or_terminals(widget: Any, value: Any) -> Any:
     """A colour, or "" for the terminal's own. Tk refuses "", and has no such
     thing as the terminal's colour to give it."""
@@ -1285,6 +1292,11 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "activebackground": _colour_or_terminals,
     "activeborderwidth": _signed_distance,
     "activeforeground": _colour_or_terminals,
+    "background": _colour_or_terminals,
+    "foreground": _colour_or_terminals,
+    "highlightbackground": _colour_or_terminals,
+    "highlightcolor": _colour_or_terminals,
+    "placeholderforeground": _colour_or_terminals,
     "activerelief": _relief,
     "blockcursor": _tcl_boolean,
     "buttonbackground": _colour_or_terminals,
@@ -12888,6 +12900,10 @@ class Text(_Drawable, XView, YView):
             resolved = _OPTION_ALIASES.get(option, option)
             if resolved not in self._TAG_OPTIONS:
                 raise TclError(f'unknown option "-{option}"')
+            if resolved in _TAG_COLOUR_OPTIONS:
+                # Refused here, as Tk refuses it, rather than when the text is
+                # drawn - where it broke the window's layout. TkCurses-f760.
+                _colour_or_terminals(self, value)
             options[resolved] = value
             if name == "sel" and resolved in _SELECTION_WIDGET_OPTIONS:
                 self._options[_SELECTION_WIDGET_OPTIONS[resolved]] = value
@@ -14725,8 +14741,16 @@ class Canvas(_Drawable, XView, YView):
             option = _OPTION_ALIASES.get(name, name)
             if option not in spec:
                 raise TclError(f'unknown option "-{name}"')
-            options[option] = value
+            options[option] = self._checked_item_value(option, value)
         return options
+
+    def _checked_item_value(self, option: str, value: Any) -> Any:
+        """An item option's value, a colour refused as Tk refuses it: when it
+        is given, not when it is drawn - where it broke the window's layout.
+        TkCurses-f760."""
+        if option in _ITEM_COLOUR_OPTIONS:
+            _colour_or_terminals(self, value)
+        return value
 
     # ----------------------------------------------------------- finding them
 
@@ -14851,7 +14875,7 @@ class Canvas(_Drawable, XView, YView):
                 option = _OPTION_ALIASES.get(name, name)
                 if option not in spec_for_kind:
                     raise TclError(f'unknown option "-{name}"')
-                item.options[option] = value
+                item.options[option] = self._checked_item_value(option, value)
         self._redraw()
         return None
 

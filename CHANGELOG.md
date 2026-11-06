@@ -6,7 +6,16 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+### Changed
+- An unknown colour name is refused when it is set, with Tk's
+  `unknown color name "x"`, for every widget colour option, a Text tag's
+  colours and a Canvas item's `fill` and `outline`. `darkyellow`, which Tk
+  does not have, and a name with a space at either end are now refused too.
+
 ### Fixed
+- Every colour name Tk knows is known: its whole table of 665, read as Tk
+  reads them, `SteelBlue`, `steel blue` and `gray90` among them. There were
+  28, and any other name broke the window's layout when it was drawn.
 - An exception in a callback no longer wipes the widgets off the screen. The
   screen was repainted after it, but only the cells beneath the widgets, so
   every widget vanished until the program ended. A curses window refreshed

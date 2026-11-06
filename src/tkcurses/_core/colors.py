@@ -42,6 +42,7 @@ from enum import IntEnum
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
+from tkcurses._core import x11colors
 from tkcurses._core.dispatcher import CursesDispatcher
 
 if TYPE_CHECKING:
@@ -261,9 +262,12 @@ def rgb_of(spec: str) -> tuple[int, int, int] | None:
     direct = rgb_for(spec)
     if direct is not None:
         return direct
-    resolved = _NAMED.get(spec.lower())
-    if resolved is None:
+    name = x11colors.lookup(spec)
+    if name is None:
         return None
+    resolved = _NAMED.get(name.lower())
+    if resolved is None:
+        return x11colors.NAMES[name]
     for rgb, candidate in _PALETTE_RGB:
         if candidate == resolved:
             return rgb
@@ -695,9 +699,9 @@ def parse_color(
             strength is then the wrong one.
 
     Raises:
-        ValueError: If ``spec`` is empty or a malformed hex string. An unknown
-            *name* is approximated rather than rejected, since terminals cannot
-            reproduce most X11 names exactly anyway.
+        ValueError: If ``spec`` is empty, a malformed hex string, or a name
+            Tk does not know - :mod:`tkcurses._core.x11colors` holds them
+            all, and the rule for spaces within one.
 
     At :data:`ColorDepth.BASIC` the named table is used as it always was, with
     brightness expressed as an attribute. Above it, brightness is a colour
@@ -707,12 +711,15 @@ def parse_color(
     if not spec or not spec.strip():
         raise ValueError("colour specification must not be empty")
     text = spec.strip().lower().replace(" ", "")
+    name = None if text.startswith("#") else x11colors.lookup(spec)
+    if name is not None:
+        text = name.lower()
     if depth is ColorDepth.NONE:
         # No colour, but the attributes still work and are the only thing a
         # monochrome terminal has to tell one thing from another with, so the
         # eight-colour resolution is kept and only its colour thrown away.
         return ResolvedColor(-1, parse_color(spec, ColorDepth.BASIC).attr)
-    if text in _NAMED:
+    if name is not None and text in _NAMED:
         named = _NAMED[text]
         if depth is ColorDepth.BASIC:
             if background and named.attr:
@@ -731,36 +738,9 @@ def parse_color(
         if rgb is None:
             raise ValueError(f"malformed hex colour: {spec!r}")
         return _resolve_rgb(rgb, depth, background=background)
-    known = _X11_RGB.get(text)
-    if known is not None:
-        return _resolve_rgb(known, depth, background=background)
-    raise ValueError(f"unknown colour name: {spec!r}")
-
-
-#: A few further X11 names common in tkinter code, matched by RGB rather than
-#: listed individually, so they degrade sensibly instead of raising.
-_X11_RGB: dict[str, tuple[int, int, int]] = {
-    "darkblue": (0, 0, 139),
-    "darkgreen": (0, 100, 0),
-    "darkred": (139, 0, 0),
-    "darkcyan": (0, 139, 139),
-    "darkmagenta": (139, 0, 139),
-    "darkyellow": (139, 139, 0),
-    "lightblue": (173, 216, 230),
-    "lightgreen": (144, 238, 144),
-    "lightyellow": (255, 255, 224),
-    "lightcyan": (224, 255, 255),
-    "lightpink": (255, 182, 193),
-    "gold": (255, 215, 0),
-    "beige": (245, 245, 220),
-    "tan": (210, 180, 140),
-    "salmon": (250, 128, 114),
-    "coral": (255, 127, 80),
-    "khaki": (240, 230, 140),
-    "indigo": (75, 0, 130),
-    "ivory": (255, 255, 240),
-    "snow": (255, 250, 250),
-}
+    if name is None:
+        raise ValueError(f"unknown colour name: {spec!r}")
+    return _resolve_rgb(x11colors.NAMES[name], depth, background=background)
 
 
 class ColorManager:

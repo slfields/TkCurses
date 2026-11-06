@@ -2939,6 +2939,37 @@ bits per pixel and has the full range either way.
 | `cyan` | `curses.COLOR_CYAN` | 6 |
 | `white` | `curses.COLOR_WHITE` | 7 |
 
+#### Colour names
+
+**Every name Tk knows is known here, and no other.** The table is Tk's own,
+the 665 names in its `xlib/rgb.txt` - the X11 set with Tk's changes, `gray`
+the web's 128 and `aqua`, `crimson`, `indigo` and the rest added - in
+`_core/x11colors.py`. Until `TkCurses-f760` there were 28, and a name outside
+them (`SteelBlue`, `gray90`) was stored unchecked and raised when the widget
+was drawn, in the middle of laying the window out: everything packed after
+it was never placed.
+
+**How a name is read is not in Tk's manual, and differs by platform.** On
+Windows and macOS, Tk's `colorcmp` (`xlib/xcolors.c`) ignores case and allows
+a single space only where its own spelling has a capital: `steel blue` and
+`light goldenrod yellow`, but not `steelblue `, `steel  blue` or `gray 50`.
+On X11, Tk resolves a few web colours itself and asks the X server for the
+rest, and the server is stricter: it knows each multi-word name spaced at
+every word or at none, and a numbered one only unspaced, so `antique white`
+but not `antique White1`. The rule here is `colorcmp`'s. Measured against Tk
+9.0.2 under X11, with every name in three cases and a space at every
+position, 9,490 spellings: every one X11 accepts is accepted here with the
+same RGB, and the 260 partly spaced ones it refuses are accepted, as Tk on
+Windows and macOS accepts them. The server also has a few names Tk's table
+lacks (`web gray`, `x11 gray`); a program using one runs only on X11 under Tk
+too, and they are not here.
+
+**An unknown name is refused when it is set**, `unknown color name "x"`, as
+Tk refuses it: every widget colour option, a Text tag's colours and a Canvas
+item's `fill` and `outline`. A ttk style is the exception, and that is Tk's
+too: `Style.configure` takes any value, and a widget whose style names an
+unknown colour is drawn without it - measured, no error at either point.
+
 #### Extended X11 Color Approximations
 
 At `BASIC` these are the named approximations, with brightness carried as an

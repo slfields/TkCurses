@@ -23,8 +23,10 @@ screens compared.
 **Units.** Wherever Tk measures in pixels, TkCurses measures in character
 cells: one column of one row of the terminal. A `padx` of 2 is two columns.
 
-**Colours** are given as Tk takes them - a name such as `"red"` or
-`"navy"`, or `"#rrggbb"` - and drawn as near as the terminal can show.
+**Colours** are given as Tk takes them - one of Tk's names such as `"red"`,
+`"SteelBlue"` or `"light goldenrod yellow"`, or `"#rrggbb"` - and drawn as
+near as the terminal can show. A name Tk does not know is refused when it is
+set.
 `bg` and `fg` are short for `background` and `foreground`, and `bd` for
 `borderwidth`.
 

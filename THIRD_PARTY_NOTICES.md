@@ -36,6 +36,7 @@ it. The scripts, as installed with Tcl 9.0.2 and Tk 9.0.2:
 | Tk `generic/tkBind.c` (C) | `Tk_BindEvent`, `MatchPatterns`, the promotion lists, `IsBetterMatch`, `CountSpecialized` | multi-event binding sequences and how matches are ranked (`_core/bindings.py`) |
 | Tk `generic/tkText.c` (C) | `DeleteIndexRange`, `TextPushUndoAction`, the autoseparator test in `TextInsertCmd` and `TextDeleteCmd` | where a Text's view goes when text is deleted, a deletion to the end taking whole lines, where undo and redo put the cursor, and when an edit starts a new undo group (`_core/textbuffer.py`) |
 | Tk `generic/tkUndo.c` (C) | `TkUndoRevert`, `TkUndoApply` | the separators an undo or a redo leaves behind (`_core/textbuffer.py`) |
+| Tk `xlib/rgb.txt`, `xlib/xcolors.c` (C) | the colour name table; `colorcmp` | the colour names Tk knows, and where a space may go in one (`_core/x11colors.py`) |
 
 The project documentation (`ARCHITECTURE.md`, `docs/`) also quotes Tk's
 manual pages and these scripts where it records a measurement. Tk's licence

@@ -48,6 +48,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 import tkcurses
 from tkcurses._core.attributes import BorderStyle, with_colors
 from tkcurses._core.bindings import parse_sequence
+from tkcurses._core.colors import parse_color
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.errors import TclError
 from tkcurses._core.geometry import BORDER_WIDTH, Insets, Point, Rect
@@ -925,11 +926,29 @@ class Widget:
         if colors is None:
             return curses.A_NORMAL
         options = getattr(self, "_options", {})
-        foreground = options.get("foreground") or self._styled("foreground")
-        background = options.get("background") or self._styled("background")
+        foreground = options.get("foreground") or self._styled_colour("foreground")
+        background = options.get("background") or self._styled_colour("background")
         return int(
             colors.attribute_for(str(foreground or "white"), str(background or "black"))
         )
+
+    def _styled_colour(self, option: str) -> Any:
+        """A colour from the style database, or None if it names none.
+
+        ``Style.configure`` takes any value, as Tk's does, and a widget whose
+        style names a colour Tk does not know is drawn without it - measured
+        on Tk 9.0.2, ``configure("TLabel", background="nocolour")`` and a
+        ttk.Label drawn after it, with no error at either. Here it raised in
+        the middle of laying the window out. TkCurses-f760.
+        """
+        value = self._styled(option)
+        if not value:
+            return value
+        try:
+            parse_color(str(value))
+        except ValueError:
+            return None
+        return value
 
     def _styled(self, option: str, default: Any = None) -> Any:
         """One option, resolved from the style database for this state.

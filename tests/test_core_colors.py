@@ -95,7 +95,64 @@ def test_names_are_case_and_space_insensitive():
     """tkinter accepts 'Light Gray' as readily as 'lightgray'."""
     assert parse_color("LightGray") == parse_color("lightgray")
     assert parse_color("Light Gray") == parse_color("lightgray")
-    assert parse_color("  RED  ") == parse_color("red")
+    assert parse_color("RED") == parse_color("red")
+
+
+@pytest.mark.parametrize(
+    ("spec", "known"),
+    [
+        # Every verdict measured on Tk 9.0.2, which this table follows: a
+        # space only where the name starts a word, one at a time, never at
+        # either end and never before a number.
+        ("SteelBlue", True),
+        ("steel blue", True),
+        ("STEELBLUE", True),
+        ("light goldenrod yellow", True),
+        ("Light Goldenrod Yellow", True),
+        ("lightgoldenrodyellow", True),
+        ("navy blue", True),
+        ("gray0", True),
+        ("grey100", True),
+        ("s teelblue", False),
+        ("steel  blue", False),
+        (" steelblue", False),
+        ("steelblue ", False),
+        ("  RED  ", False),
+        ("gray 50", False),
+        ("gr ay50", False),
+        ("gray101", False),
+        ("darkyellow", False),
+    ],
+)
+def test_a_name_is_read_by_tks_rule(spec, known):
+    if known:
+        parse_color(spec)
+    else:
+        with pytest.raises(ValueError, match="unknown colour name"):
+            parse_color(spec)
+
+
+def test_tks_whole_table_is_known():
+    """665 names, the X11 set with Tk's changes: gray is the web's 128, and
+    there are aqua, crimson, indigo and the rest Tk added."""
+    from tkcurses._core import x11colors
+
+    assert len(x11colors.NAMES) == 665
+    assert all(x11colors.lookup(name) == name for name in x11colors.NAMES)
+    assert x11colors.NAMES["gray"] == (128, 128, 128)
+    assert x11colors.NAMES["green"] == (0, 128, 0)
+    assert x11colors.NAMES["crimson"] == (220, 20, 60)
+    for number in range(101):
+        assert x11colors.lookup(f"gray{number}") is not None
+        assert x11colors.lookup(f"Grey{number}") is not None
+
+
+def test_a_name_beyond_the_palette_reports_tks_rgb():
+    """What a picture's get() or winfo_rgb() reports for a name the
+    approximations do not cover is the colour Tk gives it."""
+    assert rgb_of("SteelBlue") == (70, 130, 180)
+    assert rgb_of("light goldenrod yellow") == (250, 250, 210)
+    assert rgb_of("no such colour") is None
 
 
 def test_unknown_name_is_rejected():
