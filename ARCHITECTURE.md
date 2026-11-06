@@ -1353,6 +1353,23 @@ class InputHandler:
         return KEY_MAP.get(ch, chr(ch) if 32 <= ch <= 126 else f'keycode-{ch}')
 ```
 
+#### Alt from a terminal
+
+**A key read straight after an Escape is that key with Alt.** A terminal
+sends Alt-e as Escape and then `e`, and ncurses, after waiting `ESCDELAY`
+(25 ms here) for a sequence it knows, hands back both - 27, then the `e`
+already in its buffer. `InputHandler.poll` reads them as the one key Tk on
+X11 reports for Alt-e: keysym `e`, Alt held. An Escape pressed on its own
+has nothing behind it and stays Escape; a mouse report or a resize after one
+is never Alt. Until `TkCurses-r3og` the two were delivered separately, so no
+`<Alt-...>` binding could fire from a real terminal, the menu bar's Alt
+letters could not work, and Text's Alt-z redo was bound as the sequence
+`<Escape><z>` instead. One cost: a sequence ncurses does not know - an arrow
+key in the other cursor mode, say - now arrives as Alt with its first
+character, then the rest, where it arrived as Escape and then the rest;
+Escape closed whatever dialog or menu was open, Alt with `[` or `O` does
+nothing.
+
 #### Modifier Constants
 
 ```python
@@ -5272,6 +5289,21 @@ live while the children got its row back. Now the old bar is unmapped and
 stops being a menubar. `menu=None` changes nothing, as with every option
 given as `None` (see "An option given as None" under the deliberate
 differences).
+
+**The menu bar is reached from the keyboard as Tk's X11 bindings reach it**
+(`TkCurses-r3og`): `menu.tcl` binds `<F10>` to `tk::FirstMenu` and
+`<Alt-Key>` to `tk::TraverseToMenu` on `all`, and neither was here, so only
+the mouse reached a menu bar. Measured on Tk 9.0.2 under X11, and followed:
+F10 opens the first menu with its first entry that can be chosen active;
+Alt and a letter, either case, opens the menu that letter is underlined in,
+or runs a command entry on the bar, or posts a Menubutton so underlined,
+passing over disabled ones (`tk::MenuFind`); Escape closes it and the focus
+goes back where it was. When the bar's first entry is a command, F10 only
+makes it active and gives the bar the focus (`tk::MenuFirstEntry`). The
+editing widgets bind `<Alt-Key>` to nothing in Tk (`entry.tcl`,
+`text.tcl`, `spinbox.tcl`, `ttk/entry.tcl`), so an Alt letter is not typed
+and still reaches `all`; here they typed it. GNOME Terminal keeps F10 for
+its own menu, which is why the Alt letters matter more.
 
 Tk's keyboard traversal ignores columns (`menu.tcl`, `MenuNextEntry`): Up and
 Down go by index and wrap, so Down from a column's foot is the next column's

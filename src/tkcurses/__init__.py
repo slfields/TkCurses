@@ -478,6 +478,8 @@ _TK_CONTROL = 0x4
 _TK_MOD1 = 0x8
 _TK_META_MASK = 0x10000
 _TK_ALT_MASK = 0x20000
+#: Every bit that means Alt or Meta is held, from a terminal or generated.
+_TK_ALT_OR_META = _TK_MOD1 | _TK_ALT_MASK | _TK_META_MASK
 _TK_BUTTONS = {MOD_BUTTONS[n]: 0x80 << n for n in range(1, 6)}
 
 
@@ -5620,6 +5622,14 @@ class Tk(BaseWidget, Wm):
         # a terminal that reports the modifier properly instead.
         self.bind_all("<Key-F18>", _focus_previous)
         self.bind_all("<Shift-Key-F6>", _focus_previous)
+        # The menu bar from the keyboard: Tk's menu.tcl binds both on "all"
+        # under X11 - "bind all <F10> {tk::FirstMenu %W}" and "bind all
+        # <Alt-Key> {tk::TraverseToMenu %W %A}", read from Tk 9.0.2. Without
+        # them nothing but the mouse reached the bar (TkCurses-r3og). Alt
+        # matters more here: GNOME Terminal keeps F10 for its own menu, and a
+        # terminal sends Alt-f as ESC f, which the input layer reads as Alt.
+        self.bind_all("<Key-F10>", _first_menu)
+        self.bind_all("<Alt-Key>", _traverse_to_menu)
 
     def winfo_class(self) -> str:
         """The class this root binds and reads options under."""
@@ -9689,6 +9699,11 @@ def _entry_keystroke(event: Event) -> str | None:
             entry._changed()
         return "break"
 
+    if event.state & _TK_ALT_OR_META:
+        # Not typed, and not kept: entry.tcl, spinbox.tcl and ttk/entry.tcl
+        # bind <Alt-Key> and <Meta-Key> to "# nothing", so Alt-f opens a menu
+        # through "all" rather than putting an f in the field. TkCurses-r3og.
+        return None
     if event.char and event.char.isprintable():
         selection = field.selection
         start = selection[0] if selection else field.cursor
@@ -12306,9 +12321,10 @@ class Text(_Drawable, XView, YView):
         bind(name, "<<PasteSelection>>", _text_paste_selection)
         bind(name, "<<Undo>>", _text_undo)
         bind(name, "<<Redo>>", _text_redo)
-        # Alt-z, as a terminal sends it. Ours, not Tk's: Tk 9.0.2 never fires
-        # a virtual event of two keys, so it cannot be one of <<Redo>>'s.
-        bind(name, "<Key-Escape><Key-z>", _text_redo)
+        # Alt-z. Ours, not Tk's, whose X11 <<Redo>> is Control-Z alone. It was
+        # the sequence Escape then z, which is what a terminal sends, until
+        # the input layer read the two as the one key they are. TkCurses-r3og.
+        bind(name, "<Alt-Key-z>", _text_redo)
         for sequence, (goes_to, selects) in _TEXT_NAVIGATION.items():
             bind(name, sequence, _text_navigation(goes_to, selects))
         # text.tcl: sideways a page, the cursor left where it is.
@@ -13778,6 +13794,10 @@ def _text_key(event: Event) -> str | None:
         text._type("\n")
         return "break"
     if keysym == "Tab":
+        return None
+    if event.state & _TK_ALT_OR_META:
+        # text.tcl binds <Alt-Key> and <Meta-Key> to "# nothing": see the
+        # same test in the Entry's. TkCurses-r3og.
         return None
     if len(event.char) == 1 and event.char.isprintable():
         text._type(event.char)
@@ -15424,7 +15444,10 @@ class Menu(_Drawable):
     The same widget is also a **menubar** when a toplevel is given one
     through its ``menu`` option. It then draws in a row across the top of
     that window, its cascades post beneath their labels, and the toplevel
-    lays its children out in what is left.
+    lays its children out in what is left. As in Tk, F10 opens its first
+    menu, and Alt with the letter an entry's ``underline`` marks opens that
+    menu or runs that command - wherever the focus is. Some terminals keep
+    F10 for themselves; the Alt letters reach the program.
 
     Sample output:
         # size: 40x8
@@ -16027,6 +16050,11 @@ class Menu(_Drawable):
             parent._open_cascade = None
             parent._active = None
             parent._refresh()
+            if previous is parent:
+                # Opened from a bar F10 gave the focus to: the bar lets it
+                # go too, rather than keeping it with nothing active.
+                _leave_menubar(parent)
+                return
         if parent is not None and parent._posted:
             parent._open_cascade = None
             parent.grab_set()
@@ -16354,7 +16382,10 @@ def _menu_key(event: Event) -> str | None:
     menu = event.widget
     keysym = event.keysym
     if keysym == "Escape":
-        menu.unpost()
+        if menu._as_menubar and not menu._posted:
+            _leave_menubar(menu)
+        else:
+            menu.unpost()
         return "break"
     if menu._as_menubar:
         return _menubar_key(menu, keysym)
@@ -16408,6 +16439,17 @@ def _menubar_key(menu: Menu, keysym: str) -> str | None:
     return "break"
 
 
+def _leave_menubar(menu: Menu) -> None:
+    """Escape on a menu bar holding the focus, which F10 gives it when its
+    first entry is not a cascade: nothing active, and the focus back where
+    it was, as Tk's ``tk::MenuEscape`` unposts it."""
+    menu._active = None
+    menu._refresh()
+    previous, menu._focus_before = menu._focus_before, None
+    if previous is not None and previous.winfo_exists():
+        previous.focus_set()
+
+
 def _reopen(menu: Menu) -> None:
     """Follow the active menubar entry with its dropdown, if one is open."""
     if menu._open_cascade is not None and menu._active is not None:
@@ -16443,6 +16485,119 @@ def _first_selectable(menu: Menu, direction: int) -> int:
     if direction < 0:
         numbers.reverse()
     return next((n for n in numbers if menu._entries[n].selectable), menu._active or 0)
+
+
+def _first_menu(event: Event) -> None:
+    """F10: open the first menu of the window's menu bar, or its first
+    Menubutton's. Follows ``tk::FirstMenu``."""
+    _open_from_keyboard(_menu_find(event.widget.winfo_toplevel(), ""), "")
+
+
+def _traverse_to_menu(event: Event) -> None:
+    """Alt and a letter: open the menu whose underlined letter it is, in the
+    menu bar or on a Menubutton, ignoring case. Follows
+    ``tk::TraverseToMenu``; a posted menu never gets here, because the Menu
+    class keeps every key it is sent (see :func:`_menu_key`)."""
+    char = event.char if len(event.char) == 1 else event.keysym
+    if len(char) != 1 or not char.isprintable():
+        return
+    char = char.lower()
+    _open_from_keyboard(_menu_find(event.widget.winfo_toplevel(), char), char)
+
+
+def _underlined(label: str, underline: Any) -> str:
+    """The lower-cased character ``underline`` picks out of ``label``."""
+    index = int(underline if underline not in (None, "") else -1)
+    return label[index].lower() if 0 <= index < len(label) else ""
+
+
+def _menu_find(window: Misc, char: str) -> Menu | Menubutton | None:
+    """The menu bar with an entry underlined ``char`` (lower case), or else the first
+    Menubutton so underlined, searched depth first; with ``char`` empty, the
+    bar or the first Menubutton. Disabled ones are passed over. Follows
+    ``tk::MenuFind``, whose bar is a child of the toplevel; here it is the one
+    the window's ``menu`` option names."""
+    bar: Menu | None = getattr(window, "_menubar_shown", None)
+    if (
+        bar is not None
+        and bar.winfo_exists()
+        and (
+            not char
+            or any(
+                entry.selectable
+                and _underlined(entry.label, entry.options.get("underline")) == char
+                for entry in bar._entries
+            )
+        )
+    ):
+        return bar
+    return _menubutton_find(window, window, char)
+
+
+def _menubutton_find(top: Misc, window: Misc, char: str) -> Menubutton | None:
+    """The second half of ``tk::MenuFind``: Menubuttons, not crossing into
+    another toplevel."""
+    for child in window.winfo_children():
+        if child.winfo_toplevel() is not top:
+            continue
+        if isinstance(child, Menubutton):
+            options = child._options
+            mine = _underlined(str(options["text"]), options["underline"])
+            if (char == mine or not char) and not child._disabled:
+                return child
+        else:
+            found = _menubutton_find(top, child, char)
+            if found is not None:
+                return found
+    return None
+
+
+def _open_from_keyboard(found: Menu | Menubutton | None, char: str) -> None:
+    """Open what :func:`_menu_find` found, as ``tk::TraverseToMenu`` and
+    ``tk::FirstMenu`` do: a Menubutton posts its menu; on the bar, ``char``
+    picks the entry (``tk::TraverseWithinMenu``) - a cascade opens, anything
+    else is chosen - and with none the first entry opens. Either way the menu
+    that opens has its first entry active (``tk::MenuFirstEntry``)."""
+    if isinstance(found, Menubutton):
+        found.post_menu()
+        menu = found._options["menu"]
+        if menu is not None and menu._posted:
+            _first_entry(menu)
+        return
+    if found is None:
+        return
+    for number, entry in enumerate(found._entries):
+        if not entry.selectable:
+            continue
+        if char and _underlined(entry.label, entry.options.get("underline")) != char:
+            continue
+        if entry.kind != "cascade":
+            # Chosen, as Tk's TraverseWithinMenu invokes it; with no letter,
+            # F10 on a bar whose first entry is a command, it is only shown
+            # active - Tk's MenuFirstEntry activates and does not invoke.
+            if char:
+                found.invoke(number)
+            else:
+                found._focus_before = found.tk.focus
+                found.focus_set()
+                found.activate(number)
+            return
+        found._open(number)
+        submenu = entry.options.get("menu")
+        if submenu is not None and submenu._posted:
+            _first_entry(submenu)
+        return
+
+
+def _first_entry(menu: Menu) -> None:
+    """Make the first entry that can be chosen active, unless one already
+    is. Follows ``tk::MenuFirstEntry``."""
+    if menu._active is not None:
+        return
+    for number, entry in enumerate(menu._entries):
+        if entry.selectable:
+            menu.activate(number)
+            return
 
 
 def _by_mnemonic(menu: Menu, char: str) -> str | None:

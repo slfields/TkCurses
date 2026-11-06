@@ -13,6 +13,14 @@ All notable changes to TkCurses. The format follows
   does not have, and a name with a space at either end are now refused too.
 
 ### Fixed
+- The menu bar can be reached from the keyboard, as in Tk: F10 opens the
+  first menu, and Alt with an underlined letter opens that menu, runs that
+  command or posts that Menubutton. Only the mouse reached it before.
+- Alt with a key, which a terminal sends as Escape and the key, arrives as
+  that key with Alt held, so `<Alt-...>` bindings fire. It arrived as an
+  Escape and then the key.
+- An Alt letter is no longer typed into an Entry, Spinbox or Text, as Tk's
+  bindings ignore it there.
 - Every colour name Tk knows is known: its whole table of 665, read as Tk
   reads them, `SteelBlue`, `steel blue` and `gray90` among them. There were
   28, and any other name broke the window's layout when it was drawn.

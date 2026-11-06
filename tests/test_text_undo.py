@@ -34,7 +34,7 @@ from types import SimpleNamespace
 import pytest
 
 from tkcurses import Misc, TclError, Text
-from tkcurses._core.events import MOD_CTRL, KeyEvent
+from tkcurses._core.events import MOD_ALT, MOD_CTRL, KeyEvent
 from tkcurses._core.geometry import Rect
 from tkcurses._core.panels import PanelStack
 
@@ -380,16 +380,15 @@ def test_control_z_undoes_and_control_shift_z_redoes(root):
     assert text.get("1.0", "end-1c") == "ab"
 
 
-def test_alt_z_redoes_as_a_terminal_sends_it(root):
-    """Escape, then ``z``: a binding of ours, since a terminal cannot send
-    Control-Shift-z and Tk never fires a two-key virtual event. The ``z`` is
-    not typed."""
+def test_alt_z_redoes(root):
+    """A binding of ours, since a terminal cannot send Control-Shift-z. A
+    terminal sends Alt-z as Escape then ``z``, which the input layer reads as
+    the one key. The ``z`` is not typed."""
     text = blank(root)
     text.focus_set()
     press(text, "a", "b")
     control(text, "z")
-    text._handle(KeyEvent(keysym="Escape", char="\x1b"))
-    text._handle(KeyEvent(keysym="z", char="z"))
+    text._handle(KeyEvent(keysym="z", char="z", modifiers=MOD_ALT))
     assert text.get("1.0", "end-1c") == "ab"
 
 

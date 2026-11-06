@@ -57,6 +57,9 @@ from tkcurses._core.events import (
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
+#: The Escape key's code, which also begins whatever Alt is held with.
+_ESCAPE = 27
+
 __all__ = [
     "DEFAULT_CLICK_INTERVAL",
     "SIGNAL_KEYS",
@@ -557,11 +560,36 @@ class InputHandler:
         the distinction wrong eventually.
         """
         events: list[Event] = []
-        while True:
-            code = self._dispatcher.call(self._stdscr.getch)
-            if code == curses.ERR:
-                return events
+        code = self._dispatcher.call(self._stdscr.getch)
+        while code != curses.ERR:
+            following = curses.ERR
+            if code == _ESCAPE:
+                following = self._dispatcher.call(self._stdscr.getch)
+                if following not in (curses.ERR, curses.KEY_MOUSE, curses.KEY_RESIZE):
+                    events.append(self._alt_key(following))
+                    code = self._dispatcher.call(self._stdscr.getch)
+                    continue
             events.extend(self._translate(code))
+            if following == curses.ERR:
+                following = self._dispatcher.call(self._stdscr.getch)
+            code = following
+        return events
+
+    def _alt_key(self, code: int) -> KeyEvent:
+        """A key pressed with Alt, which a terminal sends as Escape and then
+        the key.
+
+        ncurses waits ``ESCDELAY`` after an Escape for the rest of a sequence
+        it knows, and when what follows is no such sequence it hands both back
+        - Escape, then the key, already waiting. So a key read straight after
+        an Escape was sent with it, and is the one key Alt-e is, as Tk on X11
+        reports it: keysym ``e`` with Alt held. An Escape pressed on its own
+        has nothing behind it, and stays Escape. Mouse reports and resizes
+        are never Alt, and are read as themselves.
+        """
+        event = self._key_event(code)
+        event.modifiers |= MOD_ALT
+        return event
 
     def next_event(self, timeout_ms: int = 50) -> Event | None:
         """Wait for and return one event, or None if nothing arrived."""

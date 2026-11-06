@@ -24,6 +24,7 @@ The handler itself needs a terminal and is covered by the tty tests.
 from __future__ import annotations
 
 import curses
+import os
 
 import pytest
 
@@ -289,6 +290,43 @@ def test_poll_drains_every_pending_code(curses_stub):
     handler = make_handler(FakeScreen([ord("a"), ord("b"), ord("c")]))
     events = handler.poll()
     assert [event.char for event in events] == ["a", "b", "c"]
+
+
+def test_a_key_sent_after_escape_is_that_key_with_alt(curses_stub):
+    """Alt-e from a terminal is Escape and e together; ncurses hands back
+    both at once, and they are the one key Tk on X11 reports. TkCurses-r3og."""
+    handler = make_handler(FakeScreen([27, ord("e"), 27, ord("E"), ord("a")]))
+    events = handler.poll()
+    assert [(e.keysym, e.char, e.modifiers) for e in events] == [
+        ("e", "e", MOD_ALT),
+        ("E", "E", MOD_ALT),
+        ("a", "a", 0),
+    ]
+
+
+def test_an_escape_on_its_own_stays_escape(curses_stub):
+    handler = make_handler(FakeScreen([ord("a"), 27]))
+    events = handler.poll()
+    assert [(e.keysym, e.modifiers) for e in events] == [("a", 0), ("Escape", 0)]
+
+
+@pytest.mark.parametrize("follower", [curses.KEY_MOUSE, curses.KEY_RESIZE])
+def test_a_mouse_report_or_resize_after_escape_is_not_alt(curses_stub, follower):
+    """Neither is a key, so the Escape before it stays a key of its own."""
+    curses_stub.setattr(
+        curses, "getmouse", lambda: (0, 1, 1, 0, curses.BUTTON1_PRESSED)
+    )
+    curses_stub.setattr(curses, "resize_term", lambda rows, cols: None)
+    curses_stub.setattr(os, "get_terminal_size", lambda: os.terminal_size((80, 24)))
+    handler = make_handler(FakeScreen([27, follower, ord("x")]))
+    events = handler.poll()
+    assert (events[0].type, events[0].keysym, events[0].modifiers) == (
+        "key",
+        "Escape",
+        0,
+    )
+    assert events[1].type != "key"
+    assert (events[-1].keysym, events[-1].modifiers) == ("x", 0)
 
 
 def test_poll_on_an_idle_terminal_returns_nothing(curses_stub):
