@@ -16,6 +16,10 @@ All notable changes to TkCurses. The format follows
 - A guide to terminals: what TkCurses needs from one, colour depth,
   resizing, the keys a terminal cannot send, the mouse, the clipboard,
   Unicode, suspending and restoring, and the settings that take effect.
+- Six example programs in `examples/` - a form, a to-do list, a text
+  editor, a table and a chart among them - on a page of the documentation
+  that shows each one's screen, taken by running it when the documentation
+  is built.
 
 ### Changed
 - The `dos` theme has a look of its own: double lines across and single

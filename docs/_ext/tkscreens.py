@@ -36,6 +36,11 @@ picture is cropped to what it drew. A first line ``# size: 60x15`` asks
 for another size and is not shown. The same examples are written as
 ``{tkcurses-sample}`` blocks on Markdown pages.
 
+A whole program, from ``examples/``, is shown by ``{tkcurses-example}``,
+which runs the file as it is - its own imports and its own ``mainloop`` -
+and can press keys before the picture is taken, so a screen can show a
+menu open or a form filled in.
+
 Screens are cached under the doctree directory by the example, its size
 and the library's source, so an unchanged example is not run again and
 any change to the library runs them all.
@@ -45,6 +50,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import json
 import re
 import sys
 from pathlib import Path
@@ -124,8 +130,14 @@ def program(code: str) -> str:
 # -- the screen ---------------------------------------------------------------
 
 
-def capture(code: str, size: tuple[int, int]) -> list[list[Any]]:
-    """Run the example in a pseudo-terminal and return its cells, settled."""
+def capture(
+    code: str, size: tuple[int, int], keys: tuple[str, ...] = (), *, whole: bool = False
+) -> list[list[Any]]:
+    """Run the example in a pseudo-terminal and return its cells, settled.
+
+    ``whole`` runs ``code`` as a complete program rather than an example's
+    body; ``keys`` are pressed, in order, once it has drawn.
+    """
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     from tests.support.terminal import TerminalHarness, TerminalTimeout
@@ -133,13 +145,16 @@ def capture(code: str, size: tuple[int, int]) -> list[list[Any]]:
     cols, rows = size
     term = TerminalHarness(cols, rows)
     try:
-        term.run_source(program(code))
+        term.run_source(code if whole else program(code))
         try:
             term.wait_for(
                 lambda t: any(line.strip() for line in t.display),
                 message="the example to draw something",
             )
             term.wait_for_idle(0.3)
+            for key in keys:
+                term.send_keys(key)
+                term.wait_for_idle(0.3)
         except TerminalTimeout as error:
             raise SampleError(f"{error}\n{term.stderr}") from None
         if term.exit_status is not None or term.stderr.strip():
@@ -438,6 +453,41 @@ def _summary(body: str) -> str:
     return "What this draws: " + " ".join(body.split())[:200]
 
 
+def render_example(
+    path: Path, size: tuple[int, int], keys: tuple[str, ...], cache: Path | None = None
+) -> str:
+    """A whole program's screen, after ``keys``, as SVG."""
+    source = path.read_text()
+    key = hashlib.sha256(
+        "\0".join(
+            (
+                RENDERER_VERSION,
+                library_fingerprint(),
+                f"{size}",
+                json.dumps(keys),
+                source,
+            )
+        ).encode()
+    ).hexdigest()
+    if cache is not None and (cache / f"{key}.svg").exists():
+        return (cache / f"{key}.svg").read_text()
+    title = f"What {path.name} draws" + (f" after {' '.join(keys)}" if keys else "")
+    picture = svg(crop(capture(source, size, keys, whole=True)), title)
+    if cache is not None:
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / f"{key}.svg").write_text(picture)
+    return picture
+
+
+def shown(source: str) -> str:
+    """A program as the page shows it: without the licence notice it opens
+    with, which the file itself keeps."""
+    lines = source.splitlines()
+    while lines and (lines[0].startswith("#") or not lines[0].strip()):
+        lines.pop(0)
+    return "\n".join(lines) + "\n"
+
+
 # -- Sphinx -------------------------------------------------------------------
 
 
@@ -468,6 +518,77 @@ class SampleDirective(Directive):
         )
         container = nodes.container(classes=["tkcurses-sample"])
         container += [literal, figure]
+        return [container]
+
+
+def _size_option(text: str) -> tuple[int, int]:
+    match = re.fullmatch(r"\s*(\d+)\s*x\s*(\d+)\s*", text)
+    if not match:
+        raise ValueError(f"a size is columns x rows, like 60x15, not {text!r}")
+    return int(match[1]), int(match[2])
+
+
+def _keys_option(text: str) -> tuple[str, ...]:
+    keys = json.loads(text)
+    if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
+        raise ValueError('keys are a JSON list of strings, like ["abc", "<Return>"]')
+    return tuple(keys)
+
+
+class ExampleDirective(Directive):
+    """``.. tkcurses-example:: examples/name.py`` - a whole program, its
+    screen, and a link to the file.
+
+    ``:size: 60x15`` sets the terminal (40x10 otherwise), and ``:keys:`` is a
+    JSON list of what to press first: literal text and ``<Name>`` keys, as
+    the test harness's ``send_keys`` takes them.
+    """
+
+    required_arguments = 1
+    has_content = False
+    option_spec = {"size": _size_option, "keys": _keys_option}  # noqa: RUF012
+
+    def run(self) -> list[nodes.Node]:
+        relative = self.arguments[0]
+        path = ROOT / relative
+        env = self.state.document.settings.env
+        if not path.is_file():
+            return [
+                self.state.document.reporter.warning(
+                    f"example {relative} not found", line=self.lineno
+                )
+            ]
+        env.note_dependency(str(path))
+        source = path.read_text()
+        literal = nodes.literal_block(shown(source), shown(source), language="python")
+        link = nodes.paragraph()
+        link += nodes.reference(
+            relative,
+            relative,
+            refuri=f"https://github.com/slfields/TkCurses/blob/master/{relative}",
+        )
+        cache = Path(env.app.doctreedir) / "tkscreens"
+        try:
+            picture = render_example(
+                path,
+                self.options.get("size", DEFAULT_SIZE),
+                self.options.get("keys", ()),
+                cache,
+            )
+        except SampleError as error:
+            return [
+                literal,
+                self.state.document.reporter.warning(
+                    f"example {relative} failed: {error}", line=self.lineno
+                ),
+            ]
+        figure = nodes.raw(
+            "",
+            f'<div class="tkcurses-sample-screen">{picture}</div>',
+            format="html",
+        )
+        container = nodes.container(classes=["tkcurses-sample"])
+        container += [figure, link, literal]
         return [container]
 
 
@@ -522,6 +643,7 @@ def setup(app: Sphinx) -> dict[str, Any]:
     # autodoc is loaded.
     app.setup_extension("sphinx.ext.autodoc")
     app.add_directive("tkcurses-sample", SampleDirective)
+    app.add_directive("tkcurses-example", ExampleDirective)
     # A page whose own text is unchanged still draws differently when the
     # library or the renderer does. A config value Sphinx compares between
     # builds, rebuild="env", makes it read every page again when either

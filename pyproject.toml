@@ -209,6 +209,9 @@ known-first-party = ["tkcurses"]
 # The same, for the tests that check its path handling: they have to speak
 # the os.path the module speaks to be checking anything.
 "tests/test_filedialog.py" = ["PTH"]
+# The examples are written as a reader would write a tkinter program: an
+# event handler takes the event whether it reads it or not.
+"examples/*.py" = ["ARG001", "ARG005"]
 # And for the scenario that drives it, which passes the file dialogs the
 # os.path strings they take.
 "uat/scenario_30_choosers.py" = ["PTH"]

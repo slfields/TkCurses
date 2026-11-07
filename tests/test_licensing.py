@@ -35,7 +35,7 @@ import pytest
 import tkcurses
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE_DIRS = ("src", "tests", "uat")
+SOURCE_DIRS = ("src", "tests", "uat", "examples")
 
 AUTHOR = "Scott L. Fields"
 COPYRIGHT = f"# Copyright (C) 2026  {AUTHOR}"

@@ -331,3 +331,71 @@ def test_an_example_that_complains_after_drawing_is_an_error():
             'tk.Label(root, text="Hi").pack()\n'
             'root.after(50, lambda: print("something is off", file=sys.stderr))'
         )
+
+
+# -- whole programs -------------------------------------------------------------
+
+
+def test_a_program_is_shown_without_its_licence_notice():
+    source = "# TkCurses - a notice\n# SPDX-License-Identifier: GPL-3.0-only\n\n" + (
+        '"""What it does."""\n\nimport tkcurses as tk\n# a comment kept\n'
+    )
+    assert tkscreens.shown(source) == (
+        '"""What it does."""\n\nimport tkcurses as tk\n# a comment kept\n'
+    )
+
+
+def test_an_example_s_size_and_keys_are_read():
+    assert tkscreens._size_option("60x15") == (60, 15)
+    assert tkscreens._keys_option('["abc", "<Return>"]') == ("abc", "<Return>")
+    with pytest.raises(ValueError, match="columns x rows"):
+        tkscreens._size_option("wide")
+    with pytest.raises(ValueError, match="JSON list"):
+        tkscreens._keys_option('"<Return>"')
+
+
+@pytest.mark.tty
+def test_a_program_is_drawn_after_its_keys(tmp_path):
+    picture = tkscreens.render_example(
+        ROOT / "examples" / "todo.py", (40, 14), ("Buy bread", "<Return>")
+    )
+    words = " ".join(re.findall(r">([^<]+)</text>", picture))
+    assert "Buy bread" in words
+    assert "3 tasks, 0 done" in words
+
+
+@pytest.mark.tty
+def test_a_program_is_run_again_only_when_its_keys_change(tmp_path, monkeypatch):
+    path = ROOT / "examples" / "hello.py"
+    first = tkscreens.render_example(path, (40, 6), (), tmp_path)
+    runs = []
+    real = tkscreens.capture
+
+    def counted(*args, **kwargs):
+        runs.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(tkscreens, "capture", counted)
+    assert tkscreens.render_example(path, (40, 6), (), tmp_path) == first
+    assert runs == []
+    tkscreens.render_example(path, (40, 6), ("<Tab>",), tmp_path)
+    assert len(runs) == 1
+
+
+@pytest.mark.tty
+def test_a_page_shows_a_program_its_screen_and_its_file(tmp_path):
+    result = _build(
+        tmp_path, "# P\n\n```{tkcurses-example} examples/hello.py\n:size: 40x6\n```\n"
+    )
+    assert result.returncode == 0, result.stderr
+    page = (tmp_path / "_build" / "index.html").read_text()
+    assert 'class="tkcurses-sample-screen"' in page
+    assert ">Quit</text>" in page
+    assert "blob/master/examples/hello.py" in page
+    assert "SPDX" not in page
+
+
+def test_a_missing_program_fails_the_build(tmp_path):
+    result = _build(tmp_path, "# P\n\n```{tkcurses-example} examples/nowhere.py\n```\n")
+    assert result.returncode != 0
+    assert "example examples/nowhere.py not found" in result.stderr
