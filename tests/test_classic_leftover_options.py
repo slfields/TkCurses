@@ -229,7 +229,7 @@ def drawn(root):
     """A Listbox 12 cells wide with no border, painting into a Window."""
     root.tk.panels = PanelStack(window_factory=Window, panel_factory=None)
     root.tk.screen = SimpleNamespace(
-        started=True, size=SimpleNamespace(width=60, height=20)
+        started=True, size=SimpleNamespace(width=60, height=20), glyphs=None
     )
     widget = Listbox(
         root, width=12, height=4, borderwidth=0, highlightthickness=0, relief="flat"
@@ -520,7 +520,10 @@ def test_a_tearoffcommand_is_kept(root):
 def test_a_menus_font_styles_its_labels(root):
     root.tk.panels = PanelStack(window_factory=Window, panel_factory=None)
     root.tk.screen = SimpleNamespace(
-        started=True, size=SimpleNamespace(width=60, height=20), refresh=lambda: None
+        started=True,
+        size=SimpleNamespace(width=60, height=20),
+        refresh=lambda: None,
+        glyphs=None,
     )
     menu = Menu(root, font="Courier 10 bold")
     menu.add_command(label="Open")
@@ -772,7 +775,10 @@ def test_a_label_taken_away_redraws_the_text(root):
     """A frame with no children is laid out by nothing, so it is told."""
     root.tk.panels = PanelStack(window_factory=Window, panel_factory=None)
     root.tk.screen = SimpleNamespace(
-        started=True, size=SimpleNamespace(width=60, height=20), refresh=lambda: None
+        started=True,
+        size=SimpleNamespace(width=60, height=20),
+        refresh=lambda: None,
+        glyphs=None,
     )
     frame = LabelFrame(root, text="TEXT")
     frame.place(x=0, y=0, width=20, height=5)

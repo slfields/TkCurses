@@ -65,6 +65,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from tkcurses._core.application import Application
 from tkcurses._core.attributes import (
+    ASCII_GLYPHS,
     BorderStyle,
     for_state,
     from_font,
@@ -3761,6 +3762,9 @@ class BaseWidget(Misc):
             column -= left
         rows, columns = dispatcher.call(window.getmaxyx)
         text = _one_cell_each(text)
+        screen = self.tk.screen
+        if screen is not None and screen.glyphs is not None:
+            text = text.translate(screen.glyphs)
         if column < 0:
             text = text[-column:]
             column = 0
@@ -5505,14 +5509,19 @@ class Tk(BaseWidget, Wm):
         """
         # Before curses starts: deciding on OSC 52 asks the terminal a
         # question, and curses would read the answer as keystrokes.
+        settings = TkCursesConfig.load()
         self.tk.selections.route = choose_route(
-            TkCursesConfig.load().clipboard.system,
+            settings.clipboard.system,
             os.environ,
             ask_terminal=ask_terminal_for_osc52,
         )
         buffer = self._screen.start()
         try:
-            settings = TkCursesConfig.load()
+            # Malformed values and settings that no longer do anything, said
+            # once the terminal is back: there is nowhere to say them now.
+            self._held_reports.extend(
+                f"tkcurses: {warning}\n" for warning in settings.warnings
+            )
             # ncurses cannot tell a lone Escape from the start of an escape
             # sequence until this long has passed with nothing following. The
             # default is a full second, which makes Escape - the key that
@@ -5530,12 +5539,16 @@ class Tk(BaseWidget, Wm):
                 click_interval=mouse.click_interval,
                 report_motion=mouse.report_motion,
                 report_hover=mouse.report_hover,
+                mouse=mouse.enabled,
             )
             # Bindings are almost always made before mainloop(), so the
             # terminal has to be told what they wanted once it exists.
             self.tk.input = self._input
             self.tk.refresh_signal_keys()
-            colors = ColorManager()
+            mode = settings.display.color_mode
+            colors = ColorManager(
+                ceiling=ColorDepth(int(mode)) if mode.isdigit() else None
+            )
             if colors.start():
                 # Cells are painted through this; without colour support the
                 # screen keeps its attributes-only resolver.
@@ -5545,10 +5558,14 @@ class Tk(BaseWidget, Wm):
             # their cells are written past it when the terminal takes direct
             # colour. See _core/direct.py.
             painter = DirectPainter()
-            allowed = TkCursesConfig.load().display.direct_images
+            allowed = settings.display.direct_images
             if not allowed:
                 pass
-            elif colors.depth >= ColorDepth.DIRECT or truecolor_hinted():
+            elif (
+                colors.depth >= ColorDepth.DIRECT
+                or mode == "truecolor"
+                or (mode == "auto" and truecolor_hinted())
+            ):
                 # Exact colour, written as ESC[38;2;r;g;b.
                 painter.enable(True)
             elif colors.depth >= ColorDepth.EXTENDED:
@@ -5563,6 +5580,9 @@ class Tk(BaseWidget, Wm):
             # colours there are has to ask - and the answer on a terminal
             # without any is a real answer rather than a missing one.
             self.tk.colors = colors
+            self._screen.glyphs = (
+                None if settings.display.unicode_borders else ASCII_GLYPHS
+            )
             self.tk.screen = self._screen
             self.tk.panels = PanelStack()
             # The terminal's own cursor, at the focused widget's insert point;

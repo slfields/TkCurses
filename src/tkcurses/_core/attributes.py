@@ -27,6 +27,7 @@ is the closest a character grid gets to the same distinction.
 from __future__ import annotations
 
 import curses
+import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 __all__ = [
+    "ASCII_GLYPHS",
     "ATTRIBUTES",
     "BorderStyle",
     "attribute_names",
@@ -204,3 +206,48 @@ def style_for_relief(relief: str) -> BorderStyle:
     if key not in _RELIEF_STYLES:
         raise ValueError(f"unknown relief: {relief!r}")
     return _RELIEF_STYLES[key]
+
+
+def _box_as_ascii(character: str) -> str:
+    """The ASCII for one box-drawing character, read off its Unicode name.
+
+    A piece reaching sideways and up or down is a corner, a tee or a cross,
+    all ``+``; one reaching only sideways is ``-`` and only up or down ``|``.
+    The names say which way each piece reaches - ``BOX DRAWINGS DOWN SINGLE
+    AND LEFT DOUBLE`` is a corner - so every weight, dash and arc is covered
+    without a table of 128 entries to get wrong.
+    """
+    name = unicodedata.name(character)
+    if "DIAGONAL CROSS" in name:
+        return "X"
+    if "DIAGONAL UPPER RIGHT" in name:
+        return "/"
+    if "DIAGONAL UPPER LEFT" in name:
+        return "\\"
+    words = set(name.split())
+    across = bool(words & {"HORIZONTAL", "LEFT", "RIGHT"})
+    down = bool(words & {"VERTICAL", "UP", "DOWN"})
+    if across and down:
+        return "+"
+    return "-" if across else "|"
+
+
+#: What the ``[display] unicode_borders`` setting turned off writes in place
+#: of the characters boxes, arrows and bars are drawn with, for
+#: :meth:`str.translate`. One character for one, so nothing a widget has
+#: measured moves.
+ASCII_GLYPHS: dict[int, str] = {
+    **{code: _box_as_ascii(chr(code)) for code in range(0x2500, 0x2580)},
+    # Blocks: bars, thumbs and the canvas's half cells. The shades are a
+    # trough's, lighter to darker.
+    **dict.fromkeys(range(0x2580, 0x25A0), "#"),
+    ord("░"): ".",
+    ord("▒"): ":",
+    # Arrows and markers.
+    **dict.fromkeys(map(ord, "▲▴↑"), "^"),
+    **dict.fromkeys(map(ord, "▼▾↓"), "v"),
+    **dict.fromkeys(map(ord, "▶▸►→"), ">"),
+    **dict.fromkeys(map(ord, "◀◂◄←"), "<"),
+    **dict.fromkeys(map(ord, "◆•"), "*"),
+    ord("◢"): "/",
+}

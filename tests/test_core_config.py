@@ -24,9 +24,9 @@ from pathlib import Path
 
 import pytest
 
+from tkcurses._core import config as config_module
 from tkcurses._core.config import (
     COLOR_MODES,
-    LOG_LEVELS,
     TkCursesConfig,
     config_paths,
 )
@@ -48,16 +48,7 @@ def test_defaults_match_the_specification():
     assert config.mouse.report_motion is True
     assert config.display.color_mode == "auto"
     assert config.display.unicode_borders is True
-    assert config.display.refresh_interval == 16
-    assert config.input.poll_timeout == 50
-    assert config.input.keypad is True
     assert config.input.escape_delay == 25
-    assert config.accessibility.high_contrast is False
-    assert config.accessibility.min_click_interval == 0
-    assert config.accessibility.screen_reader is False
-    assert config.debug.enabled is False
-    assert config.debug.log_file == ""
-    assert config.debug.log_level == "WARNING"
 
 
 def test_loading_nothing_yields_defaults():
@@ -79,14 +70,14 @@ def test_values_are_read_from_a_file(tmp_path):
 
         [display]
         color_mode = 256
-        refresh_interval = 33
+        unicode_borders = no
         """,
     )
     config = TkCursesConfig.load(paths=(path,), env={})
     assert config.mouse.click_interval == 350
     assert config.mouse.enabled is False
     assert config.display.color_mode == "256"
-    assert config.display.refresh_interval == 33
+    assert config.display.unicode_borders is False
     assert config.warnings == []
 
 
@@ -186,10 +177,10 @@ def test_numbers_are_clamped_to_their_range(tmp_path, value, expected):
 
 
 def test_clamping_is_reported(tmp_path):
-    path = write(tmp_path, "[input]\npoll_timeout = 9999\n")
+    path = write(tmp_path, "[input]\nescape_delay = 9999\n")
     config = TkCursesConfig.load(paths=(path,), env={})
-    assert config.input.poll_timeout == 500
-    assert any("outside 10-500" in w for w in config.warnings)
+    assert config.input.escape_delay == 1000
+    assert any("outside 0-1000" in w for w in config.warnings)
 
 
 @pytest.mark.parametrize("mode", COLOR_MODES)
@@ -204,13 +195,6 @@ def test_an_unknown_colour_mode_falls_back(tmp_path):
     config = TkCursesConfig.load(paths=(path,), env={})
     assert config.display.color_mode == "auto"
     assert any("not one of" in w for w in config.warnings)
-
-
-@pytest.mark.parametrize("level", LOG_LEVELS)
-def test_every_log_level_is_accepted(tmp_path, level):
-    path = write(tmp_path, f"[debug]\nlog_level = {level.lower()}\n")
-    config = TkCursesConfig.load(paths=(path,), env={})
-    assert config.debug.log_level == level
 
 
 # ------------------------------------------------------------ environment
@@ -231,19 +215,19 @@ def test_environment_overrides_files(tmp_path):
         ("TKCURSES_MOUSE_CLICK_INTERVAL", "150", "mouse", "click_interval", 150),
         ("TKCURSES_MOUSE_ENABLED", "false", "mouse", "enabled", False),
         ("TKCURSES_DISPLAY_COLOR_MODE", "16", "display", "color_mode", "16"),
-        ("TKCURSES_DISPLAY_UNICODE", "false", "display", "unicode_borders", False),
-        ("TKCURSES_INPUT_POLL_TIMEOUT", "20", "input", "poll_timeout", 20),
-        ("TKCURSES_INPUT_ESCAPE_DELAY", "0", "input", "escape_delay", 0),
+        ("TKCURSES_MOUSE_REPORT_MOTION", "no", "mouse", "report_motion", False),
+        ("TKCURSES_MOUSE_REPORT_HOVER", "yes", "mouse", "report_hover", True),
         (
-            "TKCURSES_ACCESSIBILITY_HIGH_CONTRAST",
-            "true",
-            "accessibility",
-            "high_contrast",
-            True,
+            "TKCURSES_DISPLAY_COLOR_MODE",
+            "TrueColor",
+            "display",
+            "color_mode",
+            "truecolor",
         ),
-        ("TKCURSES_DEBUG", "true", "debug", "enabled", True),
-        ("TKCURSES_DEBUG_LOG_FILE", "/tmp/x.log", "debug", "log_file", "/tmp/x.log"),
-        ("TKCURSES_DEBUG_LOG_LEVEL", "debug", "debug", "log_level", "DEBUG"),
+        ("TKCURSES_DISPLAY_UNICODE", "false", "display", "unicode_borders", False),
+        ("TKCURSES_DISPLAY_DIRECT_IMAGES", "0", "display", "direct_images", False),
+        ("TKCURSES_INPUT_ESCAPE_DELAY", "0", "input", "escape_delay", 0),
+        ("TKCURSES_CLIPBOARD_SYSTEM", "osc52", "clipboard", "system", "osc52"),
     ],
 )
 def test_every_documented_variable(variable, value, section, key, expected):
@@ -268,25 +252,47 @@ def test_unrelated_variables_are_ignored():
 # --------------------------------------------------------------- behaviour
 
 
-def test_accessibility_minimum_raises_the_click_interval():
-    """A user who needs longer between clicks is not overridden."""
-    config = TkCursesConfig()
-    config.mouse.click_interval = 200
-    config.accessibility.min_click_interval = 400
-    assert config.effective_click_interval == 400
-
-
-def test_accessibility_minimum_does_not_lower_the_click_interval():
-    config = TkCursesConfig()
-    config.mouse.click_interval = 300
-    config.accessibility.min_click_interval = 100
-    assert config.effective_click_interval == 300
-
-
 def test_as_dict_covers_every_section():
     data = TkCursesConfig().as_dict()
-    assert set(data) == {"mouse", "display", "input", "accessibility", "debug"}
+    assert set(data) == {"mouse", "display", "input", "clipboard"}
     assert data["mouse"]["click_interval"] == 200
+
+
+# --------------------------------------------------------- removed settings
+
+REMOVED = config_module._REMOVED
+
+
+def test_every_setting_there_is_has_a_variable():
+    """The table is the configuration: a row is read, and nothing else is."""
+    rows = {(section, key) for section, key, *_ in config_module._FIELDS}
+    fields = {
+        (section, key)
+        for section, keys in TkCursesConfig().as_dict().items()
+        for key in keys
+    }
+    assert rows == fields
+
+
+def test_no_removed_setting_is_still_read():
+    rows = {(section, key) for section, key, *_ in config_module._FIELDS}
+    assert not rows & {(section, key) for section, key, _ in REMOVED}
+
+
+@pytest.mark.parametrize(("section", "key", "variable"), REMOVED)
+def test_a_removed_setting_in_a_file_is_reported(tmp_path, section, key, variable):
+    """Read, validated and used by nothing, once; whoever still sets one is
+    told it does nothing rather than left believing it took effect."""
+    path = write(tmp_path, f"[{section}]\n{key} = 1\n")
+    config = TkCursesConfig.load(paths=(path,), env={})
+    assert config.warnings == [f"[{section}] {key} in {path} no longer has any effect"]
+
+
+@pytest.mark.parametrize(("section", "key", "variable"), REMOVED)
+def test_a_removed_variable_is_reported(section, key, variable):
+    config = TkCursesConfig.load(paths=(), env={variable: "1"})
+    assert config.warnings == [f"${variable} no longer has any effect"]
+    assert config == TkCursesConfig(warnings=config.warnings)
 
 
 # ------------------------------------------------------------------- paths

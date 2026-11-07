@@ -284,6 +284,9 @@ class InputHandler:
         dispatcher: Serialises curses calls. Defaults to the shared one.
         click_interval: Multi-click window in milliseconds.
         stream: Descriptor to wait on. Defaults to standard input.
+        report_motion: Ask for motion while a button is held.
+        report_hover: Ask for every movement of the pointer.
+        mouse: False leaves the mouse unreported, to the terminal.
     """
 
     def __init__(
@@ -295,6 +298,7 @@ class InputHandler:
         stream: Any = None,
         report_motion: bool = True,
         report_hover: bool = False,
+        mouse: bool = True,
     ) -> None:
         self._stdscr = stdscr
         self._dispatcher = dispatcher or CursesDispatcher.get()
@@ -304,6 +308,7 @@ class InputHandler:
         self._click_interval = click_interval
         self._report_motion = report_motion
         self._report_hover = report_hover
+        self._mouse_wanted = mouse
         self._motion_mode = b""
         self._saved_termios: tuple[int, list[Any]] | None = None
         #: Keysyms taken back from the tty's signal handling, by request.
@@ -318,7 +323,10 @@ class InputHandler:
         # select() does the waiting, so getch() must never block.
         self._dispatcher.call(self._stdscr.nodelay, True)
         self._disable_flow_control()
-        self._enable_mouse()
+        # Not asked for at all when turned off, so the terminal keeps the
+        # mouse and its own selection works as it does in a shell.
+        if self._mouse_wanted:
+            self._enable_mouse()
 
     def _disable_flow_control(self) -> None:
         """Take the tty's own keys back, as far as the application needs.

@@ -121,8 +121,8 @@ def test_every_setting_on_the_page_is_one_the_configuration_knows():
 
 def test_every_setting_on_the_page_is_used_when_the_program_starts():
     """The page offers only settings that change something. Twelve of the
-    eighteen are read and then ignored, and the porting guide once told
-    readers to use one of them."""
+    eighteen there once were went unused, and the porting
+    guide told readers to set one of them."""
     start = inspect.getsource(tkcurses.Tk._start)
     for variable, section_name, key in settings():
         assert f"{section_name}.{key}" in start, variable

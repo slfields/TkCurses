@@ -1705,302 +1705,106 @@ Settings are loaded in order, with later sources overriding earlier ones:
 ### Config File Format
 
 ```ini
-; tkcurses.ini - TkCurses Runtime Configuration
-; Lines starting with ; or # are comments
+; tkcurses.ini - every setting, at its default.
+; Lines starting with ; or # are comments.
 
 [mouse]
-; Double/triple click detection window (milliseconds)
-; Range: 1-1000, Default: 200
-click_interval = 200
-
-; Enable mouse support (true/false)
+; Ask the terminal for the mouse at all. Off leaves it to the terminal,
+; whose own selection then works without Shift.
 enabled = true
-
-; Report mouse motion events (true/false)
-; Required for drag support, may increase CPU usage
+; Double/triple click window, milliseconds. Range 1-1000.
+click_interval = 200
+; Drags (DEC 1002), and every movement (1003).
 report_motion = true
-
-[clipboard]
-; How copies reach other applications: auto, osc52, command, or off.
-; auto asks the terminal for OSC 52, else uses wl-copy/xclip/xsel locally.
-system = auto
+report_hover = false
 
 [display]
-; Color mode: 8, 16, 256, or truecolor
-; Use "auto" to detect terminal capability
+; auto, 8, 16, 256 or truecolor. A number is a ceiling; see below.
 color_mode = auto
-
-; Enable Unicode box-drawing characters (true/false)
-; Set to false for ASCII-only terminals
+; false draws boxes, arrows and bars in ASCII.
 unicode_borders = true
-
-; Refresh rate limit (milliseconds between refreshes)
-; Lower = smoother, Higher = less CPU usage
-; Range: 10-1000, Default: 16 (approximately 60 FPS)
-refresh_interval = 16
+; false sends pictures through curses' colour pairs.
+direct_images = true
 
 [input]
-; Input polling timeout (milliseconds)
-; Affects responsiveness of after() callbacks
-; Range: 10-500, Default: 50
-poll_timeout = 50
-
-; Enable keypad mode for special keys (true/false)
-keypad = true
-
-; Escape key delay (milliseconds)
-; Time to wait for escape sequences after ESC
-; Range: 0-1000, Default: 25
+; How long to wait after ESC for the rest of a sequence. Range 0-1000.
 escape_delay = 25
 
-[accessibility]
-; High contrast mode (true/false)
-high_contrast = false
-
-; Minimum click interval for users with motor difficulties
-; Overrides [mouse] click_interval if higher
-min_click_interval = 0
-
-; Screen reader compatibility mode (true/false)
-screen_reader = false
-
-[debug]
-; Enable debug logging (true/false)
-enabled = false
-
-; Log file path (empty = stderr)
-log_file =
-
-; Log level: DEBUG, INFO, WARNING, ERROR
-log_level = WARNING
+[clipboard]
+; auto, osc52, command or off.
+system = auto
 ```
 
 ### Configuration Implementation
 
-```python
-import configparser
-import os
-import sys
-from pathlib import Path
-from dataclasses import dataclass, field
-from typing import Any
+`_core/config.py` holds the settings as dataclasses and one table,
+`_FIELDS`, of section, key, kind, environment variable and range: the INI
+reader, the environment reader and validation all walk it, so they cannot
+disagree. `Tk._start` loads it once and hands each setting to the piece it
+governs. A value that cannot be parsed falls back to its default and a
+number out of range is clamped, each recorded in `warnings`, because
+configuration is read before there is a screen to complain on.
 
-@dataclass
-class MouseConfig:
-    """Mouse-related configuration."""
-    click_interval: int = 200
-    enabled: bool = True
-    report_motion: bool = True
+**Warnings are printed when the terminal is given back**, through the same
+held-reports path a callback's traceback takes (`Tk._held_reports`). Until
+`TkCurses-4j1h` nothing printed them at all: a mistyped setting was
+corrected silently and never mentioned.
 
-@dataclass
-class DisplayConfig:
-    """Display-related configuration."""
-    color_mode: str = 'auto'
-    unicode_borders: bool = True
-    refresh_interval: int = 16
+**Every setting is measured through the terminal, not read back off the
+configuration** - `tests/test_config_tty.py`. The configuration once had
+eighteen settings, and twelve of them were read, validated and tested while
+nothing used them; a test of the parsing passed for every one, and the
+porting guide told readers to set one that did nothing. Three were made to
+work and nine removed (`TkCurses-4j1h`):
 
-@dataclass
-class InputConfig:
-    """Input-related configuration."""
-    poll_timeout: int = 50
-    keypad: bool = True
-    escape_delay: int = 25
+- **`color_mode` is a ceiling, never a floor.** A number caps the depth
+  `ColorManager` works to (`ceiling=`), so `8` on xterm-256color draws
+  with the basic eight and `winfo_colordepth()` answers 8. It cannot
+  raise one: curses refuses a colour number past the `COLORS` it started
+  with, so `256` under `TERM=xterm` stays 8. `truecolor` is the other
+  thing a user can want from it - pictures written past curses as 24-bit
+  escapes, as `COLORTERM=truecolor` does - and a number below 256 outranks
+  `COLORTERM`.
+- **`unicode_borders` off translates at the two places characters leave
+  for the terminal**: `Widget._write_line`, which every widget draws
+  through, and `CursesScreen._paint`, which a `tkcurses.curses` window
+  inside a running application paints through. `ASCII_GLYPHS` in
+  `_core/attributes.py` is one character for one, so nothing a widget
+  measured moves. Box pieces are read off their Unicode names - reaching
+  sideways and up or down is `+`, only sideways `-`, only up or down `|` -
+  which covers every weight, dash and arc without a 128-entry table. It
+  also changes a program's own text that uses those characters, which on a
+  terminal that cannot draw them is no loss. A standalone
+  `tkcurses.curses` program does not read the configuration.
+- **`mouse.enabled` off never calls `mousemask`**, so none of 1000, 1002,
+  1003 or 1006 is sent.
 
-@dataclass
-class AccessibilityConfig:
-    """Accessibility-related configuration."""
-    high_contrast: bool = False
-    min_click_interval: int = 0
-    screen_reader: bool = False
+The nine removed are in `_REMOVED`, and a file or environment that still
+sets one gets a warning that it no longer has any effect:
+`refresh_interval` (the loop redraws when idle, not on a timer),
+`poll_timeout` (internal to the loop), `keypad` (off breaks every arrow
+key), `high_contrast` and `screen_reader` (nothing behind them),
+`min_click_interval` (the same thing as `click_interval`), and the three
+`debug` settings (there is no logging to configure).
 
-@dataclass
-class DebugConfig:
-    """Debug-related configuration."""
-    enabled: bool = False
-    log_file: str = ''
-    log_level: str = 'WARNING'
-
-@dataclass
-class TkCursesConfig:
-    """Complete TkCurses configuration."""
-    mouse: MouseConfig = field(default_factory=MouseConfig)
-    display: DisplayConfig = field(default_factory=DisplayConfig)
-    input: InputConfig = field(default_factory=InputConfig)
-    accessibility: AccessibilityConfig = field(default_factory=AccessibilityConfig)
-    debug: DebugConfig = field(default_factory=DebugConfig)
-
-    @classmethod
-    def get_config_paths(cls) -> list[Path]:
-        """Get configuration file paths in load order."""
-        paths = []
-
-        if sys.platform == 'win32':
-            # Windows paths
-            programdata = os.environ.get('PROGRAMDATA', r'C:\ProgramData')
-            localappdata = os.environ.get('LOCALAPPDATA', '')
-
-            paths.append(Path(programdata) / 'tkcurses' / 'tkcurses.ini')
-            if localappdata:
-                paths.append(Path(localappdata) / 'tkcurses' / 'tkcurses.ini')
-        else:
-            # Unix-like paths (Linux, macOS, FreeBSD, etc.)
-            paths.append(Path('/etc/tkcurses/tkcurses.ini'))
-
-            # XDG Base Directory Specification
-            config_home = os.environ.get('XDG_CONFIG_HOME', '')
-            if not config_home:
-                config_home = Path.home() / '.config'
-            else:
-                config_home = Path(config_home)
-
-            paths.append(config_home / 'tkcurses' / 'tkcurses.ini')
-
-        return paths
-
-    @classmethod
-    def load(cls) -> 'TkCursesConfig':
-        """Load configuration from all sources."""
-        config = cls()
-
-        # Load from INI files (in order)
-        parser = configparser.ConfigParser()
-        config_paths = cls.get_config_paths()
-
-        for path in config_paths:
-            if path.exists():
-                try:
-                    parser.read(path)
-                except configparser.Error:
-                    pass  # Skip malformed files
-
-        # Apply INI settings
-        config._apply_parser(parser)
-
-        # Apply environment variable overrides (highest priority)
-        config._apply_env_overrides()
-
-        return config
-
-    def _apply_parser(self, parser: configparser.ConfigParser) -> None:
-        """Apply settings from ConfigParser."""
-        # Mouse settings
-        if parser.has_section('mouse'):
-            self.mouse.click_interval = parser.getint(
-                'mouse', 'click_interval', fallback=self.mouse.click_interval
-            )
-            self.mouse.enabled = parser.getboolean(
-                'mouse', 'enabled', fallback=self.mouse.enabled
-            )
-            self.mouse.report_motion = parser.getboolean(
-                'mouse', 'report_motion', fallback=self.mouse.report_motion
-            )
-
-        # Display settings
-        if parser.has_section('display'):
-            self.display.color_mode = parser.get(
-                'display', 'color_mode', fallback=self.display.color_mode
-            )
-            self.display.unicode_borders = parser.getboolean(
-                'display', 'unicode_borders', fallback=self.display.unicode_borders
-            )
-            self.display.refresh_interval = parser.getint(
-                'display', 'refresh_interval', fallback=self.display.refresh_interval
-            )
-
-        # Input settings
-        if parser.has_section('input'):
-            self.input.poll_timeout = parser.getint(
-                'input', 'poll_timeout', fallback=self.input.poll_timeout
-            )
-            self.input.keypad = parser.getboolean(
-                'input', 'keypad', fallback=self.input.keypad
-            )
-            self.input.escape_delay = parser.getint(
-                'input', 'escape_delay', fallback=self.input.escape_delay
-            )
-
-        # Accessibility settings
-        if parser.has_section('accessibility'):
-            self.accessibility.high_contrast = parser.getboolean(
-                'accessibility', 'high_contrast',
-                fallback=self.accessibility.high_contrast
-            )
-            self.accessibility.min_click_interval = parser.getint(
-                'accessibility', 'min_click_interval',
-                fallback=self.accessibility.min_click_interval
-            )
-            self.accessibility.screen_reader = parser.getboolean(
-                'accessibility', 'screen_reader',
-                fallback=self.accessibility.screen_reader
-            )
-
-        # Debug settings
-        if parser.has_section('debug'):
-            self.debug.enabled = parser.getboolean(
-                'debug', 'enabled', fallback=self.debug.enabled
-            )
-            self.debug.log_file = parser.get(
-                'debug', 'log_file', fallback=self.debug.log_file
-            )
-            self.debug.log_level = parser.get(
-                'debug', 'log_level', fallback=self.debug.log_level
-            )
-
-    def _apply_env_overrides(self) -> None:
-        """Apply environment variable overrides."""
-        env_mapping = {
-            'TKCURSES_MOUSE_CLICK_INTERVAL': ('mouse', 'click_interval', int),
-            'TKCURSES_MOUSE_ENABLED': ('mouse', 'enabled', self._parse_bool),
-            'TKCURSES_DISPLAY_COLOR_MODE': ('display', 'color_mode', str),
-            'TKCURSES_DISPLAY_UNICODE': ('display', 'unicode_borders', self._parse_bool),
-            'TKCURSES_INPUT_POLL_TIMEOUT': ('input', 'poll_timeout', int),
-            'TKCURSES_INPUT_ESCAPE_DELAY': ('input', 'escape_delay', int),
-            'TKCURSES_ACCESSIBILITY_HIGH_CONTRAST': ('accessibility', 'high_contrast', self._parse_bool),
-            'TKCURSES_DEBUG': ('debug', 'enabled', self._parse_bool),
-            'TKCURSES_DEBUG_LOG_FILE': ('debug', 'log_file', str),
-            'TKCURSES_DEBUG_LOG_LEVEL': ('debug', 'log_level', str),
-        }
-
-        for env_var, (section, key, converter) in env_mapping.items():
-            value = os.environ.get(env_var)
-            if value is not None:
-                try:
-                    section_obj = getattr(self, section)
-                    setattr(section_obj, key, converter(value))
-                except (ValueError, AttributeError):
-                    pass  # Skip invalid values
-
-    @staticmethod
-    def _parse_bool(value: str) -> bool:
-        """Parse boolean from string."""
-        return value.lower() in ('true', '1', 'yes', 'on')
-
-    def apply(self, app: 'Tk') -> None:
-        """Apply configuration to a Tk application instance."""
-        # Apply mouse settings
-        if self.mouse.enabled:
-            app.configure_mouse(click_interval=max(
-                self.mouse.click_interval,
-                self.accessibility.min_click_interval
-            ))
-
-        # Apply other settings as needed...
-```
+**The pty harness does not implement REP**, `CSI n b`, which ncurses uses
+for a run of one ASCII character when the locale is not UTF-8 - measured,
+`-\x1b[19b` for an Entry's top edge under `LANG=C`. A test of ASCII
+borders under `LANG=C` sees `+-+` where a terminal draws the whole rail.
+`TkCurses-go7y`.
 
 ### Environment Variables Reference
 
 | Variable | INI Equivalent | Type | Description |
 |----------|----------------|------|-------------|
+| `TKCURSES_MOUSE_ENABLED` | `[mouse] enabled` | bool | Ask for the mouse at all |
 | `TKCURSES_MOUSE_CLICK_INTERVAL` | `[mouse] click_interval` | int | Double-click timing (ms) |
-| `TKCURSES_MOUSE_ENABLED` | `[mouse] enabled` | bool | Enable mouse support |
-| `TKCURSES_DISPLAY_COLOR_MODE` | `[display] color_mode` | str | Color mode |
-| `TKCURSES_DISPLAY_UNICODE` | `[display] unicode_borders` | bool | Unicode borders |
-| `TKCURSES_INPUT_POLL_TIMEOUT` | `[input] poll_timeout` | int | Input poll timeout (ms) |
+| `TKCURSES_MOUSE_REPORT_MOTION` | `[mouse] report_motion` | bool | Drags (DEC 1002) |
+| `TKCURSES_MOUSE_REPORT_HOVER` | `[mouse] report_hover` | bool | Every movement (DEC 1003) |
+| `TKCURSES_DISPLAY_COLOR_MODE` | `[display] color_mode` | str | `auto`, `8`, `16`, `256` or `truecolor` |
+| `TKCURSES_DISPLAY_UNICODE` | `[display] unicode_borders` | bool | Box drawing, or ASCII |
+| `TKCURSES_DISPLAY_DIRECT_IMAGES` | `[display] direct_images` | bool | Pictures past curses' pairs |
 | `TKCURSES_INPUT_ESCAPE_DELAY` | `[input] escape_delay` | int | ESC sequence delay (ms) |
-| `TKCURSES_ACCESSIBILITY_HIGH_CONTRAST` | `[accessibility] high_contrast` | bool | High contrast mode |
-| `TKCURSES_DEBUG` | `[debug] enabled` | bool | Enable debug logging |
-| `TKCURSES_DEBUG_LOG_FILE` | `[debug] log_file` | str | Debug log file path |
-| `TKCURSES_DEBUG_LOG_LEVEL` | `[debug] log_level` | str | Log level |
 | `TKCURSES_CLIPBOARD_SYSTEM` | `[clipboard] system` | str | `auto`, `osc52`, `command` or `off`: how the clipboard reaches other applications |
 
 ### Usage Examples
@@ -2009,18 +1813,14 @@ class TkCursesConfig:
 # Temporary override for testing
 $ TKCURSES_MOUSE_CLICK_INTERVAL=400 python my_app.py
 
-# Enable debug logging
-$ TKCURSES_DEBUG=true TKCURSES_DEBUG_LOG_LEVEL=DEBUG python my_app.py
+# How it looks with eight colours, and in ASCII
+$ TKCURSES_DISPLAY_COLOR_MODE=8 TKCURSES_DISPLAY_UNICODE=0 python my_app.py
 
-# Create user config for accessibility
+# A user config
 $ mkdir -p ~/.config/tkcurses
 $ cat > ~/.config/tkcurses/tkcurses.ini << 'EOF'
 [mouse]
 click_interval = 350
-
-[accessibility]
-high_contrast = true
-min_click_interval = 300
 EOF
 ```
 

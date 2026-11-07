@@ -67,7 +67,7 @@ def root(stack):
     root = Misc()
     root.tk.panels = stack
     root.tk.screen = SimpleNamespace(
-        started=True, size=SimpleNamespace(width=60, height=20)
+        started=True, size=SimpleNamespace(width=60, height=20), glyphs=None
     )
     root._rect = Rect(0, 0, 60, 20)
     root._mapped = True

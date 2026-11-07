@@ -30,9 +30,29 @@ All notable changes to TkCurses. The format follows
   colours and a Canvas item's `fill` and `outline`. `darkyellow`, which Tk
   does not have, and a name with a space at either end are now refused too.
 
+### Removed
+- Nine configuration settings that were accepted and did nothing:
+  `[display] refresh_interval`, `[input] poll_timeout` and `keypad`, the
+  whole `[accessibility]` section (`high_contrast`, `min_click_interval`,
+  `screen_reader`) and the whole `[debug]` section (`enabled`, `log_file`,
+  `log_level`), with their `TKCURSES_*` variables. A program that still
+  sets one is told so when it ends.
+
 ### Fixed
-- The porting guide said `TKCURSES_DISPLAY_COLOR_MODE` overrides the colour
-  depth; it has no effect. It now says to set `TERM`, which does.
+- `TKCURSES_DISPLAY_COLOR_MODE` (`[display] color_mode`) takes effect: `8`,
+  `16` or `256` draws with no more colours than that, and `truecolor` draws
+  pictures in full colour as `COLORTERM=truecolor` does. It was read and
+  ignored.
+- `TKCURSES_DISPLAY_UNICODE=0` (`[display] unicode_borders`) draws boxes,
+  arrows and bars in ASCII, for a terminal without box-drawing characters.
+  It was read and ignored.
+- `TKCURSES_MOUSE_ENABLED=0` (`[mouse] enabled`) leaves the mouse to the
+  terminal. It was read and ignored.
+- A configuration value that cannot be read, or is out of range, is
+  reported on the terminal when the program ends. It was corrected without
+  a word.
+- The porting guide offered `TKCURSES_DISPLAY_COLOR_MODE`, which then did
+  nothing. It now says to set `TERM`, and the terminal guide covers both.
 - The menu bar can be reached from the keyboard, as in Tk: F10 opens the
   first menu, and Alt with an underlined letter opens that menu, runs that
   command or posts that Menubutton. Only the mouse reached it before.

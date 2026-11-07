@@ -99,7 +99,7 @@ def shown(widget, width, height=1):
     """Lay ``widget`` out at the top left and draw it into a :class:`Window`."""
     widget._allocate(Rect(0, 0, width, height))
     widget._panel = SimpleNamespace(window=Window(height, width))
-    widget.tk.screen = SimpleNamespace()
+    widget.tk.screen = SimpleNamespace(glyphs=None)
     widget._redraw()
     return widget._panel.window
 

@@ -43,9 +43,7 @@ from pathlib import Path
 from typing import Any
 
 __all__ = [
-    "AccessibilitySettings",
     "ClipboardSettings",
-    "DebugSettings",
     "DisplaySettings",
     "InputSettings",
     "MouseSettings",
@@ -53,14 +51,14 @@ __all__ = [
     "config_paths",
 ]
 
-#: Values accepted for ``[display] color_mode``.
+#: Values accepted for ``[display] color_mode``. A number is a ceiling on
+#: what the terminal reports - it can take colours away, never add them,
+#: because curses refuses a colour number past the one it was given - and
+#: ``truecolor`` sends pictures as 24-bit escape sequences, as COLORTERM does.
 COLOR_MODES = ("auto", "8", "16", "256", "truecolor")
 
 #: Values accepted for ``[clipboard] system``.
 CLIPBOARD_SYSTEMS = ("auto", "osc52", "command", "off")
-
-#: Values accepted for ``[debug] log_level``.
-LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _FALSE = frozenset({"0", "false", "no", "off"})
@@ -72,6 +70,8 @@ class MouseSettings:
 
     #: Window within which clicks count as a double or triple click.
     click_interval: int = 200
+    #: False leaves the mouse to the terminal, whose own text selection
+    #: then works without holding Shift.
     enabled: bool = True
     #: Motion while a button is held - DEC mode 1002 - which is what a drag
     #: is made of. ncurses does not ask the terminal for this on its own.
@@ -87,11 +87,11 @@ class MouseSettings:
 class DisplaySettings:
     """Rendering behaviour."""
 
+    #: One of :data:`COLOR_MODES`.
     color_mode: str = "auto"
-    #: False restricts borders to ASCII, for terminals without box drawing.
+    #: False writes the characters boxes, arrows and bars are drawn with as
+    #: ASCII, for terminals without box drawing.
     unicode_borders: bool = True
-    #: Minimum gap between refreshes; 16ms is roughly 60 per second.
-    refresh_interval: int = 16
     #: False makes images go through curses' colour pairs instead of being
     #: written as escape sequences. Direct writing is what lets a picture use
     #: more than the 255 (foreground, background) combinations curses can
@@ -103,11 +103,8 @@ class DisplaySettings:
 
 @dataclass
 class InputSettings:
-    """Input polling behaviour."""
+    """Input behaviour."""
 
-    #: How long the loop waits for input, which bounds timer latency.
-    poll_timeout: int = 50
-    keypad: bool = True
     #: How long to wait for the rest of an escape sequence after ESC.
     #:
     #: ncurses defaults to a full second, which makes Escape - the key that
@@ -119,16 +116,6 @@ class InputSettings:
 
 
 @dataclass
-class AccessibilitySettings:
-    """Settings that trade speed for reach."""
-
-    high_contrast: bool = False
-    #: Raises the click interval for users who need longer between clicks.
-    min_click_interval: int = 0
-    screen_reader: bool = False
-
-
-@dataclass
 class ClipboardSettings:
     """Reaching the system clipboard - see :mod:`tkcurses._core.system_clipboard`."""
 
@@ -136,16 +123,6 @@ class ClipboardSettings:
     #: clipboard tool; ``osc52`` and ``command`` force one route; ``off``
     #: keeps the clipboard inside the program. TkCurses-hpr.
     system: str = "auto"
-
-
-@dataclass
-class DebugSettings:
-    """Diagnostics."""
-
-    enabled: bool = False
-    #: Empty means stderr.
-    log_file: str = ""
-    log_level: str = "WARNING"
 
 
 #: One row per setting: section, key, the environment variable that overrides
@@ -159,47 +136,33 @@ _FIELDS: tuple[tuple[str, str, str, str | None, tuple[int, int] | None], ...] = 
     ("display", "color_mode", "choice", "TKCURSES_DISPLAY_COLOR_MODE", None),
     ("display", "unicode_borders", "bool", "TKCURSES_DISPLAY_UNICODE", None),
     ("display", "direct_images", "bool", "TKCURSES_DISPLAY_DIRECT_IMAGES", None),
-    (
-        "display",
-        "refresh_interval",
-        "int",
-        "TKCURSES_DISPLAY_REFRESH_INTERVAL",
-        (10, 1000),
-    ),
-    ("input", "poll_timeout", "int", "TKCURSES_INPUT_POLL_TIMEOUT", (10, 500)),
-    ("input", "keypad", "bool", "TKCURSES_INPUT_KEYPAD", None),
     ("input", "escape_delay", "int", "TKCURSES_INPUT_ESCAPE_DELAY", (0, 1000)),
-    (
-        "accessibility",
-        "high_contrast",
-        "bool",
-        "TKCURSES_ACCESSIBILITY_HIGH_CONTRAST",
-        None,
-    ),
+    ("clipboard", "system", "choice", "TKCURSES_CLIPBOARD_SYSTEM", None),
+)
+
+#: Settings that were accepted once and never did anything, by section, key
+#: and environment variable. Each was read, validated and tested while
+#: nothing used it, so a file or an environment setting one is told so
+#: rather than left believing it took effect.
+_REMOVED: tuple[tuple[str, str, str], ...] = (
+    ("display", "refresh_interval", "TKCURSES_DISPLAY_REFRESH_INTERVAL"),
+    ("input", "poll_timeout", "TKCURSES_INPUT_POLL_TIMEOUT"),
+    ("input", "keypad", "TKCURSES_INPUT_KEYPAD"),
+    ("accessibility", "high_contrast", "TKCURSES_ACCESSIBILITY_HIGH_CONTRAST"),
     (
         "accessibility",
         "min_click_interval",
-        "int",
         "TKCURSES_ACCESSIBILITY_MIN_CLICK_INTERVAL",
-        (0, 1000),
     ),
-    (
-        "accessibility",
-        "screen_reader",
-        "bool",
-        "TKCURSES_ACCESSIBILITY_SCREEN_READER",
-        None,
-    ),
-    ("debug", "enabled", "bool", "TKCURSES_DEBUG", None),
-    ("debug", "log_file", "str", "TKCURSES_DEBUG_LOG_FILE", None),
-    ("debug", "log_level", "choice", "TKCURSES_DEBUG_LOG_LEVEL", None),
-    ("clipboard", "system", "choice", "TKCURSES_CLIPBOARD_SYSTEM", None),
+    ("accessibility", "screen_reader", "TKCURSES_ACCESSIBILITY_SCREEN_READER"),
+    ("debug", "enabled", "TKCURSES_DEBUG"),
+    ("debug", "log_file", "TKCURSES_DEBUG_LOG_FILE"),
+    ("debug", "log_level", "TKCURSES_DEBUG_LOG_LEVEL"),
 )
 
 #: Allowed values for the settings validated against a fixed list.
 _CHOICES: dict[tuple[str, str], tuple[str, ...]] = {
     ("display", "color_mode"): COLOR_MODES,
-    ("debug", "log_level"): LOG_LEVELS,
     ("clipboard", "system"): CLIPBOARD_SYSTEMS,
 }
 
@@ -225,23 +188,9 @@ class TkCursesConfig:
     mouse: MouseSettings = field(default_factory=MouseSettings)
     display: DisplaySettings = field(default_factory=DisplaySettings)
     input: InputSettings = field(default_factory=InputSettings)
-    accessibility: AccessibilitySettings = field(default_factory=AccessibilitySettings)
-    debug: DebugSettings = field(default_factory=DebugSettings)
     clipboard: ClipboardSettings = field(default_factory=ClipboardSettings)
     #: Problems found while loading, for the application to surface later.
     warnings: list[str] = field(default_factory=list)
-
-    # ---------------------------------------------------------- derived
-
-    @property
-    def effective_click_interval(self) -> int:
-        """The click interval actually used.
-
-        The accessibility minimum wins when it is higher, so a user who needs
-        longer between clicks is not overridden by an application's own
-        preference.
-        """
-        return max(self.mouse.click_interval, self.accessibility.min_click_interval)
 
     # ----------------------------------------------------------- loading
 
@@ -283,6 +232,11 @@ class TkCursesConfig:
                 continue
             raw = parser.get(section, key)
             self._apply(section, key, kind, limits, raw, source=str(path))
+        for section, key, _ in _REMOVED:
+            if parser.has_section(section) and parser.has_option(section, key):
+                self.warnings.append(
+                    f"[{section}] {key} in {path} no longer has any effect"
+                )
 
     def _read_env(self, env: dict[str, str] | os._Environ[str]) -> None:
         """Apply environment overrides, which outrank every file."""
@@ -292,6 +246,9 @@ class TkCursesConfig:
             self._apply(
                 section, key, kind, limits, env[variable], source=f"${variable}"
             )
+        for _, _, variable in _REMOVED:
+            if variable in env:
+                self.warnings.append(f"${variable} no longer has any effect")
 
     def _apply(
         self,
@@ -366,5 +323,5 @@ class TkCursesConfig:
                 item.name: getattr(getattr(self, section), item.name)
                 for item in fields(getattr(self, section))
             }
-            for section in ("mouse", "display", "input", "accessibility", "debug")
+            for section in ("mouse", "display", "input", "clipboard")
         }

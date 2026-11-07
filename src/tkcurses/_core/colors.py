@@ -753,8 +753,17 @@ class ColorManager:
     raising, so an over-colourful application degrades instead of failing.
     """
 
-    def __init__(self, *, dispatcher: CursesDispatcher | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        dispatcher: CursesDispatcher | None = None,
+        ceiling: ColorDepth | None = None,
+    ) -> None:
         self._dispatcher = dispatcher or CursesDispatcher.get()
+        #: The most colour to use whatever the terminal reports - the
+        #: ``[display] color_mode`` setting. Only ever a limit: curses refuses
+        #: a colour number past the ``COLORS`` it started with.
+        self._ceiling = ceiling
         self._pairs: dict[tuple[int, int], int] = {}
         #: Whole resolved attributes, keyed by what was asked for. A screen
         #: paints one cell at a time and asks here for each - measured, a
@@ -822,6 +831,8 @@ class ColorManager:
             # same number in every case measured, but this one cannot be out
             # of step with the library actually being called.
             self._depth = detect_depth(getattr(curses, "COLORS", 0))
+            if self._ceiling is not None:
+                self._depth = min(self._depth, self._ceiling)
             # The depth decides what every colour resolves to, so answers
             # worked out before it was known are not answers any more.
             self._attributes.clear()

@@ -17,6 +17,9 @@ itself, and what to do when a terminal falls short.
   text is whatever Unicode the program shows. Under `LANG=C`, an accented
   letter comes out as `�` and the lines of a box as `^`. Set
   `LANG=C.UTF-8`, or any `.UTF-8` locale, if your system does not already.
+  A terminal whose font has no box-drawing characters can have boxes,
+  arrows and bars drawn in plain ASCII instead, with
+  `TKCURSES_DISPLAY_UNICODE=0`.
 - **Linux or macOS.** Windows' own Python has no `termios`; under WSL,
   TkCurses runs as on Linux.
 
@@ -55,6 +58,11 @@ basic terminal, run it with a smaller `TERM`:
 ```console
 $ TERM=xterm python3 app.py
 ```
+
+or keep `TERM` and set `TKCURSES_DISPLAY_COLOR_MODE` to `8`, `16` or
+`256`. It only ever takes colours away: on a terminal with 8, asking for
+256 still gets 8. Set to `truecolor`, it draws pictures in full colour as
+`COLORTERM=truecolor` does, for a terminal that does not say so.
 
 ## Size and resizing
 
@@ -146,6 +154,9 @@ keyboard alone.
   `TKCURSES_MOUSE_REPORT_MOTION=0` turns off reports of drags as well.
 - **Double clicks** are two clicks within 200 milliseconds on the same
   cell. `TKCURSES_MOUSE_CLICK_INTERVAL` sets a longer time, up to 1000.
+- **`TKCURSES_MOUSE_ENABLED=0` leaves the mouse to the terminal**, whose
+  own selection then works without Shift. The program is used from the
+  keyboard.
 - **Inside tmux**, the mouse reaches a program only with `set -g mouse on`
   in tmux's configuration.
 
@@ -251,7 +262,10 @@ system = command
 
 | Environment variable | In the file | Default |
 |---|---|---|
+| `TKCURSES_DISPLAY_COLOR_MODE` | `[display] color_mode` | `auto` |
+| `TKCURSES_DISPLAY_UNICODE` | `[display] unicode_borders` | on |
 | `TKCURSES_INPUT_ESCAPE_DELAY` | `[input] escape_delay` | 25 |
+| `TKCURSES_MOUSE_ENABLED` | `[mouse] enabled` | on |
 | `TKCURSES_MOUSE_CLICK_INTERVAL` | `[mouse] click_interval` | 200 |
 | `TKCURSES_MOUSE_REPORT_MOTION` | `[mouse] report_motion` | on |
 | `TKCURSES_MOUSE_REPORT_HOVER` | `[mouse] report_hover` | off |
@@ -262,4 +276,6 @@ system = command
 colours rather than past them, for a terminal that shows them wrongly.
 A value that cannot be read is ignored and the default used, and a number
 out of range is brought within it, so a mistyped setting never stops a
-program from starting.
+program from starting. Each is reported when the program ends, once the
+terminal is back, as is a setting that earlier versions accepted and that
+no longer does anything.

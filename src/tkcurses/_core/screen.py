@@ -456,6 +456,10 @@ class CursesScreen:
         #: attributes are honoured, which keeps this module free of any
         #: dependency on colour handling.
         self.attribute_resolver: Callable[[str, str, int], int] = _attributes_only
+        #: A :meth:`str.translate` table applied to every character on its
+        #: way to the terminal, or None. ``[display] unicode_borders`` off
+        #: sets it to :data:`~tkcurses._core.attributes.ASCII_GLYPHS`.
+        self.glyphs: dict[int, str] | None = None
 
     # ---------------------------------------------------------- lifecycle
 
@@ -613,19 +617,21 @@ class CursesScreen:
         painted = 0
         last_row = buffer.height - 1
         last_col = buffer.width - 1
+        glyphs = self.glyphs
         for region in buffer.get_dirty():
             for row in range(region.top, region.bottom + 1):
                 for col in range(region.left, region.right + 1):
                     cell = buffer.cell(row, col)
                     attr = self.attribute_resolver(cell.fg, cell.bg, cell.attr)
+                    char = cell.char if glyphs is None else cell.char.translate(glyphs)
                     if row == last_row and col == last_col:
                         # Writing the last cell scrolls the screen and raises;
                         # insch puts the character there without advancing.
                         with contextlib.suppress(curses.error):
-                            stdscr.insch(row, col, cell.char, attr)
+                            stdscr.insch(row, col, char, attr)
                     else:
                         with contextlib.suppress(curses.error):
-                            stdscr.addch(row, col, cell.char, attr)
+                            stdscr.addch(row, col, char, attr)
                     painted += 1
         stdscr.noutrefresh()
         if self.cursor is not None:
