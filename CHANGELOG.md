@@ -6,6 +6,22 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+## [0.3.0rc2] - 2026-11-07
+
+The second release candidate. Grid and PanedWindow layout now follow Tk's
+own arithmetic, ported from its C sources and checked against Tk 9.0.2 on
+random layouts: a program that relied on a PanedWindow sharing extra room
+between its panes, or on a uniform grid group overflowing, will now lay
+out as it would in Tk. Five other departures from Tk found while writing
+the examples are fixed too.
+
+The documentation gained a four-part tutorial, a porting guide, a guide to
+terminals, a configuration reference and a compatibility matrix, with
+eleven example programs; every program in them is run on each
+documentation build. The configuration settings for colour depth, box
+drawing and the mouse now take effect, nine that did nothing are removed,
+and the menu bar can be reached from the keyboard.
+
 ### Added
 - A guide to porting a tkinter program: sizes in cells, windows, fonts,
   colours, the keyboard, the mouse, output and errors, with programs that
@@ -231,6 +247,7 @@ Phase 2 of the original codebase: the base widget classes, `Tk` and `Toplevel`,
 the variable classes and the panel stack. Superseded by the rebuild; it has no
 `Entry` or `Text`.
 
-[Unreleased]: https://github.com/slfields/TkCurses/compare/v0.3.0rc1...HEAD
+[Unreleased]: https://github.com/slfields/TkCurses/compare/v0.3.0rc2...HEAD
+[0.3.0rc2]: https://github.com/slfields/TkCurses/compare/v0.3.0rc1...v0.3.0rc2
 [0.3.0rc1]: https://github.com/slfields/TkCurses/compare/v0.2.0...v0.3.0rc1
 [0.2.0]: https://github.com/slfields/TkCurses/releases/tag/v0.2.0
