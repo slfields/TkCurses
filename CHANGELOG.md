@@ -10,6 +10,9 @@ All notable changes to TkCurses. The format follows
 - A guide to porting a tkinter program: sizes in cells, windows, fonts,
   colours, the keyboard, the mouse, output and errors, with programs that
   are run against the library on every documentation build.
+- A compatibility matrix in the reference: every class, method and function
+  of tkinter's, and whether TkCurses has it, generated on every
+  documentation build so it cannot drift.
 
 ### Changed
 - An unknown colour name is refused when it is set, with Tk's

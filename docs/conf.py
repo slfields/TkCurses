@@ -32,7 +32,8 @@ import importlib.metadata
 import sys
 from pathlib import Path
 
-# The project's own extensions: tkscreens draws each example's screen.
+# The project's own extensions: tkscreens draws each example's screen, and
+# compat writes the compatibility matrix.
 sys.path.insert(0, str(Path(__file__).parent / "_ext"))
 # This checkout's library, ahead of any installed one: an editable install
 # made in another checkout otherwise wins, and the reference would describe
@@ -57,6 +58,7 @@ extensions = [
     "tkscreens",
     # One entry per method, however many names it has.
     "aliases",
+    "compat",
 ]
 
 source_suffix = {".md": "markdown"}

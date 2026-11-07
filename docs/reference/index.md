@@ -11,6 +11,7 @@ geometry
 images
 dialogs/index
 modules/index
+compatibility
 ```
 
 Every class and function TkCurses provides: [the application and what
@@ -19,7 +20,8 @@ every widget has](core/index.md), the [standard options](options.md), the
 [themed widgets](ttk/index.md), the
 [geometry managers](geometry.md), [images](images.md),
 [dialogs](dialogs/index.md) and [the other modules](modules/index.md),
-among them `curses` and `panel`.
+among them `curses` and `panel`. [Compatibility with tkinter](compatibility.md)
+lists every class and method of tkinter's and whether TkCurses has it.
 
 A method tkinter gives two names, such as `wm_title` and `title`, is
 described once, under the first, and says what else it is called.
