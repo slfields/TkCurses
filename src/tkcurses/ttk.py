@@ -1882,6 +1882,7 @@ class Combobox(Widget, _EntryCommands):
         bind(self._ttk_class, "<Any-Key>", tkcurses._entry_key)
         bind(self._ttk_class, "<FocusIn>", tkcurses._entry_focus_in)
         bind(self._ttk_class, "<FocusOut>", tkcurses._entry_focus_out)
+        bind(self._ttk_class, "<<TraverseIn>>", _combobox_traverse_in)
         tkcurses._bind_entry_clipboard(bind, self._ttk_class)
         tkcurses._bind_entry_navigation(bind, self._ttk_class, themed=True)
 
@@ -2167,6 +2168,18 @@ def _combobox_open(event: Event) -> Any:
         combobox._post()
         return "break"
     return None
+
+
+def _combobox_traverse_in(event: Event) -> None:
+    """``ttk::combobox::TraverseIn``: select it all, unless it cannot be typed in.
+
+    A readonly or disabled combobox is left as it is: there is nothing typing
+    could replace.
+    """
+    combobox = event.widget
+    if combobox.instate(["!readonly", "!disabled"]):
+        combobox.selection_range(0, "end")
+        combobox.icursor("end")
 
 
 def _combobox_escape(event: Event) -> Any:

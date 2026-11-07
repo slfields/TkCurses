@@ -62,9 +62,8 @@ root.title("Calculator")
 # The keys sit on a Frame of their own colour, which shows between them.
 body = tk.Frame(root, background="gray15", padx=1, pady=1)
 body.pack(fill="both", expand=True)
-# width=1 keeps a long number from asking the grid for more room: the
-# Labels are as wide as the keys below them, whatever they hold.
-screen = {"background": "black", "anchor": "e", "padx": 1, "width": 1}
+# Anchored east, so a number too long for the screen shows its end.
+screen = {"background": "black", "anchor": "e", "padx": 1}
 history = tk.Label(body, foreground="gray60", **screen)
 history.grid(row=0, column=0, columnspan=4, sticky="nsew")
 display = tk.Label(body, text="0", foreground="lime green", **screen)
@@ -181,8 +180,10 @@ for row, keys in enumerate(KEYS, start=2):
             padx=(0, 1 if column < 3 else 0),
             pady=(1, 0),
         )
+# One uniform group: the four columns stay the same width, even while a
+# long number asks the grid for more room than the window has.
 for column in range(4):
-    body.columnconfigure(column, weight=1)
+    body.columnconfigure(column, weight=1, uniform="key")
 for row in range(2, len(KEYS) + 2):
     body.rowconfigure(row, weight=1)
 

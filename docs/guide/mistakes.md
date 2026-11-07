@@ -70,15 +70,16 @@ for number in range(3):
 ## pack and grid in one container
 
 **Symptom:** an error naming both managers - *cannot use geometry manager
-grid inside . which already has slaves managed by pack*.
+"pack" inside ".": grid is already managing its content windows*.
 
 ```python
 tk.Label(root, text="Name").grid(row=0, column=0)
 tk.Button(root, text="OK").pack()         # the same container as the label
 ```
 
-The widgets inside one container are arranged by one manager. Put the
-gridded ones in a frame of their own, and pack the frame:
+The widgets inside one container are arranged by one of the two. Put the
+gridded ones in a frame of their own, and pack the frame. (`place` is
+different: it may share a container with either.)
 
 ```python
 form = tk.Frame(root)

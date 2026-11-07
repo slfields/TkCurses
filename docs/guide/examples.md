@@ -67,8 +67,9 @@ and BackSpace to take back a digit. The screen is taken after typing
 ```
 
 The keys sit on a Frame with a background of its own, which shows in the
-gaps between them. The display Labels are given `width=1`, so that a long
-number cannot ask the grid for more room than the keys below take.
+gaps between them. The four columns are one `uniform` group, so they stay
+the same width even when a long number asks for more room than the window
+has; the display is anchored east, so such a number shows its end.
 
 ## A text editor
 
@@ -129,7 +130,10 @@ sash, shows which widgets take the room.
 ```
 
 The sash moves with the mouse, or with the arrows after one Tab has given
-the PanedWindow the focus. In the gridded pane, the column of fields and
+the PanedWindow the focus. The left pane is added with a `width` of 20,
+and keeps it as the window grows: a PanedWindow gives the extra room to
+its last pane, as Tk's does, unless a pane's `stretch` says otherwise.
+In the gridded pane, the column of fields and
 the row of the Text have weight 1 and the labels' column has none, so the
 fields widen and the labels do not.
 

@@ -488,3 +488,139 @@ def test_the_cursor_hides_when_the_focus_leaves_for_a_button(terminal, tmp_path)
     )
     term.wait_for(lambda t: t.cursor_cell() == (2, 7), message="cursor in the entry")
     term.wait_for(lambda t: t.cursor_cell() is None, message="cursor hidden")
+
+
+#: Every entry Tk selects on <<TraverseIn>>, made filled with "hello".
+_FILLED = {
+    "Entry": "tkcurses.Entry(root)",
+    "Spinbox": "tkcurses.Spinbox(root, from_=0, to=9)",
+    "ttk.Entry": "ttk.Entry(root)",
+    "ttk.Spinbox": "ttk.Spinbox(root, from_=0, to=9)",
+    "ttk.Combobox": 'ttk.Combobox(root, values=["a"])',
+}
+
+
+@pytest.mark.parametrize("kind", sorted(_FILLED))
+def test_tab_into_a_filled_entry_selects_it_so_typing_replaces_it(
+    terminal, tmp_path, kind
+):
+    """Measured on Tk 9.0: Tab into each of these selects all of it and puts
+    the cursor at the end, so what is typed replaces it - tk::TabToWindow's
+    <<TraverseIn>>. TkCurses-h0bj: typing used to go in front."""
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        f"""
+import tkcurses
+from tkcurses import ttk
+
+root = tkcurses.Tk()
+first = tkcurses.Button(root, text="first")
+first.pack()
+field = {_FILLED[kind]}
+field.pack()
+field.delete(0, "end")
+field.insert(0, "hello")
+field.icursor(0)
+shown = tkcurses.Label(root, text="")
+shown.pack()
+root.bind_all("<Return>", lambda e: shown.configure(text=f"got [{{field.get()}}]"))
+first.focus_set()
+root.mainloop()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("hello")
+    term.send_keys("<Tab>", "new", "<Return>")
+    term.wait_for_text("got [new]")
+
+
+def test_tab_into_a_readonly_combobox_leaves_it_unselected(terminal, tmp_path):
+    """ttk::combobox::TraverseIn selects only one that can be typed in."""
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        """
+import tkcurses
+from tkcurses import ttk
+
+root = tkcurses.Tk()
+first = tkcurses.Button(root, text="first")
+first.pack()
+box = ttk.Combobox(root, values=["hello"], state="readonly")
+box.pack()
+box.set("hello")
+shown = tkcurses.Label(root, text="")
+shown.pack()
+box.bind("<FocusIn>", lambda e: root.after_idle(
+    lambda: shown.configure(text=f"selected {box.selection_present()}")))
+first.focus_set()
+root.mainloop()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("hello")
+    term.send_keys("<Tab>")
+    term.wait_for_text("selected False")
+
+
+def test_tab_tells_the_widget_left_and_then_the_one_reached(terminal, tmp_path):
+    """<<TraverseOut>> on the old focus, then <<TraverseIn>> on the new, from
+    Tab and from F6 alike."""
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        """
+import tkcurses
+
+root = tkcurses.Tk()
+a = tkcurses.Button(root, text="a")
+b = tkcurses.Button(root, text="b")
+a.pack()
+b.pack()
+log = []
+shown = tkcurses.Label(root, text="")
+shown.pack()
+
+def note(what):
+    log.append(what)
+    shown.configure(text=" ".join(log))
+
+for name, widget in (("a", a), ("b", b)):
+    widget.bind("<<TraverseOut>>", lambda e, n=name: note("out-" + n))
+    widget.bind("<<TraverseIn>>", lambda e, n=name: note("in-" + n))
+a.focus_set()
+root.mainloop()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("a")
+    term.send_keys("<Tab>")
+    term.wait_for_text("out-a in-b")
+    term.send_keys("<F6>")
+    term.wait_for_text("out-a in-b out-b in-a")
+
+
+def test_tab_into_an_entry_puts_the_cursor_at_the_end(terminal, tmp_path):
+    """Left after Tab steps back from the end, as in Tk: <<TraverseIn>> sets
+    the cursor there as well as selecting."""
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        """
+import tkcurses
+
+root = tkcurses.Tk()
+first = tkcurses.Button(root, text="first")
+first.pack()
+field = tkcurses.Entry(root)
+field.pack()
+field.insert(0, "hello")
+field.icursor(0)
+shown = tkcurses.Label(root, text="")
+shown.pack()
+root.bind_all("<Return>", lambda e: shown.configure(text=f"got [{field.get()}]"))
+first.focus_set()
+root.mainloop()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("hello")
+    term.send_keys("<Tab>", "<Left>", "X", "<Return>")
+    term.wait_for_text("got [hellXo]")

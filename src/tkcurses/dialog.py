@@ -73,7 +73,13 @@ class _ButtonRow(_Dialog):
     def body(self, window: Toplevel) -> Misc | None:
         text = str(self.options.get("text") or "")
         if text:
-            tkcurses.Label(window, text=text, justify="left").pack(padx=1, pady=1)
+            # Wrapped, as dialog.tcl wraps it: "option add
+            # *Dialog.msg.wrapLength 3i" on X11, which in Tk's default font
+            # is about forty characters. A long message - a file's whole path
+            # - was otherwise cut by the window. TkCurses-tyd9.
+            tkcurses.Label(window, text=text, justify="left", wraplength=40).pack(
+                padx=1, pady=1
+            )
         row = tkcurses.Frame(window)
         row.pack(pady=1)
         default = _default_index(self.options.get("default"))

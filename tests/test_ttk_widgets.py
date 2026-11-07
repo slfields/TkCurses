@@ -1398,14 +1398,14 @@ def test_surplus_space_is_divided_by_weight(themed_root, weights, grown):
     assert _grown_by(themed_root, weights, 30, 42) == grown
 
 
-def test_an_unweighted_paned_window_still_spreads_evenly(themed_root):
-    """The CLASSIC widget's documented behaviour, which must not change.
+def test_an_unweighted_paned_window_follows_stretch_not_weights(themed_root):
+    """The CLASSIC widget shares room by ``stretch``, never by weight.
 
-    "Surplus and shortfall are both spread across the panes rather than given to
-    one of them - which is what a person expects and what Tk's own
-    -stretch middle default does." Weights are what the themed widget adds, so a
-    pane that names none shares evenly, and the two widgets live in one layout
-    engine.
+    Weights are what the themed widget adds, and the two widgets live in one
+    layout engine, so a weight leaking into the classic one would go unseen.
+    The claim this used to hold - that the classic widget spreads surplus
+    evenly, "what Tk's own -stretch middle default does" - was wrong twice
+    over: Tk's default is ``last``, measured in TkCurses-g60s.
 
     Driven through a real tkcurses.PanedWindow, not through distribute() with the
     weights left out. The first version did the latter and was worthless:
@@ -1422,14 +1422,20 @@ def test_an_unweighted_paned_window_still_spreads_evenly(themed_root):
         pw._allocate(Rect(0, 0, width, 8))
         pw._map()
         for index in range(3):
-            pw.add(tkcurses.Label(pw, name=f"c{width}{index}", text="pane"))
+            pw.add(
+                tkcurses.Label(pw, name=f"c{width}{index}", text="pane"),
+                stretch="always",
+            )
         pw.update_layout()
         return [child.winfo_width() for child in pw._paned.slaves()]
 
+    # TkCurses-g60s: the classic widget now follows Tk's -stretch, whose
+    # default gives everything to the last pane; "always" shares it by size,
+    # and three equal panes grow alike.
     grown = [b - a for a, b in zip(widths(30), widths(42), strict=True)]
     assert grown == [4, 4, 4], (
         f"a classic paned window shared its surplus as {grown} rather than "
-        "evenly - weights have leaked into the widget that has no such option"
+        "by stretch - weights have leaked into the widget that has no such option"
     )
 
 

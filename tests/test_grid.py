@@ -509,15 +509,36 @@ def test_a_span_is_at_least_one(root):
 
 
 def test_mixing_managers_in_one_container_is_refused(root):
+    # Tk 9.0.2's wording, measured.
     Box(root, "a").pack()
-    with pytest.raises(TclError, match="already has slaves managed by pack"):
+    with pytest.raises(TclError) as raised:
         Box(root, "b").grid()
+    assert str(raised.value) == (
+        'cannot use geometry manager "grid" inside ".": '
+        "pack is already managing its content windows"
+    )
 
 
 def test_mixing_the_other_way_round_is_refused_too(root):
     Box(root, "a").grid()
-    with pytest.raises(TclError, match="already has slaves managed by grid"):
+    with pytest.raises(TclError) as raised:
         Box(root, "b").pack()
+    assert str(raised.value) == (
+        'cannot use geometry manager "pack" inside ".": '
+        "grid is already managing its content windows"
+    )
+
+
+def test_a_container_whose_packing_is_over_can_be_gridded(root):
+    """Measured on Tk 9.0.2: the refusal lasts only while pack has a child."""
+    first = Box(root, "a")
+    first.pack()
+    first.pack_forget()
+    second = Box(root, "b")
+    second.grid(row=0, column=0)
+    assert root.grid_slaves() == [second]
+    root.update_layout()
+    assert geometry(second) == (0, 0, 10, 2)
 
 
 # ------------------------------------------------- reconfiguring one option

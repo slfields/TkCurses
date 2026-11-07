@@ -201,7 +201,11 @@ def test_text_too_wide_keeps_its_beginning(terminal, tmp_path):
     assert term.display[1][1:11] == "far too wi"
 
 
-def test_a_centred_label_narrower_than_its_text_starts_at_the_left(terminal, tmp_path):
+def test_a_centred_label_narrower_than_its_text_shows_the_middle(terminal, tmp_path):
+    # Tk 9.0 centres the whole line and cuts both ends: 16 characters in 10
+    # cells start 3 to the left. This test once asserted the start, which
+    # was the departure in TkCurses-tyd9; what it guards still holds - the
+    # line is centred before it is cut, not after.
     term = terminal(cols=40, rows=12)
     term.run_source(
         program(
@@ -213,5 +217,101 @@ def test_a_centred_label_narrower_than_its_text_starts_at_the_left(terminal, tmp
         ),
         workdir=tmp_path,
     )
-    term.wait_for(lambda t: "abc" in "\n".join(t.display), message="the text")
-    assert term.display[0].startswith("abcdefghij")
+    term.wait_for(lambda t: t.display[0].startswith("defghijklm"), message="the middle")
+
+
+# Measured on Tk 9.0 from screenshots: text "abcdefghij" in a classic widget
+# with width=5 shows "fghij" anchored e, "abcde" anchored w and "cdefg"
+# centred; a themed one shows "abcde" whatever the anchor. TkCurses-tyd9.
+_CLIPPED = [
+    ("tkcurses.Label(root, text=T, width=5, anchor='e')", "fghij"),
+    ("tkcurses.Label(root, text=T, width=5, anchor='w')", "abcde"),
+    ("tkcurses.Label(root, text=T, width=5, anchor='center')", "cdefg"),
+    ("tkcurses.Checkbutton(root, text=T, width=5, anchor='e')", "[ ] fghij"),
+    ("tkcurses.Radiobutton(root, text=T, width=5, anchor='e', value=1)", "(-) fghij"),
+    ("ttk.Label(root, text=T, width=5, anchor='e')", "abcde"),
+    ("ttk.Label(root, text=T, width=5, anchor='center')", "abcde"),
+]
+
+
+@pytest.mark.parametrize(
+    ("widget", "shown"),
+    _CLIPPED,
+    ids=[
+        "Label-e",
+        "Label-w",
+        "Label-center",
+        "Checkbutton-e",
+        "Radiobutton-e",
+        "ttk.Label-e",
+        "ttk.Label-center",
+    ],
+)
+def test_text_too_wide_is_cut_where_the_anchor_puts_it(
+    terminal, tmp_path, widget, shown
+):
+    term = terminal(cols=30, rows=6)
+    term.run_source(
+        program(
+            "from tkcurses import ttk\n"
+            "T = 'abcdefghij'\n"
+            f"{widget}.pack(anchor='w')\n"
+            "tkcurses.Label(root, text='end').pack(anchor='w')"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(
+        lambda t: t.display[0].rstrip() == shown and t.display[1].startswith("end"),
+        message=repr(shown),
+    )
+
+
+def test_the_underline_follows_text_cut_by_its_anchor(terminal, tmp_path):
+    term = terminal(cols=30, rows=6)
+    term.run_source(
+        program(
+            "T = 'abcdefghij'\n"
+            "tkcurses.Label(root, text=T, width=5, anchor='e', underline=7)"
+            ".pack(anchor='w')\n"
+            "tkcurses.Label(root, text=T, width=5, anchor='e', underline=1)"
+            ".pack(anchor='w')"
+        ),
+        workdir=tmp_path,
+    )
+    # "h" is the third cell of "fghij"; "b" is cut off, and so is its mark.
+    term.wait_for_cell(0, 2, lambda cell: cell.data == "h" and cell.underscore)
+    term.wait_for_cell(1, 4, lambda cell: cell.data == "j")
+    assert not any(
+        term.char_at(row, c).underscore
+        for row in (0, 1)
+        for c in range(30)
+        if (row, c) != (0, 2)
+    )
+
+
+def test_the_underline_of_a_cut_letter_is_not_drawn_on_the_border(terminal, tmp_path):
+    # "e" is cut off by the anchor, and its cell would be the left border.
+    term = terminal(cols=30, rows=6)
+    term.run_source(
+        program(
+            "tkcurses.Label(root, text='abcdefghij', width=5, anchor='e',"
+            " underline=4, borderwidth=1, relief='solid').pack(anchor='w')"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_cell(1, 5, lambda cell: cell.data == "j")
+    assert term.char_at(1, 0).data == "│"
+    assert not term.char_at(1, 0).underscore
+
+
+def test_a_themed_labels_underline_is_under_the_letter_it_shows(terminal, tmp_path):
+    term = terminal(cols=30, rows=6)
+    term.run_source(
+        program(
+            "from tkcurses import ttk\n"
+            "ttk.Label(root, text='abcdefghij', width=5, anchor='e', underline=1)"
+            ".pack(anchor='w')"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_cell(0, 1, lambda cell: cell.data == "b" and cell.underscore)

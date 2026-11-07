@@ -208,6 +208,11 @@ for style in ("normal", "bold", "italic", "underline"):
 Where the content sits when the widget is bigger than it needs to be: a
 compass point - `n`, `ne`, `e`, `se`, `s`, `sw`, `w`, `nw` - or `center`.
 
+When the text is wider than the widget, the anchor also decides which part
+is cut off, as in Tk: anchored `e`, the end shows and the start is cut;
+centred, both ends are cut. A themed widget is the exception, and always
+shows the start.
+
 ```{tkcurses-sample}
 for anchor in ("nw", "center", "se"):
     tk.Label(root, text=anchor, width=10, height=3, relief="solid",

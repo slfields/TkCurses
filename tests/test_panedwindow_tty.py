@@ -195,10 +195,12 @@ def test_dragging_the_sash_resizes_the_panes(terminal, tmp_path):
     width = int(term.display[9].split("w=")[1].split("|")[0])
     term.send_mouse(column, row, action="press")
     term._drain(0.08)
-    term.send_mouse(column - 6, row, action="move", button=1)
+    # Rightwards: the left pane starts at its own size, which is its minsize,
+    # and as in Tk a sash cannot take a pane below that.
+    term.send_mouse(column + 6, row, action="move", button=1)
     term._drain(0.08)
-    term.send_mouse(column - 6, row, action="release")
-    term.wait_for_text(f"w={width - 6}|")
+    term.send_mouse(column + 6, row, action="release")
+    term.wait_for_text(f"w={width + 6}|")
 
 
 def test_the_arrows_move_the_sash(terminal, tmp_path):
@@ -217,9 +219,9 @@ def test_the_arrows_move_the_sash(terminal, tmp_path):
     term.wait_for_text("w=")
     term.wait_for_idle()
     width = int(term.display[9].split("w=")[1].split("|")[0])
-    term.send_keys("<Left>")
-    term.wait_for_text(f"w={width - 1}|")
     term.send_keys("<Right>")
+    term.wait_for_text(f"w={width + 1}|")
+    term.send_keys("<Left>")
     term.wait_for_text(f"w={width}|")
 
 

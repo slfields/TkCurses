@@ -14,6 +14,12 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Portions follow logic in Tk's C sources, each named beside the code that
+# follows it. Tcl and Tk are copyright the Regents of the University of
+# California, Sun Microsystems, Inc., Scriptics Corporation, ActiveState
+# Corporation, Apple Inc. and other parties, and are used under
+# the Tcl/Tk licence; see THIRD_PARTY_NOTICES.md.
 
 """Panes divided by sashes, and where the divisions fall.
 
@@ -41,11 +47,21 @@ from tkcurses._core.geometry import Managed, Rect, Size
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-__all__ = ["SASH_WIDTH", "PaneOptions", "PanedLayout", "distribute", "place_sash"]
+__all__ = [
+    "SASH_WIDTH",
+    "STRETCH_VALUES",
+    "PaneOptions",
+    "PanedLayout",
+    "distribute",
+    "place_sash",
+]
 
 #: Cells a sash occupies between two panes. One, because a terminal has no
 #: half cells to spare on furniture and a single line reads as a divider.
 SASH_WIDTH = 1
+
+#: What a classic pane's ``stretch`` may be, in the order Tk lists them.
+STRETCH_VALUES = ("always", "first", "last", "middle", "never")
 
 
 class Pane(Managed, Protocol):
@@ -83,11 +99,12 @@ class PaneOptions:
     minsize: int = 0
     sticky: str = "nsew"
     size: int | None = None
-    #: How this pane shares surplus and shortfall, or None to share it evenly
-    #: with every other pane. ttk's ``-weight``; the classic widget has no such
-    #: option and leaves it None, which is what keeps its documented
-    #: spread-across-everything behaviour. See :func:`distribute`.
+    #: How this pane shares surplus and shortfall: ttk's ``-weight``, which
+    #: :func:`distribute` follows. The classic widget has no such option and
+    #: leaves it None, and its panes are laid out by ``stretch`` instead.
     weight: int | None = None
+    #: Which room a classic pane takes beyond its size: Tk's ``-stretch``.
+    stretch: str = "last"
 
 
 def distribute(
@@ -107,10 +124,9 @@ def distribute(
         One size per pane, summing to ``available`` whenever that is possible
         without breaking a minimum.
 
-    Surplus and shortfall are both spread across the panes rather than given
-    to one of them, so growing a window widens every pane a little instead of
-    stretching the last one - which is what a person expects and what Tk's
-    own ``-stretch middle`` default does.
+    The themed panedwindow's arithmetic: surplus and shortfall follow the
+    panes' weights (see :func:`_shares`). A classic PanedWindow's panes are
+    laid out by :func:`arrange` instead, which follows Tk's.
     """
     if not wanted:
         return []
@@ -180,9 +196,7 @@ def _grow(
 ) -> list[int]:
     """Hand out extra cells, by weight when any pane named one.
 
-    Without weights the cells go round-robin from the first pane, which is the
-    classic widget's documented behaviour: surplus spread across the panes
-    rather than given to one of them.
+    Without weights the cells go round-robin from the first pane.
     """
     shares = _shares(weights, len(sizes))
     return [
@@ -263,6 +277,129 @@ def place_sash(
     return sizes
 
 
+def _stretchable(stretch: str, index: int, first: int, last: int) -> bool:
+    """Whether a pane takes a share of spare room: Tk's ``IsStretchable``."""
+    return (
+        stretch == "always"
+        or (stretch == "first" and index == first)
+        or (stretch == "last" and index == last)
+        or (stretch == "middle" and index not in (first, last))
+    )
+
+
+def arrange(
+    bases: Sequence[int],
+    minimums: Sequence[int],
+    stretches: Sequence[str],
+    length: int,
+    gap: int = SASH_WIDTH,
+) -> list[int]:
+    """Each classic pane's size in ``length`` cells: Tk's ``ArrangePanes``.
+
+    Step for step from ``generic/tkPanedWindow.c``, as are
+    :func:`move_sash` (``MoveSash``) and the layout's requested size
+    (``ComputeGeometry``).
+
+    Args:
+        bases: Each pane's own size - its ``width`` (or ``height``) if it
+            was given one, otherwise the size it had when it was added.
+        minimums: Each pane's ``minsize``.
+        stretches: Each pane's ``stretch``.
+        length: The cells the paned window has along its direction.
+        gap: Cells each sash takes, its padding included.
+
+    The spare room - or the shortfall - goes to the panes ``stretch``
+    allows, in proportion to their sizes, any left over to the last of
+    them; with none stretchable, a shortfall comes out of the others as
+    late as it can. Measured on Tk 9.0.2 with ``-stretch`` at its
+    default, ``last``: two panes of 50 and 50 with minsizes 120 and 200 in
+    600 pixels are 120 and 475, and growing the window gives the whole
+    growth to the last. A pane cut off by the edge has a size of zero or
+    less, and is not shown. Recomputed every time from ``bases``: what a
+    person did with a sash is kept by setting the pane's ``width``, as
+    :func:`move_sash` does, not by remembering sizes.
+    """
+    count = len(bases)
+    if count == 0:
+        return []
+    first, last = 0, count - 1
+    reserve = length - sum(bases) - gap * (count - 1)
+    dynamic = dynamic_minimum = 0
+    for index in range(count):
+        if _stretchable(stretches[index], index, first, last):
+            dynamic += bases[index]
+            dynamic_minimum += minimums[index]
+    sizes = []
+    position = 0
+    sashes = count - 1
+    for index in range(count):
+        size, floor = bases[index], minimums[index]
+        if _stretchable(stretches[index], index, first, last):
+            share = size / dynamic if dynamic > 0 else size / length if length else 0
+            dynamic -= size
+            dynamic_minimum -= floor
+            amount = int(share * reserve)
+            if size + amount >= floor:
+                reserve -= amount
+                size += amount
+            else:
+                reserve += size - floor
+                size = floor
+            if index == last and reserve > 0:
+                size += reserve
+                reserve = 0
+        elif dynamic - dynamic_minimum + reserve < 0:
+            if size + dynamic - dynamic_minimum + reserve <= floor:
+                reserve += size - floor
+                size = floor
+            else:
+                size += dynamic - dynamic_minimum + reserve
+                reserve = dynamic_minimum - dynamic
+        # Cut off where the window ends, room for the sashes still to come
+        # kept back.
+        size = min(size, length - gap * sashes - position)
+        sizes.append(size)
+        position = max(0, position + size) + gap
+        sashes -= 1
+    return sizes
+
+
+def move_sash(
+    sizes: Sequence[int], minimums: Sequence[int], sash: int, distance: int
+) -> list[int]:
+    """Move a classic sash ``distance`` cells: Tk's ``MoveSash``.
+
+    The pane on the side it moves towards gives up room, and when that one
+    is down to its ``minsize`` the next one beyond it does, and so on - a
+    sash dragged far enough pushes the panes after it along, as Tk's does.
+    Returns the new sizes, which the caller keeps as every pane's
+    ``width``: Tk pins them all, so that the move survives the next
+    layout.
+    """
+    sizes = list(sizes)
+    if distance == 0 or not 0 <= sash < len(sizes) - 1:
+        return sizes
+    if distance > 0:
+        grows, giving = sash, range(sash + 1, len(sizes))
+    else:
+        distance = -distance
+        grows, giving = sash + 1, range(sash, -1, -1)
+    spare = sum(sizes[index] - minimums[index] for index in giving)
+    if spare <= 0:
+        return sizes
+    distance = min(distance, spare)
+    sizes[grows] += distance
+    for index in giving:
+        room = sizes[index] - minimums[index]
+        if distance > room:
+            distance -= room
+            sizes[index] = minimums[index]
+        else:
+            sizes[index] -= distance
+            break
+    return sizes
+
+
 class PanedLayout:
     """Lays a paned window's children out in a row or a column."""
 
@@ -279,6 +416,12 @@ class PanedLayout:
         #: Cells each sash takes between two panes: the sash, any handle
         #: wider than it, and ``sashpad`` either side. The window sets it.
         self.sash = SASH_WIDTH
+        #: A classic pane's size when its ``width`` is not set: Tk's
+        #: ``paneWidth``, the size it asked for when it was added. Taken
+        #: again while the window has never been laid out, as Tk takes it
+        #: again while the window is unmapped.
+        self._natural: dict[int, int] = {}
+        self._arranged = False
 
     @property
     def vertical(self) -> bool:
@@ -287,17 +430,40 @@ class PanedLayout:
 
     # ----------------------------------------------------------- membership
 
+    @property
+    def classic(self) -> bool:
+        """True for a classic PanedWindow's panes, laid out as Tk's are.
+
+        The themed widget's panes carry a ``weight``, and share room by it.
+        """
+        return all(self._options[id(w)].weight is None for w in self._order)
+
     def add(self, widget: Pane, options: PaneOptions) -> None:
         """Add a pane, or change one already there."""
         if widget not in self._order:
             self._order.append(widget)
             self._sizes = []
+            self._adopt(widget, options)
         self._options[id(widget)] = options
+
+    def _adopt(self, widget: Pane, options: PaneOptions) -> None:
+        """Start a new pane's remembered size: Tk's ``paneWidth`` on adding.
+
+        Its ``width`` if it was added with one, otherwise left to be taken
+        from what it asks for. A later ``paneconfigure`` of ``width`` does
+        not touch it - measured, the window's requested size stays where it
+        was - and only a sash moved changes it again.
+        """
+        self._natural.pop(id(widget), None)
+        if options.size is not None and options.size > 0:
+            self._natural[id(widget)] = options.size
 
     def insert(self, index: int, widget: Pane, options: PaneOptions) -> None:
         """Add a pane at a position rather than at the end."""
         if widget in self._order:
             self._order.remove(widget)
+        else:
+            self._adopt(widget, options)
         self._order.insert(max(0, min(index, len(self._order))), widget)
         self._options[id(widget)] = options
         self._sizes = []
@@ -307,6 +473,7 @@ class PanedLayout:
         if widget in self._order:
             self._order.remove(widget)
         self._options.pop(id(widget), None)
+        self._natural.pop(id(widget), None)
         self._sizes = []
 
     def options_for(self, widget: Pane) -> PaneOptions | None:
@@ -334,7 +501,15 @@ class PanedLayout:
         return Size(across, along) if self.vertical else Size(along, across)
 
     def _wanted(self, widget: Pane, options: PaneOptions) -> int:
-        """How long one pane wants to be, along the window's direction."""
+        """How long one pane wants to be, along the window's direction.
+
+        For a classic pane, Tk's ``ComputeGeometry``: its remembered size,
+        raised to its ``minsize`` - and kept raised, as Tk keeps it.
+        """
+        if options.weight is None:
+            wanted = max(self._natural_of(widget), options.minsize)
+            self._natural[id(widget)] = wanted
+            return wanted
         if options.size is not None:
             return max(options.size, options.minsize)
         if self.vertical:
@@ -342,6 +517,30 @@ class PanedLayout:
         else:
             natural = int(widget.winfo_reqwidth())
         return max(natural, options.minsize)
+
+    def _natural_of(self, widget: Pane) -> int:
+        """A classic pane's remembered size, taken now if it has none yet.
+
+        Taken again from what the pane asks for until the window is first
+        laid out, unless it was given a ``width``: Tk's
+        ``PanedWindowReqProc`` does the same while the window is unmapped.
+        """
+        options = self._options[id(widget)]
+        given = options.size is not None and options.size > 0
+        if id(widget) in self._natural and (self._arranged or given):
+            return self._natural[id(widget)]
+        natural = int(
+            widget.winfo_reqheight() if self.vertical else widget.winfo_reqwidth()
+        )
+        self._natural[id(widget)] = natural
+        return natural
+
+    def _base(self, widget: Pane) -> int:
+        """A classic pane's size before stretching: ``ArrangePanes``' base."""
+        options = self._options[id(widget)]
+        if options.size is not None and options.size > 0:
+            return options.size
+        return max(self._natural_of(widget), options.minsize)
 
     def _across_of(self, widget: Pane) -> int:
         """How wide one pane wants to be, across the window's direction."""
@@ -358,6 +557,16 @@ class PanedLayout:
             (area.height if self.vertical else area.width)
             - self.sash * (len(self._order) - 1),
         )
+        if self.classic:
+            self._sizes = arrange(
+                [self._base(widget) for widget in self._order],
+                [self._options[id(w)].minsize for w in self._order],
+                [self._options[id(w)].stretch for w in self._order],
+                area.height if self.vertical else area.width,
+                self.sash,
+            )
+            self._arranged = True
+            return list(self._sizes)
         minimums = [self._options[id(w)].minsize for w in self._order]
         if len(self._sizes) == len(self._order):
             wanted = self._sizes
@@ -372,15 +581,48 @@ class PanedLayout:
 
     def move_sash(self, sash: int, position: int, area: Rect) -> None:
         """Put one sash at a position, in cells from the window's edge."""
-        sizes = self.sizes(area)
         minimums = [self._options[id(w)].minsize for w in self._order]
+        if self.classic:
+            # Tk's "sash place": the distance from where the sash is, then
+            # MoveSash, which pins every pane's width to its new size.
+            sizes = self._current()
+            distance = position - self._sash_at(sizes, sash)
+            if distance == 0 or not 0 <= sash < len(sizes) - 1:
+                # Tk returns before pinning anything: measured, a sash
+                # placed where it already is leaves every width unset.
+                return
+            sizes = move_sash(sizes, minimums, sash, distance)
+            for widget, size in zip(self._order, sizes, strict=True):
+                self._options[id(widget)].size = size
+                self._natural[id(widget)] = size
+            self._sizes = sizes
+            return
+        sizes = self.sizes(area)
         self._sizes = place_sash(sizes, sash, position, minimums, self.sash)
+
+    def _current(self) -> list[int]:
+        """The panes' sizes now: as last laid out, or as they ask before then.
+
+        Before the first layout Tk's sashes sit where ``ComputeGeometry``
+        put them, after each pane's own size - which is what lets a sash be
+        placed before the window has any room.
+        """
+        if len(self._sizes) == len(self._order):
+            return list(self._sizes)
+        return [
+            self._wanted(widget, self._options[id(widget)]) for widget in self._order
+        ]
+
+    def _sash_at(self, sizes: Sequence[int], sash: int) -> int:
+        """Where a sash starts, given the pane sizes before it."""
+        return sum(max(0, size) for size in sizes[: sash + 1]) + sash * self.sash
 
     def sash_position(self, sash: int) -> int:
         """Where one sash starts, in cells from the window's edge."""
-        if not 0 <= sash < len(self._sizes) - 1:
+        sizes = self._current() if self.classic else self._sizes
+        if not 0 <= sash < len(sizes) - 1:
             return 0
-        return sum(self._sizes[: sash + 1]) + sash * self.sash
+        return self._sash_at(sizes, sash)
 
     def apply(self, container: object, area: Rect) -> None:
         """Give each pane its strip of the window, then redraw the sashes.
@@ -394,6 +636,8 @@ class PanedLayout:
         sizes = self.sizes(area)
         offset = 0
         for widget, size in zip(self._order, sizes, strict=True):
+            # A pane the window's edge cut off entirely has no room at all.
+            size = max(0, size)
             if self.vertical:
                 rect = Rect(area.x, area.y + offset, area.width, size)
             else:

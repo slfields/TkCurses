@@ -239,6 +239,29 @@ class _Screen(pyte.Screen):
         super().resize(lines, columns)
         self.tabstops |= set(range((old // 8 + 1) * 8, self.columns, 8))
 
+    def erase_in_display(self, how: int = 0, *args: object, **kwargs: object) -> None:
+        """Erase as a terminal does: every cell, in the current background.
+
+        pyte keeps each row as a sparse dict of the cells written to it, and
+        its erase walks the cells a row *has* - so a row nothing was ever
+        written to stays empty, and reads back as the default background.
+        xterm, with back-colour erase, fills every cell with the current one,
+        and ncurses relies on it: a screen whose rows are all one colour is
+        painted with a single ``ESC [ J``. A root window given a background
+        came out coloured on its first row and nowhere else. TkCurses-0awl.
+        """
+        super().erase_in_display(how, *args, **kwargs)
+        if how == 0:
+            rows = range(self.cursor.y + 1, self.lines)
+        elif how == 1:
+            rows = range(self.cursor.y)
+        else:
+            rows = range(self.lines)
+        for row in rows:
+            line = self.buffer[row]
+            for column in range(self.columns):
+                line[column] = self.cursor.attrs
+
     def cursor_back_tab(self, count: int = 0) -> None:
         """Move the cursor back ``count`` tab stops, as ``CSI Z`` does."""
         for _ in range(count or 1):

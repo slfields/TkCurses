@@ -1060,6 +1060,18 @@ The same obligation applies to a composite widget that forwards keys to a child,
 and to any future widget that wants `F6` for itself: claim it, and say in the
 widget's own docstring which key still leaves.
 
+**Moving the focus sends `<<TraverseOut>>` and `<<TraverseIn>>`**, as
+`tk::TabToWindow` does: the first to the widget being left, the second to
+the one reached, after the focus has moved. Tab, Shift-Tab, F6 and Shift-F6
+all go through `_move_focus`, so all four send them; `focus_set()` and a
+click do not, in Tk or here. What uses them, measured on Tk 9.0 with
+`bind_class`: Entry, Spinbox, TEntry and TSpinbox bind `<<TraverseIn>>` to
+select everything and put the cursor at the end, so typing replaces what was
+there; TCombobox does the same unless it is readonly or disabled
+(`ttk::combobox::TraverseIn`). Nothing binds `<<TraverseOut>>`. Before
+`TkCurses-h0bj` neither event was sent, and Tab into a filled field left the
+cursor where it was, so typing went in front of the old text.
+
 ### Input Handling Architecture
 
 Curses input handling requires careful design to capture all events without blocking the application or consuming excessive CPU.
@@ -3287,22 +3299,28 @@ and a Canvas whose default relief was not Tk's; the next five
 (`TkCurses-q6d1`) found these, each measured against Tk 9.0 and filed
 rather than fixed alongside:
 
-- the root window never paints its `background` (`TkCurses-0awl`);
+- the root window never paints its `background` (`TkCurses-0awl`, fixed
+  since);
 - a Label too narrow for its text shows the start whatever its anchor,
-  where Tk keeps the side the anchor names (`TkCurses-tyd9`);
+  where Tk keeps the side the anchor names (`TkCurses-tyd9`, fixed since);
 - uniform weighted grid columns under a spanning widget grow past their
-  master (`TkCurses-xcy3`);
+  master (`TkCurses-xcy3`, fixed since by porting Tk's grid arithmetic);
 - a PanedWindow shares extra room between panes and ignores a pane's
   `width`, where Tk's `-stretch last` gives it all to the last
-  (`TkCurses-g60s`);
+  (`TkCurses-g60s`, fixed since by porting Tk's pane arithmetic);
 - `canvasx` and `canvasy` take a screen coordinate where Tk's take a
   window one, so `canvas.canvasx(event.x)` is right only for a canvas at
-  the screen's corner (`TkCurses-0n21`).
+  the screen's corner (`TkCurses-0n21`, fixed since).
 
-Each example steers clear in a way a Tk program could equally have been
-written - a coloured Frame rather than the root, a `width=1` display, no
-`uniform` group, the panes' own split - so none of them depends on a bug
-staying unfixed.
+Each example first steered clear in a way a Tk program could equally have
+been written, so none depended on a bug staying unfixed. With the five
+fixed (`TkCurses-fbrq`) the two that bent are back to what a Tk programmer
+would write: the calculator's columns are one `uniform` group and its
+display asks for all the room it likes, where it had `width=1` to keep
+out of the grid; and the layout's left pane starts at a `width` of its own
+and keeps it through a resize, where the panes used to share the room.
+The calculator's coloured Frame stays: it carries the margin round the
+keys, which the root cannot until it takes `padx` (`TkCurses-00dx`).
 
 **The pty harness gives a widened terminal tab stops**, which pyte does
 not: it sets a stop every eight columns once, at the starting width.
@@ -3324,15 +3342,15 @@ The larger program is `examples/notes.py`, shown a part at a time with
 cannot quote code the file no longer has - a marker that stops matching
 fails the build under `-W`.
 
-Writing it found two departures from Tk, measured on Tk 9.0.2 and filed
-rather than fixed here. **Tab into an Entry does not select its text**:
+Writing it found two departures from Tk, measured on Tk 9.0.2, filed
+rather than fixed there, and fixed since (`TkCurses-fbrq`). **Tab into an Entry does not select its text**:
 Tk's `tk::TabToWindow` sends `<<TraverseIn>>`, and the Entry class binds
 it to select everything and put the cursor at the end, so typing replaces
 the field; TkCurses has no `<<TraverseIn>>`, and typing goes in front
 (`TkCurses-h0bj`). **`place` cannot share a container with `pack` or
 `grid`**: Tk refuses only pack and grid together, and a placed badge over
 packed content is accepted; TkCurses keeps one manager per container
-(`TkCurses-huq9`). The concepts page says so, and places in a frame of its
+(`TkCurses-huq9`). The concepts page said so, and placed in a frame of its
 own.
 
 **`tkscreens` runs each example in a fresh temporary directory**, which is
@@ -3757,6 +3775,31 @@ continuing, because a diagnosable error beats a machine that has to be
 power-cycled. `LayoutEngine.ancestry()` refuses to walk a cycle for the same
 reason.
 
+#### Which managers share a container
+
+A container has two layout slots, not one: `_layout_manager`, for pack, grid
+or a paned window's own, and `_place_manager`, for place. The engine runs the
+first and then the second, so placed children land over what pack or grid
+arranged. Measured on Tk 9.0.2, which is what this follows:
+
+- place shares a container with pack or grid, and is never refused - the
+  overlay, a badge or a floating button over packed content;
+- pack and grid refuse each other only while the other still lays out a
+  child: a frame whose last packed child was forgotten takes grid. The error
+  is Tk 9's, `cannot use geometry manager "grid" inside ".": pack is already
+  managing its content windows`, where 8.6 said `which already has slaves
+  managed by pack`;
+- `place` on a packed widget in the same container takes it out of pack, and
+  `pack` takes it back out of place;
+- `pack_forget`, `grid_forget` and `place_forget` leave alone a widget another
+  manager lays out.
+
+Before `TkCurses-huq9` a container had one slot, so place refused a packed
+container and pack a placed one, and every forget unmapped the widget
+whichever manager it was in. One departure is left: Tk lets pack and place
+into a panedwindow, and here its paned layout holds the slot pack needs, so
+pack there is refused.
+
 `pack_propagate(False)` stops a container resizing to fit its children: it
 keeps the size it was given and its parent is never told. Tk spells the flag
 once per manager; there is one container and one setting, so `pack_propagate`,
@@ -3820,6 +3863,34 @@ second copy of the normalisation to keep in step. `TkCurses-l8f`.
 | `ipadx` | pixels | Cells |
 | `ipady` | pixels | Cells |
 
+**Line sizes are Tk's own arithmetic**, ported from `generic/tkGrid.c`:
+`ResolveConstraints` for the size the grid asks for and `AdjustOffsets` for
+fitting it to the room it gets, then `TkComputeAnchor` for where it sits
+(`_core/grid.py`, `_resolve`, `_adjust`, `_origin`). The rules that come
+with it, none of them in `grid(n)`:
+
+- `-pad` is added to the largest child wholly in the line, and the line is
+  then the larger of that and `-minsize`; an empty line gets no pad;
+- a `-uniform` group is evened up before anything else, and a line of
+  weight 0 in one counts as weight 1;
+- room a spanning child needs beyond its lines' own is shared among them
+  by weight, cumulatively and rounded down, so the remainder lands on the
+  last - four uniform columns needing 24 under a child needing 25 end at
+  6, 12, 18 and 25;
+- room to spare in the container is shared the same way, so five rows of
+  weight 1 sharing 13 are 2, 3, 2, 3, 3; too little is taken from the
+  weighted lines down to their `-minsize`, and past that the grid is cut;
+- with no weights, a centred grid larger than its container is cut on
+  both sides.
+
+**How it is held to Tk:** `tests/support/record_grid_reference.py` asks real
+Tk 9.0.2 to lay out 150 random grids - weights, minsizes, pads, uniform
+groups, spans, padding, anchors, containers too big and too small - with
+frames sized in pixels standing for cells, and `tests/test_grid_reference.py`
+wants every cell's `grid_bbox` the same. Measured before the port, 85 of 400
+such grids matched; after, 1200 of 1200 (`TkCurses-xcy3`). Re-record when
+the Tk the library follows changes.
+
 #### Place Class
 
 | tkinter Method | TkCurses | Notes |
@@ -3860,6 +3931,21 @@ Main application window.
 | `report_callback_exception(exc, val, tb)` | ✓ | Exception handler |
 
 Inherits all methods from `Misc` and `Wm`.
+
+**The root's `background` is painted into the screen buffer**, not into a
+window: the root deliberately has none (see "The root is not one of them"),
+so the buffer the panels are drawn over is its background. Setting it fills
+every cell; setting it back to `''` fills them with black, which is what a
+widget with no background paints, rather than the terminal's own default -
+curses has already been told about those cells and cannot be told to forget.
+A resize paints the cells it adds. The default stays `''` where Tk's is
+`SystemButtonFace` (`#d9d9d9` on X11): every widget here defaults to the
+terminal's own colours, and a light grey root would paint over a terminal
+that a person chose to be dark. `TkCurses-0awl`; before it the option was
+taken and kept and painted nothing.
+
+A Toplevel paints its `background` behind its children and under its border,
+through its window's `bkgd`, as Tk paints a toplevel's.
 
 ---
 
@@ -3982,6 +4068,18 @@ Static text display.
 | `height` | lines | Cells |
 | `padx` | pixels | Cells |
 | `pady` | pixels | Cells |
+
+**Text wider than the widget is cut where the anchor puts it.** Measured on
+Tk 9.0 from screenshots (`magick import -window`), `text="abcdefghij"` in
+`width=5`: a classic Label, Button, Checkbutton or Radiobutton shows `fghij`
+anchored `e`, `abcde` anchored `w` and `cdefg` centred - `TkComputeAnchor`
+gives a negative offset and the window clips it. ttk.Label, ttk.Button and
+ttk.Checkbutton show `abcde` whatever the anchor. Message wraps, so never
+gets here. `_TextWidget._cells_cut_before` is the one place that decides,
+and the underline follows the text, and is not drawn when its letter is
+cut. Before `TkCurses-tyd9` every widget showed the start, so a right-hand
+display - a calculator's - lost the end of a long number. A centred label
+narrower than its text used to show the start too; it shows the middle now.
 
 ---
 
@@ -5344,8 +5442,8 @@ coordinates are in pixels, `width` and `height` are in cells.
 | `addtag_overlapping(newtag, x1, y1, x2, y2)` | ☐ | Tag overlapping - not implemented; TkCurses-7jv |
 | `addtag_withtag(newtag, tagOrId)` | ✓ | Tag with tag |
 | `bbox(tagOrId=None)` | ○ | Bounding box, in pixels |
-| `canvasx(screenx)` | ○ | Screen column to canvas pixel |
-| `canvasy(screeny)` | ○ | Screen row to canvas pixel (its upper half) |
+| `canvasx(screenx, gridspacing=None)` | ○ | Window column to canvas pixel, as `event.x` is; `gridspacing` ignored (TkCurses-0n21) |
+| `canvasy(screeny, gridspacing=None)` | ○ | Window row to canvas pixel (its upper half) |
 | `coords(tagOrId, *args)` | ○ | Get/set coords, in pixels |
 | `create_arc(...)` | ✗ | N/A (TkCurses-aj1.16.1) |
 | `create_bitmap(...)` | ✗ | Likewise (TkCurses-aj1.16.1) |
@@ -5414,7 +5512,7 @@ Resizable paned container.
 | `proxy_place(x, y)` | ☐ | Place proxy - not implemented; TkCurses-xy2 |
 | `sash_coord(index)` | ○ | Sash cell coords |
 | `sash_mark(index)` | ☐ | Mark sash - not implemented; TkCurses-xy2 |
-| `sash_place(index, x, y)` | ○ | Place sash |
+| `sash_place(index, x, y)` | ○ | Place sash; pins every pane's `width`, as Tk's `MoveSash` |
 | `panecget(child, option)` | ✓ | Get pane option |
 | `paneconfigure(child, **kw)` | ✓ | Configure pane |
 | `panes()` | ✓ | List panes |
@@ -5452,6 +5550,48 @@ on Tk 9.0.2, with each pixel a cell here:
   `tk::panedwindow::DragSash` and `ReleaseSash` do. Tk raises a window for its
   proxy; the panes here are panels above the paned window's own, so the proxy
   is a panel too, drawn as the sash in `proxybackground`.
+
+**Pane sizes are Tk's arithmetic** (`TkCurses-g60s`), from
+`generic/tkPanedWindow.c`: `ArrangePanes` for the sizes, `MoveSash` for a
+sash moved, `ComputeGeometry` for what the window asks for. They used to be
+our own - every change shared evenly, a `width` ignored once laid out - and
+`examples/layout.py` found it: Tk gave two panes of 50 with minsizes 120
+and 200 in 600 pixels 120 and 475, and put all of a resize in the second.
+Held to Tk differentially, as the grid is: random windows, horizontal and
+vertical, with minsizes, `stretch`, `width`, then resized, reconfigured and
+sashes placed, every sash and the requested length compared. 1200 of 1200
+agree; 200 are in `tests/support/paned_reference.json`, replayed by
+`tests/test_paned_reference.py`. What the manual does not say:
+
+- **A pane has two sizes.** `width` is the option; `paneWidth`, which Tk
+  never shows, is the size the pane had when it was added (its `width`
+  then, or what its child asked for, raised to its `minsize` for good).
+  Layout uses `width` when it is set and `paneWidth` otherwise, but the
+  *requested* size is always `paneWidth`: `paneconfigure(a, width=6)` on a
+  pane added at 19 leaves the window asking for 19.
+- **`stretch` shares by size, not evenly**: each stretchable pane takes
+  its size over the stretchable total of the spare room, truncated, and the
+  last stretchable pane any remainder. With none stretchable, a shortfall
+  comes out of the others from the first; a pane the edge cuts off is
+  unmapped.
+- **Moving a sash pins every pane**: `MoveSash` first sets each pane's
+  `width` to its size on screen, then moves the room, taking it from the
+  panes beyond in turn as each reaches its minsize. So after one
+  `sash_place` every `panecget(..., "width")` has a number, a resize goes
+  wholly to the last pane, and the window asks for what the panes add up
+  to. **A sash placed where it already is pins nothing** - `MoveSash`
+  returns at a distance of 0 first.
+- **Before the window is mapped a sash place is unreliable in Tk**: the
+  sash positions it measures from have not been worked out. Measured, a
+  sash placed at 180 before the first update, or from `after_idle`, was at
+  120 (both panes at their minsize), at 100 (no minsize, panes asking 50),
+  or at 180 (a pane given `width=300`, which `panecget` then still
+  reported). Not copied: here the panes' own sizes stand in until then. A
+  program that wants a starting split gives a pane a `width`, as
+  `examples/layout.py` does, and that works the same in both.
+
+The themed `ttk.Panedwindow` keeps its own arithmetic, by `weight`
+(`distribute`); a pane with a weight is not a classic pane.
 
 Where cells cannot follow. A sash, and so a span, is never less than one
 cell: Tk takes `sashwidth 0` and a negative `sashpad`, which would leave

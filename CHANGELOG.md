@@ -53,6 +53,40 @@ All notable changes to TkCurses. The format follows
   sets one is told so when it ends.
 
 ### Fixed
+- A PanedWindow's panes are sized by Tk's own arithmetic, from
+  `tkPanedWindow.c`. A pane starts at its `width` or what its child asks
+  for, and room beyond that goes to the last pane rather than being shared;
+  the new `stretch` pane option (`always`, `first`, `last`, `middle`,
+  `never`) changes who takes it. A pane's `width` is kept through a
+  resize, and moving a sash sets every pane's `width`, as Tk's does. 200
+  paned windows recorded from Tk 9.0.2 are matched sash for sash.
+- Grid rows and columns are sized by Tk's own arithmetic, from
+  `tkGrid.c`. A `uniform` group under a spanning widget no longer grows
+  past its container; spare room lands on the later lines, as in Tk; a
+  line's `pad` is added to its largest child rather than on top of its
+  `minsize`; and a weight-0 line in a `uniform` group counts as weight 1.
+  150 grids recorded from Tk 9.0.2 are matched cell for cell.
+- Text too wide for a Label, Button, Checkbutton or Radiobutton is cut
+  where its `anchor` puts it, as in Tk: anchored `e`, the end shows. The
+  start always showed. Themed widgets show the start, as Tk's do.
+- `place` shares a container with `pack` or `grid`, as in Tk, so a badge
+  can sit over packed content. Moving a widget between `place` and `pack`
+  in one container takes it out of the other, a forget from a manager not
+  laying the widget out leaves it alone, and a container whose last packed
+  child was forgotten can be gridded. The error for mixing `pack` and
+  `grid` is Tk 9's.
+- The root window and a Toplevel paint their `background` behind their
+  widgets, as Tk's do. It was accepted and nothing was drawn.
+- Tab into an Entry, Spinbox, or a themed entry, spinbox or editable
+  combobox selects what is in it, with the cursor at the end, so typing
+  replaces it, as in Tk. Typing went in front of the old text. Moving the
+  focus with Tab or F6 sends `<<TraverseOut>>` and `<<TraverseIn>>`, as
+  Tk's does.
+- `Canvas.canvasx` and `canvasy` take a position in the canvas's window,
+  as `event.x` and `event.y` are, as Tk's do. They took a position on the
+  screen, so `canvas.canvasx(event.x)` was right only for a canvas at the
+  screen's top-left corner, and a click on an item in any other canvas
+  could reach the wrong item.
 - `TKCURSES_DISPLAY_COLOR_MODE` (`[display] color_mode`) takes effect: `8`,
   `16` or `256` draws with no more colours than that, and `truecolor` draws
   pictures in full colour as `COLORTERM=truecolor` does. It was read and

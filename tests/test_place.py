@@ -280,10 +280,66 @@ def test_a_negative_size_is_not_produced(root):
     assert box.winfo_width() >= 0
 
 
-def test_mixing_place_with_pack_is_refused(root):
-    Box(root, "a").pack()
-    with pytest.raises(TclError, match="already has slaves managed by pack"):
-        Box(root, "b").place(x=0)
+# Measured on Tk 9.0.2: place shares a container with pack or grid - an
+# overlay over packed or gridded content - and only pack and grid refuse
+# each other.
+
+
+def test_place_shares_a_container_with_pack(root):
+    packed, placed = Box(root, "a"), Box(root, "b")
+    packed.pack()
+    placed.place(x=30, y=5)
+    assert root.pack_slaves() == [packed]
+    assert root.place_slaves() == [placed]
+    root.update_layout()
+    assert geometry(packed) == (15, 0, 10, 2)
+    assert geometry(placed) == (30, 5, 10, 2)
+
+
+def test_place_shares_a_container_with_grid(root):
+    gridded, placed = Box(root, "a"), Box(root, "b")
+    gridded.grid(row=0, column=0)
+    placed.place(relx=1.0, anchor="ne")
+    assert root.grid_slaves() == [gridded]
+    root.update_layout()
+    assert geometry(gridded) == (0, 0, 10, 2)
+    assert geometry(placed) == (30, 0, 10, 2)
+
+
+def test_place_then_pack_moves_a_widget_between_them(root):
+    box = Box(root, "a")
+    box.pack()
+    box.place(x=1, y=1)
+    assert (root.pack_slaves(), root.place_slaves()) == ([], [box])
+    root.update_layout()
+    assert geometry(box) == (1, 1, 10, 2)
+    box.pack()
+    assert (root.pack_slaves(), root.place_slaves()) == ([box], [])
+    assert box.winfo_manager() == "pack"
+
+
+def test_forgetting_from_another_manager_leaves_a_widget_alone(root):
+    packed, placed = Box(root, "a"), Box(root, "b")
+    packed.pack()
+    placed.place(x=30, y=5)
+    placed.pack_forget()
+    placed.grid_forget()
+    packed.place_forget()
+    root.update_layout()
+    assert (packed.winfo_manager(), placed.winfo_manager()) == ("pack", "place")
+    assert packed.winfo_ismapped() and placed.winfo_ismapped()
+    assert root.place_slaves() == [placed]
+
+
+def test_a_placed_container_takes_the_size_its_contents_ask_for(root):
+    holder = Widget(root, name="holder")
+    holder.place(x=0, y=5)
+    Box(holder, "inside", width=12, height=3).pack()
+    root.update_layout()
+    assert geometry(holder) == (0, 5, 12, 3)
+    Box(holder, "more", width=14, height=1).pack()
+    root.update_layout()
+    assert geometry(holder) == (0, 5, 14, 4)
 
 
 # ------------------------------------------------- reconfiguring one option

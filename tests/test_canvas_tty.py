@@ -410,3 +410,41 @@ def test_a_shape_does_not_take_the_canvas_background_as_its_colour(terminal, tmp
     term.wait_for_idle()
     row, column = next(iter(sorted(inked(term))))
     assert term.attrs_at(row, column)["fg"] == "red"
+
+
+def test_a_click_finds_the_item_in_a_canvas_away_from_the_corner(terminal, tmp_path):
+    """canvasx(event.x) is the canvas point under the pointer wherever the
+    canvas is, and an item's binding hears a click on it. TkCurses-0n21: both
+    took a screen position, and were wrong for a canvas not at (0, 0)."""
+    term = terminal(cols=40, rows=14)
+    term.run_source(
+        """
+import tkcurses
+
+root = tkcurses.Tk()
+shown = tkcurses.Label(root, text="waiting")
+shown.place(x=0, y=13)
+c = tkcurses.Canvas(root, width=20, height=8)
+c.place(x=10, y=3)
+c.create_rectangle(4, 4, 8, 8, fill="white", outline="", tags="hot")
+
+def clicked(event):
+    shown.configure(text=f"at {c.canvasx(event.x)},{c.canvasy(event.y)}")
+
+def hit(event):
+    shown.configure(text=shown.cget("text") + " hit")
+
+c.bind("<Button-1>", clicked)
+c.tag_bind("hot", "<Button-1>", hit, add="+")
+root.mainloop()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda t: len(inked(t)) >= 4, message="the square")
+    row = min(r for r, _ in inked(term))
+    column = min(c for _, c in inked(term))
+    # The square's top-left cell is canvas (4, 4): two columns and one row
+    # past where the canvas's coordinates start.
+    term.click(column, row)
+    term.wait_for_text("at 4,4")
+    term.wait_for_text("hit")

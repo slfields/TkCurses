@@ -216,6 +216,6 @@ three the stand-in version found:
   its text showed the end hard against the far edge with the beginning cut
   off. Justification is measured from the real line length now.
 - A helper that decorated a frame by *placing* a label in it made that frame a
-  place container, and Tk allows only one manager per container — so nothing
+  place container, and TkCurses then allowed one manager per container — so nothing
   could be packed inside it afterwards and the nesting scenario silently
   refused to nest.

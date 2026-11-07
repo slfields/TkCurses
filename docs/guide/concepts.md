@@ -233,18 +233,30 @@ overlay, such as a badge in a corner.
 
 ### One manager to a container
 
-The widgets inside one container are all arranged by one manager: you can
-pack some widgets into a frame and grid others into a *different* frame,
-but not pack and grid widgets in the same one. The two would each try to
-size the container to suit their own widgets, forever, so tkinter and
-TkCurses both refuse, with an error saying which manager is already there.
-Mixing managers is done with frames: grid a form inside a frame, and pack
-that frame among the others. [Layouts](examples.md#layouts) in the
+The widgets inside one container are arranged by one of `pack` and `grid`:
+you can pack some widgets into a frame and grid others into a *different*
+frame, but not pack and grid widgets in the same one. The two would each
+try to size the container to suit their own widgets, forever, so tkinter
+and TkCurses both refuse, with an error saying which manager is already
+there. Mixing them is done with frames: grid a form inside a frame, and
+pack that frame among the others. [Layouts](examples.md#layouts) in the
 examples does exactly that, with all three.
 
-In tkinter, `place` may share a container with `pack` or `grid`, which is
-how a badge is put over packed content. TkCurses does not allow that yet,
-so give placed widgets a frame of their own, as above.
+`place` is the exception, because it makes no claim on the container's
+size. It may share a container with `pack` or `grid`, and that is how a
+badge is put over packed content:
+
+% expect: [3 new]
+
+```python
+import tkcurses as tk
+
+root = tk.Tk()
+tk.Label(root, text="Inbox").pack(anchor="w")
+tk.Label(root, text="Drafts").pack(anchor="w")
+tk.Label(root, text="[3 new]").place(relx=1, anchor="ne")
+root.mainloop()
+```
 
 ### When the terminal changes size
 

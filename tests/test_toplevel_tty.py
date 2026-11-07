@@ -154,3 +154,22 @@ def test_a_key_reaches_a_binding_on_a_toplevel(terminal, tmp_path):
     term.wait_for_text("ready")
     term.send(b"z")
     term.wait_for_text("window got z")
+
+
+def test_a_toplevel_paints_its_background_inside_its_border(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            'win = tkcurses.Toplevel(root, background="blue")\n'
+            'win.geometry("14x5+10+2")\n'
+            'tkcurses.Label(win, text="in", bg="red").pack()'
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("in")
+    # The border and the interior below the label, both blue.
+    for row, column in ((2, 10), (4, 12), (5, 20), (6, 23)):
+        term.wait_for_cell(
+            row, column, lambda cell: cell.bg == "blue", message=f"{row},{column}"
+        )
+    term.wait_for_cell(0, 0, lambda cell: cell.bg != "blue", message="the root")

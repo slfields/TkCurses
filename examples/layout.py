@@ -68,7 +68,10 @@ message.insert("1.0", "The fields widen with the pane, and this grows both ways.
 right.columnconfigure(1, weight=1)
 right.rowconfigure(3, weight=1)
 
-panes.add(left, minsize=12)
+# The left pane starts 20 cells wide and the right takes the rest. Growth
+# goes to the last pane too, as Tk's "stretch last" default gives it, so the
+# left keeps its width until the sash is moved.
+panes.add(left, minsize=12, width=20)
 panes.add(right, minsize=20)
 
 # place: by fraction of the status bar, so these stay at its left, middle

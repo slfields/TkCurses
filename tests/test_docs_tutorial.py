@@ -70,7 +70,7 @@ def test_the_complete_programs_are_found():
     # Every block that calls mainloop is a whole program, and is run below;
     # and no two say they draw the same thing, or one would hide the other.
     whole = [b for b in found(BLOCK) if "mainloop()" in b]
-    assert len(found(PROGRAM)) == len(programs()) == len(whole) == 18
+    assert len(found(PROGRAM)) == len(programs()) == len(whole) == 19
 
 
 def test_the_pages_link_to_each_other_in_order():

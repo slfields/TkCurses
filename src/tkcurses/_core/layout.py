@@ -239,13 +239,17 @@ class LayoutEngine:
         before it can place them in it.
         """
         manager = container._layout_manager
-        if manager is None:
-            return
-        if getattr(manager, "propagates", True):
-            self._propagate(
-                container, container._outer_size(manager.requested(container))
-            )
-        manager.apply(container, container._content_rect())
+        if manager is not None:
+            if getattr(manager, "propagates", True):
+                self._propagate(
+                    container, container._outer_size(manager.requested(container))
+                )
+            manager.apply(container, container._content_rect())
+        # Placed children last, over what pack or grid arranged: place has a
+        # layout of its own beside theirs, as in Tk. TkCurses-huq9.
+        placed = getattr(container, "_place_manager", None)
+        if placed is not None:
+            placed.apply(container, container._content_rect())
 
     def _propagate(self, container: Any, requested: Size) -> None:
         """Record what a container needs and tell its parent, if it should.
@@ -266,7 +270,10 @@ class LayoutEngine:
             return
         container._requested = requested
         parent = container.master
-        if parent is not None and parent._layout_manager is not None:
+        if parent is not None and (
+            parent._layout_manager is not None
+            or getattr(parent, "_place_manager", None) is not None
+        ):
             self.invalidate(parent)
 
     # ----------------------------------------------------------- diagnostics

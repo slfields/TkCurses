@@ -239,18 +239,21 @@ def test_the_calculator_refuses_to_divide_by_zero(terminal, tmp_path):
 @pytest.mark.tty
 def test_the_calculator_keeps_a_long_answer_inside_the_window(terminal, tmp_path):
     """A display Label as wide as its text pushed the keys a cell right and
-    cut the last figure off; it is given width=1 to keep out of the grid."""
+    cut the last figure off, until the grid followed Tk's arithmetic
+    (TkCurses-xcy3); the four columns are one uniform group, as they would
+    be in Tk, and the display asks for all it likes."""
     term = start(terminal, tmp_path, "calculator", cols=30, rows=14)
     term.wait_for_text("C")
     term.send_keys("999999999999*999999=", "*999999=")
     term.wait_for(
         lambda t: (
             t.display[2].strip() == "9.99998e+23"
-            and t.display[1].strip().startswith(f"9.99998999999e+17 {TIMES} 999999")
+            and t.display[1].rstrip().endswith(f"e+17 {TIMES} 999999 =")
         ),
-        message="the whole answer, and the sum - too wide for the window",
+        message="the whole answer, and the end of the sum - too wide for the window",
     )
-    # The keys stay where they were; the sum is the Label's to cut.
+    # The keys stay where they were; the sum is the Label's to cut, and,
+    # anchored e, it loses its start, as in Tk (TkCurses-tyd9).
     assert term.display[4].index("C") == 3
 
 
@@ -372,18 +375,17 @@ def test_the_layout_follows_a_resize(terminal, tmp_path):
     term = start(terminal, tmp_path, "layout", cols=60, rows=16)
     term.wait_for_text("60x16")
     left, high, right, _ = pane_sizes(term)
-    assert (left + 1 + right, high) == (60, 14)
+    assert (left, high, right) == (20, 14, 39)
     term.resize(80, 20)
     term.wait_for(
         lambda t: (
             t.display[19].startswith(" 80x20")
             and t.display[19].rstrip().endswith("relx=1")
             and len(t.display[19].rstrip()) == 79
-            and (sizes := pane_sizes(t)) is not None
-            and sizes[0] + 1 + sizes[2] == 80
-            and sizes[1] == sizes[3] == 18
+            and pane_sizes(t) == (20, 18, 59, 18)
         ),
-        message="the status bar's ends placed at the new edges, and both panes taller",
+        message="the status bar's ends at the new edges, both panes taller, "
+        "and the growth all to the last pane",
     )
     # The fields' column and the Text's row have weight, so the fields reach
     # one cell short of the window's edge and the Text down to the status bar.

@@ -410,11 +410,33 @@ def test_a_deleted_item_stops_being_current(canvas):
 # ----------------------------------------------------------------- the view
 
 
-def test_canvasx_and_canvasy_convert_from_the_screen(canvas):
+def test_canvasx_and_canvasy_convert_from_the_window(canvas):
     area = canvas._text_area()
     assert canvas.canvasx(area.x + 3) == 3
     # Two pixel rows to a cell row.
     assert canvas.canvasy(area.y + 2) == 4
+
+
+def test_canvasx_takes_a_window_coordinate_wherever_the_canvas_is(root):
+    """As event.x is: Tk 9.0 answers canvasx(10) = 10.0 for a canvas packed
+    with padx=50, so canvasx(event.x) is the canvas point under the pointer.
+    TkCurses-0n21."""
+    widget = Canvas(root, width=20, height=5, relief="flat")
+    widget._allocate(Rect(7, 4, 20, 5))
+    widget._map()
+    assert (widget.winfo_rootx(), widget.winfo_rooty()) == (7, 4)
+    area = widget._text_area()
+    assert widget.canvasx(area.x + 3) == 3
+    assert widget.canvasy(area.y + 2) == 4
+
+
+def test_canvasx_follows_the_view(canvas):
+    canvas.configure(scrollregion=(0, 0, 200, 100))
+    canvas.xview_moveto(0.5)
+    canvas.yview_moveto(0.5)
+    area = canvas._text_area()
+    assert canvas.canvasx(area.x) == 100
+    assert canvas.canvasy(area.y) == 50
 
 
 def test_the_view_starts_at_the_origin(canvas):

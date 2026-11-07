@@ -1005,3 +1005,74 @@ root.mainloop()
         workdir=tmp_path,
     )
     term.wait_for_text("loaded late")
+
+
+def _blue(cell):
+    return cell.bg == "blue"
+
+
+def test_a_root_given_a_background_paints_every_cell_behind_the_widgets(
+    terminal, tmp_path
+):
+    # Tk paints a toplevel's background behind its children; the root here is
+    # the whole terminal, so that is every cell no widget covers.
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        "import tkcurses as tk\n"
+        "root = tk.Tk()\n"
+        'root.configure(background="blue")\n'
+        'tk.Label(root, text="on top", bg="red").pack()\n'
+        "root.after(4000, root.quit)\n"
+        "root.mainloop()\n",
+        workdir=tmp_path,
+    )
+    for row, column in ((0, 0), (0, 39), (5, 20), (9, 0), (9, 39)):
+        term.wait_for_cell(row, column, _blue, message=f"blue at {row},{column}")
+    term.wait_for_cell(0, 17, lambda cell: cell.data == "o" and cell.bg == "red")
+
+
+def test_the_root_background_can_be_taken_away(terminal, tmp_path):
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        "import tkcurses as tk\n"
+        "root = tk.Tk()\n"
+        'root.configure(bg="blue")\n'
+        'root.after(300, lambda: root.configure(bg=""))\n'
+        "root.after(4000, root.quit)\n"
+        "root.mainloop()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_cell(5, 20, _blue, message="the blue background")
+    term.wait_for_cell(5, 20, lambda cell: cell.bg == "black", message="black")
+    term.wait_for_cell(9, 39, lambda cell: cell.bg == "black", message="black")
+
+
+def test_the_root_background_reaches_the_cells_a_resize_adds(terminal, tmp_path):
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        "import tkcurses as tk\n"
+        "root = tk.Tk()\n"
+        'root.configure(bg="blue")\n'
+        "root.after(4000, root.quit)\n"
+        "root.mainloop()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_cell(9, 39, _blue, message="the blue background")
+    term.resize(50, 14)
+    term.wait_for_cell(13, 49, _blue, message="blue in the new corner")
+
+
+def test_a_background_set_before_loadtk_is_painted_when_curses_starts(
+    terminal, tmp_path
+):
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        "import tkcurses as tk\n"
+        "root = tk.Tk(useTk=False)\n"
+        'root.configure(bg="blue")\n'
+        "root.loadtk()\n"
+        "root.after(4000, root.quit)\n"
+        "root.mainloop()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_cell(5, 20, _blue, message="the blue background")
