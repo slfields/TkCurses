@@ -134,9 +134,9 @@ A name Tk does not know is refused with Tk's own `TclError` when it is set.
 
 What is drawn is the nearest colour the terminal can show. Terminals
 range from 8 colours to 16 million, and TkCurses finds out which it is
-talking to; `winfo_colordepth()` says what it found, and
-`TKCURSES_DISPLAY_COLOR_MODE` (`8`, `16`, `256` or `truecolor`) overrides
-it. On a basic terminal a colour can change a long way: with eight colours,
+talking to from `TERM`; `winfo_colordepth()` says what it found. Run a
+program with `TERM=xterm` to see it as an eight-colour terminal draws it -
+[Terminals](terminals.md) has the others. On a basic terminal a colour can change a long way: with eight colours,
 `SteelBlue` is drawn grey. A design that tells things apart only by colour,
 or by close shades, may lose the difference there.
 
@@ -166,7 +166,8 @@ the keyboard. Most of that is already done for you, as it is in Tk:
   opens its own menu - so give every menu an `underline`.
 - **Return and space** press a focused button.
 
-Some keys cannot reach a program the way they reach one on a desktop:
+Some keys cannot reach a program the way they reach one on a desktop
+([Terminals](terminals.md) has the whole list):
 
 - **Ctrl-C, Ctrl-Z and Ctrl-\\** close, suspend and quit the program, as
   in any terminal program, **unless the program binds them**: a binding for

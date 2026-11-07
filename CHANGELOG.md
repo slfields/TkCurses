@@ -13,6 +13,9 @@ All notable changes to TkCurses. The format follows
 - A compatibility matrix in the reference: every class, method and function
   of tkinter's, and whether TkCurses has it, generated on every
   documentation build so it cannot drift.
+- A guide to terminals: what TkCurses needs from one, colour depth,
+  resizing, the keys a terminal cannot send, the mouse, the clipboard,
+  Unicode, suspending and restoring, and the settings that take effect.
 
 ### Changed
 - The `dos` theme has a look of its own: double lines across and single
@@ -24,6 +27,8 @@ All notable changes to TkCurses. The format follows
   does not have, and a name with a space at either end are now refused too.
 
 ### Fixed
+- The porting guide said `TKCURSES_DISPLAY_COLOR_MODE` overrides the colour
+  depth; it has no effect. It now says to set `TERM`, which does.
 - The menu bar can be reached from the keyboard, as in Tk: F10 opens the
   first menu, and Alt with an underlined letter opens that menu, runs that
   command or posts that Menubutton. Only the mouse reached it before.

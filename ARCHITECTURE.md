@@ -2823,11 +2823,12 @@ things a terminal changes (`TkCurses-5t48`):
   every focus change, `-undo` change and `event add`/`delete`. Everywhere
   else Control-z still suspends the program.
 - **Control-Shift-z is the byte Control-z is**, 0x1A, so it arrives only
-  from a terminal that reports modifiers. So the Text also binds Alt-z, as a
-  terminal sends it - Escape, then `z` - to redo. A binding of ours, not one
-  of `<<Redo>>`'s sequences: Tk 9.0.2 lists a two-key virtual event and never
-  fires it, measured on a Text and on a bare Frame. Like any sequence it has
-  no time limit, so Escape and a later `z` redo too.
+  from a terminal that reports modifiers. So the Text also binds
+  `<Alt-Key-z>` to redo - a terminal sends Alt-z as Escape and `z`, which the
+  input layer reads back as one key with Alt (see "Alt from a terminal"). A
+  binding of ours, not one of `<<Redo>>`'s sequences. It was a two-key
+  sequence, Escape then `z`, until Alt was read as Alt; that had no time
+  limit, so Escape and a later `z` redid too, and now they do not.
 - **The Lock forms are left out**: Caps Lock does not change the byte.
 
 **Deliberately unlike Tk**, a disabled Text's undo changes nothing, moves no
