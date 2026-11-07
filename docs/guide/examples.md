@@ -1,6 +1,6 @@
 # Examples
 
-Eleven complete programs, each a single file in the
+Twelve complete programs, each a single file in the
 [`examples`](https://github.com/slfields/TkCurses/tree/master/examples)
 directory. Run one from a checkout with:
 
@@ -84,6 +84,23 @@ The screen is taken after typing two lines and pressing F10.
 ```
 
 Give it a file to open: `python3 examples/editor.py notes.txt`.
+
+## Notes
+
+A list of notes beside the one being edited, with a search that narrows
+the list as you type, a menu, a dialog before deleting, and a file the
+notes are saved in half a second after the typing stops. The left pane is
+packed and the right gridded, inside a PanedWindow.
+[A larger program](larger-program.md) builds it a piece at a time. The
+screen is taken after writing two notes.
+
+```{tkcurses-example} examples/notes.py
+:size: 60x16
+:keys: ["Shopping", "<Tab>", "Milk, eggs and bread.", "<Control-n>", "Ideas", "<Tab>", "A guide to TkCurses."]
+```
+
+The notes are kept in `notes.json` beside the program; give another file
+to keep them there instead: `python3 examples/notes.py ~/notes.json`.
 
 ## A table
 

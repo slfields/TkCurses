@@ -27,6 +27,13 @@ All notable changes to TkCurses. The format follows
   with pack, grid and place together that follows a resize, a line graph
   and a scene of shapes on a Canvas, and a picture - the Mandelbrot set,
   or an image file - fitted to the window.
+- A tutorial in four parts: an introduction that explains what TkCurses is
+  and what it is built on - event-driven programs, tkinter, curses and
+  panels, Unicode, colour and graphics - then the core concepts of the
+  widget tree, geometry management and events, the common widgets, and a
+  notes application built a piece at a time. With them, pages of common
+  mistakes, how TkCurses works, and a glossary; and the notes application
+  as a twelfth example program.
 
 ### Changed
 - The `dos` theme has a look of its own: double lines across and single

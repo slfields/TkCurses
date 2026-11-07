@@ -2,26 +2,162 @@
 
 This guide is for anyone who has written some Python and wants a program
 with an interface: buttons, fields to type into, lists to choose from. It
-assumes nothing about tkinter or any other toolkit. By the end you will
-have written a small, complete application.
+assumes nothing about tkinter or any other toolkit. It is the first of a
+short series:
+
+1. **Introduction** - this page: what TkCurses is, what it is built on,
+   and a first program.
+2. **[Core concepts](concepts.md)** - the three ideas every program rests
+   on: the widget tree, geometry management, and events.
+3. **[Common widgets](widgets.md)** - the widgets you will use most, and
+   what each is for.
+4. **[A larger program](larger-program.md)** - a notes application, built
+   and explained a piece at a time.
+
+[Common mistakes](mistakes.md) lists the ones nearly everybody makes once,
+and the [glossary](glossary.md) defines the words these pages use.
 
 ## What TkCurses is
 
+### Programs that wait to be told
+
 Most programs that run in a terminal talk to you in lines of text: they
-print, you type, they print again. A program with a *user interface*
-instead puts things on the screen that stay there - a field you can type
-into, a button you can press, a list you can scroll through - and reacts
-to whatever you do to them, in whatever order you do it.
+print, you type, they print again. The program is in charge. It decides
+what to ask and in what order, and it stops and waits at each `input()`
+until you answer.
 
-A **GUI toolkit** is a library that provides those things. Python ships
-with one called *tkinter*, which draws them in windows on a desktop.
-TkCurses provides the same things, with the same names and the same way of
-using them, but draws them with text inside the terminal you are already
-in. That means a TkCurses program also works over SSH, on a server with no
-desktop, and in a container.
+A program with a *user interface* turns that around. It puts things on the
+screen that stay there - a field you can type into, a button you can
+press, a list you can scroll through - and then waits for *you*. You might
+type in the field, or press the button first, or scroll the list and
+change your mind. The program does not know which, and does not ask. It
+says in advance what should happen *if* each thing is done, and responds to
+whatever is done, in whatever order.
 
-Because the two speak the same language, everything you learn here also
-applies to tkinter, and a great deal written about tkinter applies here.
+That arrangement has a name, **event-driven programming**, and three parts
+make it work:
+
+- **Widgets** are the things on the screen: a label, a button, a field, a
+  list. A program builds its interface by making widgets and putting them
+  inside one another, so that the whole screen is a tree of them.
+- **Geometry managers** decide where each widget goes and how big it is,
+  and decide again whenever there is more or less room.
+- **The event loop** waits for something to happen - a key, a click, the
+  terminal being resized, a timer running out - and calls the function the
+  program said to call for it. Those functions are *callbacks*: you write
+  them, and the loop calls them back.
+
+So a program's own code runs in two phases. First it builds the interface
+and connects callbacks to events. Then it hands control to the loop, and
+from then on its code runs only when the loop calls a callback. The
+[core concepts](concepts.md) page takes each of the three in turn.
+
+### tkinter
+
+A **GUI toolkit** is a library that provides widgets, geometry managers and
+an event loop. Python ships with one, **tkinter**, which is Python's
+interface to the Tk toolkit and draws its widgets in windows on a desktop.
+Python's own documentation for it is the place to start, and the
+introduction there points to the tutorials and reference it trusts:
+
+- [tkinter - Python interface to Tcl/Tk](https://docs.python.org/3/library/tkinter.html),
+  the standard library's documentation;
+- [tkinter.ttk](https://docs.python.org/3/library/tkinter.ttk.html), the
+  themed widgets;
+- [TkDocs](https://tkdocs.com/tutorial/), a tutorial that covers tkinter
+  thoroughly and is kept up to date;
+- [Tk's own manual pages](https://www.tcl-lang.org/man/tcl9.0/TkCmd/contents.html),
+  which are what tkinter's behaviour is ultimately defined by.
+
+**TkCurses is tkinter for the terminal.** It has the same modules, classes,
+methods and options, used the same way, but it draws with text in the
+terminal you are already in rather than in a window on a desktop. Because
+the two speak the same language, everything you learn here applies to
+tkinter, and almost everything written about tkinter applies here. Where
+TkCurses differs, because a terminal is not a desktop, the reference says
+so on the class or method concerned.
+
+It also means a TkCurses program runs where a desktop program cannot: over
+SSH, on a server with no display, in a container, or on the Linux console.
+
+### curses
+
+A terminal shows a grid of character **cells**, typically 80 or more
+across and 24 or more down, each holding one character in one colour. A
+program that only prints adds lines at the bottom. A program that draws
+*anywhere* on that grid - an editor, a file manager, `top` - sends the
+terminal escape sequences that move the cursor, set colours and clear
+parts of the screen, and those sequences differ from one terminal to the
+next.
+
+**curses** is the library that hides the differences. It reads what the
+terminal can do from the terminfo database, keeps a copy of what the screen
+should look like, and sends only the changes. Its usual implementation is
+[ncurses](https://invisible-island.net/ncurses/), and Python's standard
+library wraps it as the [`curses`](https://docs.python.org/3/library/curses.html)
+module; the [Curses Programming with Python](https://docs.python.org/3/howto/curses.html)
+HOWTO introduces it. A curses program works in *windows* - rectangles of
+cells it can write into and then copy to the screen.
+
+**Panels** are curses' answer to windows that overlap. Each window can be
+put on a panel, the panels are kept in a stack, and
+[`curses.panel`](https://docs.python.org/3/library/curses.panel.html)
+draws them back to front, so that the one on top is the one you see where
+they overlap. Moving a panel to the top is how a menu drops down over a
+form or a dialog appears over everything else.
+
+TkCurses is built on both. Every widget draws into a curses window of its
+own, each window sits on a panel, and the panels are stacked in the order
+of the widget tree, children in front of the widget they are inside. You
+never handle the windows or panels yourself - the widgets do - but they
+are why a dropped-down menu covers what is under it and leaves it intact
+when it goes. A program written for curses itself can use
+`tkcurses.curses` and `tkcurses.panel`, which offer the standard modules'
+interfaces on top of the same machinery, and can even share the screen
+with widgets. [How TkCurses works](how-it-works.md) follows a key press
+and a redraw through these layers.
+
+### Unicode
+
+**Unicode** is the standard that gives every character in every writing
+system a number, and **UTF-8** is the way of writing those numbers as
+bytes that terminals and files on Linux and macOS use. TkCurses relies on
+it in two ways:
+
+- **Your text is Unicode.** A label, an entry or a text widget can hold
+  `"Zoë"`, `"Ελληνικά"` or `"→ ✓"`, and shows them as long as the
+  terminal's font has them.
+- **Its drawing is Unicode.** Borders are box-drawing characters (`┌─┐`),
+  radio buttons and arrows are symbols (`•`, `▲`, `▾`), and pictures and charts
+  are made of block characters (`▀`, `▄`, `█`). A terminal running in a
+  UTF-8 locale shows them all.
+
+Two things follow. The terminal must be using UTF-8 - nearly every one
+does, and [Terminals](terminals.md#what-a-terminal-needs) says how to
+check and what to do if not, including drawing in plain ASCII instead. And
+a cell holds one character, but not every character fits in one: most
+Chinese, Japanese and Korean characters and many emoji are drawn two cells
+wide, which [Terminals](terminals.md#unicode) explains.
+
+### Colour and graphics
+
+A terminal shows a fixed number of colours, and which number depends on
+the terminal: none, 8, 16, 256, or the 16 million of "true colour". A
+program asks for colours by name (`"tomato"`, `"navy"`) or as `"#rrggbb"`,
+exactly as in tkinter, and TkCurses draws each as the nearest colour the
+terminal has. So a program can be written once and still look right on a
+basic terminal - as long as it never tells things apart by colour alone.
+[Terminals](terminals.md#colours) lists the kinds and how to try a program
+on each.
+
+There are no pixels, only cells, so graphics are drawn with characters.
+The **Canvas** draws lines, rectangles, ovals, polygons and text, and to
+make curves smoother it counts half a cell as its unit down the screen,
+using the half-block characters `▀` and `▄`. A **PhotoImage** reads PNG,
+GIF and netpbm files and draws two pixels to a cell, one above the other,
+in the colours the terminal has - or in full colour on a terminal that
+says it offers it. The [examples](examples.md) include a graph, a drawing
+you can move things around in, and a picture.
 
 ## Before you start
 
@@ -58,324 +194,19 @@ Four things happen here, and every TkCurses program does all four.
    whole terminal screen, and everything else goes inside it.
 3. **`tk.Label(root, ...)`** creates a *widget*: one element of the
    interface, here a piece of text. The first argument says which window
-   or widget it goes inside - its *parent*. Then **`.pack()`** puts it on
-   the screen. A widget that has not been packed, or placed some other way
-   (see [Arranging widgets](#arranging-widgets)), exists but is not shown.
-4. **`root.mainloop()`** hands control to TkCurses. From here on it draws
-   the screen, waits for keys and mouse clicks, and calls your code when
-   something happens. It returns when the root window is closed.
-
-That last step is the big difference from a program that prints and reads.
-You do not write a loop asking "what did the user do?". You describe the
-interface, say which of your functions to run for which events, and let
-`mainloop` do the asking.
-
-## Widgets and options
-
-Every widget is created the same way: the class, the parent, then
-*options* as keyword arguments. Options set what the widget shows and how.
-
-% expect: Status: ready
-
-```python
-import tkcurses as tk
-
-root = tk.Tk()
-title = tk.Label(root, text="Inventory", fg="yellow")
-title.pack()
-status = tk.Label(root, text="Status: ready", fg="black", bg="green")
-status.pack()
-root.mainloop()
-```
-
-`fg` and `bg` are the foreground (text) and background colours. Colours
-are shown as well as your terminal allows, and a terminal with no colour
-shows the text without them.
-
-An option can be read and changed after the widget exists:
-
-```python
-status.configure(text="Status: saving")   # change one or more options
-status["text"] = "Status: saved"          # the same, one option at a time
-print(status.cget("text"))                # read one back
-```
-
-The widgets you will use most are:
-
-| Widget | What it is |
-|---|---|
-| `Label` | Text that the user reads. |
-| `Button` | Text the user presses to make something happen. |
-| `Entry` | A one-line field the user types into. |
-| `Text` | A multi-line field, an editor. |
-| `Checkbutton` | A box that is ticked or not. |
-| `Radiobutton` | One of a group of choices, of which only one is chosen. |
-| `Listbox` | A list of lines the user picks from. |
-| `Scrollbar` | Scrolls a `Listbox`, `Text` or `Canvas` that does not fit. |
-| `Frame` | An empty area that holds other widgets, to group them. |
-| `Menu` | A menu bar, or a menu that drops down from one. |
-
-The [API reference](../reference/index.md) lists them all, with every
-option each one takes.
-
-## Making something happen
-
-A `Button` takes a `command` option: a function for TkCurses to call when
-the button is pressed. Pass the function itself - `command=add_one`, not
-`command=add_one()`, which would call it once immediately and pass what it
-returned.
-
-% expect: Pressed 0 times
-
-```python
-import tkcurses as tk
-
-presses = 0
-
-def add_one():
-    global presses
-    presses += 1
-    counter.configure(text=f"Pressed {presses} times")
-
-root = tk.Tk()
-counter = tk.Label(root, text="Pressed 0 times")
-counter.pack()
-tk.Button(root, text="Press me", command=add_one).pack()
-tk.Button(root, text="Quit", command=root.destroy).pack()
-root.mainloop()
-```
-
-A button is pressed by clicking it, if your terminal sends mouse clicks,
-or by moving to it with **Tab** and pressing **Return** or the **space
-bar**. Tab moves the *keyboard focus* - which widget your keys go to -
-forward through the widgets, and **Shift-Tab** moves it back.
-
-`root.destroy` closes the root window, which ends `mainloop` and with it
-the program. The Quit button runs it directly, because it is already a
-function.
-
-## Variables
-
-Reading a field's contents and writing them back by hand gets tedious.
-A *variable* holds a value and keeps every widget attached to it showing
-that value. `StringVar` holds text; `IntVar`, `DoubleVar` and `BooleanVar`
-hold the other kinds.
-
-% expect: Hello, stranger
-
-```python
-import tkcurses as tk
-
-root = tk.Tk()
-name = tk.StringVar(value="stranger")
-message = tk.StringVar()
-
-def greet(*args):
-    message.set(f"Hello, {name.get()}")
-
-name.trace_add("write", greet)
-greet()
-
-tk.Label(root, text="Your name:").pack()
-field = tk.Entry(root, textvariable=name)
-field.pack()
-tk.Label(root, textvariable=message).pack()
-field.focus_set()
-root.mainloop()
-```
-
-The `Entry` and the variable `name` are connected by
-`textvariable=name`: whatever is typed into the field is in `name`, and
-`name.set(...)` would change what the field shows. `trace_add("write",
-greet)` asks for `greet` to be called whenever `name` changes, so the
-second label follows along as you type. `focus_set()` puts the keyboard
-focus in the field to start with.
-
-## Arranging widgets
-
-Something has to decide where each widget goes and how big it is. That is
-the job of a *geometry manager*, and there are three. Each widget is
-arranged by one of them, chosen by calling its method.
-
-**`pack`** stacks widgets against a side of their parent, top to bottom
-unless you say otherwise. It is the simplest, and fine for a column or a
-row of widgets.
-
-```python
-toolbar = tk.Frame(root)
-toolbar.pack(side="top", fill="x")      # a strip across the top
-tk.Button(toolbar, text="Open").pack(side="left")
-tk.Button(toolbar, text="Save").pack(side="left")
-```
-
-`fill="x"` stretches a widget across the space it was given; `side="left"`
-lines the buttons up in a row inside the frame.
-
-**`grid`** puts widgets in rows and columns, like a table. It is the
-natural choice for a form.
-
-% expect: Email
-
-```python
-import tkcurses as tk
-
-root = tk.Tk()
-form = tk.Frame(root)
-form.pack(fill="x")
-for row, label in enumerate(["Name", "Email", "Phone"]):
-    tk.Label(form, text=label).grid(row=row, column=0, sticky="w")
-    tk.Entry(form).grid(row=row, column=1, sticky="ew")
-form.columnconfigure(1, weight=1)
-root.mainloop()
-```
-
-`sticky="w"` keeps a label against the west (left) edge of its cell, and
-`"ew"` stretches a field from east to west. `columnconfigure(1, weight=1)`
-gives column 1 any spare width, so the fields grow with the terminal and
-the labels do not.
-
-**`place`** puts a widget at an exact position, which is rarely what you
-want and occasionally exactly that.
-
-Sizes and positions are counted in character cells - one column of one
-row of the terminal - rather than the pixels a desktop toolkit counts in.
-
-## Events
-
-`command` covers buttons. For everything else, `bind` connects an *event*
-to a function: a key, a mouse click, the focus arriving. The event is
-named in angle brackets, and the function receives an *event object*
-saying what happened.
-
-% expect: Press a key
-
-```python
-import tkcurses as tk
-
-root = tk.Tk()
-shown = tk.Label(root, text="Press a key")
-shown.pack()
-
-def on_key(event):
-    shown.configure(text=f"You pressed {event.keysym}")
-
-root.bind("<Key>", on_key)
-root.bind("<Escape>", lambda event: root.destroy())
-root.mainloop()
-```
-
-`<Key>` is any key, `<Escape>` is one key, and `<Control-s>` would be
-Ctrl and S together. A binding on `root` hears keys whichever widget has
-the focus.
-
-To run something later, or every so often, ask `after` to call it in a
-number of milliseconds. A function that schedules itself again keeps going:
-
-% expect: Seconds:
-
-```python
-import tkcurses as tk
-
-root = tk.Tk()
-seconds = tk.IntVar(value=0)
-tk.Label(root, text="Seconds:").pack(side="left")
-tk.Label(root, textvariable=seconds).pack(side="left")
-
-def tick():
-    seconds.set(seconds.get() + 1)
-    root.after(1000, tick)
-
-root.after(1000, tick)
-root.mainloop()
-```
-
-Your functions run inside `mainloop`, which cannot redraw the screen or
-read keys until they return. Keep them quick: a function that sleeps or
-waits on the network freezes the interface while it does. `after` is how
-to wait without freezing.
-
-## A complete program
-
-Everything so far, put together: a to-do list. Type a task and press
-Return to add it; pick one in the list and press **Done** to take it off.
-
-% expect: To do
-
-```python
-import tkcurses as tk
-
-root = tk.Tk()
-root.title("To do")
-
-tk.Label(root, text="To do", fg="yellow").pack()
-
-entry_row = tk.Frame(root)
-entry_row.pack(fill="x")
-task = tk.StringVar()
-field = tk.Entry(entry_row, textvariable=task)
-field.pack(side="left", fill="x", expand=True)
-
-def add(event=None):
-    text = task.get().strip()
-    if text:
-        tasks.insert("end", text)
-        task.set("")
-
-tk.Button(entry_row, text="Add", command=add).pack(side="left")
-field.bind("<Return>", add)
-
-def done():
-    for index in reversed(tasks.curselection()):
-        tasks.delete(index)
-
-buttons = tk.Frame(root)
-buttons.pack(side="bottom", fill="x")
-tk.Button(buttons, text="Done", command=done).pack(side="left")
-tk.Button(buttons, text="Quit", command=root.destroy).pack(side="right")
-
-list_row = tk.Frame(root)
-list_row.pack(fill="both", expand=True)
-tasks = tk.Listbox(list_row)
-tasks.pack(side="left", fill="both", expand=True)
-bar = tk.Scrollbar(list_row, command=tasks.yview)
-bar.pack(side="right", fill="y")
-tasks.configure(yscrollcommand=bar.set)
-
-field.focus_set()
-root.mainloop()
-```
-
-A few things are new:
-
-- **`expand=True`** gives a widget a share of any space left over, so the
-  list grows to fill the terminal while the rows of buttons keep their
-  height.
-- **The row of buttons is packed before the list**, against the bottom.
-  `pack` hands out space in the order widgets were packed, so in a short
-  terminal whatever is packed last is what gets squeezed - and a list that
-  loses a few lines is better than buttons that disappear.
-- **The scrollbar and the list are connected both ways.** `command=
-  tasks.yview` lets the scrollbar move the list; `yscrollcommand=bar.set`
-  lets the list tell the scrollbar where it is, when it scrolls by itself.
-- **`add` is used twice**: by the button, which calls it with no
-  arguments, and by the binding on Return, which passes an event. The
-  `event=None` lets one function serve both.
-- **`curselection()`** answers the positions of the chosen lines.
-  Deleting from the end backwards keeps the positions still to delete
-  where they were.
+   or widget it goes inside - its *parent*. Then **`.pack()`** asks a
+   geometry manager to put it on the screen. A widget that no geometry
+   manager has been asked to show exists, but is not shown.
+4. **`root.mainloop()`** hands control to the event loop. From here on it
+   draws the screen, waits for keys and mouse clicks, and calls your code
+   when something happens. It returns when the root window is closed.
+
+Those are the three parts from above, in miniature: a widget in a tree
+(the label, inside the root), a geometry manager (`pack`), and the event
+loop (`mainloop`). This program has no callbacks, so the only event it
+answers is Ctrl-C.
 
 ## Where next
 
-- The **themed widgets** in `tkcurses.ttk` are a second, more modern set
-  of the same widgets, and add a few more: tabs (`Notebook`), a drop-down
-  list (`Combobox`), a tree and table (`Treeview`) and a progress bar.
-- **Dialogs** ask a question and wait for the answer:
-  `tkcurses.messagebox.askyesno("Quit?", "Really quit?")` is one line.
-- The [API reference](../reference/index.md) has every class, option and
-  method.
-
-Any tkinter tutorial or book will also serve. Where TkCurses behaves
-differently from tkinter, the reference says so on the class or method
-concerned - most often because a terminal is not a desktop: it counts in
-cells rather than pixels, it has one screen rather than many windows, and
-it can only show the colours and characters the terminal has.
+**[Core concepts](concepts.md)** takes the three parts one at a time,
+with a program for each.

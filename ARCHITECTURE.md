@@ -3314,6 +3314,32 @@ below it. `_Screen.resize` adds them, as xterm does. Like REP
 (`TkCurses-go7y`), a terminal does it and the emulator under the tests
 did not.
 
+**The tutorial is four pages read in order, and they are tested as one**
+(`TkCurses-5dli`): the introduction, core concepts, common widgets and a
+larger program, with common mistakes, how TkCurses works and a glossary
+beside them. `tests/test_docs_tutorial.py` runs every complete program on
+the first three and the mistakes page, and checks each page names the next.
+The larger program is `examples/notes.py`, shown a part at a time with
+`literalinclude` and `:start-at:` on its section comments, so the page
+cannot quote code the file no longer has - a marker that stops matching
+fails the build under `-W`.
+
+Writing it found two departures from Tk, measured on Tk 9.0.2 and filed
+rather than fixed here. **Tab into an Entry does not select its text**:
+Tk's `tk::TabToWindow` sends `<<TraverseIn>>`, and the Entry class binds
+it to select everything and put the cursor at the end, so typing replaces
+the field; TkCurses has no `<<TraverseIn>>`, and typing goes in front
+(`TkCurses-h0bj`). **`place` cannot share a container with `pack` or
+`grid`**: Tk refuses only pack and grid together, and a placed badge over
+packed content is accepted; TkCurses keeps one manager per container
+(`TkCurses-huq9`). The concepts page says so, and places in a frame of its
+own.
+
+**`tkscreens` runs each example in a fresh temporary directory**, which is
+where the harness writes the program file. The notes example keeps its data
+beside itself, and with one shared directory a build would load the last
+build's notes and draw a different screen.
+
 ---
 
 ## Complete API Reference

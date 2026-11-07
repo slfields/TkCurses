@@ -399,3 +399,21 @@ def test_a_missing_program_fails_the_build(tmp_path):
     result = _build(tmp_path, "# P\n\n```{tkcurses-example} examples/nowhere.py\n```\n")
     assert result.returncode != 0
     assert "example examples/nowhere.py not found" in result.stderr
+
+
+@pytest.mark.tty
+def test_each_run_starts_in_a_directory_of_its_own():
+    # A program that keeps data beside itself, as examples/notes.py does,
+    # must not find the previous run's and draw a different screen.
+    program = (
+        "from pathlib import Path\n"
+        "import tkcurses as tk\n"
+        "seen = Path(__file__).with_name('seen')\n"
+        "root = tk.Tk()\n"
+        "tk.Label(root, text='again' if seen.exists() else 'first').pack()\n"
+        "seen.write_text('x')\n"
+        "root.mainloop()\n"
+    )
+    for _ in range(2):
+        cells = tkscreens.capture(program, (20, 3), whole=True)
+        assert "".join(cell.data for cell in cells[0]).strip() == "first"

@@ -184,7 +184,7 @@ tk.Label(root, text="Two\nlines").pack()
 ### textvariable
 
 A variable whose value is the widget's text, kept up to date as it
-changes. See [Variables](../guide/introduction.md#variables).
+changes. See [Variables](../guide/concepts.md#variables).
 
 ### font
 

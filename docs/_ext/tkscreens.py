@@ -53,6 +53,7 @@ import html
 import json
 import re
 import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -144,8 +145,12 @@ def capture(
 
     cols, rows = size
     term = TerminalHarness(cols, rows)
+    # Each run in a directory of its own, which is where the program file is
+    # written: a program that keeps data beside itself, as the notes example
+    # does, would otherwise find the last build's and draw a different screen.
+    workdir = tempfile.TemporaryDirectory(prefix="tkscreens-")
     try:
-        term.run_source(code if whole else program(code))
+        term.run_source(code if whole else program(code), workdir=Path(workdir.name))
         try:
             term.wait_for(
                 lambda t: any(line.strip() for line in t.display),
@@ -177,6 +182,7 @@ def capture(
         ]
     finally:
         term.close()
+        workdir.cleanup()
 
 
 def _colour(name: str, default: str) -> str:

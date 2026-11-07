@@ -23,6 +23,7 @@ the page tells a reader to.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -54,7 +55,7 @@ def test_every_example_is_on_the_page_and_nothing_else_is():
     shown = DIRECTIVE.findall(PAGE.read_text())
     files = sorted(f"examples/{path.name}" for path in EXAMPLES.glob("*.py"))
     assert sorted(shown) == files
-    assert len(files) == 11
+    assert len(files) == 12
 
 
 def test_every_example_carries_the_notice():
@@ -404,3 +405,67 @@ def test_the_layout_sash_moves_from_the_keyboard(terminal, tmp_path):
         ),
         message="the left pane three wider and the right three narrower",
     )
+
+
+@pytest.mark.tty
+def test_notes_are_written_and_saved_beside_the_program(terminal, tmp_path):
+    term = start(terminal, tmp_path, "notes")
+    term.wait_for_text("1 of 1 notes")
+    term.send_keys("Shopping", "<Tab>", "milk and eggs", "<Control-n>")
+    term.wait_for_text("2 of 2 notes")
+    # The text first and the title last, so that the title is kept by its
+    # own edit and not only because editing the text copies it too.
+    term.send_keys("<Tab>", "a tutorial")
+    term.send(b"\x1b[Z")  # Shift-Tab, back to the title
+    term.send_keys("Ideas")
+    term.wait_for(
+        lambda t: t.contains("a tutorial") and t.contains("Ideas"),
+        message="the second note in the editor and the list",
+    )
+    term.send_keys("<Control-q>")
+    assert term.wait_for_exit() == 0
+    saved = json.loads((tmp_path / "notes.json").read_text())
+    assert saved == [
+        {"title": "Shopping", "text": "milk and eggs"},
+        {"title": "Ideas", "text": "a tutorial"},
+    ]
+
+
+@pytest.mark.tty
+def test_notes_search_narrows_the_list(terminal, tmp_path):
+    store = tmp_path / "mine.json"
+    store.write_text(
+        json.dumps(
+            [{"title": "Shopping", "text": "milk"}, {"title": "Ideas", "text": "eggs"}]
+        )
+    )
+    term = start(terminal, tmp_path, "notes", str(store))
+    term.wait_for_text("2 of 2 notes")
+    term.send(b"\x1b[Z")  # Shift-Tab, from the list back to the search field
+    term.send_keys("egg")
+    term.wait_for(
+        lambda t: (
+            t.contains("1 of 2 notes")
+            and t.contains("Ideas")
+            and t.find_text("Shopping")[0] == 2
+        ),
+        message="only Ideas listed; Shopping is still the title being edited",
+    )
+
+
+@pytest.mark.tty
+def test_notes_asks_before_deleting(terminal, tmp_path):
+    store = tmp_path / "mine.json"
+    store.write_text(
+        json.dumps(
+            [{"title": "Shopping", "text": "milk"}, {"title": "Ideas", "text": "eggs"}]
+        )
+    )
+    term = start(terminal, tmp_path, "notes", str(store))
+    term.wait_for_text("2 of 2 notes")
+    row, column = term.find_text("Delete")
+    term.click(column + 1, row)
+    term.wait_for_text("Delete Shopping?")
+    term.send_keys("<Return>")
+    term.wait_for_text("Saved 1 notes")
+    assert json.loads(store.read_text()) == [{"title": "Ideas", "text": "eggs"}]
