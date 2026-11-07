@@ -68,61 +68,75 @@ _FALSE = frozenset({"0", "false", "no", "off"})
 class MouseSettings:
     """Mouse behaviour."""
 
-    #: Window within which clicks count as a double or triple click.
+    #: How close together, in milliseconds, two clicks on the same cell must
+    #: be to count as a double click, and three as a triple click.
     click_interval: int = 200
-    #: False leaves the mouse to the terminal, whose own text selection
-    #: then works without holding Shift.
+    #: Whether to use the mouse at all. Off leaves it to the terminal, whose
+    #: own text selection then works without holding Shift; the program is
+    #: used from the keyboard.
     enabled: bool = True
-    #: Motion while a button is held - DEC mode 1002 - which is what a drag
-    #: is made of. ncurses does not ask the terminal for this on its own.
+    #: Whether the terminal reports the pointer moving while a button is
+    #: held, which is what a drag is made of.
     report_motion: bool = True
-    #: Every movement, button or no button - DEC mode 1003. Needed for a
-    #: widget that highlights what the pointer is over, and off by default
-    #: because it sends an event for every cell the pointer crosses and takes
-    #: the terminal's own text selection away while it is on.
+    #: Whether the terminal reports every movement of the pointer, button or
+    #: no button, as hovering needs. Off by default: it sends a report for
+    #: every cell the pointer crosses, and takes the terminal's own text
+    #: selection away while it is on.
     report_hover: bool = False
+    # report_motion is DEC mode 1002, report_hover 1003. ncurses asks the
+    # terminal for neither on its own; see InputHandler._enable_motion.
 
 
 @dataclass
 class DisplaySettings:
     """Rendering behaviour."""
 
-    #: One of :data:`COLOR_MODES`.
+    #: How many colours to use. ``auto`` uses what ``TERM`` says the
+    #: terminal has. ``8``, ``16`` or ``256`` uses no more than that - never
+    #: more than ``TERM`` says, so it can show how a program looks on a
+    #: plainer terminal but not add colours. ``truecolor`` draws pictures in
+    #: full colour, as ``COLORTERM=truecolor`` does, for a terminal that
+    #: does not say so.
     color_mode: str = "auto"
-    #: False writes the characters boxes, arrows and bars are drawn with as
-    #: ASCII, for terminals without box drawing.
+    #: Whether boxes, arrows and bars are drawn with Unicode's box-drawing
+    #: characters. Off draws them in ASCII - ``+``, ``-``, ``|`` - for a
+    #: terminal whose font has none.
     unicode_borders: bool = True
-    #: False makes images go through curses' colour pairs instead of being
-    #: written as escape sequences. Direct writing is what lets a picture use
-    #: more than the 255 (foreground, background) combinations curses can
-    #: name, so turning it off costs a photograph most of its colour - but a
-    #: terminal that mis-renders the sequences needs a way out, and so does a
-    #: test that wants to exercise the pair table.
+    #: Whether pictures are written to the terminal directly, in as many
+    #: colours as it has. Off draws them through curses, which can show a
+    #: picture only a few hundred colour combinations at once; it is for a
+    #: terminal that shows directly written pictures wrongly.
     direct_images: bool = True
+    # Direct writing is what lets a picture use more than the 255
+    # (foreground, background) pairs curses can name. Off is also how a test
+    # exercises the pair table.
 
 
 @dataclass
 class InputSettings:
     """Input behaviour."""
 
-    #: How long to wait for the rest of an escape sequence after ESC.
-    #:
-    #: ncurses defaults to a full second, which makes Escape - the key that
-    #: cancels things - feel broken. Every terminal in common use sends the
-    #: rest of a sequence in the same packet, so 25ms loses nothing and is
-    #: what most terminal applications settle on. A slow serial link, or a
-    #: terminal that splits a sequence across packets, wants more.
+    #: How long, in milliseconds, to wait after Escape for the rest of a
+    #: key such as an arrow, which arrives as Escape and more. Raise it over
+    #: a slow connection where arrow keys arrive as Escape and letters.
     escape_delay: int = 25
+    # ncurses defaults to a full second, which makes Escape - the key that
+    # cancels things - feel broken. Every terminal in common use sends the
+    # rest of a sequence in the same packet, so 25ms loses nothing and is
+    # what most terminal applications settle on.
 
 
 @dataclass
 class ClipboardSettings:
     """Reaching the system clipboard - see :mod:`tkcurses._core.system_clipboard`."""
 
-    #: ``auto`` asks the terminal for OSC 52 and falls back to the desktop's
-    #: clipboard tool; ``osc52`` and ``command`` force one route; ``off``
-    #: keeps the clipboard inside the program. TkCurses-hpr.
+    #: How a copy reaches other programs. ``auto`` uses the terminal's own
+    #: clipboard (OSC 52) when the terminal has one, which works over SSH,
+    #: and otherwise the desktop's clipboard tool - ``wl-copy``, ``xclip``
+    #: or ``xsel``. ``osc52`` and ``command`` use only the one; ``off``
+    #: keeps the clipboard inside the program.
     system: str = "auto"
+    # TkCurses-hpr.
 
 
 #: One row per setting: section, key, the environment variable that overrides
@@ -140,24 +154,51 @@ _FIELDS: tuple[tuple[str, str, str, str | None, tuple[int, int] | None], ...] = 
     ("clipboard", "system", "choice", "TKCURSES_CLIPBOARD_SYSTEM", None),
 )
 
-#: Settings that were accepted once and never did anything, by section, key
-#: and environment variable. Each was read, validated and tested while
-#: nothing used it, so a file or an environment setting one is told so
-#: rather than left believing it took effect.
-_REMOVED: tuple[tuple[str, str, str], ...] = (
-    ("display", "refresh_interval", "TKCURSES_DISPLAY_REFRESH_INTERVAL"),
-    ("input", "poll_timeout", "TKCURSES_INPUT_POLL_TIMEOUT"),
-    ("input", "keypad", "TKCURSES_INPUT_KEYPAD"),
-    ("accessibility", "high_contrast", "TKCURSES_ACCESSIBILITY_HIGH_CONTRAST"),
+#: Settings that were accepted once and never did anything, by section,
+#: key, environment variable and why there is nothing for it to do. Each was
+#: read, validated and tested while nothing used it, so a file or an
+#: environment setting one is told so rather than left believing it took
+#: effect.
+_REMOVED: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "display",
+        "refresh_interval",
+        "TKCURSES_DISPLAY_REFRESH_INTERVAL",
+        "the screen is redrawn when the program is idle, not on a timer",
+    ),
+    (
+        "input",
+        "poll_timeout",
+        "TKCURSES_INPUT_POLL_TIMEOUT",
+        "the program waits for input and timers together, not by polling",
+    ),
+    (
+        "input",
+        "keypad",
+        "TKCURSES_INPUT_KEYPAD",
+        "without it no arrow or function key would work",
+    ),
+    (
+        "accessibility",
+        "high_contrast",
+        "TKCURSES_ACCESSIBILITY_HIGH_CONTRAST",
+        "a theme and the colour options do this",
+    ),
     (
         "accessibility",
         "min_click_interval",
         "TKCURSES_ACCESSIBILITY_MIN_CLICK_INTERVAL",
+        "``[mouse] click_interval`` does this",
     ),
-    ("accessibility", "screen_reader", "TKCURSES_ACCESSIBILITY_SCREEN_READER"),
-    ("debug", "enabled", "TKCURSES_DEBUG"),
-    ("debug", "log_file", "TKCURSES_DEBUG_LOG_FILE"),
-    ("debug", "log_level", "TKCURSES_DEBUG_LOG_LEVEL"),
+    (
+        "accessibility",
+        "screen_reader",
+        "TKCURSES_ACCESSIBILITY_SCREEN_READER",
+        "there was nothing behind it",
+    ),
+    ("debug", "enabled", "TKCURSES_DEBUG", "TkCurses keeps no log"),
+    ("debug", "log_file", "TKCURSES_DEBUG_LOG_FILE", "TkCurses keeps no log"),
+    ("debug", "log_level", "TKCURSES_DEBUG_LOG_LEVEL", "TkCurses keeps no log"),
 )
 
 #: Allowed values for the settings validated against a fixed list.
@@ -232,7 +273,7 @@ class TkCursesConfig:
                 continue
             raw = parser.get(section, key)
             self._apply(section, key, kind, limits, raw, source=str(path))
-        for section, key, _ in _REMOVED:
+        for section, key, _, _ in _REMOVED:
             if parser.has_section(section) and parser.has_option(section, key):
                 self.warnings.append(
                     f"[{section}] {key} in {path} no longer has any effect"
@@ -246,7 +287,7 @@ class TkCursesConfig:
             self._apply(
                 section, key, kind, limits, env[variable], source=f"${variable}"
             )
-        for _, _, variable in _REMOVED:
+        for _, _, variable, _ in _REMOVED:
             if variable in env:
                 self.warnings.append(f"${variable} no longer has any effect")
 

@@ -32,8 +32,8 @@ import importlib.metadata
 import sys
 from pathlib import Path
 
-# The project's own extensions: tkscreens draws each example's screen, and
-# compat writes the compatibility matrix.
+# The project's own extensions: tkscreens draws each example's screen,
+# compat writes the compatibility matrix and configref the settings.
 sys.path.insert(0, str(Path(__file__).parent / "_ext"))
 # This checkout's library, ahead of any installed one: an editable install
 # made in another checkout otherwise wins, and the reference would describe
@@ -59,6 +59,7 @@ extensions = [
     # One entry per method, however many names it has.
     "aliases",
     "compat",
+    "configref",
 ]
 
 source_suffix = {".md": "markdown"}
@@ -66,7 +67,8 @@ root_doc = "index"
 
 # docs/ also holds the UAT checklists, which are instructions for a person
 # running the acceptance scenarios, not documentation of the library.
-exclude_patterns = ["_build", "UAT_*.md"]
+# reference/_*.md are fragments other pages include.
+exclude_patterns = ["_build", "UAT_*.md", "reference/_*.md"]
 
 myst_enable_extensions = ["colon_fence", "deflist"]
 myst_heading_anchors = 3

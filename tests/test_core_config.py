@@ -276,10 +276,10 @@ def test_every_setting_there_is_has_a_variable():
 
 def test_no_removed_setting_is_still_read():
     rows = {(section, key) for section, key, *_ in config_module._FIELDS}
-    assert not rows & {(section, key) for section, key, _ in REMOVED}
+    assert not rows & {(section, key) for section, key, *_ in REMOVED}
 
 
-@pytest.mark.parametrize(("section", "key", "variable"), REMOVED)
+@pytest.mark.parametrize(("section", "key", "variable"), [row[:3] for row in REMOVED])
 def test_a_removed_setting_in_a_file_is_reported(tmp_path, section, key, variable):
     """Read, validated and used by nothing, once; whoever still sets one is
     told it does nothing rather than left believing it took effect."""
@@ -288,7 +288,7 @@ def test_a_removed_setting_in_a_file_is_reported(tmp_path, section, key, variabl
     assert config.warnings == [f"[{section}] {key} in {path} no longer has any effect"]
 
 
-@pytest.mark.parametrize(("section", "key", "variable"), REMOVED)
+@pytest.mark.parametrize(("section", "key", "variable"), [row[:3] for row in REMOVED])
 def test_a_removed_variable_is_reported(section, key, variable):
     config = TkCursesConfig.load(paths=(), env={variable: "1"})
     assert config.warnings == [f"${variable} no longer has any effect"]

@@ -1745,6 +1745,14 @@ governs. A value that cannot be parsed falls back to its default and a
 number out of range is clamped, each recorded in `warnings`, because
 configuration is read before there is a screen to complain on.
 
+**The `#:` comment on each settings field is user-facing text**: the
+configuration reference (`docs/reference/configuration.md`) is generated
+from `_FIELDS`, `_CHOICES`, the dataclass defaults, those comments and
+`_REMOVED` by `docs/_ext/configref.py`, so it cannot list a setting the
+code lacks or miss one it has. Notes for whoever maintains a setting go in
+plain `#` comments beside it. `tests/test_configref.py` wants every
+setting described in whole sentences with no tracker IDs or private names.
+
 **Warnings are printed when the terminal is given back**, through the same
 held-reports path a callback's traceback takes (`Tk._held_reports`). Until
 `TkCurses-4j1h` nothing printed them at all: a mistyped setting was

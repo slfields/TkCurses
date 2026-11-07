@@ -238,7 +238,9 @@ Type `reset` and press Return, even if you cannot see what you type.
 
 ## Settings
 
-Each of the settings above is an environment variable, set for one run:
+Each of the settings above is an environment variable, set for one run
+(the [configuration reference](../reference/configuration.md) describes
+every setting in full):
 
 ```console
 $ TKCURSES_MOUSE_CLICK_INTERVAL=400 python3 app.py

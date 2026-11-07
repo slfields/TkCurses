@@ -20,6 +20,9 @@ All notable changes to TkCurses. The format follows
   editor, a table and a chart among them - on a page of the documentation
   that shows each one's screen, taken by running it when the documentation
   is built.
+- A configuration reference: every setting, its environment variable, its
+  values and default, and the settings that were removed, generated from
+  the code on every documentation build.
 
 ### Changed
 - The `dos` theme has a look of its own: double lines across and single
