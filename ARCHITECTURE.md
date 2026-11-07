@@ -6062,7 +6062,7 @@ Its `identify_element` still answers `""` (`TkCurses-at9`).
 |-------|-------------|
 | `default` | Standard Unicode box drawing |
 | `ascii` | Pure ASCII (`+`, `-`, `\|`) |
-| `dos` | DOS/CP437 box characters |
+| `dos` | DOS/CP437 mixed boxes: double across, single down (`╒═╕`) |
 | `rounded` | Rounded corners (`╭╮╰╯`) |
 | `double` | Double-line boxes (`╔═╗`) |
 | `minimal` | No borders, spaces only |

@@ -15,6 +15,9 @@ All notable changes to TkCurses. The format follows
   documentation build so it cannot drift.
 
 ### Changed
+- The `dos` theme has a look of its own: double lines across and single
+  lines down (`╒═╕`), as DOS programs framed their windows. It drew
+  exactly what `double` draws.
 - An unknown colour name is refused when it is set, with Tk's
   `unknown color name "x"`, for every widget colour option, a Text tag's
   colours and a Canvas item's `fill` and `outline`. `darkyellow`, which Tk

@@ -179,7 +179,9 @@ class Glyphs:
 THEMES: dict[str, Glyphs] = {
     "default": Glyphs("┌", "┐", "└", "┘", "─", "│"),
     "ascii": Glyphs("+", "+", "+", "+", "-", "|", "+", "+", "+"),
-    "dos": Glyphs("╔", "╗", "╚", "╝", "═", "║", "╦", "╩", "╬"),
+    # Double rails across and single down: the mixed pieces only code page
+    # 437 has, as DOS programs framed their windows.
+    "dos": Glyphs("╒", "╕", "╘", "╛", "═", "│", "╤", "╧", "╪"),
     "rounded": Glyphs("╭", "╮", "╰", "╯", "─", "│"),
     "double": Glyphs("╔", "╗", "╚", "╝", "═", "║", "╦", "╩", "╬"),
     "minimal": Glyphs(" ", " ", " ", " ", " ", " ", " ", " ", " "),

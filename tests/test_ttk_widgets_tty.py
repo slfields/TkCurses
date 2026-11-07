@@ -112,6 +112,32 @@ def test_every_theme_draws_its_own_rail(themed):
     assert seen["minimal"] == " "
 
 
+DOS_BOX = """
+import tkcurses
+from tkcurses import ttk
+
+root = tkcurses.Tk()
+ttk.Style(root).theme_use('dos')
+ttk.Frame(root, relief='solid', width=8, height=4).place(x=2, y=1)
+ttk.Label(root, text='ready').place(x=20, y=0)
+root.after(8000, root.quit)
+root.mainloop()
+"""
+
+
+def test_the_dos_theme_draws_single_sides_under_double_rails(terminal, tmp_path):
+    term = terminal(cols=40, rows=8)
+    term.run_source(DOS_BOX, workdir=tmp_path)
+    box = {1: "╒══════╕", 2: "│      │", 3: "│      │", 4: "╘══════╛"}
+
+    def drawn(t):
+        return all(t.display[row][2:10] == line for row, line in box.items())
+
+    term.wait_for(drawn, message="the dos box")
+    for row, line in box.items():
+        assert term.display[row][2:10] == line, term.describe()
+
+
 def test_one_theme_change_reaches_every_widget_of_a_class(themed):
     """Three separators, one theme_use, all three follow."""
     themed.send(b"n")

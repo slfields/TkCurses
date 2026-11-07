@@ -24,6 +24,8 @@ asserted.
 
 from __future__ import annotations
 
+import unicodedata
+
 import pytest
 
 from tkcurses import Frame, Misc, TclError
@@ -234,6 +236,33 @@ def test_the_default_theme_is_in_use_to_begin_with(style):
 def test_theme_use_switches_and_reports(style):
     assert style.theme_use("ascii") == "ascii"
     assert style.theme_use() == "ascii"
+
+
+def test_no_two_themes_draw_alike():
+    """A theme with another's characters is a name that does nothing."""
+    looks = [tuple(vars(glyphs).values()) for glyphs in THEMES.values()]
+    assert len(set(looks)) == len(looks)
+
+
+def test_dos_frames_double_across_and_single_down():
+    """Code page 437's mixed pieces, which DOS programs framed windows
+    with: every piece joins a double horizontal to a single vertical, so a
+    tee and a cross meet the rails on either side of them."""
+    dos = THEMES["dos"]
+    assert (dos.top_left, dos.horizontal, dos.top_right) == ("╒", "═", "╕")
+    assert (dos.bottom_left, dos.vertical, dos.bottom_right) == ("╘", "│", "╛")
+    assert (dos.tee_down, dos.tee_up, dos.cross) == ("╤", "╧", "╪")
+    for piece in (
+        dos.top_left,
+        dos.top_right,
+        dos.bottom_left,
+        dos.bottom_right,
+        dos.tee_down,
+        dos.tee_up,
+        dos.cross,
+    ):
+        name = unicodedata.name(piece)
+        assert "SINGLE" in name and "DOUBLE" in name, name
 
 
 def test_switching_to_a_theme_that_does_not_exist_says_so(style):
