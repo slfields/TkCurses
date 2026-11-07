@@ -31,6 +31,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
 PAGE = ROOT / "docs" / "guide" / "examples.md"
+TIMES = "\N{MULTIPLICATION SIGN}"
 DIRECTIVE = re.compile(r"^```\{tkcurses-example\} (\S+)$", re.M)
 
 
@@ -53,7 +54,7 @@ def test_every_example_is_on_the_page_and_nothing_else_is():
     shown = DIRECTIVE.findall(PAGE.read_text())
     files = sorted(f"examples/{path.name}" for path in EXAMPLES.glob("*.py"))
     assert sorted(shown) == files
-    assert len(files) == 6
+    assert len(files) == 11
 
 
 def test_every_example_carries_the_notice():
@@ -190,4 +191,216 @@ def test_the_chart_draws_every_month_and_follows_a_resize(terminal, tmp_path):
     term.wait_for(
         lambda t: "Jun" in t.display[19] and t.display[19].index("Jun") > 45,
         message="the months along the new bottom row, spread wider",
+    )
+
+
+@pytest.mark.tty
+def test_the_calculator_works_a_sum_typed(terminal, tmp_path):
+    term = start(terminal, tmp_path, "calculator", cols=30, rows=14)
+    term.wait_for_text("C")
+    term.send_keys("12+30*2")
+    term.wait_for(
+        lambda t: (
+            t.display[1].rstrip().endswith(f"42 {TIMES}")
+            and t.display[2].strip() == "2"
+        ),
+        message="the sum so far above the number being typed",
+    )
+    term.send_keys("=")
+    term.wait_for(
+        lambda t: (
+            t.display[1].strip() == f"42 {TIMES} 2 =" and t.display[2].strip() == "84"
+        ),
+        message="the answer, worked left to right",
+    )
+
+
+@pytest.mark.tty
+def test_the_calculator_works_a_sum_clicked(terminal, tmp_path):
+    term = start(terminal, tmp_path, "calculator", cols=30, rows=14)
+    term.wait_for_text("C")
+    for key in ("7", "+", "8", "="):
+        row, column = term.find_text(key)
+        term.click(column, row)
+    term.wait_for(lambda t: t.display[2].strip() == "15", message="7 + 8 by mouse")
+
+
+@pytest.mark.tty
+def test_the_calculator_refuses_to_divide_by_zero(terminal, tmp_path):
+    term = start(terminal, tmp_path, "calculator", cols=30, rows=14)
+    term.wait_for_text("C")
+    term.send_keys("7/0=")
+    term.wait_for_text("Division by zero")
+    term.send_keys("2+2=")
+    term.wait_for(lambda t: t.display[2].strip() == "4", message="a fresh start")
+
+
+@pytest.mark.tty
+def test_the_calculator_keeps_a_long_answer_inside_the_window(terminal, tmp_path):
+    """A display Label as wide as its text pushed the keys a cell right and
+    cut the last figure off; it is given width=1 to keep out of the grid."""
+    term = start(terminal, tmp_path, "calculator", cols=30, rows=14)
+    term.wait_for_text("C")
+    term.send_keys("999999999999*999999=", "*999999=")
+    term.wait_for(
+        lambda t: (
+            t.display[2].strip() == "9.99998e+23"
+            and t.display[1].strip().startswith(f"9.99998999999e+17 {TIMES} 999999")
+        ),
+        message="the whole answer, and the sum - too wide for the window",
+    )
+    # The keys stay where they were; the sum is the Label's to cut.
+    assert term.display[4].index("C") == 3
+
+
+def legend_colour(term, name):
+    row, column = term.find_text(name)
+    return term.attrs_at(row, column)["fg"]
+
+
+def cells_coloured(term, colour):
+    return sum(
+        term.attrs_at(row, column)["fg"] == colour
+        for row in range(1, len(term.display) - 1)
+        for column in range(len(term.display[row]))
+        if term.display[row][column] in "▀▄█"
+    )
+
+
+@pytest.mark.tty
+def test_the_plot_hides_and_shows_a_curve(terminal, tmp_path):
+    term = start(terminal, tmp_path, "plot", cols=60, rows=16)
+    term.wait_for_text("2 cos x")
+    term.wait_for_idle()
+    blue = legend_colour(term, "2 cos x")
+    assert cells_coloured(term, blue) > 30
+    term.send_keys("2")
+    term.wait_for(
+        lambda t: legend_colour(t, "2 cos x") != blue and cells_coloured(t, blue) == 0,
+        message="the cosine gone and its legend greyed",
+    )
+    term.send_keys("2")
+    term.wait_for(lambda t: cells_coloured(t, blue) > 30, message="the cosine back")
+
+
+@pytest.mark.tty
+def test_the_plot_follows_a_resize(terminal, tmp_path):
+    term = start(terminal, tmp_path, "plot", cols=60, rows=16)
+    term.wait_for_text("4π")
+    term.resize(80, 20)
+    term.wait_for(
+        lambda t: (
+            t.display[19].rstrip().endswith("4π") and len(t.display[19].rstrip()) == 79
+        ),
+        message="the axis labels along the new bottom row, to the right edge",
+    )
+
+
+@pytest.mark.tty
+def test_the_shapes_move_with_the_arrows(terminal, tmp_path):
+    term = start(terminal, tmp_path, "shapes", cols=40, rows=14)
+    term.wait_for_text("Moving the sun")
+    row, column = term.find_text("~~")
+    term.send_keys("<Tab>", "<Tab>", "<Tab>")
+    term.wait_for_text("Moving the bird")
+    term.send_keys("<Right>", "<Right>", "<Right>", "<Down>", "<Down>")
+    term.wait_for(
+        lambda t: t.find_text("~~") == (row + 1, column + 3),
+        message="the bird three cells right and a row down",
+    )
+
+
+@pytest.mark.tty
+def test_a_shape_is_dragged_with_the_mouse(terminal, tmp_path):
+    term = start(terminal, tmp_path, "shapes", cols=40, rows=14)
+    term.wait_for_text("Moving the sun")
+    row, column = term.find_text("~~")
+    term.send_mouse(column, row, action="press")
+    term.wait_for_text("Moving the bird")
+    # Two movements, so a drag measured from where it began is caught.
+    term.send_mouse(column + 2, row, action="move")
+    term.wait_for(
+        lambda t: t.find_text("~~") == (row, column + 2), message="the drag under way"
+    )
+    term.send_mouse(column + 5, row, action="move")
+    term.send_mouse(column + 5, row, action="release")
+    term.wait_for(
+        lambda t: t.find_text("~~") == (row, column + 5), message="the bird dragged"
+    )
+
+
+@pytest.mark.tty
+def test_the_picture_zooms_and_moves(terminal, tmp_path):
+    term = start(terminal, tmp_path, "picture", cols=60, rows=16)
+    term.wait_for_text("-0.6000 +0.0000i, 1x")
+    term.send_keys("+")
+    term.wait_for_text("-0.6000 +0.0000i, 2x")
+    term.send_keys("<Right>")
+    term.wait_for_text("-0.2000 +0.0000i, 2x")
+    term.send_keys("-", "-")
+    term.wait_for_text("-0.2000 +0.0000i, 0.5x")
+
+
+@pytest.mark.tty
+def test_the_picture_opens_a_file_and_fills_the_window(terminal, tmp_path):
+    width, height = 40, 20
+    pixels = bytes(
+        channel
+        for y in range(height)
+        for x in range(width)
+        for channel in (x * 6, y * 12, 160)
+    )
+    (tmp_path / "ramp.ppm").write_bytes(b"P6 40 20 255\n" + pixels)
+    term = start(terminal, tmp_path, "picture", str(tmp_path / "ramp.ppm"))
+    term.wait_for_text("ramp.ppm, 40x20")
+    # 40x20 pixels fit 60 columns by 15 rows at one and a half times.
+    term.wait_for(
+        lambda t: all(line == "▀" * 60 for line in t.display[:15]),
+        message="the picture across the whole window",
+    )
+    assert term.attrs_at(0, 0) != term.attrs_at(14, 59)
+
+
+def pane_sizes(term):
+    found = re.search(r"pack (\d+)x(\d+).*grid (\d+)x(\d+)", term.display[1])
+    return tuple(map(int, found.groups())) if found else None
+
+
+@pytest.mark.tty
+def test_the_layout_follows_a_resize(terminal, tmp_path):
+    term = start(terminal, tmp_path, "layout", cols=60, rows=16)
+    term.wait_for_text("60x16")
+    left, high, right, _ = pane_sizes(term)
+    assert (left + 1 + right, high) == (60, 14)
+    term.resize(80, 20)
+    term.wait_for(
+        lambda t: (
+            t.display[19].startswith(" 80x20")
+            and t.display[19].rstrip().endswith("relx=1")
+            and len(t.display[19].rstrip()) == 79
+            and (sizes := pane_sizes(t)) is not None
+            and sizes[0] + 1 + sizes[2] == 80
+            and sizes[1] == sizes[3] == 18
+        ),
+        message="the status bar's ends placed at the new edges, and both panes taller",
+    )
+    # The fields' column and the Text's row have weight, so the fields reach
+    # one cell short of the window's edge and the Text down to the status bar.
+    row, _ = term.find_text("To")
+    assert len(term.display[row].rstrip()) == 79
+    assert term.display[18].count("┘") == 2
+
+
+@pytest.mark.tty
+def test_the_layout_sash_moves_from_the_keyboard(terminal, tmp_path):
+    term = start(terminal, tmp_path, "layout", cols=60, rows=16)
+    term.wait_for_text("60x16")
+    left, _, right, _ = pane_sizes(term)
+    term.send_keys("<Tab>", "<Right>", "<Right>", "<Right>")
+    term.wait_for(
+        lambda t: (
+            (sizes := pane_sizes(t)) is not None
+            and (sizes[0], sizes[2]) == (left + 3, right - 3)
+        ),
+        message="the left pane three wider and the right three narrower",
     )

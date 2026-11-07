@@ -224,6 +224,21 @@ class _Screen(pyte.Screen):
         """Whether one cell was drawn dim."""
         return (row, column) in self._dim_cells
 
+    def resize(self, lines: int | None = None, columns: int | None = None) -> None:
+        """Resize, giving the new columns tab stops as a terminal does.
+
+        pyte sets a stop every eight columns once, at the width it starts
+        with, and a resize adds none. ncurses moves the cursor with tabs when
+        that is shorter, so after a terminal had grown from 60 columns to 80
+        a tab from column 56 went to the last column instead of 64, the next
+        character wrapped, and the whole screen scrolled up a row - a status
+        bar's right-hand label was drawn at the start of a line below it.
+        xterm gives every new column the default stops.
+        """
+        old = self.columns
+        super().resize(lines, columns)
+        self.tabstops |= set(range((old // 8 + 1) * 8, self.columns, 8))
+
     def cursor_back_tab(self, count: int = 0) -> None:
         """Move the cursor back ``count`` tab stops, as ``CSI Z`` does."""
         for _ in range(count or 1):

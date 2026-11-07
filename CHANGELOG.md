@@ -23,6 +23,10 @@ All notable changes to TkCurses. The format follows
 - A configuration reference: every setting, its environment variable, its
   values and default, and the settings that were removed, generated from
   the code on every documentation build.
+- Five more example programs: a calculator in colour, a window laid out
+  with pack, grid and place together that follows a resize, a line graph
+  and a scene of shapes on a Canvas, and a picture - the Mandelbrot set,
+  or an image file - fitted to the window.
 
 ### Changed
 - The `dos` theme has a look of its own: double lines across and single

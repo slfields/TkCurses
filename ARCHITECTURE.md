@@ -3278,6 +3278,42 @@ Genuinely still ahead:
 - Complex rendering logic has inline comments
 - Type hints serve as inline documentation
 
+**The example programs are a test of the library as a person uses it.**
+`examples/` holds eleven, each on `docs/guide/examples.md` with the screen
+the docs build takes by running it, and each driven by
+`tests/test_examples.py` the way the page says to use it. Writing them
+finds bugs: the first six found a Treeview heading command never called
+and a Canvas whose default relief was not Tk's; the next five
+(`TkCurses-q6d1`) found these, each measured against Tk 9.0 and filed
+rather than fixed alongside:
+
+- the root window never paints its `background` (`TkCurses-0awl`);
+- a Label too narrow for its text shows the start whatever its anchor,
+  where Tk keeps the side the anchor names (`TkCurses-tyd9`);
+- uniform weighted grid columns under a spanning widget grow past their
+  master (`TkCurses-xcy3`);
+- a PanedWindow shares extra room between panes and ignores a pane's
+  `width`, where Tk's `-stretch last` gives it all to the last
+  (`TkCurses-g60s`);
+- `canvasx` and `canvasy` take a screen coordinate where Tk's take a
+  window one, so `canvas.canvasx(event.x)` is right only for a canvas at
+  the screen's corner (`TkCurses-0n21`).
+
+Each example steers clear in a way a Tk program could equally have been
+written - a coloured Frame rather than the root, a `width=1` display, no
+`uniform` group, the panes' own split - so none of them depends on a bug
+staying unfixed.
+
+**The pty harness gives a widened terminal tab stops**, which pyte does
+not: it sets a stop every eight columns once, at the starting width.
+ncurses moves the cursor with tabs when that is shorter, so after a
+resize from 60 columns to 80 a tab from column 56 went to the last column,
+the next character wrapped, and the screen scrolled up a row - the layout
+example's status bar drew its right-hand label at the start of a line
+below it. `_Screen.resize` adds them, as xterm does. Like REP
+(`TkCurses-go7y`), a terminal does it and the emulator under the tests
+did not.
+
 ---
 
 ## Complete API Reference

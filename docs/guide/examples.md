@@ -1,6 +1,6 @@
 # Examples
 
-Six complete programs, each a single file in the
+Eleven complete programs, each a single file in the
 [`examples`](https://github.com/slfields/TkCurses/tree/master/examples)
 directory. Run one from a checkout with:
 
@@ -52,6 +52,24 @@ screen is taken after adding a task and marking another done.
 :keys: ["Buy bread", "<Return>", "<Tab>", "<Down>", " "]
 ```
 
+## A calculator
+
+Buttons in a grid, each kind in its own colours - digits, operators,
+clear and equals - with another colour under the mouse. The rows and
+columns all have weight, so the keys grow with the window. Click the keys
+or type: the digits and `+ - * /`, Return for the answer, Escape to clear
+and BackSpace to take back a digit. The screen is taken after typing
+`12+30*2`; the line above the number is the sum so far.
+
+```{tkcurses-example} examples/calculator.py
+:size: 30x14
+:keys: ["12+30*2"]
+```
+
+The keys sit on a Frame with a background of its own, which shows in the
+gaps between them. The display Labels are given `width=1`, so that a long
+number cannot ask the grid for more room than the keys below take.
+
 ## A text editor
 
 A Text with a scrollbar, a menu bar, a status line, and files: Open and
@@ -79,6 +97,25 @@ the number of moons and choosing the third planet.
 :keys: ["3", "<Down>", "<Down>", "<Return>"]
 ```
 
+## Layouts
+
+The three geometry managers in one window. The window itself is packed -
+a title along the top, a status bar along the bottom, and a PanedWindow
+given what is left. The PanedWindow's left pane is packed, its right pane
+gridded, and the status bar's three labels are placed by fraction of its
+width, at its left edge, its middle and its right edge. Each pane writes
+its own size into its heading, so resizing the terminal, or dragging the
+sash, shows which widgets take the room.
+
+```{tkcurses-example} examples/layout.py
+:size: 60x16
+```
+
+The sash moves with the mouse, or with the arrows after one Tab has given
+the PanedWindow the focus. In the gridded pane, the column of fields and
+the row of the Text have weight 1 and the labels' column has none, so the
+fields widen and the labels do not.
+
 ## A chart
 
 Rectangles and text on a Canvas, drawn again whenever the window changes
@@ -88,3 +125,47 @@ one, which is why the bars can end halfway up a row.
 ```{tkcurses-example} examples/chart.py
 :size: 50x14
 ```
+
+## A graph
+
+Three curves, each a single line item through a point per column, with
+axes, labels and a legend; 1, 2 and 3 hide and show them. Like the chart
+it is drawn again whenever the window changes size, and as down is half a
+cell, a curve moves in steps of half a row.
+
+```{tkcurses-example} examples/plot.py
+:size: 60x16
+```
+
+## Shapes
+
+A scene of rectangles, ovals, polygons, a line and text on a Canvas. Each
+movable shape's items share a tag, so `move` takes the house - walls,
+roof and door - as one. Tab chooses a shape and the arrows move it, or
+drag one with the mouse. The screen is taken after choosing the house and
+moving it four cells right.
+
+```{tkcurses-example} examples/shapes.py
+:size: 40x14
+:keys: ["<Tab>", "<Right>", "<Right>", "<Right>", "<Right>"]
+```
+
+The mouse handlers turn the event's position into canvas coordinates with
+`canvasx` and `canvasy`, as a Tk program does; here that also turns a row
+into the half-row a canvas counts in.
+
+## A picture
+
+The Mandelbrot set, computed into a PhotoImage with `put` and shown in a
+Label, at the size of the window: a pixel is one column wide and half a
+row tall. + and - zoom, and the arrows move about.
+
+```{tkcurses-example} examples/picture.py
+:size: 60x16
+```
+
+Give it a PNG, GIF or PPM file and it shows that instead:
+`python3 examples/picture.py photo.png`. The program works out the
+largest size that keeps the picture's proportions, `resize` resamples it
+to that, and `fit_pairs` reduces its colours, only if it has to, to the
+colour pairs the terminal has left.

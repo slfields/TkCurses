@@ -26,9 +26,11 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import pyte
 import pytest
 
 from tests.support import TerminalTimeout
+from tests.support.terminal import _Screen
 
 pytestmark = pytest.mark.tty
 
@@ -235,6 +237,17 @@ def test_resize_signals_the_application(terminal, tmp_path):
     term.wait_for_text("event=KEY_RESIZE")
     assert term.row(0) == "size=60x20"
     term.send_keys("q")
+
+
+def test_a_tab_reaches_a_column_the_terminal_grew():
+    """ncurses tabs across the screen when it is shorter. Without stops in
+    the new columns, a tab past the old width went to the edge, and what
+    followed wrapped onto the next line and scrolled the screen."""
+    screen = _Screen(60, 4)
+    stream = pyte.Stream(screen)
+    screen.resize(4, 80)
+    stream.feed("\x1b[1;57H\t\tx")
+    assert (screen.cursor.y, screen.display[0][72]) == (0, "x")
 
 
 def test_attributes_are_readable(terminal, tmp_path):
