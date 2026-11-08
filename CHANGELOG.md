@@ -6,6 +6,21 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+## [0.3.0rc3] - 2026-11-08
+
+The third release candidate. The themed widgets now take Tk's ttk options
+and refuse the classic ones, as tkinter's do: a program that gave a ttk
+widget `relief`, `background` or another classic option will now fail here
+as it would on tkinter, and should set its appearance through a style.
+
+Wide characters - CJK, fullwidth letters, most emoji - take two cells
+everywhere: entries, Text, Listbox, the menus, the Treeview, the Canvas and
+the `curses` compatibility module, which now draws as ncurses does. A
+Listbox, Treeview or Notebook given no size asks for the room its contents
+need, a Treeview heading runs its command, and Ctrl-C is answered between
+callbacks - cancelling a dialog shown before `mainloop()` as Escape does -
+rather than raised in the middle of one.
+
 ### Changed
 - The ttk widgets refuse the classic widgets' options, as Tk's do:
   `ttk.Button(relief="flat")`, `cget("troughcolor")` on a ttk.Scrollbar
@@ -331,7 +346,8 @@ Phase 2 of the original codebase: the base widget classes, `Tk` and `Toplevel`,
 the variable classes and the panel stack. Superseded by the rebuild; it has no
 `Entry` or `Text`.
 
-[Unreleased]: https://github.com/slfields/TkCurses/compare/v0.3.0rc2...HEAD
+[Unreleased]: https://github.com/slfields/TkCurses/compare/v0.3.0rc3...HEAD
+[0.3.0rc3]: https://github.com/slfields/TkCurses/compare/v0.3.0rc2...v0.3.0rc3
 [0.3.0rc2]: https://github.com/slfields/TkCurses/compare/v0.3.0rc1...v0.3.0rc2
 [0.3.0rc1]: https://github.com/slfields/TkCurses/compare/v0.2.0...v0.3.0rc1
 [0.2.0]: https://github.com/slfields/TkCurses/releases/tag/v0.2.0
