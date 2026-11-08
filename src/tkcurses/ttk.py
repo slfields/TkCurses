@@ -694,14 +694,18 @@ class Widget:
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, refusing to change ``-class`` after construction.
 
-        Tk makes ``-class`` read-only: measured, configuring it afterwards
-        raises "attempt to change read-only option". It has to be, because
-        the widget's bindings were installed under the name it had when it
-        was built, and letting it move would leave them behind.
+        Tk makes ``-class`` read-only: measured on Tk 9.0.2, configuring it
+        afterwards raises "attempt to change read-only option", even to the
+        class it already has, and whether it is given as ``class_=`` or as
+        ``{"class": ...}``. It has to be, because the widget's bindings were
+        installed under the name it had when it was built, and letting it
+        move would leave them behind.
         """
+        # Both spellings: this looked for "class" alone, and tkinter's keyword
+        # is class_, which configure strips, so it never ran. Nor did it refuse
+        # the value the widget already had, which Tk does. TkCurses-h5xd.
         given = tkcurses._given(cnf, kw)
-        current = getattr(self, "_options", {}).get("class", "")
-        if "class" in given and given["class"] != current:
+        if given.keys() & {"class", "class_"}:
             raise TclError("attempt to change read-only option")
         result = super().configure(cnf, **kw)  # type: ignore[misc]
         if "state" in given and "state" in getattr(self, "_options", {}):

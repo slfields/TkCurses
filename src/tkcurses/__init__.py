@@ -54,7 +54,9 @@ import itertools
 import math
 import os
 import re
+import signal
 import sys
+import threading
 import time
 import traceback
 import weakref
@@ -90,6 +92,7 @@ from tkcurses._core.canvas import (
     polygon_pixels,
     rectangle_pixels,
 )
+from tkcurses._core.cells import cells, char_cells, clip_cells, skip_cells
 from tkcurses._core.clipboard import CLIPBOARD, PRIMARY
 from tkcurses._core.colors import (
     ColorDepth,
@@ -1268,6 +1271,24 @@ def _signed_distance(widget: Any, value: Any) -> int:
     return 0 if math.isinf(number) else round(number)
 
 
+def _scroll_region_value(widget: Any, value: Any) -> Any:
+    """A Canvas's ``scrollregion``: four distances, or "" (or None) for none.
+
+    Measured on Tk 9.0.2: ``0``, ``" "``, three values and five are refused as
+    ``bad scrollRegion "0"``, and a value that is not a distance names it -
+    ``expected screen distance but got "a"``.
+    """
+    if value is None or value == "":
+        return value
+    elements = _tcl_list(value)
+    if len(elements) != 4:
+        shown = " ".join(elements) if isinstance(value, (tuple, list)) else value
+        raise TclError(f'bad scrollRegion "{shown}"')
+    for element in elements:
+        _signed_distance(widget, element)
+    return value
+
+
 def _element_borderwidth(widget: Any, value: Any) -> Any:
     """A size, or "" for the scrollbar's own ``borderwidth``. Tk reads any
     negative width back as "", measured."""
@@ -2322,8 +2343,8 @@ class Misc:
         Overridable so a themed widget can add ttk's ``-padding`` to it.
         """
         return Insets.symmetric(
-            horizontal=int(self._options.get("padx", 0) or 0),
-            vertical=int(self._options.get("pady", 0) or 0),
+            horizontal=_as_int(self._options.get("padx", 0), 0),
+            vertical=_as_int(self._options.get("pady", 0), 0),
         )
 
     def _outer_size(self, content: Size) -> Size:
@@ -2492,8 +2513,8 @@ class Misc:
         to. A test that wants to read geometry without running a loop does.
 
         TkCurses extension:
-            tkinter has no such method: in Tk, ``update_idletasks`` lays
-            widgets out, which here it does not.
+            tkinter has no such method. :meth:`update_idletasks` lays widgets
+            out too, and redraws.
         """
         return self.tk.layout.run()
 
@@ -3018,18 +3039,22 @@ class Misc:
     # ==================================================================
 
     def update_idletasks(self) -> None:
-        """Run pending idle callbacks without touching input.
+        """Run pending idle callbacks, lay widgets out and redraw, without
+        touching input.
 
-        Differences from tkinter:
-            Widgets are not laid out: in Tk geometry is computed by idle
-            handlers, so ``update_idletasks`` followed by ``winfo_width`` gives
-            the width a widget will have. Here call :meth:`update` or
-            :meth:`update_layout` first.
+        Geometry is idle work, as in Tk, so ``update_idletasks`` followed by
+        ``winfo_width`` gives the width a widget will have, and a change made
+        during a long computation is on the screen when it returns.
         """
+        # Measured on Tk 9.0.2: a packed Button reads winfo_width() 1 and is
+        # unmapped before root.update_idletasks(), 62 and mapped after, and
+        # the same from a child widget's update_idletasks. Here it only ran
+        # the idle callbacks and read 0 (TkCurses-q6b1).
         self.tk.timers.run_idle()
+        self._settle()
 
     def update(self) -> None:
-        """Run pending callbacks.
+        """Run pending callbacks, then lay widgets out and redraw.
 
         Idle work first, then anything whose timer has expired, which is the
         order the main loop uses. Input is not read here: draining the
@@ -3039,6 +3064,15 @@ class Misc:
         """
         self.tk.timers.run_idle()
         self.tk.timers.run_due()
+        self._settle()
+
+    def _settle(self) -> None:
+        """Lay out what is waiting and show it, as the main loop does after
+        its callbacks."""
+        self.tk.layout.run()
+        show = getattr(self._root(), "_update_display", None)
+        if show is not None:
+            show()
 
     def wait_variable(self, name: Variable) -> None:
         """Run the event loop until ``name`` is written to.
@@ -3817,18 +3851,29 @@ class BaseWidget(Misc):
         if screen is not None and screen.glyphs is not None:
             text = text.translate(screen.glyphs)
         if column < 0:
-            text = text[-column:]
-            column = 0
+            # In cells: a wide character cut in half by the edge leaves its
+            # other half blank, not drawn half off the window.
+            text, blank = skip_cells(text, -column)
+            column = blank
         if not 0 <= row < rows or not column < columns:
             return
-        text = text[: columns - column]
+        text = clip_cells(text, columns - column)
         if not text:
             return
         with contextlib.suppress(_curses.error):
-            if column + len(text) >= columns:
-                if text[:-1]:
-                    dispatcher.call(window.addstr, row, column, text[:-1], attribute)
-                dispatcher.call(window.insstr, row, columns - 1, text[-1], attribute)
+            if column + cells(text) >= columns:
+                # The last character, with any marks that combine with it,
+                # inserted where it starts - the last cell, or the one before
+                # for a wide one - so the write does not advance past the end.
+                last = len(text) - 1
+                while last > 0 and char_cells(text[last]) == 0:
+                    last -= 1
+                head, tail = text[:last], text[last:]
+                if head:
+                    dispatcher.call(window.addstr, row, column, head, attribute)
+                dispatcher.call(
+                    window.insstr, row, column + cells(head), tail, attribute
+                )
             else:
                 dispatcher.call(window.addstr, row, column, text, attribute)
 
@@ -5513,6 +5558,8 @@ class Tk(BaseWidget, Wm):
         self._mouse_owner: Misc | None = None
         self._input: InputHandler | None = None
         self._motion_asserted = False
+        #: A Ctrl-C the loop has yet to answer; see :meth:`_catch_interrupts`.
+        self._interrupt_pending = False
         #: Tracebacks that would have landed on the screen, kept until the
         #: terminal is handed back.
         self._held_reports: list[str] = []
@@ -5753,6 +5800,11 @@ class Tk(BaseWidget, Wm):
             ``<Control-c>``, which takes the key from the terminal entirely;
             raise from a ``WM_DELETE_WINDOW`` handler; or install a SIGINT
             handler.
+
+            It is answered between callbacks, never in the middle of one. A
+            second Ctrl-C while a callback has still not returned raises
+            KeyboardInterrupt inside it, so a program stuck in a callback
+            can still be stopped.
         """
         # This docstring once claimed the terminal was restored before it was
         # true - measured, Ctrl-C left cbreak, the hidden cursor, the
@@ -5763,6 +5815,7 @@ class Tk(BaseWidget, Wm):
         self._running = True
         self.tk.quit_requested = False
         passes = 0
+        release = self._catch_interrupts()
         try:
             while self._running and not self.tk.quit_requested:
                 if not self.winfo_exists():
@@ -5790,6 +5843,59 @@ class Tk(BaseWidget, Wm):
             raise
         finally:
             self._running = False
+            if release is not None:
+                release()
+
+    def _catch_interrupts(self) -> Callable[[], None] | None:
+        """Take Ctrl-C as a request the loop answers between callbacks.
+
+        Python turns SIGINT into a KeyboardInterrupt raised wherever the
+        program happens to be, and here Ctrl-C is not an interrupt but the
+        copy-or-close gesture. Raised inside a callback, it tore that callback
+        in half: measured, a poll that rescheduled itself with ``after`` died
+        on the Ctrl-C and never ran again, though the program carried on.
+        So while the loop runs the signal only marks the request, and the
+        loop answers it at the end of the pass, as it would a key - within
+        the input wait's twentieth of a second when it is idle, since a
+        signal ends ``select`` early and it is retried for what is left.
+
+        A second Ctrl-C while the first is still waiting means the loop is
+        not coming back - a callback is stuck - and is raised as
+        KeyboardInterrupt, as before, so a wedged program can still be
+        stopped. Nothing is changed outside the main thread, or when the
+        program has a SIGINT handler of its own.
+
+        Returns:
+            What puts the signal back, or None if it was left alone.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            return None
+        if signal.getsignal(signal.SIGINT) is not signal.default_int_handler:
+            return None
+        self._interrupt_pending = False
+        signal.signal(signal.SIGINT, self._on_interrupt)
+
+        def release() -> None:
+            signal.signal(signal.SIGINT, signal.default_int_handler)
+            self._interrupt_pending = False
+
+        return release
+
+    def _on_interrupt(self, signum: int, frame: Any) -> None:
+        """SIGINT while the loop runs: note it, or raise if one is waiting."""
+        del signum, frame
+        if self._interrupt_pending:
+            self._interrupt_pending = False
+            raise KeyboardInterrupt
+        self._interrupt_pending = True
+
+    def _answer_interrupt(self) -> None:
+        """Copy or close for a Ctrl-C noted since the last pass."""
+        if not self._interrupt_pending:
+            return
+        self._interrupt_pending = False
+        if not self._copy_on_interrupt():
+            self._close_requested()
 
     def _close_requested(self) -> None:
         """The user asked to close the application. Ctrl-C means this.
@@ -5825,6 +5931,8 @@ class Tk(BaseWidget, Wm):
         # painted at a size it is about to stop having.
         self._guard(self.tk.layout.run)
         self._update_display()
+        # Last, between passes, where a callback cannot be cut in half.
+        self._answer_interrupt()
 
     def _renew_colour_pairs(self) -> None:
         """Rebuild an exhausted colour-pair table, and put the screen back.
@@ -6948,13 +7056,14 @@ _STAND_IN = {"\t": " "}
 
 
 def _one_cell_each(text: str) -> str:
-    """Replace anything that would not occupy exactly one cell.
+    """Replace each control character with a printable stand-in.
 
-    Every column calculation in this library - clipping to a window, the
-    insert cursor, ``bbox``, mapping a click back to an index - assumes one
-    character is one cell. A control character breaks that assumption at the
-    only point where it cannot be checked: curses draws it as the terminal
-    sees fit, and the arithmetic has already been done.
+    Column calculations here - clipping to a window, the insert cursor,
+    ``bbox``, mapping a click back to an index - measure a printable
+    character by :func:`~tkcurses._core.cells.char_cells`, and some still
+    count one cell per character. A control character has no width at all
+    until curses draws it as the terminal sees fit, which is after the
+    arithmetic has been done.
 
     Measured before this existed: a Text holding "\tAB" drew A at column 10
     while reporting it at column 4, because curses expanded the tab to a tab
@@ -7444,7 +7553,9 @@ class _TextWidget(_Drawable):
         """Ask for room for the content, or for the size the options name.
 
         Padding and any border are included: a label asks for what it needs to
-        draw, not for what is left after the frame around it.
+        draw, not for what is left after the frame around it. The padding is
+        :meth:`_content_padding`'s, so a themed widget's ``padding`` is in it
+        too.
         """
         text_width, text_height = self._content_size()
         # _as_int throughout: a ttk label keeps a width Tk does not check,
@@ -7452,10 +7563,8 @@ class _TextWidget(_Drawable):
         width = _as_int(self._options["width"], 0) or text_width
         height = _as_int(self._options["height"], 0) or text_height
         edge = 2 * BORDER_WIDTH if self._bordered else 0
-        self._request_size(
-            width + 2 * _as_int(self._options["padx"], 0) + edge,
-            height + 2 * _as_int(self._options["pady"], 0) + edge,
-        )
+        padding = self._content_padding()
+        self._request_size(width + padding.width + edge, height + padding.height + edge)
 
     # ------------------------------------------------------------- painting
 
@@ -7519,9 +7628,10 @@ class _TextWidget(_Drawable):
             # so text too long to fit ends up hard against the far edge with
             # its beginning cut off.
             column = origin_x + text_place.x
-            column += align_offset(len(line), block_width, justify)
+            column += align_offset(cells(line), block_width, justify)
             skipped = self._cells_cut_before(column, area)
-            line, column = line[skipped:], max(column + skipped, area.x)
+            line, blank = skip_cells(line, skipped)
+            column = max(column + skipped + blank, area.x)
             text = clip_text(line, area.x + area.width - column)
             # Through _write_line, which clips again to the window: the area
             # is the widget's, and a widget the screen edge cuts in half has
@@ -7635,13 +7745,12 @@ class _TextWidget(_Drawable):
     def _text_area(self) -> Rect:
         """Where the text may go, in cells relative to this widget's window."""
         edge = BORDER_WIDTH if self._border_drawn else 0
-        padx = _as_int(self._options["padx"], 0)
-        pady = _as_int(self._options["pady"], 0)
+        padding = self._content_padding()
         return Rect(
-            edge + padx,
-            edge + pady,
-            max(0, self._rect.width - 2 * (edge + padx)),
-            max(0, self._rect.height - 2 * (edge + pady)),
+            edge + padding.left,
+            edge + padding.top,
+            max(0, self._rect.width - 2 * edge - padding.width),
+            max(0, self._rect.height - 2 * edge - padding.height),
         )
 
     _STATE_COLOURS: ClassVar[dict[str, tuple[str | None, str | None]]] = {
@@ -7707,6 +7816,8 @@ class _TextWidget(_Drawable):
                 line_number = number
                 break
             remaining -= len(line)
+        # The index counts characters; where the letter is counts cells.
+        letter = remaining
         if line_number is None:
             # The index runs past the end of the text, which is how tkinter
             # code switches the underline off without removing the option.
@@ -7716,9 +7827,9 @@ class _TextWidget(_Drawable):
         top = max(area.y, area.y + int((area.height - block_height) * down))
         row = top + line_number
         column = area.x + int((area.width - block_width) * across)
-        column += align_offset(
-            len(lines[line_number]), block_width, str(self._options["justify"])
-        )
+        line = lines[line_number]
+        column += align_offset(cells(line), block_width, str(self._options["justify"]))
+        remaining = cells(line[:letter])
         # Where the line was drawn, so the mark is under its letter; and not
         # at all when that letter is cut off.
         if column < area.x and not self._cells_cut_before(column, area):
@@ -7731,7 +7842,7 @@ class _TextWidget(_Drawable):
                 window,
                 row,
                 column + remaining,
-                lines[line_number][remaining],
+                line[letter],
                 attribute | _curses.A_UNDERLINE,
             )
 
@@ -8834,11 +8945,12 @@ class Entry(_Drawable, XView):
     ``textvariable``, ``width``, ``xscrollcommand``.
 
     Differences from tkinter:
-        ``justify`` is accepted and not drawn: the text starts at the left
-        whatever it says. The insertion cursor is the terminal's own, so
-        ``insertbackground``, ``insertborderwidth``, ``insertofftime``,
-        ``insertontime`` and ``insertwidth`` draw nothing, and nor does
-        ``selectborderwidth``. ``highlightbackground``, ``highlightcolor`` and
+        The insertion cursor is the terminal's own, so ``insertbackground``,
+        ``insertborderwidth``, ``insertofftime``, ``insertontime`` and
+        ``insertwidth`` draw nothing, and nor does ``selectborderwidth``. It
+        takes a cell where Tk's is a line between two, so while the field has
+        the focus a right-justified or centred text keeps one cell free for it
+        at the right. ``highlightbackground``, ``highlightcolor`` and
         ``highlightthickness`` are accepted and draw nothing: the focus is shown
         by markers instead. So is ``cursor``: the mouse pointer belongs to the
         terminal.
@@ -9135,7 +9247,8 @@ class Entry(_Drawable, XView):
         if text in ("insert", INSERT):
             return self._field.cursor
         if text.startswith("@"):
-            return self._field.index_at(int(text[1:]) - self._text_area().x)
+            area = self._text_area()
+            return self._field.index_at(int(text[1:]) - area.x - self._shift(area))
         selection = self._field.selection
         if text in ("sel.first", SEL_FIRST):
             if selection is None:
@@ -9326,7 +9439,8 @@ class Entry(_Drawable, XView):
         if length == 0:
             return (area.x, area.y, 0, 1)
         position = min(self.index(index), length - 1)
-        return (area.x + position - self._field.view, area.y, 1, 1)
+        shift = self._shift(area)
+        return (area.x + shift + position - self._field.view, area.y, 1, 1)
 
     def _view_fractions(self) -> tuple[float, float]:
         """Where the visible run sits in the text, as two fractions."""
@@ -9643,6 +9757,30 @@ class Entry(_Drawable, XView):
             max(0, self._rect.height - 2 * (edge + pady)),
         )
 
+    def _shift(self, area: Rect) -> int:
+        """How many cells ``justify`` puts before the text, while it all fits.
+
+        Tk's ``EntryComputeGeometry``: a text no wider than the field starts
+        at the left, flush with the right edge, or at half the room left over;
+        one that does not fit starts at the left and scrolls, whatever the
+        justification. Measured on Tk 9.0.2, the same in all five entries:
+        ``Sample`` in 20 starts at character 14 right and 7 centred.
+
+        Tk's insertion cursor is a line on the right edge of the last
+        character. Ours takes a cell, so while it is shown - the field has
+        the focus and can be edited - one cell more is kept for it, and the
+        text does not move as the cursor does.
+        """
+        justify = str(self._options["justify"])
+        if justify not in ("right", "center"):
+            return 0
+        room = area.width - len(self._displayed())
+        if self.focus_get() is self and self._editable:
+            room -= 1
+        if room <= 0:
+            return 0
+        return room if justify == "right" else room // 2
+
     def _showing_placeholder(self) -> bool:
         """Whether the ghost text is what the field is displaying.
 
@@ -9722,7 +9860,7 @@ class Entry(_Drawable, XView):
                 dispatcher,
                 window,
                 area.y,
-                area.x,
+                area.x + self._shift(area),
                 text,
                 self._placeholder_attribute(attribute)
                 if self._showing_placeholder()
@@ -9749,7 +9887,7 @@ class Entry(_Drawable, XView):
                 dispatcher,
                 window,
                 area.y,
-                area.x + start,
+                area.x + self._shift(area) + start,
                 text,
                 self._selection_attribute(attribute),
             )
@@ -9774,7 +9912,7 @@ class Entry(_Drawable, XView):
         self._insert_at = None
         if self.focus_get() is not self or not self._editable:
             return
-        column = self._field.column_of(self._field.cursor)
+        column = self._field.column_of(self._field.cursor) + self._shift(area)
         if not (0 <= column < area.width):
             return
         self._insert_at = (
@@ -9958,7 +10096,7 @@ def _entry_index_at(entry: Any, x: int) -> int:
     """
     area = entry._text_area()
     column = min(max(x - area.x, 0), max(area.width - 1, 0))
-    return int(entry._field.index_at(column))
+    return int(entry._field.index_at(column - entry._shift(area)))
 
 
 def _entry_start_drag(entry: Any, mode: str) -> None:
@@ -10242,7 +10380,8 @@ def _entry_paste_selection(event: Event) -> None:
     entry = event.widget
     if not entry._editable:
         return
-    entry.icursor(entry._field.index_at(event.x - entry._text_area().x))
+    area = entry._text_area()
+    entry.icursor(entry._field.index_at(event.x - area.x - entry._shift(area)))
     try:
         text = entry.selection_get()
     except TclError:
@@ -11366,12 +11505,13 @@ class Spinbox(Entry):
         ``select_present``, ``select_range`` and ``select_to`` are here as on
         an Entry; tkinter's Spinbox has only the ``selection_`` names.
 
-        ``justify`` is accepted and not drawn: the text starts at the left
-        whatever it says. ``buttoncursor`` changes nothing, the pointer being
-        the terminal's. The insertion cursor is the terminal's own, so
-        ``insertbackground``, ``insertborderwidth``, ``insertofftime``,
-        ``insertontime`` and ``insertwidth`` draw nothing, and nor does
-        ``selectborderwidth``. ``highlightbackground``, ``highlightcolor`` and
+        ``buttoncursor`` changes nothing, the pointer being the terminal's.
+        The insertion cursor is the terminal's own, so ``insertbackground``,
+        ``insertborderwidth``, ``insertofftime``, ``insertontime`` and
+        ``insertwidth`` draw nothing, and nor does ``selectborderwidth``. It
+        takes a cell where Tk's is a line between two, so while the field has
+        the focus a right-justified or centred text keeps one cell free for it
+        at the right. ``highlightbackground``, ``highlightcolor`` and
         ``highlightthickness`` are accepted and draw nothing: the focus is shown
         by markers instead. So is ``cursor``: the mouse pointer belongs to the
         terminal.
@@ -14744,6 +14884,7 @@ class Canvas(_Drawable, XView, YView):
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
         "height": _signed_distance,
+        "scrollregion": _scroll_region_value,
         "width": _signed_distance,
     }
 

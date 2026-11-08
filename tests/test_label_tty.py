@@ -315,3 +315,91 @@ def test_a_themed_labels_underline_is_under_the_letter_it_shows(terminal, tmp_pa
         workdir=tmp_path,
     )
     term.wait_for_cell(0, 1, lambda cell: cell.data == "b" and cell.underscore)
+
+
+# Wide and combining characters take the cells a terminal gives them: two
+# for a CJK ideograph or most emoji, none for a combining mark. A label that
+# counted code points allotted five cells to A + three ideographs + B, and
+# drew A and two of them. TkCurses-2by7.
+
+WIDE = "\u65e5\u672c\u8a9e"
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["A" + WIDE + "B", "x\U0001f600y", "e\u0301z|"],
+    ids=["ideographs", "emoji", "combining"],
+)
+def test_a_label_of_wide_or_combining_text_shows_all_of_it(terminal, tmp_path, text):
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            f"label = tkcurses.Label(root, text={text!r}, relief='solid')\n"
+            "label.place(x=3, y=2)"
+        ),
+        workdir=tmp_path,
+    )
+    shown = text.replace("e\u0301", "\u00e9")  # one cell, as pyte composes it
+    term.wait_for_text(shown)
+    # The border sits right after the last character: the label asked for
+    # exactly the cells its text takes.
+    row = term.display[3]
+    assert row[row.index(shown) + len(shown)] == "\u2502"
+
+
+def test_a_wide_character_cut_by_the_edge_leaves_a_blank_not_half(terminal, tmp_path):
+    """Six ideographs anchored east in five cells show the last two and the
+    second half of the one before, which is a blank, not half of it."""
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            f"tkcurses.Label(root, text={WIDE * 2!r}, width=5, anchor='e')"
+            ".place(x=3, y=2)"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text(WIDE[1:])
+    assert term.display[2].index(WIDE[1:]) == 4
+    assert term.text_at(2, 3, 1) == " "
+
+
+def test_wide_text_wraps_by_cells(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            f"tkcurses.Label(root, text={WIDE + ' ' + WIDE!r}, wraplength=6)"
+            ".place(x=3, y=2)"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(
+        lambda t: t.text_at(2, 3).startswith(WIDE) and t.text_at(3, 3).startswith(WIDE),
+        message="two rows of three ideographs",
+    )
+
+
+def test_a_wide_character_in_the_last_cells_of_the_screen_is_drawn(terminal, tmp_path):
+    """The screen's edge cuts the label to four cells: two ideographs, the
+    second ending in the last column, which curses only takes inserted."""
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(f"tkcurses.Label(root, text={WIDE!r}).place(x=36, y=2)"),
+        workdir=tmp_path,
+    )
+    term.wait_for_text(WIDE[:2])
+    assert term.display[2].rstrip().endswith(WIDE[:2])
+    assert WIDE[2] not in "\n".join(term.display)
+
+
+def test_the_underline_is_under_its_letter_in_wide_text(terminal, tmp_path):
+    """underline counts characters; the third ideograph starts four cells in.
+    Counted as two, the mark lands on the second and writes the third over
+    it."""
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(f"tkcurses.Label(root, text={WIDE!r}, underline=2).place(x=3, y=2)"),
+        workdir=tmp_path,
+    )
+    term.wait_for_text(WIDE)
+    term.wait_for_cell(2, 7, lambda cell: cell.underscore and cell.data == WIDE[2])
+    assert not term.attrs_at(2, 5)["underscore"]

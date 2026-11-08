@@ -1112,3 +1112,48 @@ def test_padding_set_on_a_running_root_moves_its_children(terminal, tmp_path):
     term.wait_for_cell(0, 0, lambda cell: cell.bg == "red", message="red at 0,0")
     term.wait_for_cell(0, 0, lambda cell: cell.bg != "red", message="0,0 cleared")
     term.wait_for_cell(2, 3, lambda cell: cell.bg == "red", message="red at 2,3")
+
+
+@pytest.mark.parametrize("call", ["root.update_idletasks()", "button.update()"])
+def test_update_idletasks_lays_widgets_out(terminal, tmp_path, call):
+    """Measured on Tk 9.0.2: a packed Button reads winfo_width() 1 before
+    update_idletasks and its real width after, from the root or from a
+    child; tkinter's idiom for centring a window or sizing to content
+    depends on it. ``update`` from a widget does the same here."""
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        program(
+            "button = tkcurses.Button(root, text='Hello')\n"
+            "button.pack()\n"
+            f"{call}\n"
+            "early = button.winfo_width()\n"
+            "root.after(200, lambda: buffer.write(9, 0, "
+            "f'early={early} late={button.winfo_width()}'))"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("late=")
+    early, late = term.display[9].split()
+    assert early.split("=")[1] == late.split("=")[1] != "0"
+
+
+def test_update_idletasks_shows_a_change_before_a_long_computation(terminal, tmp_path):
+    """The other idiom: say "working", update_idletasks, then block. The
+    screen must say it while the program is busy, not after."""
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        program(
+            "import time\n"
+            "label = tkcurses.Label(root, text='idle')\n"
+            "label.pack()\n"
+            "def work():\n"
+            "    label.configure(text='working')\n"
+            "    root.update_idletasks()\n"
+            "    time.sleep(3)\n"
+            "    label.configure(text='finished')\n"
+            "root.after(100, work)"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("working", timeout=2.5)
+    assert "finished" not in "\n".join(term.display)

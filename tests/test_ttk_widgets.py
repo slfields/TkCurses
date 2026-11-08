@@ -1695,6 +1695,37 @@ def test_padding_adds_to_padx_and_pady_rather_than_replacing_them(padded_root):
     assert (content.x, content.y) == (2 + 1, 3 + 1)
 
 
+@pytest.mark.parametrize(
+    "widget", [Label, Button, Checkbutton, Radiobutton, Menubutton]
+)
+def test_padding_enlarges_a_widget_whose_content_is_its_text(padded_root, widget):
+    """Measured on Tk 9.0.2 with padding=9: Label 50x21 -> 68x39, Checkbutton
+    72x23 -> 88x39, Button 83x30 -> 95x42. Tk's padding replaces the theme's
+    own, a pixel or three, which is no cell here, so here it is added."""
+    plain = widget(padded_root, text="Sample")
+    padded = widget(padded_root, text="Sample", padding="1 2 3 4")
+    assert padded.winfo_reqwidth() == plain.winfo_reqwidth() + 1 + 3
+    assert padded.winfo_reqheight() == plain.winfo_reqheight() + 2 + 4
+    plain.configure(padding=2)
+    assert plain.winfo_reqwidth() == padded.winfo_reqwidth()
+    assert plain.winfo_reqheight() == padded.winfo_reqheight() - 2
+
+
+@pytest.mark.parametrize(
+    "widget", [Label, Button, Checkbutton, Radiobutton, Menubutton]
+)
+def test_padding_moves_a_widgets_text_in_from_its_left_and_top(padded_root, widget):
+    from tkcurses._core.geometry import Rect
+
+    plain = widget(padded_root, text="Sample")
+    padded = widget(padded_root, text="Sample", padding="1 2 3 4")
+    for each in (plain, padded):
+        each._allocate(Rect(0, 0, each.winfo_reqwidth(), each.winfo_reqheight()))
+    before, after = plain._text_area(), padded._text_area()
+    assert (after.x, after.y) == (before.x + 1, before.y + 2)
+    assert (after.width, after.height) == (before.width, before.height)
+
+
 # ------------------------------------------------- Treeview -striped (xe9.4)
 #
 # Tk 9.0's alternating row tint. Measured: a boolean, default 0, rejecting

@@ -208,14 +208,42 @@ def test_a_refused_configure_changes_nothing_else(root):
     assert made.cget("width") == 3
 
 
+THEMED = [
+    name
+    for name in ttk.__all__
+    if isinstance(getattr(ttk, name), type)
+    and issubclass(getattr(ttk, name), ttk.Widget)
+    and name not in ("Widget", "OptionMenu")
+]
+
+
 def test_ttk_keeps_its_own_class_rule(root):
-    """ttk's -class is "" by default and may be set to what it has."""
+    """ttk's -class is "" by default, and the class is its own."""
     frame = ttk.Frame(root)
     assert frame.cget("class") == ""
-    frame.configure(**{"class": ""})
-    with pytest.raises(TclError, match="attempt to change read-only option"):
-        frame.configure(**{"class": "X"})
     assert ttk.Labelframe(root).winfo_class() == "TLabelframe"
+
+
+@pytest.mark.parametrize("name", THEMED)
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda widget: widget.configure(class_="Other"),
+        lambda widget: widget.configure({"class": "Other"}),
+        lambda widget: widget.configure(class_=widget.cget("class")),
+        lambda widget: widget.__setitem__("class", "Other"),
+    ],
+    ids=["keyword", "dict", "unchanged", "item"],
+)
+def test_a_themed_widget_refuses_any_class_change(root, name, change):
+    """Measured on Tk 9.0.2, on every themed widget: configuring -class
+    after the widget is made is refused, even to the value it has, however
+    it is spelled."""
+    widget = getattr(ttk, name)(root)
+    before = widget.winfo_class()
+    with pytest.raises(TclError, match=r"^attempt to change read-only option$"):
+        change(widget)
+    assert widget.winfo_class() == before
 
 
 # ------------------------------------------------------------------- values

@@ -244,10 +244,12 @@ def test_class_is_read_only_after_construction(our_root):
         label.configure(**{"class": "Other"})
 
 
-def test_setting_class_to_what_it_already_is_is_not_a_change(our_root):
-    """So a dict of options read back and passed whole does not raise."""
+def test_setting_class_to_what_it_already_is_is_refused_too(our_root):
+    """Measured on Tk 9.0.2: ``ttk.Frame(class_="Mine").configure(
+    class_="Mine")`` raises, as any other value does (TkCurses-h5xd)."""
     label = tkcurses.ttk.Label(our_root, **{"class": "Custom"})
-    label.configure(**{"class": "Custom"})
+    with pytest.raises(tkcurses.TclError, match="read-only"):
+        label.configure(**{"class": "Custom"})
     assert label.winfo_class() == "Custom"
 
 

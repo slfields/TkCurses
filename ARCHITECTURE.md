@@ -1903,9 +1903,35 @@ that traceback, and on the alternate screen it would be swapped away unread.
 **Ctrl-C raises `WM_DELETE_WINDOW`.** It arrives as a signal only when
 nothing has bound `<Control-c>` — see `refresh_signal_keys`, which hands the
 key to an application that asks for it and otherwise leaves the tty to make
-a signal of it. `mainloop()` catches the `KeyboardInterrupt` around one pass
-of the loop and calls `_close_requested()`, which invokes the protocol
-handler if there is one and calls `destroy()` if there is not.
+a signal of it. While `mainloop()` runs, the signal only notes the request
+(`Tk._catch_interrupts`), and the loop answers it at the end of a pass by
+calling `_close_requested()`, which invokes the protocol handler if there is
+one and calls `destroy()` if there is not.
+
+**Answered between callbacks, not raised inside one** (`TkCurses-lppt`).
+Python delivers SIGINT as a `KeyboardInterrupt` raised wherever the program
+happens to be, and `mainloop()` used to catch it around a pass. A callback
+running at that moment was cut off where it stood. Measured with a poll that
+sleeps 0.2s and then reschedules itself with `after`: on Ctrl-C with text
+selected, the poll stopped at its fourth run, every time out of four, and
+the copy it would have shown never reached the screen, while the program
+went on running. That was scenario 43 on a contended CI runner, waiting 20
+seconds for a clipboard line its dead poll could never redraw. With the
+request noted and answered between passes, the same poll goes on (5, 8,
+...) and the copy shows. A second Ctrl-C while the first still waits means
+the loop is not coming back - a callback that never returns - and is raised
+as `KeyboardInterrupt` in it, so a wedged program can still be stopped from
+the keyboard; `mainloop()` still catches that one as before. Nothing is
+changed outside the main thread or when the program has installed a SIGINT
+handler of its own, and Python's handler is put back when the loop ends.
+
+**Before `mainloop()` a Ctrl-C is a `KeyboardInterrupt`**, as in tkinter,
+raised in the program's own setup. The tests that sent one as soon as their
+first paint appeared painted before the loop started, and on a slow runner
+the byte arrived in that gap: exit -2, death by an uncaught interrupt -
+reproduced every time with a one-second pause before `mainloop()`, and once
+in 25 rounds under CPU load without one. They now start drawing from inside
+the loop.
 
 Three behaviours fall out of that, and all three are what a person expects:
 
@@ -2688,6 +2714,37 @@ class Cell:
     attr: int = A_NORMAL      # Attributes (bold, underline, etc.)
     dirty: bool = False       # Needs redraw
 ```
+
+### Wide and combining characters
+
+**A character is not a cell** (`TkCurses-2by7`). A terminal gives a CJK
+ideograph, a fullwidth letter or most emoji two cells, and a combining mark
+or a zero-width character none - it joins the cell before. Measured in the
+test harness's terminal (pyte, which follows `wcwidth` as terminals do,
+`TERM=xterm-256color`): `Label(text="A日本語B")` drew `A日本`, five cells
+allotted for five code points; `x😀y` lost the `y`; `é` written as `e` plus
+U+0301 left a blank cell after it.
+
+`_core/cells.py` gives the widths, from Python's own Unicode database by
+the rules of Markus Kuhn's `wcwidth` and the `wcwidth` package's refinements
+(spacing marks and the Hangul medial and final jamo are 0, regional
+indicators 2), so no table of ours goes stale and nothing new is a
+dependency. Its tests check each sample against `wcwidth` itself when it is
+installed, as it is wherever pyte is. Three helpers do the arithmetic:
+`cells` measures, `clip_cells` keeps the start that fits without halving a
+wide character, and `skip_cells` drops the start and reports the blank cell
+left where a wide character straddled the cut.
+
+What measures in cells so far: `_write_line`, which every widget draws
+through - so nothing overruns its window, and a wide character ending in a
+window's last cell is inserted where it starts rather than at the last
+cell; `clip_text`; `wrap`, `measure` and so `wraplength`; and the Label
+family's anchoring, justification, cutting and underline (Label, Button,
+Checkbutton, Radiobutton, Menubutton, Message and their themed forms).
+What does not yet, each filed: the entries' cursor, view and clicks
+(`TkCurses-9t4l`), the Text widget's layout and indices (`TkCurses-l8w7`),
+and the Listbox, Scale's label and the other widgets that slice their text
+by characters (`TkCurses-r9k2`).
 
 ### Screen Buffer
 
@@ -3489,7 +3546,7 @@ Base mixin providing common widget functionality.
 | `winfo_vrootwidth()` | ○ | Virtual screen cells |
 | **Event Loop** | | |
 | `update()` | ✓ | Process pending events |
-| `update_idletasks()` | ✓ | Process idle callbacks |
+| `update_idletasks()` | ✓ | Process idle callbacks, then lay out and redraw, as Tk's geometry and display idle handlers do (`TkCurses-q6b1`) |
 | `mainloop(n=0)` | ✓ | Enter event loop |
 | `quit()` | ✓ | Exit event loop |
 | **Binding** | | |
@@ -4678,6 +4735,23 @@ edits the entry while being asked about a variable write. Tk abandons the whole
 update and leaves the widget holding the old text while the variable holds the
 new — a widget out of step with its own `textvariable`. Here both the write and
 the edit land. `TkCurses-doh` records it, with the measurement.
+
+**`justify` places a text only while it fits** (`TkCurses-2431`). Tk's
+`EntryComputeGeometry` starts a text no wider than the field at the left
+edge, flush with the right one, or at half the room left over, and one
+wider than the field at the left, scrolling as a left-justified one does.
+Measured on Tk 9.0.2 with `bbox`: `Sample` in a field 20 wide starts at
+character 14 right-justified and 7 centred, the same in `tk.Entry`,
+`tk.Spinbox`, `ttk.Entry`, `ttk.Spinbox` and `ttk.Combobox` - the spinbox
+arrows and the combobox's are outside the field. The one place this departs
+is the insertion cursor: Tk's is a line on the edge after the last
+character, ours a cell, so a right-justified text with the cursor at its end
+would put the cursor off the field. While the field has the focus and can
+be edited, one cell is kept free for it at the right, whether the cursor is
+at the end or not, so the text does not jump a cell as the cursor moves
+away from the end; it moves one cell when the focus comes or goes instead.
+The same offset is applied to the selection, the cursor, `bbox`, `@x` and
+clicks, in `Entry._shift`.
 
 ---
 

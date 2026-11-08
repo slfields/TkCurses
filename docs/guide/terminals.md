@@ -210,13 +210,16 @@ root.mainloop()
 ## Unicode
 
 Text is Unicode throughout, and anything the terminal's font can draw can
-be shown. TkCurses does not yet measure wide characters as wide: Chinese,
-Japanese and Korean characters and most emoji take two cells of the
-screen, and a widget sized for them by its text is too narrow, so the end
-of the text is cut off. Give such a widget a `width` in cells. Accents
-written as a separate combining character take a cell of their own, so
-prefer the composed form - `"é"`, not `"é"`; `unicodedata.normalize("NFC", text)`
-converts one into the other.
+be shown. Chinese, Japanese and Korean characters and most emoji take two
+cells of the screen, and an accent written as a separate combining
+character takes none. Labels, buttons, check and radio buttons,
+menubuttons and messages measure text that way: they are sized, wrapped
+and aligned by the cells it takes. Entries, Text and the Listbox do not
+yet - their cursor and columns count one cell per character, and in a
+Listbox wide text can run over the border - so there, give the widget a
+`width` with room to spare and prefer the composed form of an accent -
+`"é"`, not `"é"`; `unicodedata.normalize("NFC", text)` converts one
+into the other.
 
 ## Leaving, and getting the terminal back
 

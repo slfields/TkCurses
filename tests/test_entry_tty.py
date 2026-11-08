@@ -19,6 +19,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 pytestmark = pytest.mark.tty
@@ -386,8 +388,11 @@ def _clipboard_watcher() -> str:
         "    buffer.write(8, 0, ('clip=' + held).ljust(20))\n"
         "    root.tk.screen.refresh()\n"
         "    root.after(50, show)\n"
-        "show()\n"
-        "buffer.write(10, 0, 'ready')"
+        # From inside the loop, not before it: a Ctrl-C sent once clip= is
+        # on screen must find the loop running, or it is a KeyboardInterrupt
+        # in the program's own setup - which is tkinter's behaviour, and on a
+        # slow CI runner was the -2 exit of TkCurses-lppt.
+        "root.after(0, show)\n"
     )
 
 
@@ -421,6 +426,116 @@ def test_ctrl_c_with_nothing_selected_still_closes(terminal, tmp_path):
     term.run_source(program(body), workdir=tmp_path)
     term.wait_for_text("clip=-")
     term.send(b"\x03")
+    assert term.wait_for_exit(timeout=10) == 0
+
+
+# Ctrl-C is answered between callbacks, not raised inside one. Python delivers
+# SIGINT as a KeyboardInterrupt wherever the program is, and a callback cut in
+# half by it - a poll that reschedules itself - simply stopped, while the
+# program carried on. On a slow runner that was scenario 43 waiting 20 seconds
+# for a clipboard line its dead poll would never redraw. TkCurses-lppt.
+
+
+def _busy_poll(body: str = "") -> str:
+    """A poll that spends most of the loop's time inside itself, so that a
+    Ctrl-C all but certainly arrives while it runs."""
+    return (
+        "import time\n"
+        "e = tkcurses.Entry(root, width=20)\n"
+        "e.place(x=1, y=1)\n"
+        "e.insert(0, 'hello world')\n"
+        "e.focus_set()\n"
+        "count = [0]\n"
+        "def poll():\n"
+        "    count[0] += 1\n"
+        "    try:\n"
+        "        held = root.clipboard_get()\n"
+        "    except tkcurses.TclError:\n"
+        "        held = '-'\n"
+        "    buffer.write(8, 0, f'clip={held} polls={count[0]}'.ljust(30))\n"
+        "    root.tk.screen.refresh()\n"
+        "    time.sleep(0.2)\n"
+        "    root.after(10, poll)\n"
+        "root.after(0, poll)\n" + body
+    )
+
+
+def _polls(term) -> int:
+    match = re.search(r"polls=(\d+)", "\n".join(term.display))
+    return int(match.group(1)) if match else 0
+
+
+def test_ctrl_c_during_a_callback_lets_it_finish_and_then_copies(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    term.run_source(program(_busy_poll()), workdir=tmp_path)
+    term.wait_for(lambda t: _polls(t) >= 2, message="the poll running")
+    term.send_keys("<Home>", *["<Shift-Right>"] * 5)
+    term.wait_for(
+        lambda t: all(t.attrs_at(2, col)["reverse"] for col in range(2, 7)),
+        message="'hello' selected",
+    )
+    term.send(b"\x03")
+    term.wait_for_text("clip=hello")
+    after = _polls(term)
+    term.wait_for(lambda t: _polls(t) >= after + 2, message="the poll still running")
+
+
+def test_ctrl_c_twice_stops_a_callback_that_never_returns(terminal, tmp_path):
+    """The way out of a wedged program: the first Ctrl-C waits for the loop,
+    which is not coming back, and the second is raised in the callback."""
+    term = terminal(cols=40, rows=12)
+    body = (
+        "import time\n"
+        "def stuck():\n"
+        "    buffer.write(9, 0, 'stuck')\n"
+        "    root.tk.screen.refresh()\n"
+        "    while True:\n"
+        "        time.sleep(0.05)\n"
+        "root.after(100, stuck)"
+    )
+    term.run_source(program(body), workdir=tmp_path)
+    term.wait_for_text("stuck")
+    term.send(b"\x03")
+    term.wait_for_idle()
+    term.send(b"\x03")
+    assert term.wait_for_exit(timeout=10) == 0
+
+
+def test_a_programs_own_sigint_handler_is_left_alone(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    body = (
+        "import signal\n"
+        "seen = []\n"
+        "def mine(signum, frame):\n"
+        "    seen.append(signum)\n"
+        "    buffer.write(9, 0, 'mine')\n"
+        "signal.signal(signal.SIGINT, mine)\n"
+        "root.after(0, lambda: buffer.write(10, 0, 'ready'))\n"
+        "def later():\n"
+        "    if seen:\n"
+        "        buffer.write(11, 0, 'still running')\n"
+        "    root.after(50, later)\n"
+        "root.after(0, later)"
+    )
+    term.run_source(program(body), workdir=tmp_path)
+    term.wait_for_text("ready")
+    term.send(b"\x03")
+    term.wait_for_text("mine")
+    # The handler decided not to close, and nothing here overrode it.
+    term.wait_for_text("still running")
+
+
+def test_sigint_is_python_s_own_again_after_mainloop(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    after = (
+        "import signal, sys\n"
+        "sys.exit(0 if signal.getsignal(signal.SIGINT) is signal.default_int_handler"
+        " else 3)"
+    )
+    source = program("root.after(200, root.quit)").replace(
+        "root.mainloop()\n", "root.mainloop()\n" + after + "\n"
+    )
+    term.run_source(source, workdir=tmp_path)
     assert term.wait_for_exit(timeout=10) == 0
 
 
@@ -624,3 +739,97 @@ root.mainloop()
     term.wait_for_text("hello")
     term.send_keys("<Tab>", "<Left>", "X", "<Return>")
     term.wait_for_text("got [hellXo]")
+
+
+@pytest.mark.parametrize(
+    ("make", "justify", "column"),
+    [
+        ("tkcurses.Entry(root, width=20, justify={!r})", "right", 16),
+        ("tkcurses.Entry(root, width=20, justify={!r})", "center", 9),
+        ("tkcurses.Spinbox(root, width=20, justify={!r})", "right", 16),
+        ("tkcurses.ttk.Entry(root, width=20, justify={!r})", "right", 16),
+        ("tkcurses.ttk.Combobox(root, width=20, justify={!r})", "right", 15),
+    ],
+)
+def test_justify_draws_the_text_where_tk_does(
+    terminal, tmp_path, make, justify, column
+):
+    """Right-justified text is flush with the field's right edge, centred
+    text has half the room either side, as measured on Tk 9.0.2."""
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "import tkcurses.ttk\n"
+            f"e = {make.format(justify)}\n"
+            "e.place(x=1, y=1)\n"
+            "e.insert(0, 'Sample')"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("Sample")
+    assert term.display[2].index("Sample") == column
+
+
+def test_a_focused_right_justified_field_keeps_a_cell_for_the_cursor(
+    terminal, tmp_path
+):
+    """Tk's cursor is a line on the edge; ours takes a cell, kept for it
+    while typing, so the text does not move as the cursor does."""
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "e = tkcurses.Entry(root, width=20, justify='right')\n"
+            "e.place(x=1, y=1)\n"
+            "e.insert(0, '42')\n"
+            "e.focus_set()"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(
+        lambda t: t.text_at(2, 19, 2) == "42" and t.cursor_cell() == (2, 21),
+        message="42 before the cursor at the right edge",
+    )
+    term.send(b"7")
+    term.wait_for(
+        lambda t: t.text_at(2, 18, 3) == "427" and t.cursor_cell() == (2, 21),
+        message="427 grown leftwards, the cursor still at the edge",
+    )
+    term.send_keys("<Left>")
+    term.wait_for(
+        lambda t: t.cursor_cell() == (2, 20) and t.text_at(2, 18, 3) == "427",
+        message="the cursor moved, the text did not",
+    )
+
+
+def test_a_click_on_right_justified_text_lands_on_its_character(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "e = tkcurses.Entry(root, width=20, justify='right')\n"
+            "e.place(x=1, y=1)\n"
+            "e.insert(0, 'ac')\n"
+            "e.focus_set()"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda t: t.text_at(2, 19, 2) == "ac", message="ac on the right")
+    term.click(20, 2)
+    term.send(b"b")
+    term.wait_for(lambda t: t.text_at(2, 18, 3) == "abc", message="abc")
+
+
+def test_a_selection_in_right_justified_text_covers_its_characters(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "e = tkcurses.Entry(root, width=20, justify='right')\n"
+            "e.place(x=1, y=1)\n"
+            "e.insert(0, 'abcd')\n"
+            "e.selection_range(1, 3)"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda t: t.text_at(2, 18, 4) == "abcd", message="abcd")
+    term.wait_for_idle()
+    reversed_cells = [col for col in range(2, 22) if term.attrs_at(2, col)["reverse"]]
+    assert reversed_cells == [19, 20]

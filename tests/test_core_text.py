@@ -165,3 +165,25 @@ def test_spans_are_contiguous_and_ordered():
     spans = wrap_spans("one two three four five", 7, "word")
     assert spans[0][0] == 0
     assert all(spans[i][1] == spans[i + 1][0] for i in range(len(spans) - 1))
+
+
+# ------------------------------------------------------------- wide text
+
+WIDE = "\u65e5"
+
+
+def test_measure_counts_cells_not_characters():
+    assert measure(["A" + WIDE * 3 + "B", "ab"]) == (8, 2)
+
+
+def test_wrapping_counts_cells():
+    """Three wide characters are six cells: two to a row of five, and the
+    third with a space and a fourth make five again."""
+    assert wrap(WIDE * 3 + " " + WIDE, 5) == [WIDE * 2, WIDE + " " + WIDE]
+    assert wrap(WIDE * 3 + " " + WIDE, 4) == [WIDE * 2, WIDE, WIDE]
+    assert wrap(WIDE * 2 + " " + WIDE, 6) == [WIDE * 2, WIDE]
+    assert wrap(WIDE + " " + WIDE, 5) == [WIDE + " " + WIDE]
+
+
+def test_a_wide_character_in_a_row_of_one_still_moves_on():
+    assert wrap(WIDE * 2, 1) == [WIDE, WIDE]

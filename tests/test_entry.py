@@ -1329,3 +1329,33 @@ def test_the_placeholder_is_drawn_dim(entry):
     entry.configure(placeholder="type here")
     plain = 0
     assert entry._placeholder_attribute(plain) & curses.A_DIM
+
+
+# ------------------------------------------------------------------ justify
+
+
+@pytest.mark.parametrize(
+    ("justify", "first"), [("left", 1), ("right", 15), ("center", 8)]
+)
+def test_justify_places_a_text_that_fits(entry, justify, first):
+    """Measured on Tk 9.0.2: "Sample" in a field of 20 starts at character
+    14 right-justified and 7 centred, in all five entries."""
+    entry.configure(justify=justify)
+    entry.insert(0, "Sample")
+    assert entry._char_bbox(0)[0] == first
+    assert entry.index(f"@{first}") == 0
+    assert entry.index(f"@{first + 5}") == 5
+
+
+def test_a_click_before_right_justified_text_is_its_start(entry):
+    entry.configure(justify="right")
+    entry.insert(0, "Sample")
+    assert entry.index("@2") == 0
+
+
+@pytest.mark.parametrize("justify", ["right", "center"])
+def test_a_text_too_long_to_fit_starts_at_the_left(entry, justify):
+    """Tk justifies only a text that fits; a longer one scrolls as left."""
+    entry.configure(justify=justify)
+    entry.insert(0, "x" * 30)
+    assert entry._char_bbox(0)[0] == 1

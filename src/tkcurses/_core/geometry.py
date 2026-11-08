@@ -35,6 +35,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from tkcurses._core.cells import clip_cells
+
 __all__ = [
     "BORDER_WIDTH",
     "Container",
@@ -519,8 +521,7 @@ def clip_text(text: str, width: int) -> str:
     """Truncate ``text`` to at most ``width`` cells.
 
     Widgets must not write past their content area; truncating at the source
-    keeps a long label from spilling over a neighbour or a border.
+    keeps a long label from spilling over a neighbour or a border. Cells, not
+    characters: a wide character takes two.
     """
-    if width <= 0:
-        return ""
-    return text[:width]
+    return clip_cells(text, width)

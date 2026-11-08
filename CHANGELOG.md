@@ -17,6 +17,35 @@ All notable changes to TkCurses. The format follows
   is `panedwindow`, as Tk's is, and `""` after `forget`; adding a packed
   widget as a pane takes it out of pack, and packing a pane takes it out of
   the panes.
+- A Canvas `scrollregion` that is not four distances - `0`, three numbers,
+  `"a b c d"` - is refused when it is set, with Tk's message; it was
+  stored and then raised at the first layout.
+- `justify="right"` and `"center"` place the text in an Entry, Spinbox,
+  `ttk.Entry`, `ttk.Spinbox` and `ttk.Combobox`, as in Tk, while all of it
+  fits; it was always drawn from the left. A click, `index("@x")` and
+  `bbox` follow it. While the field has the focus, one cell at the right is
+  kept for the insertion cursor.
+- A themed widget refuses `configure(class_=...)` after it is made, with
+  Tk's "attempt to change read-only option", even to the class it already
+  has; it took the new class and lost its class's bindings and style.
+- `update_idletasks()` lays widgets out and redraws, as in Tk, so
+  `winfo_width()` after it gives the width a widget will have, and a label
+  changed before a long computation shows the change while it runs. So does
+  `update()` called on a widget other than the root.
+- `padding` enlarges a themed Label, Button, Checkbutton, Radiobutton and
+  Menubutton and moves their text in from it, as in Tk; it was honoured
+  only by the themed containers.
+- Ctrl-C is answered between callbacks rather than raised in the middle of
+  one. A callback running when it arrived was cut short - a poll that
+  rescheduled itself with `after` simply stopped - while the program went
+  on. A second Ctrl-C while a callback has not returned still interrupts
+  it, and a program's own SIGINT handler is left alone.
+- Wide characters - CJK, fullwidth letters, most emoji - take two cells and
+  combining marks none, as on the terminal, in labels, buttons, check and
+  radio buttons, menubuttons and messages: their size, wrapping, anchoring,
+  justification and underline. Nothing is drawn past a widget's edge, and
+  a wide character the edge cuts in half leaves a blank. Entries, Text and
+  the Listbox still count characters.
 
 ## [0.3.0rc2] - 2026-11-07
 

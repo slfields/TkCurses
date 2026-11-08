@@ -31,6 +31,8 @@ character grid means on top of a neighbour.
 
 from __future__ import annotations
 
+from tkcurses._core.cells import cells, clip_cells
+
 __all__ = ["align_offset", "measure", "wrap", "wrap_spans"]
 
 #: Where each justification puts a short line within the available width.
@@ -68,7 +70,7 @@ def _wrap_paragraph(paragraph: str, width: int) -> list[str]:
         for piece in _fit(word, width):
             if not current:
                 current = piece
-            elif len(current) + 1 + len(piece) <= width:
+            elif cells(current) + 1 + cells(piece) <= width:
                 current = f"{current} {piece}"
             else:
                 lines.append(current)
@@ -82,14 +84,21 @@ def _fit(word: str, width: int) -> list[str]:
 
     Returned whole when it fits, so the common case allocates nothing.
     """
-    if len(word) <= width:
+    if cells(word) <= width:
         return [word]
-    return [word[start : start + width] for start in range(0, len(word), width)]
+    pieces = []
+    while word:
+        # At least one character, so a wide one in a width of one still
+        # moves on rather than looping for ever.
+        piece = clip_cells(word, width) or word[0]
+        pieces.append(piece)
+        word = word[len(piece) :]
+    return pieces
 
 
 def measure(lines: list[str]) -> tuple[int, int]:
     """The cells a block of text occupies, as ``(width, height)``."""
-    return max((len(line) for line in lines), default=0), len(lines)
+    return max((cells(line) for line in lines), default=0), len(lines)
 
 
 def align_offset(line_width: int, available: int, justify: str = "left") -> int:

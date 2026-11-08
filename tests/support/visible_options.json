@@ -700,12 +700,9 @@
    "kind": "behaviour"
   },
   "justify": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    "right",
-    "center"
-   ]
+   "value": "right"
   },
   "padx": {
    "kind": "visible",
@@ -2801,12 +2798,9 @@
    "kind": "behaviour"
   },
   "justify": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    "right",
-    "center"
-   ]
+   "value": "right"
   },
   "padx": {
    "kind": "visible",
@@ -3250,13 +3244,9 @@
    "value": "right"
   },
   "padding": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    0,
-    3,
-    9
-   ]
+   "value": 3
   },
   "state": {
    "kind": "visible",
@@ -3335,13 +3325,9 @@
    "kind": "behaviour"
   },
   "padding": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    0,
-    3,
-    9
-   ]
+   "value": 3
   },
   "state": {
    "kind": "visible",
@@ -3433,12 +3419,9 @@
    "kind": "behaviour"
   },
   "justify": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    "right",
-    "center"
-   ]
+   "value": "right"
   },
   "placeholder": {
    "kind": "visible",
@@ -3548,12 +3531,9 @@
    "kind": "behaviour"
   },
   "justify": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    "right",
-    "center"
-   ]
+   "value": "right"
   },
   "placeholder": {
    "kind": "visible",
@@ -3729,13 +3709,9 @@
    "value": "right"
   },
   "padding": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    0,
-    3,
-    9
-   ]
+   "value": 3
   },
   "relief": {
    "kind": "visible",
@@ -3974,13 +3950,9 @@
    "kind": "behaviour"
   },
   "padding": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    0,
-    3,
-    9
-   ]
+   "value": 3
   },
   "state": {
    "kind": "visible",
@@ -4330,13 +4302,9 @@
    "value": "right"
   },
   "padding": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    0,
-    3,
-    9
-   ]
+   "value": 3
   },
   "state": {
    "kind": "visible",
@@ -4615,12 +4583,9 @@
    "kind": "behaviour"
   },
   "justify": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    "right",
-    "center"
-   ]
+   "value": "right"
   },
   "placeholder": {
    "kind": "visible",

@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -465,6 +466,31 @@ def test_a_vertical_scroll_unit_is_a_cell(canvas):
     canvas.configure(scrollregion=(0, 0, 200, 100))
     canvas.yview_scroll(3, "units")
     assert canvas._top == 6
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        (0, 'bad scrollRegion "0"'),
+        (5, 'bad scrollRegion "5"'),
+        (" ", 'bad scrollRegion " "'),
+        ("0 0 10", 'bad scrollRegion "0 0 10"'),
+        ((0, 0, 10), 'bad scrollRegion "0 0 10"'),
+        ("0 0 10 10 5", 'bad scrollRegion "0 0 10 10 5"'),
+        ("a b c d", 'expected screen distance but got "a"'),
+    ],
+)
+def test_a_scroll_region_tk_refuses_is_refused(canvas, value, message):
+    """Measured on Tk 9.0.2, and refused when given, not at the next layout."""
+    with pytest.raises(TclError, match=f"^{re.escape(message)}$"):
+        canvas.configure(scrollregion=value)
+    assert canvas._scroll_region() == (0, 0, 40, 20)
+
+
+@pytest.mark.parametrize("value", ["", "0 0 10 10", (0, 0, 10, 10), [0, 0, 5, 5]])
+def test_a_scroll_region_tk_takes_is_kept(canvas, value):
+    canvas.configure(scrollregion=value)
+    assert canvas.cget("scrollregion") == value
 
 
 def test_the_view_never_leaves_the_scroll_region(canvas):

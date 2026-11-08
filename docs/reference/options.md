@@ -222,9 +222,11 @@ for anchor in ("nw", "center", "se"):
 ### justify
 
 How the lines of a multi-line text line up with one another: `left`,
-`center` or `right`. Entry and Spinbox accept it and draw their text from
-the left whatever it is; OptionMenu shows one line, so it has nothing to
-line up.
+`center` or `right`. In an entry or a spinbox it places the one line in
+the field, while all of it fits: a longer text starts at the left and
+scrolls, as in Tk. While a field has the focus, one cell is kept at the
+right for the insertion cursor. OptionMenu shows one line, so it has
+nothing to line up.
 
 ```{tkcurses-sample}
 # size: 60x6
@@ -393,13 +395,16 @@ ttk.Button(root, text="Delete", style="Danger.TButton").pack(side="left", padx=1
 Space between the widget's border and what it holds, in cells. One
 number is every side; two are across and up and down; four are left,
 top, right and bottom. A themed Label, Button, Checkbutton, Radiobutton
-or Menubutton does not grow by it yet, as tkinter's does.
+or Menubutton grows by it around its text. In Tk it replaces the padding
+the theme gives the widget, which is a pixel or three and so no cell
+here, so here it is simply added.
 
 ```{tkcurses-sample}
 for padding in (0, 1, "3 0"):
     frame = ttk.Frame(root, relief="solid", padding=padding)
     ttk.Label(frame, text=f"{padding}").pack()
     frame.pack(side="left", padx=1)
+ttk.Label(root, text="label", padding="2 1", relief="solid").pack(side="left")
 ```
 
 ### class
