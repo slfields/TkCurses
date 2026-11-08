@@ -3026,6 +3026,9 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         self._top = 0
         #: Cells the columns are scrolled left by. TkCurses-xe9.6.
         self._left = 0
+        #: The heading a press landed on, until the release decides whether
+        #: to run its command - ``State(heading)`` in Tk's treeview.tcl.
+        self._pressed_heading: str | None = None
         kw.setdefault("relief", "sunken")
         self._check_titles(tkcurses._given(cnf, kw))
         self._check_display(tkcurses._given(cnf, kw))
@@ -3039,6 +3042,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         self.tk.bound_classes.add(self._ttk_class)
         bind = self.bind_class
         bind(self._ttk_class, "<Button-1>", _treeview_click)
+        bind(self._ttk_class, "<ButtonRelease-1>", _treeview_release)
         bind(self._ttk_class, "<Key-Down>", _treeview_down)
         bind(self._ttk_class, "<Key-Up>", _treeview_up)
         bind(self._ttk_class, "<Key-Right>", _treeview_expand)
@@ -3283,6 +3287,9 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
                 for span_name, start, end in self._column_spans():
                     self._columns_entry(span_name)["width"] = end - start
             entry.update(kw)
+            if "width" in kw:
+                self._apply_requested_size()
+                self._invalidate_layout()
             self._redraw()
             return None
         # Tk answers with the width the column is DRAWN at, stretched - a
@@ -4367,8 +4374,36 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         self._check_display(given)
         result = super().configure(cnf, **kw)
         if given:
+            # Columns, show, height, the border and padding all move what
+            # the tree asks for; asking again for anything else is a no-op.
+            self._apply_requested_size()
+            self._invalidate_layout()
             self._redraw()
         return result
+
+    def _apply_requested_size(self) -> None:
+        """Ask for the shown columns side by side and ``height`` rows.
+
+        Not a Frame's request, which waits for children a tree never has:
+        inheriting it asked for no width at all, so a packed tree drew
+        nothing. Measured on Tk 9.0.2, a packed tree asks for its displayed
+        columns' widths (``#0``'s 200 pixels by default) and ``height`` rows
+        under its heading row, plus the border - 202x233. Here a column's
+        width is cells, and the columns are joined by the one space each
+        that :meth:`_column_spans` puts between them.
+        """
+        names = ([TREE_COLUMN] if self._shows_tree else []) + self._displayed_names()
+        widths = [int(self._columns_entry(name)["width"]) for name in names]
+        columns = sum(widths) + max(0, len(widths) - 1)
+        rows = int(self._options["height"]) + (1 if self._shows_headings else 0)
+        # _bordered, not _border_drawn: the second also wants room on screen,
+        # which nothing has before it is laid out, and asking without the
+        # border lets it eat the rows it was meant to surround.
+        edge = BORDER_WIDTH if self._bordered else 0
+        padx, pady = int(self._options["padx"]), int(self._options["pady"])
+        self._request_size(
+            max(1, columns) + 2 * (edge + padx), max(1, rows) + 2 * (edge + pady)
+        )
 
     config = configure
 
@@ -4408,10 +4443,19 @@ def _treeview_tag_event(sequence: str, event: Event) -> None:
 
 
 def _treeview_click(event: Event) -> Any:
-    """Select the row clicked, or open the branch if the marker was hit."""
+    """Select the row clicked, or open the branch if the marker was hit.
+
+    A press on a heading only remembers which, for the release to decide
+    on, as ``ttk::treeview::heading.press`` does.
+    """
     tree = event.widget
     if not isinstance(tree, Treeview):
         return None
+    if tree.identify_region(event.x, event.y) == "heading":
+        # ttk::treeview::Press takes the focus whatever was pressed.
+        tree.focus_set()
+        tree._pressed_heading = tree.identify_column(event.x) or None
+        return "break"
     iid = tree._row_at(event.y)
     if iid is None:
         return None
@@ -4426,6 +4470,30 @@ def _treeview_click(event: Event) -> Any:
     tree.focus(iid)
     tree.selection_set(iid)
     return "break"
+
+
+def _treeview_release(event: Event) -> None:
+    """Run a heading's command if the press began on it and ends on it.
+
+    ``ttk::treeview::heading.release``: the command runs only while the
+    heading is still pressed - the pointer back over the heading the press
+    landed on - and through ``after 0``, so after the release has been
+    handled rather than inside it. Tk keeps that in the heading's
+    ``pressed`` state, which ``heading.drag`` updates as the pointer moves;
+    a terminal need not report motion with a button held, so the release's
+    own position decides it here.
+    """
+    tree = event.widget
+    if not isinstance(tree, Treeview) or tree._pressed_heading is None:
+        return
+    column, tree._pressed_heading = tree._pressed_heading, None
+    if tree.identify_region(event.x, event.y) != "heading":
+        return
+    if tree.identify_column(event.x) != column:
+        return
+    command = tree.heading(column, "command")
+    if callable(command):
+        tree.after(0, command)
 
 
 def _treeview_toggle(tree: Treeview, iid: str) -> None:

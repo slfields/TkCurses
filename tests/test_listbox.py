@@ -25,7 +25,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tkcurses import Listbox, Misc, TclError
+from tkcurses import Listbox, Misc, StringVar, TclError
 from tkcurses._core.events import MOD_CTRL, MOD_SHIFT, KeyEvent, MouseEvent
 from tkcurses._core.geometry import Rect
 from tkcurses._core.panels import PanelStack
@@ -650,7 +650,6 @@ def test_a_disabled_listbox_refuses_the_commands_that_would_change_it(listbox):
 
 
 def test_a_disabled_listbox_still_takes_its_list_variable(root):
-    from tkcurses import StringVar
 
     items = StringVar(root, value="a b")
     box = Listbox(root, name="lb", listvariable=items, state="disabled")
@@ -668,6 +667,52 @@ def test_a_listbox_asks_for_its_rows_and_columns(root):
     box = Listbox(root, name="lb", width=30, height=5)
     assert box.winfo_reqwidth() == 30 + 2
     assert box.winfo_reqheight() == 5 + 2
+
+
+# listbox(n): "If zero or less, then the desired width for the window is made
+# just large enough to hold all the elements", and the same for height.
+# Measured on Tk 9.0.2 with TkFixedFont: width=0 holding 'abcdefghij' and
+# 'ab' asks for ten characters and the border. The two cells past the widest
+# item here are its selection markers.
+
+
+@pytest.mark.parametrize("width", [0, -3])
+def test_a_listbox_of_no_width_is_as_wide_as_its_widest_item(root, width):
+    box = Listbox(root, name="lb", width=width, height=4)
+    box.insert("end", "abcdefghij", "ab")
+    assert box.winfo_reqwidth() == 10 + 2 + 2
+
+
+def test_a_listbox_of_no_height_has_a_row_for_every_item(root):
+    box = Listbox(root, name="lb", width=10, height=0)
+    box.insert("end", "a", "b", "c")
+    assert box.winfo_reqheight() == 3 + 2
+
+
+def test_a_listbox_sized_to_its_items_follows_them(root):
+    box = Listbox(root, name="lb", width=0, height=0)
+    box.insert("end", "abc", "abcdefgh")
+    box.delete(1)
+    assert (box.winfo_reqwidth(), box.winfo_reqheight()) == (3 + 2 + 2, 1 + 2)
+
+
+def test_a_listbox_sized_to_a_list_variable_fits_its_items(root):
+    items = StringVar(root, value="one two three")
+    box = Listbox(root, name="lb", width=0, height=0, listvariable=items)
+    assert (box.winfo_reqwidth(), box.winfo_reqheight()) == (5 + 2 + 2, 3 + 2)
+    items.set("a")
+    assert (box.winfo_reqwidth(), box.winfo_reqheight()) == (1 + 2 + 2, 1 + 2)
+
+
+def test_an_empty_listbox_of_no_size_still_has_a_cell(root):
+    box = Listbox(root, name="lb", width=0, height=0)
+    assert (box.winfo_reqwidth(), box.winfo_reqheight()) == (1 + 2 + 2, 1 + 2)
+
+
+def test_a_listbox_of_no_width_measures_its_items_in_cells(root):
+    box = Listbox(root, name="lb", width=0, height=1)
+    box.insert("end", "日本")  # two ideographs: four cells
+    assert box.winfo_reqwidth() == 4 + 2 + 2
 
 
 # ----------------------------------------------------------- scrollbar pair

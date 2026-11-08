@@ -137,7 +137,7 @@ for name in ("apple", "banana", "cherry", "damson", "elderberry", "fig"):
     fruit.insert("end", name)
 fruit.pack(fill="x")
 
-table = ttk.Treeview(root, columns=("price",), height=6)
+table = ttk.Treeview(root, columns=("price",), height=3)
 table.heading("#0", text="Fruit")
 table.heading("price", text="Price")
 for name, price in (("apple", "0.30"), ("banana", "0.25"), ("cherry", "2.10")):

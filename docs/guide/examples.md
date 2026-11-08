@@ -105,8 +105,8 @@ to keep them there instead: `python3 examples/notes.py ~/notes.json`.
 
 ## A table
 
-A Treeview showing columns, sorted by pressing 1, 2, 3 or 4 for a column -
-and in reverse by pressing it again. The arrows move through the rows, and
+A Treeview showing columns, sorted by clicking a column's heading - or
+pressing 1, 2, 3 or 4 for it - and in reverse by doing it again. The arrows move through the rows, and
 Return shows the chosen one below. The screen is taken after sorting by
 the number of moons and choosing the third planet.
 

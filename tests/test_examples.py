@@ -184,6 +184,26 @@ def test_a_number_sorts_the_table_and_again_reverses_it(terminal, tmp_path):
 
 
 @pytest.mark.tty
+def test_clicking_a_heading_sorts_the_table_and_again_reverses_it(terminal, tmp_path):
+    """The heading's command, which a Treeview stored and never called."""
+    term = start(terminal, tmp_path, "table", cols=52, rows=14)
+    term.wait_for_text("Neptune")
+    row, column = term.find_text("Moons")
+
+    def first(t):
+        return t.display[row + 1].lstrip("│").split()[0]
+
+    term.click(column, row)
+    term.wait_for(
+        lambda t: t.contains("Moons ^") and first(t) == "Mercury", message="fewest"
+    )
+    term.click(column, row)
+    term.wait_for(
+        lambda t: t.contains("Moons v") and first(t) == "Saturn", message="most"
+    )
+
+
+@pytest.mark.tty
 def test_the_chart_draws_every_month_and_follows_a_resize(terminal, tmp_path):
     term = start(terminal, tmp_path, "chart", cols=50, rows=14)
     for month in ("Jan", "Feb", "Mar", "Apr", "May", "Jun"):

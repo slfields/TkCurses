@@ -31,6 +31,7 @@ import tkcurses
 from tkcurses import Misc, TclError
 from tkcurses._core.events import MOD_ALT, MOD_SHIFT, MouseEvent
 from tkcurses.ttk import (
+    COLUMN_WIDTH,
     Button,
     Checkbutton,
     Combobox,
@@ -3749,3 +3750,106 @@ def test_opening_the_dropdown_leaves_another_entrys_selection_alone(combobox):
     combobox._post()
     assert combobox._listbox.curselection() == (1,)
     assert entry.selection_present()
+
+
+# A Treeview asks for its shown columns and its rows. It inherited a Frame's
+# request, which waits for children a tree never has, so a packed tree asked
+# for no width and drew nothing. Measured on Tk 9.0.2: a packed tree asks for
+# its displayed columns' widths and `height` rows under the heading row, plus
+# the border - 202x233 by default. Columns here are joined by a space each,
+# and the sunken border is a cell each side.
+
+EDGES = 2
+
+
+def _tree_size(tree):
+    return tree.winfo_reqwidth(), tree.winfo_reqheight()
+
+
+def test_a_treeview_asks_for_its_columns_and_rows(root):
+    tree = Treeview(root, name="t", columns=("a", "b"), height=4)
+    tree.column("#0", width=8)
+    tree.column("a", width=5)
+    tree.column("b", width=3)
+    assert _tree_size(tree) == (8 + 1 + 5 + 1 + 3 + EDGES, 4 + 1 + EDGES)
+
+
+def test_a_treeview_without_headings_asks_for_no_heading_row(root):
+    tree = Treeview(root, name="t", show="tree", height=3)
+    assert _tree_size(tree) == (COLUMN_WIDTH + EDGES, 3 + EDGES)
+
+
+def test_a_treeview_asks_only_for_the_columns_it_shows(root):
+    tree = Treeview(
+        root, name="t", columns=("a", "b"), displaycolumns=("b",), show="headings"
+    )
+    tree.column("b", width=6)
+    assert tree.winfo_reqwidth() == 6 + EDGES
+
+
+def test_a_treeview_asks_again_when_its_shape_changes(root):
+    tree = Treeview(root, name="t", columns=("a",), show="headings", height=2)
+    tree.column("a", width=9)
+    tree.configure(height=6, columns=("a", "b"))
+    tree.column("b", width=4)
+    assert _tree_size(tree) == (9 + 1 + 4 + EDGES, 6 + 1 + EDGES)
+
+
+# A heading's command runs when a click on it is released over it - Tk's
+# ttk::treeview::heading.press and heading.release - through `after 0`, so a
+# pass of the loop (update) runs it. It was stored and never called.
+
+
+def _click_heading(tree, press_x, release_x=None, release_y=None):
+    area = tree._rows_area()
+    tree._handle(MouseEvent(button=1, state="pressed", x=press_x, y=area.y))
+    tree._handle(
+        MouseEvent(
+            button=1,
+            state="released",
+            x=press_x if release_x is None else release_x,
+            y=area.y if release_y is None else release_y,
+        )
+    )
+
+
+def _column_x(tree, name):
+    start = next(s for n, s, _ in tree._column_spans() if n == name)
+    return tree._rows_area().x + start
+
+
+def test_clicking_a_heading_runs_its_command(root, tree):
+    calls = []
+    tree.heading("size", command=lambda: calls.append("size"))
+    tree.heading("#0", command=lambda: calls.append("#0"))
+    _click_heading(tree, _column_x(tree, "size"))
+    assert calls == []  # through after 0, not inside the release
+    root.update()
+    assert calls == ["size"]
+    _click_heading(tree, _column_x(tree, "#0"))
+    root.update()
+    assert calls == ["size", "#0"]
+
+
+def test_a_heading_release_elsewhere_runs_nothing(root, tree):
+    calls = []
+    tree.heading("size", command=lambda: calls.append("size"))
+    tree.heading("#0", command=lambda: calls.append("#0"))
+    size = _column_x(tree, "size")
+    _click_heading(tree, size, release_x=_column_x(tree, "#0"))
+    _click_heading(tree, size, release_y=tree._rows_area().y + 1)
+    root.update()
+    assert calls == []
+
+
+def test_a_click_on_a_heading_takes_the_focus_and_selects_nothing(root, filled):
+    filled.heading("size", command=lambda: None)
+    _click_heading(filled, _column_x(filled, "size"))
+    root.update()
+    assert filled.selection() == ()
+    assert root.focus_get() is filled
+
+
+def test_a_heading_without_a_command_is_clicked_quietly(root, tree):
+    _click_heading(tree, _column_x(tree, "size"))
+    root.update()

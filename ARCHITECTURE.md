@@ -3395,6 +3395,7 @@ Genuinely still ahead:
 the docs build takes by running it, and each driven by
 `tests/test_examples.py` the way the page says to use it. Writing them
 finds bugs: the first six found a Treeview heading command never called
+(`TkCurses-fl9m`, fixed: it runs on release over the heading pressed)
 and a Canvas whose default relief was not Tk's; the next five
 (`TkCurses-q6d1`) found these, each measured against Tk 9.0 and filed
 rather than fixed alongside:

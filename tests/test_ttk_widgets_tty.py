@@ -1440,3 +1440,30 @@ def test_the_wheel_scrolls_a_tree_both_ways(terminal, tmp_path):
         lambda t: t.row(1)[1:6] == "DEFGH" and "w3" in t.row(2),
         message="three cells sideways, nothing down",
     )
+
+
+def test_a_packed_treeview_with_no_size_draws(terminal, tmp_path):
+    """It asked for no width and drew nothing; it now asks for its columns
+    and rows as Tk's does."""
+    source = """
+import tkcurses
+from tkcurses import ttk
+
+root = tkcurses.Tk()
+tv = ttk.Treeview(root, height=2)
+tv.heading('#0', text='Name')
+tv.insert('', 'end', text='Alpha')
+tv.pack()
+root.after(4000, root.quit)
+root.mainloop()
+"""
+    term = terminal(cols=40, rows=12)
+    term.run_source(source, workdir=tmp_path)
+    # Both in one wait: the heading arriving does not promise the row has.
+    term.wait_for(
+        lambda t: (
+            any("Name" in line for line in t.display)
+            and any("Alpha" in line for line in t.display)
+        ),
+        message="the heading and the row",
+    )

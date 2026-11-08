@@ -61,6 +61,15 @@ All notable changes to TkCurses. The format follows
   next row, a combining mark stays with its letter, tags colour both cells
   of a wide character, and `bbox`, clicks, Up and Down and numeric tabs
   count cells.
+- A Listbox with a `width` or `height` of zero or less is as wide as its
+  widest item and as tall as its items, as listbox(n) says, and follows
+  them as they change. It asked for no room and drew an empty box.
+- A ttk.Treeview asks for its shown columns side by side and `height`
+  rows under its heading, with its border, as Tk's does. It asked for no
+  width, so a packed tree drew nothing.
+- Clicking a ttk.Treeview heading runs its `command`, when the button is
+  released over the heading it was pressed on, as Tk's does. It was
+  stored and never called. The table example sorts by its headings.
 
 ## [0.3.0rc2] - 2026-11-07
 

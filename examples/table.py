@@ -48,7 +48,7 @@ root.title("Planets")
 table = ttk.Treeview(root, columns=[c[0] for c in COLUMNS], show="headings", height=8)
 scroll = ttk.Scrollbar(root, orient="vertical", command=table.yview)
 table.configure(yscrollcommand=scroll.set)
-chosen = ttk.Label(root, text="Return shows a planet; 1-4 sort")
+chosen = ttk.Label(root, text="Return shows a planet; a heading sorts")
 chosen.pack(side="bottom", fill="x", padx=1)
 scroll.pack(side="right", fill="y")
 table.pack(fill="both", expand=True)
@@ -70,7 +70,7 @@ def sort_by(column):
 
 
 for number, (name, title, width) in enumerate(COLUMNS, start=1):
-    table.heading(name, text=title)
+    table.heading(name, text=title, command=lambda c=name: sort_by(c))
     table.column(name, width=width, anchor="w" if name == "name" else "e")
     table.bind(str(number), lambda event, c=name: sort_by(c))
 for planet in PLANETS:

@@ -265,3 +265,26 @@ def test_a_listbox_scrolled_sideways_shows_the_rest_of_its_items(terminal, tmp_p
     term.run_source(program(body), workdir=tmp_path)
     term.wait_for_text("KLMNOP")
     assert not any("abcdef" in line for line in term.display)
+
+
+def test_a_packed_listbox_of_no_width_shows_every_item_whole(terminal, tmp_path):
+    """listbox(n): a width of zero is "just large enough to hold all the
+    elements". It used to ask for no columns and draw an empty box."""
+    term = terminal(cols=40, rows=12)
+    body = (
+        "lb = tkcurses.Listbox(root, width=0, height=0)\n"
+        "lb.pack()\n"
+        "lb.insert('end', 'abcdefghij', 'ab')\n"
+    )
+    term.run_source(program(body), workdir=tmp_path)
+    # Both items in one wait, and the box's right edge right after the
+    # widest: two cells of markers, then the border - TkCurses-txk.
+    term.wait_for(
+        lambda t: (
+            any("abcdefghij" in line for line in t.display)
+            and any(line.strip(" │") == "ab" for line in t.display)
+        ),
+        message="both items, whole",
+    )
+    row = next(line for line in term.display if "abcdefghij" in line)
+    assert row.rstrip().endswith("abcdefghij │")

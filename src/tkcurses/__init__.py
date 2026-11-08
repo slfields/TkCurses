@@ -17250,12 +17250,30 @@ class Listbox(_Drawable, XView, YView):
         bind(name, "<FocusOut>", _listbox_refresh)
 
     def _apply_requested_size(self) -> None:
-        """Ask for the configured rows and columns, plus border and padding."""
+        """Ask for the configured rows and columns, plus border and padding.
+
+        A ``width`` or ``height`` of zero or less asks for room for every
+        item instead, as listbox(n) says - the widest item, in cells, with
+        its two selection markers, and one row an item - never less than
+        one of either, as Tk's ``ListboxComputeGeometry`` does.
+        """
         edge = 2 * BORDER_WIDTH if self._bordered else 0
+        width = int(self._options["width"])
+        if width <= 0:
+            width = max(1, self._widest()) + 2
+        height = int(self._options["height"])
+        if height <= 0:
+            height = max(1, len(self._items))
         self._request_size(
-            int(self._options["width"]) + 2 * int(self._options["padx"]) + edge,
-            int(self._options["height"]) + 2 * int(self._options["pady"]) + edge,
+            width + 2 * int(self._options["padx"]) + edge,
+            height + 2 * int(self._options["pady"]) + edge,
         )
+
+    def _refit(self) -> None:
+        """The items changed: a list sized to them asks for a new size."""
+        if int(self._options["width"]) <= 0 or int(self._options["height"]) <= 0:
+            self._apply_requested_size()
+            self._invalidate_layout()
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, re-measuring and repainting as the change requires."""
@@ -17325,6 +17343,7 @@ class Listbox(_Drawable, XView, YView):
             except TclError as error:
                 raise TclError(f"{error}: invalid -listvariable value") from None
             self._selection = {i for i in self._selection if i < len(self._items)}
+            self._refit()
         else:
             self.tk.variables[name] = tuple(self._items)
         handle = variable.trace_add("write", lambda *_: self._list_written(variable))
@@ -17347,6 +17366,7 @@ class Listbox(_Drawable, XView, YView):
         self._items = items
         self._selection = {i for i in self._selection if i < len(items)}
         self._clamp_view()
+        self._refit()
         self._redraw()
 
     def _publish_items(self) -> None:
@@ -17370,6 +17390,7 @@ class Listbox(_Drawable, XView, YView):
         self._items[at:at] = [str(element) for element in elements]
         self._shift_state(at, len(elements))
         self._publish_items()
+        self._refit()
         self._redraw()
 
     def delete(self, first: Any, last: Any = None) -> None:
@@ -17407,6 +17428,7 @@ class Listbox(_Drawable, XView, YView):
             self._active = min(start, max(0, len(self._items) - 1))
         self._publish_items()
         self._clamp_view()
+        self._refit()
         self._redraw()
 
     def get(self, first: Any, last: Any = None) -> Any:
