@@ -173,3 +173,27 @@ def test_a_toplevel_paints_its_background_inside_its_border(terminal, tmp_path):
             row, column, lambda cell: cell.bg == "blue", message=f"{row},{column}"
         )
     term.wait_for_cell(0, 0, lambda cell: cell.bg != "blue", message="the root")
+
+
+def test_padding_set_on_a_shown_toplevel_moves_its_children(terminal, tmp_path):
+    # TkCurses-00dx: inside the toplevel's one-cell border, then its padding.
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        "import tkcurses as tk\n"
+        "root = tk.Tk()\n"
+        "top = tk.Toplevel(root, width=20, height=6)\n"
+        'tk.Label(top, text="in", bg="red").pack(fill="both", expand=True)\n'
+        "root.after(300, lambda: top.configure(padx=3, pady=1))\n"
+        "root.after(4000, root.quit)\n"
+        "root.mainloop()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("┌")
+    top, left = term.find_text("┌")
+    # The cell inside the border is the label's until the padding arrives.
+    red = lambda cell: cell.bg == "red"  # noqa: E731
+    term.wait_for_cell(top + 1, left + 1, red, message="the label to the border")
+    term.wait_for_cell(
+        top + 1, left + 1, lambda cell: not red(cell), message="padding inside it"
+    )
+    term.wait_for_cell(top + 2, left + 4, red, message="the label inside the padding")

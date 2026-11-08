@@ -6,6 +6,18 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Padding set on the root window or a Toplevel while the program runs
+  moves their children at once; it waited for the terminal to be resized.
+  A negative `padx` or `pady` reads back as 0 on every widget, as in Tk
+  (`""` on a Message), and one that is not a distance is refused when it
+  is set rather than breaking the layout later.
+- `pack` and `grid` are accepted inside a PanedWindow that has panes, as in
+  Tk, laying their children out over the panes. A pane's `winfo_manager()`
+  is `panedwindow`, as Tk's is, and `""` after `forget`; adding a packed
+  widget as a pane takes it out of pack, and packing a pane takes it out of
+  the panes.
+
 ## [0.3.0rc2] - 2026-11-07
 
 The second release candidate. Grid and PanedWindow layout now follow Tk's

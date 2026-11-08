@@ -239,11 +239,20 @@ class LayoutEngine:
         before it can place them in it.
         """
         manager = container._layout_manager
+        # A paned window's panes, and pack or grid beside them (TkCurses-ect9).
+        # Tk sizes the window by whichever manager asked last; here pack or
+        # grid while it has children, and the panes otherwise.
+        paned = getattr(container, "_paned_manager", None)
+        sizer = manager
+        if paned is not None and (manager is None or not manager.slaves(container)):
+            sizer = paned
+        if sizer is not None and getattr(sizer, "propagates", True):
+            self._propagate(
+                container, container._outer_size(sizer.requested(container))
+            )
+        if paned is not None:
+            paned.apply(container, container._content_rect())
         if manager is not None:
-            if getattr(manager, "propagates", True):
-                self._propagate(
-                    container, container._outer_size(manager.requested(container))
-                )
             manager.apply(container, container._content_rect())
         # Placed children last, over what pack or grid arranged: place has a
         # layout of its own beside theirs, as in Tk. TkCurses-huq9.
@@ -273,6 +282,7 @@ class LayoutEngine:
         if parent is not None and (
             parent._layout_manager is not None
             or getattr(parent, "_place_manager", None) is not None
+            or getattr(parent, "_paned_manager", None) is not None
         ):
             self.invalidate(parent)
 

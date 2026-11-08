@@ -59,14 +59,14 @@ COLOURS = {
 
 root = tk.Tk()
 root.title("Calculator")
-# The keys sit on a Frame of their own colour, which shows between them.
-body = tk.Frame(root, background="gray15", padx=1, pady=1)
-body.pack(fill="both", expand=True)
+# The window's own colour shows between the keys, and its padding is the
+# margin round them.
+root.configure(background="gray15", padx=1, pady=1)
 # Anchored east, so a number too long for the screen shows its end.
 screen = {"background": "black", "anchor": "e", "padx": 1}
-history = tk.Label(body, foreground="gray60", **screen)
+history = tk.Label(root, foreground="gray60", **screen)
 history.grid(row=0, column=0, columnspan=4, sticky="nsew")
-display = tk.Label(body, text="0", foreground="lime green", **screen)
+display = tk.Label(root, text="0", foreground="lime green", **screen)
 display.grid(row=1, column=0, columnspan=4, sticky="nsew")
 
 # The number being typed, the total so far, and the operation waiting for
@@ -164,7 +164,7 @@ for row, keys in enumerate(KEYS, start=2):
     for column, key in enumerate(keys):
         background, foreground, under_mouse = COLOURS[kind(key)]
         tk.Button(
-            body,
+            root,
             text=LABELS.get(key, key),
             command=lambda key=key: press(key),
             background=background,
@@ -183,9 +183,9 @@ for row, keys in enumerate(KEYS, start=2):
 # One uniform group: the four columns stay the same width, even while a
 # long number asks the grid for more room than the window has.
 for column in range(4):
-    body.columnconfigure(column, weight=1, uniform="key")
+    root.columnconfigure(column, weight=1, uniform="key")
 for row in range(2, len(KEYS) + 2):
-    body.rowconfigure(row, weight=1)
+    root.rowconfigure(row, weight=1)
 
 
 def typed(event):

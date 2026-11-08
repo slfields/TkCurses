@@ -1076,3 +1076,39 @@ def test_a_background_set_before_loadtk_is_painted_when_curses_starts(
         workdir=tmp_path,
     )
     term.wait_for_cell(5, 20, _blue, message="the blue background")
+
+
+def test_the_root_pads_its_children_with_its_background(terminal, tmp_path):
+    # Tk 9.0.2: a root with padx=10, pady=5 puts a label packed fill="both"
+    # at 10,5, and paints the padding with its background.
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        "import tkcurses as tk\n"
+        "root = tk.Tk()\n"
+        'root.configure(padx=3, pady=2, bg="blue")\n'
+        'tk.Label(root, text="inside", bg="red").pack(fill="both", expand=True)\n'
+        "root.after(4000, root.quit)\n"
+        "root.mainloop()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_cell(2, 3, lambda cell: cell.bg == "red", message="red at 2,3")
+    term.wait_for_cell(7, 36, lambda cell: cell.bg == "red", message="red at 7,36")
+    for row, column in ((1, 3), (2, 2), (8, 36), (7, 37)):
+        term.wait_for_cell(row, column, _blue, message=f"blue at {row},{column}")
+
+
+def test_padding_set_on_a_running_root_moves_its_children(terminal, tmp_path):
+    # Set after the first layout, it did nothing until the terminal resized.
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        "import tkcurses as tk\n"
+        "root = tk.Tk()\n"
+        'tk.Label(root, text="inside", bg="red").pack(fill="both", expand=True)\n'
+        "root.after(300, lambda: root.configure(padx=3, pady=2))\n"
+        "root.after(4000, root.quit)\n"
+        "root.mainloop()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_cell(0, 0, lambda cell: cell.bg == "red", message="red at 0,0")
+    term.wait_for_cell(0, 0, lambda cell: cell.bg != "red", message="0,0 cleared")
+    term.wait_for_cell(2, 3, lambda cell: cell.bg == "red", message="red at 2,3")

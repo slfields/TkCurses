@@ -268,6 +268,55 @@ class _Screen(pyte.Screen):
             behind = [stop for stop in self.tabstops if stop < self.cursor.x]
             self.cursor.x = max(behind) if behind else 0
 
+    def scroll_up(self, count: int = 0) -> None:
+        """Scroll the scroll region up ``count`` lines, as ``CSI n S`` does.
+
+        ncurses sends it - terminfo's ``indn`` - when a refresh finds a run
+        of lines moved up by more than one, which is what a list or a tree
+        does when several keys arrive before it redraws. pyte drops it, so
+        the lines stayed where they were and only the new ones at the
+        bottom were painted: a torn screen no terminal shows, which failed
+        a Treeview test on a slow CI runner and never locally, where each
+        key was its own refresh and moved one line. TkCurses-atf4.
+        """
+        self._scroll(count or 1)
+
+    def scroll_down(self, count: int = 0) -> None:
+        """Scroll the scroll region down ``count`` lines, as ``CSI n T`` does.
+
+        terminfo's ``rin``, the other direction of :meth:`scroll_up`.
+        """
+        self._scroll(-(count or 1))
+
+    def _scroll(self, by: int) -> None:
+        """Move the scroll region's lines up by ``by`` (down if negative).
+
+        The cursor stays where it is, and the lines brought in are blank in
+        the current background, as xterm's back-colour erase leaves them.
+        """
+        top, bottom = (
+            (self.margins.top, self.margins.bottom)
+            if self.margins
+            else (0, self.lines - 1)
+        )
+        height = bottom - top + 1
+        by = max(-height, min(height, by))
+        rows = range(top, bottom + 1) if by > 0 else range(bottom, top - 1, -1)
+        lines = {row: self.buffer[row] for row in range(top, bottom + 1)}
+        dim = self._dim_cells
+        self._dim_cells = {cell for cell in dim if not top <= cell[0] <= bottom}
+        for row in rows:
+            source = row + by
+            if top <= source <= bottom:
+                self.buffer[row] = lines[source]
+                self._dim_cells |= {(row, c) for (r, c) in dim if r == source}
+            else:
+                blank = self.buffer.default_factory()
+                for column in range(self.columns):
+                    blank[column] = self.cursor.attrs
+                self.buffer[row] = blank
+        self.dirty.update(range(top, bottom + 1))
+
 
 #: An SGR sequence whose parameters are separated by colons rather than
 #: semicolons. ncurses emits these for a direct-colour terminfo - the
@@ -305,6 +354,8 @@ class _ByteStream(pyte.ByteStream):
     csi: ClassVar[dict[str, str]] = {
         **pyte.ByteStream.csi,
         "Z": "cursor_back_tab",
+        "S": "scroll_up",
+        "T": "scroll_down",
     }
 
     def feed(self, data: bytes) -> None:

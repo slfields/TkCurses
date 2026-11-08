@@ -172,3 +172,45 @@ def test_a_pair_survives_a_later_configure_that_does_not_mention_it(root, manage
         widget.grid(row=0, column=0, padx=(1, 5))
         widget.grid_configure(sticky="ew")
         assert widget.grid_info()["padx"] == (1, 5)
+
+
+# ---------------------------------------------------------------------------
+# A widget's own padx and pady (TkCurses-00dx). Measured on Tk 9.0.2: below
+# zero reads back 0, on a Message "", and "" or "abc" is refused; on every
+# widget that has them, the root and a Toplevel included.
+
+PADDED = [
+    "Frame",
+    "Label",
+    "Button",
+    "Checkbutton",
+    "Radiobutton",
+    "Menubutton",
+    "LabelFrame",
+    "Text",
+    "Toplevel",
+]
+
+
+@pytest.mark.parametrize("name", PADDED)
+@pytest.mark.parametrize("option", ["padx", "pady"])
+def test_a_negative_padding_reads_back_as_zero(root, name, option):
+    import tkcurses
+
+    widget = getattr(tkcurses, name)(root)
+    widget.configure({option: -2})
+    assert widget.cget(option) == 0
+    widget.configure({option: 3})
+    assert widget.cget(option) == 3
+    with pytest.raises(
+        tkcurses.TclError, match='expected screen distance but got "abc"'
+    ):
+        widget.configure({option: "abc"})
+
+
+def test_a_message_reads_a_negative_padding_back_as_empty(root):
+    import tkcurses
+
+    message = tkcurses.Message(root)
+    message.configure(padx=-2, pady="")
+    assert (message.cget("padx"), message.cget("pady")) == ("", "")

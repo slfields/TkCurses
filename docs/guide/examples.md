@@ -66,8 +66,8 @@ and BackSpace to take back a digit. The screen is taken after typing
 :keys: ["12+30*2"]
 ```
 
-The keys sit on a Frame with a background of its own, which shows in the
-gaps between them. The four columns are one `uniform` group, so they stay
+The window's own `background` shows in the gaps between the keys, and
+its `padx` and `pady` are the margin round them. The four columns are one `uniform` group, so they stay
 the same width even when a long number asks for more room than the window
 has; the display is anchored east, so such a number shows its end.
 

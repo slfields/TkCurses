@@ -341,6 +341,71 @@ def test_back_tab_stops_at_the_left_margin(terminal):
     assert term.row(0).startswith("HERE")
 
 
+def _rows(term, count):
+    return [term.row(row).rstrip() for row in range(count)]
+
+
+def _numbered(term, count):
+    """Rows 0..count-1 written "r0", "r1", ..., cursor left at the top."""
+    term._stream.feed(
+        b"".join(b"\x1b[%d;1Hr%d" % (row + 1, row) for row in range(count)) + b"\x1b[H"
+    )
+
+
+def test_scroll_up_moves_the_scroll_region_and_blanks_the_bottom(terminal):
+    """ncurses sends CSI n S (terminfo indn) when a refresh finds lines moved
+    up by more than one. pyte dropped it, and the screen tore: the lines
+    stayed put and only the new ones were painted. TkCurses-atf4."""
+    term = terminal(cols=10, rows=6)
+    _numbered(term, 6)
+    term._stream.feed(b"\x1b[2;5r\x1b[2S")  # region rows 2-5, one-based
+    assert _rows(term, 6) == ["r0", "r3", "r4", "", "", "r5"]
+
+
+def test_scroll_down_moves_the_scroll_region_and_blanks_the_top(terminal):
+    term = terminal(cols=10, rows=6)
+    _numbered(term, 6)
+    term._stream.feed(b"\x1b[2;5r\x1b[T")
+    assert _rows(term, 6) == ["r0", "", "r1", "r2", "r3", "r5"]
+
+
+def test_scrolling_leaves_the_cursor_and_takes_the_background(terminal):
+    term = terminal(cols=10, rows=4)
+    _numbered(term, 4)
+    term._stream.feed(b"\x1b[3;2H\x1b[44m\x1b[S")
+    # No count is one line, as ECMA-48 says.
+    assert _rows(term, 4) == ["r1", "r2", "r3", ""]
+    assert (term._screen.cursor.y, term._screen.cursor.x) == (2, 1)
+    assert term._screen.buffer[3][5].bg == "blue"
+
+
+def test_a_list_scrolled_three_lines_at_once_is_not_torn(terminal, tmp_path):
+    """The shape the CI failure had, made certain: three lines in one
+    refresh, where locally each key was a refresh of its own."""
+    term = terminal(cols=30, rows=16)
+    term.run_source(
+        "import tkcurses as tk\n"
+        "root = tk.Tk()\n"
+        'tk.Label(root, text="title").pack()\n'
+        "lb = tk.Listbox(root, height=12)\n"
+        'lb.pack(fill="both", expand=True)\n'
+        "for i in range(60):\n"
+        '    lb.insert("end", f"row {i:02d}")\n'
+        'root.after(300, lambda: lb.yview_scroll(3, "units"))\n'
+        "root.after(4000, root.quit)\n"
+        "root.mainloop()\n",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("row 00")
+    term.wait_for(
+        lambda t: t.contains("row 15") and not t.contains("row 02"),
+        message="the list three rows on",
+    )
+    assert [line[2:8] for line in term.display[2:14]] == [
+        f"row {i:02d}" for i in range(3, 15)
+    ]
+
+
 def test_assert_box_waits_for_a_box_that_is_still_arriving(terminal, tmp_path):
     """curses sends a refresh as a series of writes.
 

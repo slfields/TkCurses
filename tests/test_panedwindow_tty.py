@@ -294,3 +294,18 @@ def test_a_paned_window_survives_the_terminal_shrinking(terminal, tmp_path):
     term.resize(cols=24, rows=8)
     term.wait_for_text("LEFT")
     assert "Traceback" not in term.stderr
+
+
+def test_a_label_packed_into_a_paned_window_is_drawn_over_the_panes(terminal, tmp_path):
+    # TkCurses-ect9: refused until pack was given a slot beside the panes.
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        program(
+            PANED + "tkcurses.Label(p, text='PACKED', bg='red').pack(side='bottom')\n"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(
+        lambda t: t.contains("PACKED") and t.contains("LEFT"),
+        message="the packed label and the panes",
+    )

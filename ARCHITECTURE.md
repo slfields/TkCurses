@@ -3319,8 +3319,12 @@ would write: the calculator's columns are one `uniform` group and its
 display asks for all the room it likes, where it had `width=1` to keep
 out of the grid; and the layout's left pane starts at a `width` of its own
 and keeps it through a resize, where the panes used to share the room.
-The calculator's coloured Frame stays: it carries the margin round the
-keys, which the root cannot until it takes `padx` (`TkCurses-00dx`).
+The calculator's coloured Frame went too, once the root's own `padx` and
+`pady` were seen to work (`TkCurses-00dx`): they always had, and the issue
+was filed from a list of the options `Tk` declares itself, without those it
+inherits. What did not work was changing them on a running root or
+Toplevel, which laid nothing out again until a resize, and a negative one,
+kept as given where every Tk widget reads it back as 0 (a Message as `""`).
 
 **The pty harness gives a widened terminal tab stops**, which pyte does
 not: it sets a stop every eight columns once, at the starting width.
@@ -3331,6 +3335,16 @@ example's status bar drew its right-hand label at the start of a line
 below it. `_Screen.resize` adds them, as xterm does. Like REP
 (`TkCurses-go7y`), a terminal does it and the emulator under the tests
 did not.
+
+**The harness scrolls by more than one line**, which pyte did not
+(`TkCurses-atf4`). A refresh that finds a run of lines moved up by n uses
+terminfo's `indn`, `CSI n S` (and `rin`, `CSI n T`, for down) inside the
+scroll region; pyte dropped both, so the lines stayed put and only the new
+ones were painted. It surfaced as a Treeview with frozen rows half-redrawn
+on a slow CI runner, never locally: there each Down was a refresh of its
+own and scrolled one line, by `ind`, which pyte handles. A Listbox scrolled
+three units in one callback tore every time. The library was right all
+along; a real terminal showed the scroll.
 
 **The tutorial is four pages read in order, and they are tested as one**
 (`TkCurses-5dli`): the introduction, core concepts, common widgets and a
@@ -3777,10 +3791,11 @@ reason.
 
 #### Which managers share a container
 
-A container has two layout slots, not one: `_layout_manager`, for pack, grid
-or a paned window's own, and `_place_manager`, for place. The engine runs the
-first and then the second, so placed children land over what pack or grid
-arranged. Measured on Tk 9.0.2, which is what this follows:
+A container has three layout slots, not one: `_paned_manager`, for a paned
+window's panes; `_layout_manager`, for pack or grid; and `_place_manager`,
+for place. The engine runs them in that order, so packed children land over
+the panes and placed ones over both. Measured on Tk 9.0.2, which is what
+this follows:
 
 - place shares a container with pack or grid, and is never refused - the
   overlay, a badge or a floating button over packed content;
@@ -3792,13 +3807,25 @@ arranged. Measured on Tk 9.0.2, which is what this follows:
 - `place` on a packed widget in the same container takes it out of pack, and
   `pack` takes it back out of place;
 - `pack_forget`, `grid_forget` and `place_forget` leave alone a widget another
-  manager lays out.
+  manager lays out;
+- a paned window's panes refuse neither pack nor grid (`TkCurses-ect9`). A
+  label packed `side="bottom"` into a 300-pixel window holding a pane sits at
+  the bottom centre while the pane keeps the whole window. A pane's manager
+  reads `panedwindow`, for the themed widget too, and `""` once forgotten;
+  `add` takes a packed widget out of pack, and packing a pane takes it out of
+  the panes.
 
 Before `TkCurses-huq9` a container had one slot, so place refused a packed
 container and pack a placed one, and every forget unmapped the widget
-whichever manager it was in. One departure is left: Tk lets pack and place
-into a panedwindow, and here its paned layout holds the slot pack needs, so
-pack there is refused.
+whichever manager it was in; before `TkCurses-ect9` a paned window's layout
+held the slot pack and grid need, so both were refused there.
+
+**What the window asks for, with panes and pack both in it, is not Tk's.**
+Tk takes whichever manager last asked for a size: a pane needing 50 by 20
+with a packed 40 by 10 beside it made the window ask for 40 by 10, and a
+pane added after would ask again. Here the window asks for pack's or grid's
+size while that manager has a child, and the panes' otherwise - the same
+answer for the common order, without keeping a history of requests.
 
 `pack_propagate(False)` stops a container resizing to fit its children: it
 keeps the size it was given and its parent is never told. Tk spells the flag

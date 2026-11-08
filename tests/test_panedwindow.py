@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -259,3 +260,95 @@ def test_adding_a_pane_again_is_a_paneconfigure(root):
     paned.add(child, minsize=7)
     assert _pane(paned, child) == {"minsize": 7, "sticky": "n", "width": None}
     assert paned.panes() == [".q.f"], "still one pane, not two"
+
+
+# ---------------------------------------------------------------------------
+# Pack and grid beside the panes (TkCurses-ect9). Measured on Tk 9.0.2: both
+# are accepted in a PanedWindow that has panes, and refuse only each other; a
+# pane reports its manager as "panedwindow", and moving a widget between the
+# panes and pack takes it out of the one it leaves.
+
+
+def window_with_a_pane(root):
+    window = PanedWindow(root, name="pw", bd=0, sashwidth=1, showhandle=0)
+    window.place(x=0, y=0, width=30, height=10)
+    pane = Frame(window, name="pane", width=5, height=2)
+    window.add(pane)
+    root.update_layout()
+    return window, pane
+
+
+def test_pack_lays_a_child_out_beside_the_panes(root):
+    window, pane = window_with_a_pane(root)
+    packed = Frame(window, name="packed", width=4, height=1)
+    packed.pack(side="bottom")
+    root.update_layout()
+    assert packed.winfo_manager() == "pack"
+    assert (packed.winfo_x(), packed.winfo_y()) == (13, 9)
+    # The pane still has the whole window, as in Tk.
+    assert (pane.winfo_width(), pane.winfo_height()) == (30, 10)
+    assert window.panes() == [".pw.pane"]
+    assert window.pack_slaves() == [packed]
+
+
+def test_the_window_asks_for_what_pack_asks_while_pack_has_children(root):
+    # Tk takes the request of whichever manager asked last.
+    window, _pane = window_with_a_pane(root)
+    assert (window.winfo_reqwidth(), window.winfo_reqheight()) == (5, 2)
+    packed = Frame(window, width=4, height=1)
+    packed.pack()
+    root.update_layout()
+    assert (window.winfo_reqwidth(), window.winfo_reqheight()) == (4, 1)
+    packed.pack_forget()
+    root.update_layout()
+    assert (window.winfo_reqwidth(), window.winfo_reqheight()) == (5, 2)
+
+
+def test_grid_is_accepted_and_then_refuses_pack(root):
+    window, _pane = window_with_a_pane(root)
+    Frame(window).grid()
+    with pytest.raises(
+        TclError,
+        match=re.escape(
+            'cannot use geometry manager "pack" inside ".pw": '
+            "grid is already managing its content windows"
+        ),
+    ):
+        Frame(window).pack()
+
+
+def test_grid_is_refused_once_pack_has_a_child(root):
+    window, _pane = window_with_a_pane(root)
+    Frame(window).pack()
+    with pytest.raises(
+        TclError,
+        match=re.escape(
+            'cannot use geometry manager "grid" inside ".pw": '
+            "pack is already managing its content windows"
+        ),
+    ):
+        Frame(window).grid()
+
+
+def test_a_pane_reports_panedwindow_and_forget_clears_it(root):
+    window, pane = window_with_a_pane(root)
+    assert pane.winfo_manager() == "panedwindow"
+    window.forget(pane)
+    assert pane.winfo_manager() == ""
+
+
+def test_adding_a_packed_widget_takes_it_from_pack(root):
+    window, _pane = window_with_a_pane(root)
+    packed = Frame(window, name="packed")
+    packed.pack()
+    window.add(packed)
+    assert packed.winfo_manager() == "panedwindow"
+    assert window.pack_slaves() == []
+    assert window.panes() == [".pw.pane", ".pw.packed"]
+
+
+def test_packing_a_pane_takes_it_out_of_the_panes(root):
+    window, pane = window_with_a_pane(root)
+    pane.pack()
+    assert pane.winfo_manager() == "pack"
+    assert window.panes() == []

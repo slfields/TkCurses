@@ -935,13 +935,29 @@ def _distance_or_empty(widget: Any, value: Any) -> Any:
     """A size, or "" for none given: a PanedWindow's ``width`` and ``height``,
     Message's ``padx`` and ``pady``, ttk.Label's ``wraplength`` and the
     scrollbar's ``elementborderwidth``. Measured on Tk 9.0.2: -3 reads back
-    -3, and "x" is refused naming both."""
+    -3 (but Message's padding "", :func:`_padding_or_empty`), and "x" is
+    refused naming both."""
     if value == "":
         return value
     try:
         return _signed_distance(widget, value)
     except TclError:
         raise TclError(f'expected screen distance or "" but got "{value}"') from None
+
+
+#: Options that move a container's children: its padding and its border.
+#: Set on the root or a Toplevel after the children are laid out, they did
+#: nothing until the next resize.
+_INSET_OPTIONS = frozenset({"padx", "pady", "borderwidth"})
+
+
+def _padding_or_empty(widget: Any, value: Any) -> Any:
+    """Message's ``padx`` and ``pady``: a distance, below zero read as "".
+
+    A Message reads a negative padding back as "", not 0, measured.
+    """
+    distance = _distance_or_empty(widget, value)
+    return "" if distance == "" or distance < 0 else distance
 
 
 #: The visual classes Tk names, in the order its message lists them.
@@ -1327,6 +1343,11 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "insertontime": _tcl_integer,
     "insertunfocussed": _insert_unfocussed,
     "insertwidth": _screen_distance,
+    # Measured on Tk 9.0.2: -2 reads back 0 on a Frame, a Label, a Button, a
+    # Menubutton, a Checkbutton, a Radiobutton, a LabelFrame, a Text, the root
+    # and a Toplevel. Unchecked, "abc" was kept and broke the layout later.
+    "padx": _screen_distance,
+    "pady": _screen_distance,
     "jump": _tcl_boolean,
     "maxundo": _tcl_integer,
     "offrelief": _relief,
@@ -1545,6 +1566,10 @@ class Misc:
         #: because Tk lets place share a container with pack or grid: the
         #: overlay over packed content. TkCurses-huq9.
         self._place_manager: PlaceLayout | None = None
+        #: A PanedWindow's panes. Apart from both of the above for the same
+        #: reason: Tk lets pack or grid lay out children of a paned window
+        #: beside its panes, measured on Tk 9.0.2. TkCurses-ect9.
+        self._paned_manager: PanedLayout | None = None
         self._layout_propagate = True
         #: The stacked window this widget draws into, once it has one.
         self._panel: Panel | None = None
@@ -2750,8 +2775,13 @@ class Misc:
         container.tk.layout.invalidate(container)
 
     def _manager_layout(self, name: str) -> Layout | None:
-        """The layout ``name`` uses in this container: place has its own."""
-        return self._place_manager if name == "place" else self._layout_manager
+        """The layout ``name`` uses in this container: place and a paned
+        window's panes have their own."""
+        if name == "place":
+            return self._place_manager
+        if name == "panedwindow":
+            return self._paned_manager
+        return self._layout_manager
 
     def _managed_layout(self, name: str) -> Layout | None:
         """The layout currently laying this widget out, if ``name`` is it.
@@ -3841,7 +3871,9 @@ class BaseWidget(Misc):
             # broken order, so the common case was the wrong one.
             self._report_scroll_view()
         if resized and (
-            self._layout_manager is not None or self._place_manager is not None
+            self._layout_manager is not None
+            or self._place_manager is not None
+            or self._paned_manager is not None
         ):
             # A container given a new size has to place its children again.
             # Propagation travels upward - what a widget needs - and this is
@@ -4296,7 +4328,7 @@ class Pack:
 _MANAGER_NAMES = {
     "PackLayout": "pack",
     "GridLayout": "grid",
-    "PanedLayout": "paned",
+    "PanedLayout": "panedwindow",
 }
 
 
@@ -4310,14 +4342,16 @@ def _make_way(container: Misc, name: str) -> None:
     forgotten takes grid - and the error is Tk 9's, with both names quoted.
     Place is not this manager and never in the way. TkCurses-huq9.
 
+    A paned window's panes are not in the way either: Tk lets pack or grid
+    lay out other children beside them. TkCurses-ect9.
+
     Raises:
-        TclError: If the container's manager still lays out a child, or is
-            a paned window's, which is never given up.
+        TclError: If the container's manager still lays out a child.
     """
     manager = container._layout_manager
     if manager is None:
         return
-    if isinstance(manager, PanedLayout) or manager.slaves(container):
+    if manager.slaves(container):
         other = _MANAGER_NAMES.get(type(manager).__name__, type(manager).__name__)
         raise TclError(
             f'cannot use geometry manager "{name}" inside "{container}": '
@@ -5404,7 +5438,8 @@ class Tk(BaseWidget, Wm):
     Sample output:
         tk.Label(root, text="Hello from the main window").pack()
 
-    Its ``background`` fills every cell no widget covers.
+    Its ``background`` fills every cell no widget covers, and its ``padx``
+    and ``pady`` keep its children that far from the terminal's edges.
 
     Differences from tkinter:
         The main window is the whole terminal: its size is the terminal's,
@@ -5940,10 +5975,12 @@ class Tk(BaseWidget, Wm):
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, painting the screen if the background changed."""
-        given = _given(cnf, kw)
+        given = {self._option_synonyms.get(key, key) for key in _given(cnf, kw)}
         result = super().configure(cnf, **kw)
-        if any(self._option_synonyms.get(key, key) == "background" for key in given):
+        if "background" in given:
             self._paint_background()
+        if given & _INSET_OPTIONS:
+            self._invalidate_layout()
         return result
 
     config = configure
@@ -6348,6 +6385,8 @@ class Toplevel(BaseWidget, Wm):
             self._allocate(self._default_rect())
         elif given:
             self._draw()
+        if {self._option_synonyms.get(key, key) for key in given} & _INSET_OPTIONS:
+            self._invalidate_layout()
         return result
 
     config = configure
@@ -7111,8 +7150,8 @@ class _TextWidget(_Drawable):
     #: label's size is in characters and its padding in screen distance.
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
         "height": _tcl_integer,
-        "padx": _signed_distance,
-        "pady": _signed_distance,
+        "padx": _screen_distance,
+        "pady": _screen_distance,
         "width": _tcl_integer,
         "wraplength": _signed_distance,
     }
@@ -10784,8 +10823,8 @@ class Message(_TextWidget):
     """
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
-        "padx": _distance_or_empty,
-        "pady": _distance_or_empty,
+        "padx": _padding_or_empty,
+        "pady": _padding_or_empty,
         "width": _signed_distance,
     }
 
@@ -12005,8 +12044,8 @@ class Text(_Drawable, XView, YView):
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
         "height": _signed_distance,
-        "padx": _signed_distance,
-        "pady": _signed_distance,
+        "padx": _screen_distance,
+        "pady": _screen_distance,
         "width": _tcl_integer,
     }
 
@@ -18030,7 +18069,7 @@ class PanedWindow(_Drawable):
         super().__init__(master, cnf, name=name, **kw)
         self._paned = PanedLayout(str(self._options["orient"]))
         self._paned.sash = self._sash_span()
-        self._layout_manager = self._paned
+        self._paned_manager = self._paned
         self._install_class_bindings()
 
     def _install_class_bindings(self) -> None:
@@ -18160,8 +18199,13 @@ class PanedWindow(_Drawable):
         cannot also claim it, and it maps the child so there is a window to
         draw into. Adding a pane without this laid the panes out correctly
         and drew nothing at all.
+
+        A child pack or grid was laying out leaves it, as in Tk, where the
+        manager also reads ``panedwindow``.
         """
-        child._manager = "paned"
+        child._leave_for(self, "panedwindow")
+        child._manager = "panedwindow"
+        child._manager_container = self
         child._map()
         self._invalidate_layout()
         self._redraw()
@@ -18178,6 +18222,9 @@ class PanedWindow(_Drawable):
             super().forget()
             return
         self._paned.remove(child)
+        if child._manager == "panedwindow" and child._manager_container is self:
+            child._manager = ""
+            child._manager_container = None
         child._unmap()
         self._invalidate_layout()
         self._redraw()
