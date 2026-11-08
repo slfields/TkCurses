@@ -1943,8 +1943,24 @@ loop is running, takes Ctrl-C the way `mainloop()` does - noted, answered
 between callbacks - and the answer is an Escape key routed as if typed, so
 each dialog does what its own Escape binding does. The tests run each
 dialog twice, once cancelled by Escape and once by Ctrl-C, and require the
-same result. A dialog opened from a callback inside `mainloop()` is not
-covered by this: measured, one Ctrl-C there leaves the dialog open.
+same result.
+
+**And inside `mainloop()`** (`TkCurses-28wi`). There Ctrl-C was answered
+as copy-or-close by the dialog's own nested loop, so with nothing selected
+it destroyed the application, and the dialog's wait - seeing the root
+gone - returned as if refused: a "Save changes?" answered no, and the
+program ended. (The issue first read this as "one Ctrl-C leaves the
+dialog open"; logging the path showed the close.) Decided with the user,
+2026-11-08: Ctrl-C closes the innermost thing. So `_answer_interrupt`
+copies if the focused widget has a selection, as everywhere; otherwise,
+while any window holds the grab - which is what makes a dialog modal, and
+every dialog here takes one - it routes Escape as before mainloop. If
+Escape leaves the modal window holding the grab, because it binds no
+Escape, the window is closed through its `WM_DELETE_WINDOW` protocol and
+destroyed if it has none, so Ctrl-C never does nothing; a grab on the main
+window itself is the ordinary close. A second Ctrl-C then reaches the main
+window. A program's own `wait_window` on a window without a grab is not a
+modal question and still closes the application.
 
 Three behaviours fall out of that, and all three are what a person expects:
 
@@ -5681,6 +5697,24 @@ one across - as before; a vertical view still rests on a whole cell.
 `moveto 2`, and turning it back on pulls the view inside at once. `offset`,
 the stipple origin, is checked (`x,y`, `#x,y` or an anchor) and kept: there
 are no stipples to align.
+
+**Where a rectangle or oval stops: canvas(n) is right only without an
+outline** (`TkCurses-swxf`). The manual says a rectangle includes "its upper
+and left edges but not its lower or right edges", and an oval the same.
+Measured on Tk 9.0 by reading a Tk window's own pixels (`import -window`
+on its `winfo_id`, XGetImage through Xwayland - a root-window grab fails
+under Wayland), `create_rectangle(10, 10, 16, 14)`:
+
+| | columns | rows |
+|---|---|---|
+| fill, `outline=""` | 10-15 | 10-13 |
+| fill and outline | 10-16 | 10-14 |
+| outline only | 10-16 | 10-14 |
+
+So the fill stops before x2 and y2, as `XFillRectangle` and `XFillArc` do
+given the width `x2 - x1`, and a one-pixel outline is drawn on them. Ovals
+measure identically. TkCurses filled through x2 and y2 in both cases; now
+an outline-less fill stops short and an outlined shape is unchanged.
 
 ---
 

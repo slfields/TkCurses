@@ -3117,7 +3117,8 @@ class Misc:
         # Before mainloop nothing takes Ctrl-C, and the KeyboardInterrupt
         # came out of select() as a traceback. The wait takes it as mainloop
         # does - noted, answered between callbacks - and the answer is a
-        # cancel. Inside mainloop the loop's own handling stands.
+        # cancel. Inside mainloop the loop's own handling stands, which
+        # cancels a modal window too: _answer_interrupt.
         release = None
         if isinstance(root, Tk) and not root._running:
             release = root._catch_interrupts()
@@ -5591,8 +5592,9 @@ class Tk(BaseWidget, Wm):
         self._motion_asserted = False
         #: A Ctrl-C the loop has yet to answer; see :meth:`_catch_interrupts`.
         self._interrupt_pending = False
-        #: Set while a dialog shown before mainloop waits: a Ctrl-C then
-        #: cancels the dialog, as Escape does, instead of closing everything.
+        #: Set while a wait runs before mainloop: a Ctrl-C then cancels the
+        #: dialog, as Escape does, instead of closing everything. Inside
+        #: mainloop a held grab says the same; see :meth:`_answer_interrupt`.
         self._interrupt_cancels = False
         #: Tracebacks that would have landed on the screen, kept until the
         #: terminal is handed back.
@@ -5840,8 +5842,12 @@ class Tk(BaseWidget, Wm):
             KeyboardInterrupt inside it, so a program stuck in a callback
             can still be stopped.
 
-            A dialog shown before ``mainloop()`` is cancelled by Ctrl-C, as
-            Escape cancels it, rather than raising KeyboardInterrupt.
+            A dialog - any window holding a grab, or shown before
+            ``mainloop()`` - is cancelled by Ctrl-C, as Escape cancels it,
+            rather than closing the application; a second Ctrl-C reaches the
+            main window. A modal window with no Escape binding is closed as
+            if by its ``WM_DELETE_WINDOW`` protocol. With text selected in
+            the dialog, Ctrl-C copies it instead, as it does everywhere.
         """
         # This docstring once claimed the terminal was restored before it was
         # true - measured, Ctrl-C left cbreak, the hidden cursor, the
@@ -5927,20 +5933,53 @@ class Tk(BaseWidget, Wm):
         self._interrupt_pending = True
 
     def _answer_interrupt(self) -> None:
-        """Copy or close for a Ctrl-C noted since the last pass.
+        """Copy, cancel or close for a Ctrl-C noted since the last pass.
 
-        While a dialog shown before mainloop waits, the answer is the
-        Escape key instead, delivered as if typed, so the dialog cancels
-        exactly as its own Escape binding says.
+        Copy when the focused widget has a selection, as everywhere. Then,
+        while a modal window holds the grab - a dialog, inside mainloop or
+        before it - or a wait before mainloop runs, cancel it; otherwise
+        close the application.
         """
         if not self._interrupt_pending:
             return
         self._interrupt_pending = False
-        if self._interrupt_cancels:
-            self._guard(self._route, KeyEvent(keycode=27, keysym="Escape"))
+        if self._copy_on_interrupt():
             return
-        if not self._copy_on_interrupt():
+        modal = self.tk.grab
+        if self._interrupt_cancels or modal is not None:
+            self._cancel_on_interrupt(modal)
+            return
+        self._close_requested()
+
+    def _cancel_on_interrupt(self, modal: Misc | None) -> None:
+        """Ctrl-C in a modal window: cancel it, as Escape would.
+
+        Inside mainloop this used to be the close gesture, so a Ctrl-C in
+        a "Save changes?" question destroyed the application and the dialog
+        answered as if refused (TkCurses-28wi). The author's decision,
+        2026-11-08: Ctrl-C closes the innermost thing - the dialog, as
+        Escape does, and as it does before mainloop (TkCurses-ubwt) - and
+        a second one reaches the main window.
+
+        The Escape key is delivered as if typed, so a dialog cancels exactly
+        as its own binding says. A modal window with no Escape binding is
+        then closed through its ``WM_DELETE_WINDOW`` protocol, destroyed if
+        it has none, so Ctrl-C never does nothing; a grab on the main window
+        itself is the ordinary close.
+        """
+        self._guard(self._route, KeyEvent(keycode=27, keysym="Escape"))
+        if modal is None or self.tk.grab is not modal or not modal.winfo_exists():
+            return
+        top = modal.winfo_toplevel()
+        if top is self:
             self._close_requested()
+            return
+
+        def close() -> None:
+            if not top._invoke_protocol("WM_DELETE_WINDOW"):  # type: ignore[attr-defined]
+                top.destroy()
+
+        self._guard(close)
 
     def _close_requested(self) -> None:
         """The user asked to close the application. Ctrl-C means this.
@@ -15705,8 +15744,20 @@ class Canvas(_Drawable, XView, YView):
                 else filled_oval_pixels
             )
             edge = rectangle_pixels if item.kind == "rectangle" else oval_pixels
-            if fill:
+            if fill and outline:
                 pixels.update(dict.fromkeys(solid(x0, y0, x1, y1), fill))
+            elif fill:
+                # With no outline the fill stops short of x2 and y2, as X's
+                # XFillRectangle and XFillArc do given the width x2 - x1.
+                # Measured on Tk 9.0: (10, 10, 16, 14) fills columns 10-15
+                # and rows 10-13, and an outlined one covers 16 and 14 - the
+                # outline is drawn on them. canvas(n) says only that the far
+                # edges are left out, which is true without the outline.
+                left, right = sorted((x0, x1))
+                top, bottom = sorted((y0, y1))
+                if right > left and bottom > top:
+                    shape = solid(left, top, right - 1, bottom - 1)
+                    pixels.update(dict.fromkeys(shape, fill))
             if outline:
                 pixels.update(dict.fromkeys(edge(x0, y0, x1, y1), outline))
         elif item.kind == "polygon":

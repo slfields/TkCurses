@@ -6,6 +6,17 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Ctrl-C in a dialog opened inside `mainloop()` cancels it, as Escape
+  does and as it already did before `mainloop()`; it closed the whole
+  application, and the dialog answered as if refused. A second Ctrl-C
+  closes the application. A modal window that binds no Escape is closed
+  instead, and with text selected in the dialog Ctrl-C copies it.
+- A Canvas rectangle or oval with no outline fills up to but not including
+  its far corner, `x2` and `y2`, as Tk's does; it filled one pixel further
+  each way. One with an outline is unchanged: Tk draws the outline on `x2`
+  and `y2`.
+
 ## [0.3.0rc3] - 2026-11-08
 
 The third release candidate. The themed widgets now take Tk's ttk options

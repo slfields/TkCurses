@@ -650,3 +650,44 @@ def test_closeenough_can_be_widened(canvas):
 def test_the_tolerance_does_not_reach_across_the_canvas(canvas):
     canvas.create_line(0, 0, 4, 0, fill="white", tags="hot")
     assert canvas._item_at(30, 16) is None
+
+
+# Where a rectangle or oval stops. Measured on Tk 9.0, reading the window's
+# pixels: create_rectangle(10, 10, 16, 14) with no outline fills columns
+# 10-15 and rows 10-13, and with an outline covers 10-16 and 10-14, the
+# outline drawn on the far edges. Ovals the same. This filled through x2 and
+# y2 whether or not there was an outline.
+
+
+def item_pixels(canvas, ident):
+    item = next(i for i in canvas._items if i.ident == ident)
+    return canvas._item_pixels(item)
+
+
+def extent(pixels):
+    xs = [x for x, _ in pixels]
+    ys = [y for _, y in pixels]
+    return (min(xs), max(xs), min(ys), max(ys))
+
+
+@pytest.mark.parametrize("kind", ["rectangle", "oval"])
+def test_a_fill_with_no_outline_stops_before_the_far_edges(canvas, kind):
+    ident = getattr(canvas, f"create_{kind}")(10, 10, 16, 14, fill="red", outline="")
+    assert extent(item_pixels(canvas, ident)) == (10, 15, 10, 13)
+
+
+@pytest.mark.parametrize("kind", ["rectangle", "oval"])
+@pytest.mark.parametrize("fill", ["red", ""])
+def test_an_outline_is_drawn_on_the_far_edges(canvas, kind, fill):
+    ident = getattr(canvas, f"create_{kind}")(10, 10, 16, 14, fill=fill, outline="blue")
+    assert extent(item_pixels(canvas, ident)) == (10, 16, 10, 14)
+
+
+def test_a_rectangle_given_backwards_stops_at_the_same_edges(canvas):
+    ident = canvas.create_rectangle(16, 14, 10, 10, fill="red", outline="")
+    assert extent(item_pixels(canvas, ident)) == (10, 15, 10, 13)
+
+
+def test_a_fill_with_no_width_and_no_outline_draws_nothing(canvas):
+    ident = canvas.create_rectangle(10, 10, 10, 14, fill="red", outline="")
+    assert item_pixels(canvas, ident) == {}
