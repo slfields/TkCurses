@@ -32,7 +32,9 @@ from tkcurses._core.textlayout import (
     char_at,
     column_of,
     columns_of,
+    glyphs,
     parse_tabs,
+    render,
 )
 
 # --------------------------------------------------------------------- stops
@@ -306,3 +308,53 @@ def test_numeric_is_an_alignment_parse_tabs_accepts():
     stops = parse_tabs("10 numeric 20 right", float)
     assert stops.align(0) == "numeric"
     assert stops.align(1) == "right"
+
+
+# ------------------------------------------------------------- wide text
+#
+# An ideograph takes two cells and a combining mark none, so columns stop
+# being one a character even without a tab. TkCurses-l8w7.
+
+WIDE = "\u65e5\u672c\u8a9e"
+ACUTE = "\u0301"
+
+
+def test_columns_count_cells():
+    assert columns_of(WIDE + "ab") == [0, 2, 4, 6, 7]
+    assert columns_of("e" + ACUTE + "z") == [0, 1, 1]
+
+
+def test_a_click_on_either_half_of_an_ideograph_names_it():
+    line = WIDE + "ab"
+    assert [char_at(line, c) for c in range(9)] == [0, 0, 1, 1, 2, 2, 3, 4, 5]
+    assert all(char_at(line, column_of(line, i)) == i for i in range(len(line)))
+
+
+def test_a_tab_after_wide_text_goes_to_the_stop_after_its_cells():
+    """Three ideographs end at 6; the tab runs to the stop at 8."""
+    assert columns_of(WIDE + "\tz") == [0, 2, 4, 6, 8]
+
+
+@pytest.mark.parametrize(
+    ("alignment", "where"),
+    [("right", 4), ("center", 7), ("numeric", 6)],
+)
+def test_an_aligned_tab_measures_the_run_in_cells(alignment, where):
+    """A run of two ideographs, a point and a digit is six cells against a
+    stop at 10: right begins at 4, centre at 7, and numeric puts the point
+    on the stop, four cells after the run begins."""
+    stops = parse_tabs(f"10 {alignment}", int)
+    run = WIDE[:2] + ".5"
+    assert columns_of("\t" + run, stops=stops)[1] == where
+
+
+def test_glyphs_are_one_entry_a_cell():
+    assert glyphs(WIDE[0] + "a" + "\t" + "b", stops=parse_tabs("4", int)) == [
+        WIDE[0],
+        "",
+        "a",
+        " ",
+        "b",
+    ]
+    assert glyphs("e" + ACUTE + "z") == ["e" + ACUTE, "z"]
+    assert render(WIDE + "\tz") == WIDE + "  z"

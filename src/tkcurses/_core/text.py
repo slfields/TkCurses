@@ -31,7 +31,11 @@ character grid means on top of a neighbour.
 
 from __future__ import annotations
 
-from tkcurses._core.cells import cells, clip_cells
+from bisect import bisect_right
+from functools import lru_cache
+from itertools import accumulate
+
+from tkcurses._core.cells import cells, char_cells, clip_cells
 
 __all__ = ["align_offset", "measure", "wrap", "wrap_spans"]
 
@@ -148,9 +152,16 @@ def wrap_spans(line: str, width: int, mode: str = "char") -> list[tuple[int, int
     one row to the third space and ``bbb`` on the next. TkCurses-5co5.
 
     Always at least one span, so an empty line still occupies a row.
+
+    ``width`` is cells: an ideograph takes two and a combining mark none,
+    so a row of wide text holds half as many characters, a mark stays with
+    its letter, and an ideograph that would straddle the edge starts the
+    next row.
     """
     if width <= 0 or mode == "none" or not line:
         return [(0, len(line))]
+    if not line.isascii():
+        return list(_wrap_spans_in_cells(line, width, mode))
     spans: list[tuple[int, int]] = []
     start = 0
     while start < len(line):
@@ -160,3 +171,34 @@ def wrap_spans(line: str, width: int, mode: str = "char") -> list[tuple[int, int
         spans.append((start, end))
         start = end
     return spans
+
+
+@lru_cache(maxsize=8192)
+def _wrap_spans_in_cells(
+    line: str, width: int, mode: str
+) -> tuple[tuple[int, int], ...]:
+    """:func:`wrap_spans` for a line whose characters are not one cell each.
+
+    The cells before each character are summed once, and each row's end is
+    a binary search for the last character that ends within its width -
+    the same few operations a row as the ASCII loop, rather than a walk of
+    every character. Remembered by line, because a Text lays out every line
+    on every redraw and its lines seldom change between two.
+    """
+    before = [0, *accumulate(map(char_cells, line))]
+    spans: list[tuple[int, int]] = []
+    start = 0
+    while start < len(line):
+        # The last offset whose cells so far fit: marks after a letter that
+        # ends exactly at the edge have the same count, so they come too.
+        end = bisect_right(before, before[start] + width) - 1
+        if end <= start:
+            # A character wider than the whole row still takes one, or the
+            # loop would never move: it appended (start, start) until the
+            # process ran out of memory.
+            end = start + 1
+        if mode == "word" and end < len(line):
+            end = word_break(line, start, end)
+        spans.append((start, end))
+        start = end
+    return tuple(spans)

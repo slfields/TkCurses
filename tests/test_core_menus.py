@@ -36,6 +36,17 @@ def test_width_comes_from_the_longest_label():
     assert measure_entries(entries, indicators=False)[0] == len("Save as...")
 
 
+def test_a_wide_label_is_measured_in_cells():
+    """Three ideographs are six cells, and so is a fullwidth accelerator."""
+    wide = "\u65e5\u672c\u8a9e"
+    assert measure_entries([command(wide)], indicators=False)[0] == 6
+    plain = measure_entries([command("a", accelerator="F1")], indicators=False)[0]
+    fullwidth = measure_entries(
+        [command("a", accelerator="\uff26\uff11")], indicators=False
+    )[0]
+    assert fullwidth == plain + 2
+
+
 def test_height_is_one_row_per_entry():
     entries = [command("a"), MenuEntry("separator"), command("b")]
     assert measure_entries(entries, indicators=False)[1] == 3

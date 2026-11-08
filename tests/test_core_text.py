@@ -19,6 +19,10 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+
 import pytest
 
 from tkcurses._core.text import align_offset, measure, wrap, wrap_spans
@@ -187,3 +191,39 @@ def test_wrapping_counts_cells():
 
 def test_a_wide_character_in_a_row_of_one_still_moves_on():
     assert wrap(WIDE * 2, 1) == [WIDE, WIDE]
+
+
+def test_a_wrapped_text_widgets_rows_count_cells():
+    """wrap_spans, which a Text lays its rows out with: three ideographs and
+    a space in five cells break after the second, and the third follows."""
+    assert wrap_spans(WIDE * 3, 5) == [(0, 2), (2, 3)]
+    assert wrap_spans(WIDE * 2 + " " + WIDE, 5, "word") == [(0, 3), (3, 4)]
+
+
+def test_a_wrapped_row_keeps_a_mark_with_its_letter():
+    assert wrap_spans("ab" + "e\u0301" + "cd", 3) == [(0, 4), (4, 6)]
+
+
+def test_an_ideograph_in_a_row_of_one_cell_still_moves_on():
+    """Run in a child capped at 512 MB and 20 seconds: when this guard was
+    off, the loop appended empty rows until the kernel's OOM killer took the
+    whole test session - twice - instead of the test failing."""
+    script = (
+        "import resource\n"
+        "resource.setrlimit(resource.RLIMIT_AS, (512 << 20, 512 << 20))\n"
+        "from tkcurses._core.text import wrap_spans\n"
+        f"print(wrap_spans({WIDE * 2!r}, 1))\n"
+    )
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)}
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("wrap_spans never moved past a character wider than the row")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "[(0, 1), (1, 2)]"

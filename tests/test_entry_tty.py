@@ -833,3 +833,134 @@ def test_a_selection_in_right_justified_text_covers_its_characters(terminal, tmp
     term.wait_for_idle()
     reversed_cells = [col for col in range(2, 22) if term.attrs_at(2, col)["reverse"]]
     assert reversed_cells == [19, 20]
+
+
+# ------------------------------------------------------------ wide text
+#
+# The insertion cursor, clicks, the selection and the scrolled view count
+# cells: an ideograph takes two. Before, the cursor sat a cell left of the
+# insertion point for every ideograph before it. TkCurses-9t4l.
+
+WIDE = "日本語"
+
+
+def _wide_entry(terminal, tmp_path, extra=""):
+    term = terminal(cols=30, rows=8)
+    term.run_source(
+        program(
+            "e = tkcurses.Entry(root, width=8)\n"
+            "e.place(x=1, y=1)\n"
+            f"e.insert(0, {WIDE + 'ab' + WIDE!r})\n"
+            "e.icursor(0)\n"
+            "e.focus_set()\n" + extra
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(
+        lambda t: (
+            "\u2502" + WIDE + "ab\u2502" in t.display[2] and t.cursor_cell() == (2, 2)
+        ),
+        message="the field drawn with its cursor at the start",
+    )
+    return term
+
+
+def test_the_cursor_steps_across_a_wide_character_in_two_cells(terminal, tmp_path):
+    term = _wide_entry(terminal, tmp_path)
+    for column in (4, 6, 8, 9):
+        term.send_keys("<Right>")
+        term.wait_for(
+            lambda t, c=column: t.cursor_cell() == (2, c),
+            message=f"the cursor at column {column}",
+        )
+
+
+def test_a_click_on_either_half_of_a_wide_character_lands_on_it(terminal, tmp_path):
+    term = _wide_entry(terminal, tmp_path)
+    for column, at in ((5, 4), (4, 4), (7, 6), (8, 8)):
+        term.click(column, 2)
+        term.wait_for(
+            lambda t, a=at: t.cursor_cell() == (2, a),
+            message=f"a click at {column} putting the cursor at {at}",
+        )
+
+
+def test_a_selected_wide_character_is_shown_in_both_its_cells(terminal, tmp_path):
+    term = _wide_entry(terminal, tmp_path)
+    term.send_keys("<Right>", "<Shift-Right>")
+    term.wait_for(
+        lambda t: (
+            [t.attrs_at(2, c)["reverse"] for c in (3, 4, 5, 6)]
+            == [False, True, True, False]
+            and t.char_at(2, 4).data == WIDE[1]
+        ),
+        message="the second ideograph selected, in both its cells",
+    )
+
+
+def test_wide_text_longer_than_the_field_stops_at_its_edge(terminal, tmp_path):
+    """Three ideographs and ``abc`` are nine cells in eight: the ``c`` is not
+    drawn over the border."""
+    term = terminal(cols=30, rows=8)
+    term.run_source(
+        program(
+            "e = tkcurses.Entry(root, width=8)\n"
+            "e.place(x=1, y=1)\n"
+            f"e.insert(0, {WIDE + 'abc'!r})"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(
+        lambda t: "\u2502" + WIDE + "ab\u2502" in t.display[2],
+        message="the field cut at its border",
+    )
+
+
+def test_the_view_scrolls_by_cells_to_keep_the_cursor_in_sight(terminal, tmp_path):
+    """At the end: the b, the three ideographs and the cursor's own cell
+    are the eight cells of the field."""
+    term = _wide_entry(terminal, tmp_path)
+    term.send_keys("<End>")
+    term.wait_for(
+        lambda t: (
+            "\u2502b" + WIDE + " \u2502" in t.display[2] and t.cursor_cell() == (2, 9)
+        ),
+        message="the view scrolled to the end",
+    )
+
+
+def test_right_justified_wide_text_sits_against_the_right_edge(terminal, tmp_path):
+    term = terminal(cols=30, rows=8)
+    term.run_source(
+        program(
+            "e = tkcurses.Entry(root, width=10, justify='right')\n"
+            "e.place(x=1, y=1)\n"
+            f"e.insert(0, {WIDE!r})"
+        ),
+        workdir=tmp_path,
+    )
+    # Ten cells, less six, from column 2.
+    term.wait_for(
+        lambda t: t.display[2].find(WIDE) == 6, message="the text flush right"
+    )
+
+
+def test_a_spinbox_puts_its_cursor_after_wide_text(terminal, tmp_path):
+    term = terminal(cols=30, rows=8)
+    term.run_source(
+        program(
+            "s = tkcurses.Spinbox(root, width=10, values=('x',))\n"
+            "s.place(x=1, y=1)\n"
+            "s.delete(0, 'end')\n"
+            f"s.insert(0, {WIDE!r})\n"
+            "s.focus_set()"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(
+        lambda t: (
+            WIDE in t.display[2]
+            and t.cursor_cell() == (2, t.display[2].index(WIDE) + 6)
+        ),
+        message="the spinbox's cursor after the third ideograph",
+    )

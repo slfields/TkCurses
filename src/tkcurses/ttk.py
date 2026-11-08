@@ -48,6 +48,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 import tkcurses
 from tkcurses._core.attributes import BorderStyle, with_colors
 from tkcurses._core.bindings import parse_sequence
+from tkcurses._core.cells import cells, char_cells, clip_cells, pad_cells, skip_cells
 from tkcurses._core.colors import parse_color
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.errors import TclError
@@ -2292,7 +2293,7 @@ class Notebook(Widget, tkcurses.Frame):
                 return "tab"
             label = str(self._tabs[index].options["text"])
             start = first + 1 + TAB_PADDING
-            return "label" if start <= x < start + len(label) else "padding"
+            return "label" if start <= x < start + cells(label) else "padding"
         return ""
 
     _widget_options: ClassVar[dict[str, Any]] = {
@@ -2589,7 +2590,7 @@ class Notebook(Widget, tkcurses.Frame):
         column = TAB_INSET
         for index in self._shown:
             label = str(self._tabs[index].options["text"])
-            width = len(label) + 2 * TAB_PADDING + 2
+            width = cells(label) + 2 * TAB_PADDING + 2
             spans.append((index, column, column + width - 1))
             column += width
         return spans
@@ -2619,9 +2620,20 @@ class Notebook(Widget, tkcurses.Frame):
                 tops[column] = glyphs.horizontal
             labels[first] = glyphs.vertical
             labels[last] = glyphs.vertical
-            for offset, character in enumerate(f"{' ' * TAB_PADDING}{label}"):
-                if first + 1 + offset < last:
-                    labels[first + 1 + offset] = character
+            # One entry a cell: a wide character in its first and "" in its
+            # second, a combining mark with the character it follows.
+            column = first + 1 + TAB_PADDING
+            for character in label:
+                size = char_cells(character)
+                if column + size > last:
+                    break
+                if size == 0:
+                    labels[column - 1] += character
+                    continue
+                labels[column] = character
+                for extra in range(1, size):
+                    labels[column + extra] = ""
+                column += size
             if index == self._current:
                 # Open at the bottom: the tab runs into its page.
                 frame[first] = glyphs.bottom_right
@@ -3687,8 +3699,9 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
     def _in_view(self, line: str, width: int) -> str:
         """The part of a whole row of columns that the view shows."""
         frozen = self._frozen_width()
-        line = line.ljust(frozen)
-        return (line[:frozen] + line[frozen + self._left :])[:width]
+        # In cells: an ideograph the scrolled edge cuts leaves a blank.
+        rest, blank = skip_cells(line, frozen + self._left)
+        return clip_cells(pad_cells(line, frozen) + " " * blank + rest, width)
 
     def _view_fractions(self) -> tuple[float, float]:
         """Where the visible rows are, as two fractions of the rows that scroll.
@@ -3910,7 +3923,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         values wherever its text happened to end.
         """
         pieces = [
-            self._cell_text(iid, name).ljust(end - start)
+            pad_cells(self._cell_text(iid, name), end - start)
             for name, start, end in self._column_spans()
         ]
         return self._in_view(" ".join(pieces), width)
@@ -3918,7 +3931,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
     def _heading_text(self, width: int) -> str:
         """The heading row, drawn above the rows when ``show`` asks for it."""
         pieces = [
-            str(self.heading(name, "text")).ljust(end - start)
+            pad_cells(str(self.heading(name, "text")), end - start)
             for name, start, end in self._column_spans()
         ]
         return self._in_view(" ".join(pieces), width)
@@ -4191,7 +4204,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
                     window,
                     row,
                     left,
-                    self._row_text(iid, area.width).ljust(area.width),
+                    pad_cells(self._row_text(iid, area.width), area.width),
                     self._row_attribute(iid, offset, attribute),
                 )
                 row += 1
@@ -4945,7 +4958,7 @@ class Labelframe(Widget, tkcurses.LabelFrame):
         place = self._caption_place()
         if place is not None:
             row, column, text = place
-            if y == row and column <= x < column + len(text):
+            if y == row and column <= x < column + cells(text):
                 return ""
         return "border"
 

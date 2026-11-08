@@ -44,8 +44,23 @@ All notable changes to TkCurses. The format follows
   combining marks none, as on the terminal, in labels, buttons, check and
   radio buttons, menubuttons and messages: their size, wrapping, anchoring,
   justification and underline. Nothing is drawn past a widget's edge, and
-  a wide character the edge cuts in half leaves a blank. Entries, Text and
-  the Listbox still count characters.
+  a wide character the edge cuts in half leaves a blank.
+- Entry, Spinbox and the ttk entries measure wide characters in cells: the
+  insertion cursor sits on the character it is at, a click on either half of
+  an ideograph lands on it, a selection covers both its cells, and the view
+  and a scrollbar's fractions count cells.
+- Listbox, Scale, Menu, the menubar, ttk.Notebook, ttk.Treeview, Canvas
+  text, LabelFrame and Message measure wide characters in cells: a Listbox
+  keeps its border, a Scale's value no longer overwrites its label, a menu's
+  accelerators are whole, a tab is as wide as its label, and Canvas text is
+  centred where it should be. `font.Font.measure` counts cells too.
+- A ttk.Treeview cell is cut at its column's edge. Text longer than its
+  column pushed the columns after it out of line under their headings.
+- Text measures wide characters in cells: a row of ideographs wraps at
+  half as many characters, one that would straddle the edge starts the
+  next row, a combining mark stays with its letter, tags colour both cells
+  of a wide character, and `bbox`, clicks, Up and Down and numeric tabs
+  count cells.
 
 ## [0.3.0rc2] - 2026-11-07
 

@@ -623,3 +623,82 @@ def test_an_index_maps_to_a_column():
 
 def test_a_click_past_the_end_lands_at_the_end(field):
     assert field.index_at(99) == 5
+
+
+# ------------------------------------------------------------ wide text
+#
+# Indices count characters and columns count cells: an ideograph takes two,
+# a combining mark none. TkCurses-9t4l.
+
+WIDE = "日本語"  # three ideographs, six cells
+ACUTE = "́"
+
+
+def test_columns_count_cells():
+    field = TextField(WIDE + "ab")
+    assert [field.column_of(i) for i in range(6)] == [0, 2, 4, 6, 7, 8]
+
+
+def test_either_half_of_a_wide_character_names_it():
+    field = TextField(WIDE + "ab")
+    assert [field.index_at(c) for c in range(10)] == [0, 0, 1, 1, 2, 2, 3, 4, 5, 5]
+
+
+def test_a_combining_mark_shares_its_letters_cell():
+    field = TextField("e" + ACUTE + "z")
+    assert field.column_of(2) == 1
+    assert field.index_at(1) == 2
+
+
+def test_the_visible_run_leaves_out_a_wide_character_cut_by_the_edge():
+    field = TextField(WIDE + "ab")
+    assert field.visible(5) == WIDE[:2]
+    assert field.visible(6) == WIDE
+
+
+def test_scrolling_to_the_cursor_counts_cells():
+    """At the end of six cells and two, in five: the cursor's cell and the
+    last four cells - the b, the a and the last ideograph."""
+    field = TextField(WIDE + "ab")
+    field.scroll_into_view(5)
+    assert field.view == 2
+    assert field.column_of(field.cursor) == 4
+
+
+def test_scrolling_to_a_wide_character_makes_room_for_both_its_cells():
+    """The cursor on the third ideograph, in five cells: room for it and the
+    one before, not half of it after the first."""
+    field = TextField("ab" + WIDE)
+    field.move_to(4)
+    field.scroll_into_view(5)
+    assert field.view == 3
+    assert field.column_of(4) == 2
+
+
+def test_the_view_stops_with_the_last_cells_in_view():
+    field = TextField("ab" + WIDE)
+    field.set_view(99, 4)
+    assert field.view == 3
+    field.set_view(99, 5)
+    assert field.view == 3  # one more cell would only be half an ideograph
+
+
+def test_the_view_never_starts_on_a_combining_mark():
+    """In one cell the last view would begin at the accent, which has no cell
+    of its own; it begins at the z instead."""
+    field = TextField("ae" + ACUTE + "z")
+    field.set_view(99, 1)
+    assert field.view == 3
+
+
+def test_cells_from_the_start_and_back():
+    field = TextField(WIDE + "ab")
+    assert field.cell_of(3) == 6
+    assert field.index_at_cell(7) == 4
+    assert field.index_at_cell(99) == 5
+
+
+def test_the_measure_can_be_replaced_for_a_mask():
+    field = TextField(WIDE)
+    field.measure = len
+    assert field.column_of(3) == 3

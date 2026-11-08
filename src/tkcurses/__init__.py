@@ -92,7 +92,7 @@ from tkcurses._core.canvas import (
     polygon_pixels,
     rectangle_pixels,
 )
-from tkcurses._core.cells import cells, char_cells, clip_cells, skip_cells
+from tkcurses._core.cells import cells, char_cells, clip_cells, pad_cells, skip_cells
 from tkcurses._core.clipboard import CLIPBOARD, PRIMARY
 from tkcurses._core.colors import (
     ColorDepth,
@@ -180,6 +180,8 @@ from tkcurses._core.textlayout import (
     TabStops,
     char_at,
     column_of,
+    columns_of,
+    glyphs,
     parse_tabs,
     render,
 )
@@ -9041,6 +9043,7 @@ class Entry(_Drawable, XView):
                 standard options.
         """
         self._field = TextField()
+        self._field.measure = self._shown_cells
         self._variable_trace: tuple[Variable, str] | None = None
         self._syncing = False
         # True while a validation callback is running, so an edit made from
@@ -9378,7 +9381,7 @@ class Entry(_Drawable, XView):
         """Report or move the view, as Tk's entry does.
 
         With no arguments it answers the pair of fractions a scrollbar wants:
-        the first and last characters in view, over the length of the text. With
+        where the view begins and ends, over the width of the text. With
         ``("moveto", fraction)`` or ``("scroll", count, "units"|"pages")`` it is
         a scrollbar driving the entry, and an index scrolls that character to
         the left edge.
@@ -9387,6 +9390,12 @@ class Entry(_Drawable, XView):
         selection survives. A unit is one character and a page is the width
         less two, at least one; the view stops with the last character at the
         right edge, and a text shorter than the field never scrolls.
+
+        Differences from tkinter:
+            Tk measures the fractions and a page in pixels; here they are in
+            cells, which is the same thing for most text. A CJK ideograph or
+            most emoji takes two cells, so a page of them is half as many
+            characters.
         """
         # It used to return the first visible character as an int, so
         # -xscrollcommand could not be honoured; tkinter's Entry answers
@@ -9402,14 +9411,23 @@ class Entry(_Drawable, XView):
         if not args:
             return self._view_fractions()
         width = self._text_area().width
+        field = self._field
         if args[0] == "moveto":
             # Halves round UP, as Tk's do (2.5 of 26 shows character 3);
-            # Python's round() would send them to the even neighbour.
-            first = math.floor(float(args[1]) * len(self.get()) + 0.5)
-        elif args[0] == "scroll":
+            # Python's round() would send them to the even neighbour. A
+            # fraction of the cells, as Tk's is of the pixels: the character
+            # that cell is in comes first.
+            total = field.measure(field.text)
+            first = field.index_at_cell(math.floor(float(args[1]) * total + 0.5))
+        elif args[0] == "scroll" and args[2] == "pages":
+            # A page is cells, so it moves as far across wide text as narrow.
             count = int(args[1])
-            step = max(1, width - 2) if args[2] == "pages" else 1
-            first = self._field.view + count * step
+            cell = field.cell_of(field.view) + count * max(1, width - 2)
+            first = field.index_at_cell(cell)
+            if count > 0 and field.cell_of(first) < cell:
+                first += 1  # Never short of the page, or wide text sticks.
+        elif args[0] == "scroll":
+            first = field.view + int(args[1])
         else:
             first = self.index(args[0])
         self._field.set_view(first, width)
@@ -9432,24 +9450,27 @@ class Entry(_Drawable, XView):
           the left its x is negative, off to the right it is past the edge;
         * an empty entry answers a box of width 0 at the start.
 
-        One cell wide and one high, as everything is here. TkCurses-52q.
+        One cell high, and as wide as the character is drawn: two cells for a
+        wide one, none for a combining mark. TkCurses-52q, TkCurses-9t4l.
         """
         area = self._text_area()
-        length = len(self._field.text)
+        field = self._field
+        length = len(field.text)
         if length == 0:
             return (area.x, area.y, 0, 1)
         position = min(self.index(index), length - 1)
-        shift = self._shift(area)
-        return (area.x + shift + position - self._field.view, area.y, 1, 1)
+        column = area.x + self._shift(area) + field.column_of(position)
+        return (column, area.y, field.measure(field.text[position]), 1)
 
     def _view_fractions(self) -> tuple[float, float]:
         """Where the visible run sits in the text, as two fractions."""
-        total = len(self.get())
+        field = self._field
+        total = field.measure(field.text)
         if total <= 0:
             return (0.0, 1.0)
         width = max(1, self._text_area().width)
-        self._field.fit_view(width)
-        first = self._field.view
+        field.fit_view(width)
+        first = field.cell_of(field.view)
         return (first / total, min(1.0, (first + width) / total))
 
     def _publish_view(self) -> None:
@@ -9774,7 +9795,7 @@ class Entry(_Drawable, XView):
         justify = str(self._options["justify"])
         if justify not in ("right", "center"):
             return 0
-        room = area.width - len(self._displayed())
+        room = area.width - cells(self._displayed())
         if self.focus_get() is self and self._editable:
             room -= 1
         if room <= 0:
@@ -9806,6 +9827,12 @@ class Entry(_Drawable, XView):
         mask = str(self._options["show"])
         text = self._field.text
         return mask[0] * len(text) if mask else text
+
+    def _shown_cells(self, text: str) -> int:
+        """The cells a run of the contents takes as drawn: the mask's, with
+        ``show`` set, whatever characters it hides."""
+        mask = str(self._options.get("show") or "")
+        return cells(mask[0]) * len(text) if mask else cells(text)
 
     def _placeholder_attribute(self, attribute: int) -> int:
         """How the ghost text is drawn, as distinct from real contents.
@@ -9854,8 +9881,7 @@ class Entry(_Drawable, XView):
                 )
             if area.is_empty:
                 return
-            view = self._field.view
-            text = self._displayed()[view : view + area.width]
+            text = clip_cells(self._displayed()[self._field.view :], area.width)
             self._write_line(
                 dispatcher,
                 window,
@@ -9877,11 +9903,14 @@ class Entry(_Drawable, XView):
         if selection is None:
             return
         first, last = selection
-        start = max(0, self._field.column_of(first))
-        stop = min(area.width, self._field.column_of(last))
+        field = self._field
+        start = max(0, field.column_of(first))
+        stop = min(area.width, field.column_of(last))
         if stop <= start:
             return
-        text = self._displayed()[self._field.view + start : self._field.view + stop]
+        text = clip_cells(
+            self._displayed()[max(first, field.view) : last], stop - start
+        )
         with contextlib.suppress(_curses.error):
             self._write_line(
                 dispatcher,
@@ -11024,9 +11053,9 @@ class Message(_TextWidget):
         # No narrower than the longest word - narrower than that changes
         # nothing except where the word overflows - and no wider than the
         # whole text on one line.
-        narrowest = max(len(word) for word in words)
+        narrowest = max(cells(word) for word in words)
         best, closest = narrowest, None
-        for width in range(narrowest, len(text) + 1):
+        for width in range(narrowest, cells(text) + 1):
             block_width, block_height = measure(wrap(text, width))
             if not block_height:
                 continue
@@ -11374,7 +11403,7 @@ class LabelFrame(Frame):
         if label is not None:
             width, height = label.winfo_reqwidth() + 2, max(1, label.winfo_reqheight())
         else:
-            width, height = len(self._caption()), 1
+            width, height = cells(self._caption()), 1
         if not width:
             return
         self._request_size(
@@ -11428,9 +11457,9 @@ class LabelFrame(Frame):
         room = width - 2 * BORDER_WIDTH
         text = clip_text(caption, room)
         if alignment == "centre":
-            column = BORDER_WIDTH + (room - len(text)) // 2
+            column = BORDER_WIDTH + (room - cells(text)) // 2
         elif alignment == "right":
-            column = width - BORDER_WIDTH - len(text)
+            column = width - BORDER_WIDTH - cells(text)
         else:
             column = BORDER_WIDTH
         row = 0 if edge == "top" else height - 1
@@ -12489,7 +12518,7 @@ class Text(_Drawable, XView, YView):
                     stops=self._stops,
                     style=str(self._options["tabstyle"]),
                 )
-            widest = max(widest, left + len(text))
+            widest = max(widest, left + cells(text))
         return widest
 
     @property
@@ -12902,7 +12931,11 @@ class Text(_Drawable, XView, YView):
             return (x, y, right - x, 1)
         if not 0 <= x - area.x < area.width:
             return None
-        return (x, y, 1, 1)
+        # As wide as the character is drawn: two cells for an ideograph.
+        lines = self._buffer.lines
+        text = lines[resolved.line - 1] if resolved.line <= len(lines) else ""
+        character = text[resolved.char] if resolved.char < len(text) else "\n"
+        return (x, y, char_cells(character) if character.isprintable() else 1, 1)
 
     def _row_and_column(self, index: Any) -> tuple[int, int, tuple[int, int]] | None:
         """The display row and column for an index, and that row's extent.
@@ -13544,11 +13577,16 @@ class Text(_Drawable, XView, YView):
         column = left
         tab = 0
         for offset in range(start, len(line)):
+            if line[offset] != "\t":
+                # A wide character that would straddle the edge starts the
+                # next row; a combining mark stays with the one before.
+                size = char_cells(line[offset])
+                if size and column + size > edge:
+                    return offset
+                column += size
+                continue
             if column >= edge:
                 return offset
-            if line[offset] != "\t":
-                column += 1
-                continue
             number = self._stops.index_after(column) if style == WORDPROCESSOR else tab
             target = self._stops.nth(number)
             column = target if target > column else column + 1
@@ -13638,7 +13676,7 @@ class Text(_Drawable, XView, YView):
         """
         text = self._row_text(line, start, stop)
         left, _ = self._row_margins(line, start)
-        if "\t" not in text:
+        if "\t" not in text and text.isascii():
             return left + char - start
         return column_of(
             text,
@@ -13882,27 +13920,55 @@ class Text(_Drawable, XView, YView):
             return
         text = lines[line - 1][start:stop] if line <= len(lines) else ""
         left, _ = self._row_margins(line, start)
-        # Built so that an index into this string IS a column: the margin as
-        # leading blanks, then the drawn form of the text. A tab is the gap
+        # One entry a cell, so that a position in the list IS a column: the
+        # margin as blanks, then the drawn form of the text. A tab is the gap
         # it spans - handing a raw one to curses is what made every widget
-        # disagree with its own arithmetic (TkCurses-zrm).
-        if "\t" in text:
-            text = render(
-                text,
-                start=left,
-                stops=self._stops,
-                style=str(self._options["tabstyle"]),
-            )
-        text = " " * left + text
+        # disagree with its own arithmetic (TkCurses-zrm) - and an ideograph
+        # takes two entries. Beside it, the character each cell shows, which
+        # is what the tags are looked up by.
+        cell_text, owners = self._row_cells(text, left)
         self._draw_margin(dispatcher, window, area, offset, span, left)
-        visible = text[self._left : self._left + area.width]
+        shown = cell_text[self._left : self._left + area.width]
+        if shown and shown[0] == "":
+            shown[0] = " "  # The second half of an ideograph scrolled off.
+        end = self._left + len(shown)
+        if shown and end < len(cell_text) and cell_text[end] == "":
+            shown[-1] = " "  # The first half of one cut by the right edge.
         self._write_line(
-            dispatcher, window, area.y + offset, area.x, visible, attribute
+            dispatcher, window, area.y + offset, area.x, "".join(shown), attribute
         )
+        shown_owners = owners[self._left : end]
         for name in self._tag_order:
             self._draw_tagged(
-                dispatcher, window, area, offset, span, visible, name, attribute
+                dispatcher,
+                window,
+                area,
+                offset,
+                span,
+                (shown, shown_owners),
+                name,
+                attribute,
             )
+
+    def _row_cells(self, text: str, left: int) -> tuple[list[str], list[int | None]]:
+        """A row as drawn, one entry a cell, and the character each shows.
+
+        The second list holds, for each cell, the offset in ``text`` of the
+        character drawn there - a tab owns every cell of its gap - or None
+        for the margin.
+        """
+        margin: list[int | None] = [None] * left
+        if "\t" not in text and text.isascii():
+            return [" "] * left + list(text), margin + list(range(len(text)))
+        style = str(self._options["tabstyle"])
+        drawn = glyphs(text, start=left, stops=self._stops, style=style)
+        owners: list[int | None] = [None] * len(drawn)
+        laid = columns_of(text, start=left, stops=self._stops, style=style)
+        for index, column in enumerate(laid):
+            following = laid[index + 1] if index + 1 < len(laid) else left + len(drawn)
+            for at in range(column, following):
+                owners[at - left] = index
+        return [" "] * left + drawn, margin + owners
 
     def _draw_margin(
         self,
@@ -13949,7 +14015,7 @@ class Text(_Drawable, XView, YView):
         area: Rect,
         offset: int,
         span: tuple[int, int, int],
-        visible: str,
+        visible: tuple[list[str], list[int | None]],
         name: str,
         attribute: int,
     ) -> None:
@@ -13964,9 +14030,12 @@ class Text(_Drawable, XView, YView):
         tagged = self._tag_attribute(name)
         if tagged is None:
             return
-        first = start + self._left
-        for column, character in enumerate(visible):
-            at = Index(line, first + column)
+        shown, owners = visible
+        for column, character in enumerate(shown):
+            owner = owners[column]
+            if owner is None or character == "":
+                continue
+            at = Index(line, start + owner)
             if name not in self._buffer.tag_names(at):
                 continue
             self._write_line(
@@ -14241,9 +14310,11 @@ def _text_up_down_line(text: Text, count: int) -> str:
         text._pos_orig = insert
     rows = text._text_rows()
     origin = text._pos_orig
-    row = text._row_of(origin, rows)
+    row, column = text._display_position(origin, rows)
+    # The column in cells, as Tk keeps the x position: an ideograph is two,
+    # a tab its whole gap, and a margin counts.
+    at_start = origin.char == rows[row][1]
     target = text._row_of(insert, rows) + count
-    column = origin.char - rows[row][1]
     last = text._buffer.clamp(Index(rows[-1][0], rows[-1][2]))
     if target < 0:
         new = Index(rows[0][0], rows[0][1])
@@ -14252,11 +14323,19 @@ def _text_up_down_line(text: Text, count: int) -> str:
         # column and the last character from any other - "9.0 + 1
         # displaylines" is 10.0, "9.1 + 1 displaylines" 9.7. A plain Down
         # ends on the character either way; a shifted one selects to end.
-        new = text._buffer.end() if column == 0 else last
+        new = text._buffer.end() if at_start else last
     else:
         line, new_start, new_stop = rows[target]
         last_on_row = text._row_last(line, new_start, new_stop)
-        new = text._buffer.clamp(Index(line, min(new_start + column, last_on_row)))
+        left, _ = text._row_margins(line, new_start)
+        offset = char_at(
+            text._row_text(line, new_start, new_stop),
+            column,
+            start=left,
+            stops=text._stops,
+            style=str(text._options["tabstyle"]),
+        )
+        new = text._buffer.clamp(Index(line, min(new_start + offset, last_on_row)))
     text._prev_pos = new
     line, start, _ = rows[text._row_of(insert, rows)]
     # "end display lineend", which is the last character and not end.
@@ -15264,7 +15343,7 @@ class Canvas(_Drawable, XView, YView):
         if placed is None:
             return None
         column, row, lines = placed
-        width = max((len(line) for line in lines), default=0)
+        width = max((cells(line) for line in lines), default=0)
         return (
             column,
             row * 2,
@@ -15607,7 +15686,7 @@ class Canvas(_Drawable, XView, YView):
         if not lines:
             return None
         x, y = points[0]
-        width = max((len(line) for line in lines), default=0)
+        width = max((cells(line) for line in lines), default=0)
         across, down = parse_anchor(str(item.options.get("anchor") or "center"))
         column = x - int(width * across)
         # The cell the point falls in, then whole rows off it for a block of
@@ -15678,6 +15757,8 @@ class Canvas(_Drawable, XView, YView):
         for (x, row), (glyph, attribute) in cells.items():
             column, screen_row = x - self._left, row - top_row
             if 0 <= column < area.width and 0 <= screen_row < area.height:
+                if glyph and column + char_cells(glyph[0]) > area.width:
+                    glyph = " "  # Half an ideograph at the edge is a blank.
                 painted.append((column, screen_row, glyph, attribute))
         return painted
 
@@ -15685,7 +15766,7 @@ class Canvas(_Drawable, XView, YView):
         self,
         item: _CanvasItem,
         pixels: dict[tuple[int, int], str],
-        cells: dict[tuple[int, int], tuple[str, int]],
+        glyphs: dict[tuple[int, int], tuple[str, int]],
         base: int,
     ) -> None:
         """Put a text item's glyphs into the cells, clearing what was under.
@@ -15705,14 +15786,28 @@ class Canvas(_Drawable, XView, YView):
             underline="underline" in font,
         )
         justify = str(item.options.get("justify") or "left")
-        width = max((len(line) for line in lines), default=0)
+        width = max((cells(line) for line in lines), default=0)
         for offset, line in enumerate(lines):
-            start = column + align_offset(len(line), width, justify)
-            for index, character in enumerate(line):
-                at = (start + index, row + offset)
-                pixels.pop((at[0], at[1] * 2), None)
-                pixels.pop((at[0], at[1] * 2 + 1), None)
-                cells[at] = (character, attribute)
+            at = column + align_offset(cells(line), width, justify)
+            down = row + offset
+            for character in line:
+                size = char_cells(character)
+                if size == 0:
+                    # A combining mark joins the glyph before it.
+                    if (at - 1, down) in glyphs:
+                        glyph, look = glyphs[(at - 1, down)]
+                        glyphs[(at - 1, down)] = (glyph + character, look)
+                    continue
+                for across in range(at, at + size):
+                    pixels.pop((across, down * 2), None)
+                    pixels.pop((across, down * 2 + 1), None)
+                    # A wide glyph's second cell is "", which draws nothing:
+                    # the terminal fills it from the first.
+                    glyphs[(across, down)] = (
+                        "" if across > at else character,
+                        attribute,
+                    )
+                at += size
 
     def _ink(self, foreground: str, background: str | None, base: int) -> int:
         """The attribute a cell needs, given the colours its two halves want."""
@@ -16113,7 +16208,7 @@ class Menu(_Drawable):
         """Which menubar entry a column falls on."""
         at = self._text_area().x
         for number, entry in enumerate(self._entries):
-            width = len(entry.label) + 2
+            width = cells(entry.label) + 2
             if at <= column < at + width:
                 return number
             at += width
@@ -16446,7 +16541,7 @@ class Menu(_Drawable):
         """Where one menubar label starts, relative to the bar."""
         column = self._text_area().x
         for entry in self._entries[:at]:
-            column += len(entry.label) + 2
+            column += cells(entry.label) + 2
         return column
 
     def _dismiss_all(self) -> None:
@@ -16490,7 +16585,7 @@ class Menu(_Drawable):
         """Ask for a bar's row, or for what the entries need when posted."""
         if self._as_menubar:
             self._request_size(
-                sum(len(entry.label) + 2 for entry in self._entries) or 1, 1
+                sum(cells(entry.label) + 2 for entry in self._entries) or 1, 1
             )
             return
         width, height = self._posted_size()
@@ -16560,7 +16655,7 @@ class Menu(_Drawable):
                 clip_text(text, self._rect.width - column),
                 style,
             )
-            column += len(text)
+            column += cells(text)
             if column >= self._rect.width:
                 break
 
@@ -16602,12 +16697,12 @@ class Menu(_Drawable):
                 )
                 continue
             text = self._indicator_for(entry) + entry.label
-            line = text.ljust(width)
+            line = pad_cells(text, width)
             accelerator = entry.accelerator
             if accelerator:
-                line = line[: width - len(accelerator)] + accelerator
+                line = pad_cells(line, width - cells(accelerator)) + accelerator
             if entry.kind == "cascade" and cascades:
-                line = line[: width - 1] + CASCADE_GLYPH
+                line = pad_cells(line, width - 1) + CASCADE_GLYPH
             self._write_line(
                 dispatcher,
                 window,
@@ -16679,7 +16774,7 @@ class Menu(_Drawable):
         index = int(entry.options.get("underline", -1))
         if not 0 <= index < len(entry.label):
             return
-        column = area.x + len(self._indicator_for(entry)) + index
+        column = area.x + cells(self._indicator_for(entry) + entry.label[:index])
         if column >= area.x + area.width:
             return
         with contextlib.suppress(_curses.error):
@@ -17606,7 +17701,7 @@ class Listbox(_Drawable, XView, YView):
 
     def _widest(self) -> int:
         """The longest item, in cells: what the horizontal view is a fraction of."""
-        return max((len(item) for item in self._items), default=0)
+        return max((cells(item) for item in self._items), default=0)
 
     def _body_width(self) -> int:
         """How many cells of each item show, between the selection markers."""
@@ -17735,12 +17830,14 @@ class Listbox(_Drawable, XView, YView):
         item = self._items[position]
         # Measured on Tk 9.0.2: aligned within the wider of the widest item and
         # the window, so the horizontal view moves every row together.
-        room = max(self._widest(), self._body_width()) - len(item)
+        room = max(self._widest(), self._body_width()) - cells(item)
         justify = str(self._options["justify"])
         shift = {"right": room, "center": room // 2}.get(justify, 0)
         item = " " * max(0, shift) + item
-        body = clip_text(item[self._left :], max(0, area.width - 2))
-        line = f"{left}{body}".ljust(area.width - 1)[: area.width - 1] + right
+        # Scrolled in cells: an ideograph the left edge cuts leaves a blank.
+        item, blank = skip_cells(item, self._left)
+        body = clip_text(" " * blank + item, max(0, area.width - 2))
+        line = pad_cells(f"{left}{body}", area.width - 1) + right
         # One write, through the shared writer. The marker used to go on
         # separately with insstr, which INSERTS: it shifted the row one cell
         # right and dropped the last one, and on a bordered listbox the cell
@@ -19596,7 +19693,7 @@ class Scale(_Drawable):
         edge = 2 * BORDER_WIDTH if self._bordered else 0
         padx, pady = int(self._options["padx"]), int(self._options["pady"])
         length = max(1, int(self._options["length"]))
-        label = len(str(self._options["label"]))
+        label = cells(str(self._options["label"]))
         if self._vertical:
             across = self._thickness() + self._tick_span()
             if self._showvalue:
@@ -19756,7 +19853,7 @@ class Scale(_Drawable):
             # The label shares this row, so the value is pushed clear of it
             # rather than written through it - "V0lume" is not a label.
             if label:
-                column = max(column, area.x + len(label) + 1)
+                column = max(column, area.x + cells(label) + 1)
         if row < area.y or column < area.x:
             return
         self._write_line(

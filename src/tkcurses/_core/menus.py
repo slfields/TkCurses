@@ -43,6 +43,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from tkcurses._core.cells import cells
+
 __all__ = [
     "MenuEntry",
     "Placed",
@@ -111,8 +113,8 @@ def measure_entries(entries: list[MenuEntry], *, indicators: bool) -> tuple[int,
             Kept for every entry once any entry needs it, so the labels line
             up rather than stepping in and out.
     """
-    labels = max((len(entry.label) for entry in entries), default=0)
-    accelerators = max((len(entry.accelerator) for entry in entries), default=0)
+    labels = max((cells(entry.label) for entry in entries), default=0)
+    accelerators = max((cells(entry.accelerator) for entry in entries), default=0)
     cascades = any(entry.kind == "cascade" for entry in entries)
     width = labels
     if indicators:

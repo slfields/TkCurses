@@ -1692,3 +1692,51 @@ def test_an_index_expression_resolves_as_in_tk(text, spec, expected):
             text.index(spec)
     else:
         assert text.index(spec) == expected
+
+
+# ------------------------------------------------------------ wide text
+#
+# An ideograph takes two cells and a combining mark none. Indices count
+# characters; where they are drawn, and where Up and Down go, count cells.
+# TkCurses-l8w7.
+
+WIDE = "日本語"
+
+
+def test_an_ideographs_box_is_two_cells_wide(text):
+    text.insert("1.0", WIDE + "ab")
+    boxes = [text.bbox(f"1.{i}") for i in range(4)]
+    assert [box[0] - boxes[0][0] for box in boxes] == [0, 2, 4, 6]
+    assert [box[2] for box in boxes] == [2, 2, 2, 1]
+
+
+def test_a_wrapped_row_of_wide_text_holds_its_width_in_cells(root):
+    widget = Text(root, width=5, height=5, wrap="char")
+    widget._allocate(Rect(0, 0, 7, 7))
+    widget._map()
+    widget.insert("1.0", WIDE * 2)
+    assert widget._display_lines() == [(1, 0, 2), (1, 2, 4), (1, 4, 6)]
+
+
+def test_a_click_on_either_half_of_an_ideograph_lands_on_it(text):
+    text.insert("1.0", WIDE + "ab")
+    x = text.bbox("1.1")[0]
+    assert text.index(f"@{x},1") == text.index(f"@{x + 1},1") == "1.1"
+
+
+@pytest.mark.parametrize(
+    ("start", "keysym", "lands"),
+    [
+        ("1.5", "Down", "2.0"),  # column 5 is inside the tab
+        ("1.9", "Down", "2.2"),  # past the z: the end of the line
+        ("4.4", "Up", "3.2"),  # the e's cell is the third ideograph's first
+        ("4.2", "Up", "3.1"),
+    ],
+)
+def test_up_and_down_keep_the_column_in_cells(text, start, keysym, lands):
+    """Measured on Tk 9.0.2 with tk::TextUpDownLine: the x position is
+    kept, not the character offset, across a tab and across ideographs."""
+    text.insert("1.0", "abcdefghij\n\tz\n" + WIDE + "xy\nabcdefgh")
+    text.mark_set("insert", start)
+    text._handle(KeyEvent(keysym=keysym))
+    assert text.index("insert") == lands

@@ -37,6 +37,12 @@ gaps is what makes off-by-one errors in editing code.
 from __future__ import annotations
 
 import unicodedata
+from typing import TYPE_CHECKING
+
+from tkcurses._core.cells import cells
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 __all__ = ["TextField", "is_word_char", "run_end", "run_start"]
 
@@ -112,6 +118,11 @@ class TextField:
         self._anchor = 0
         self._selection: tuple[int, int] | None = None
         self._view = 0
+        #: The cells a run of the text takes on screen. Indices count
+        #: characters; columns count cells, and a CJK ideograph takes two
+        #: and a combining mark none. An entry with ``show`` set replaces
+        #: this, because what it draws is the mask, not the text.
+        self.measure: Callable[[str], int] = cells
 
     # --------------------------------------------------------------- state
 
@@ -363,10 +374,16 @@ class TextField:
     # ---------------------------------------------------------------- view
 
     def visible(self, width: int) -> str:
-        """The characters on screen in a field ``width`` cells wide."""
-        if width <= 0:
-            return ""
-        return self._text[self._view : self._view + width]
+        """The characters on screen in a field ``width`` cells wide.
+
+        A wide character that would straddle the right edge is left out.
+        """
+        used = 0
+        for index in range(self._view, len(self._text)):
+            used += self.measure(self._text[index])
+            if used > width:
+                return self._text[self._view : index]
+        return self._text[self._view :]
 
     def scroll_into_view(self, width: int) -> None:
         """Move the window so the cursor is on screen.
@@ -383,8 +400,16 @@ class TextField:
             return
         if self._cursor < self._view:
             self._view = self._cursor
-        elif self._cursor > self._view + width - 1:
-            self._view = self._cursor - width + 1
+        else:
+            # The cursor's own cell must fit too: the character it is on,
+            # two cells for a wide one, or one past the end.
+            text, cursor = self._text, self._cursor
+            own = self.measure(text[cursor]) if cursor < len(text) else 1
+            used = self.measure(text[self._view : cursor]) + max(1, own)
+            while used > width and self._view < cursor:
+                used -= self.measure(text[self._view])
+                self._view += 1
+            self._skip_marks(cursor)
         self._clamp_view()
 
     def set_view(self, index: int, width: int) -> None:
@@ -394,9 +419,11 @@ class TextField:
         independent, and scrolling an entry moves neither the cursor nor the
         selection (measured on 9.0.2; this moved the cursor until
         TkCurses-i8s). Held to ``len - width`` at most, as Tk holds it, so a
-        scroll to the end shows the last ``width`` characters and no blank.
+        scroll to the end shows the last ``width`` characters and no blank -
+        the last ``width`` cells, with wide characters in the text.
         """
-        self._view = max(0, min(index, len(self._text) - max(0, width)))
+        self._view = max(0, min(index, self._last_view(width)))
+        self._skip_marks(len(self._text))
 
     def fit_view(self, width: int) -> None:
         """Pull the window back if the text no longer reaches its right edge.
@@ -408,19 +435,63 @@ class TextField:
         and without it a cursor typed to the end of a full field would be
         drawn off the edge.
         """
-        limit = len(self._text) - max(0, width)
         if self._cursor == len(self._text):
-            limit += 1
-        self._view = max(0, min(self._view, limit))
+            width -= 1
+        self._view = max(0, min(self._view, self._last_view(width)))
+
+    def _last_view(self, width: int) -> int:
+        """The furthest the view may scroll: the last ``width`` cells in view."""
+        start = len(self._text)
+        used = 0
+        while start > 0:
+            used += self.measure(self._text[start - 1])
+            if used > width:
+                break
+            start -= 1
+        return start
+
+    def _skip_marks(self, limit: int) -> None:
+        """Keep the view off a combining mark, which has no cell of its own,
+        moving it no further right than ``limit``."""
+        while self._view < limit and self.measure(self._text[self._view]) == 0:
+            self._view += 1
 
     def _clamp_view(self) -> None:
         """Keep the window inside the text."""
         self._view = max(0, min(self._view, len(self._text)))
 
     def column_of(self, index: int) -> int:
-        """Where an index appears on screen, relative to the visible window."""
-        return self.clamp(index) - self._view
+        """Where an index appears on screen, relative to the visible window.
+
+        In cells: negative for an index scrolled off to the left.
+        """
+        index = self.clamp(index)
+        if index >= self._view:
+            return self.measure(self._text[self._view : index])
+        return -self.measure(self._text[index : self._view])
 
     def index_at(self, column: int) -> int:
-        """The index a screen column corresponds to, for a mouse click."""
-        return self.clamp(self._view + max(0, column))
+        """The index a screen column corresponds to, for a mouse click.
+
+        The character whose cells include ``column`` - either half of a wide
+        one names it - or the end, past the last.
+        """
+        start = self.measure(self._text[: self._view])
+        return self.index_at_cell(start + max(0, column))
+
+    def index_at_cell(self, cell: int) -> int:
+        """The character whose cells include ``cell``, counted from the start.
+
+        Not from the view, as :meth:`index_at` counts: what a scrollbar's
+        fraction of the whole text lands on.
+        """
+        used = 0
+        for index, character in enumerate(self._text):
+            used += self.measure(character)
+            if cell < used:
+                return index
+        return len(self._text)
+
+    def cell_of(self, index: int) -> int:
+        """How many cells precede ``index``, counted from the start."""
+        return self.measure(self._text[: self.clamp(index)])

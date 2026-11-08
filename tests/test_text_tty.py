@@ -483,3 +483,133 @@ def test_control_z_undoes_in_a_text_and_alt_z_redoes(terminal, tmp_path):
     term.send(b"\x1bz")
     term.wait_for_text("text=[abc]")
     assert term.exit_status is None, "Control-z must not have suspended it"
+
+
+# ------------------------------------------------------------ wide text
+#
+# An ideograph takes two cells. The Text drew, wrapped, tagged and placed
+# its cursor as if each took one, so everything after one on a line was a
+# cell out per ideograph. TkCurses-l8w7.
+
+WIDE = "日本語"
+BAR = "│"
+
+
+def _wide_text(terminal, tmp_path, body):
+    term = terminal(cols=30, rows=10)
+    term.run_source(
+        program(
+            "text = tkcurses.Text(root, width=10, height=4, wrap='char')\n"
+            "text.place(x=1, y=1)\n" + body
+        ),
+        workdir=tmp_path,
+    )
+    return term
+
+
+def test_wide_text_wraps_at_the_cells_a_row_holds(terminal, tmp_path):
+    """Ten cells: three ideographs, two letters and a fourth ideograph;
+    the fifth starts the next row rather than straddling the border."""
+    term = _wide_text(terminal, tmp_path, f"text.insert('1.0', {WIDE + 'ab' + WIDE!r})")
+    term.wait_for(
+        lambda t: (
+            BAR + WIDE + "ab" + WIDE[0] + BAR in t.display[2]
+            and BAR + WIDE[1:] + " " * 6 + BAR in t.display[3]
+        ),
+        message="the line wrapped after ten cells",
+    )
+
+
+def test_the_cursor_and_a_tag_sit_on_their_character(terminal, tmp_path):
+    term = _wide_text(
+        terminal,
+        tmp_path,
+        f"text.insert('1.0', {WIDE + 'ab'!r})\n"
+        "text.tag_configure('hot', underline=1)\n"
+        "text.tag_add('hot', '1.4')\n"
+        "text.mark_set('insert', '1.3')\n"
+        "text.focus_set()",
+    )
+    # The a is six cells in, at column 8; the b, tagged, at 9.
+    term.wait_for(
+        lambda t: (
+            t.cursor_cell() == (2, 8)
+            and [c for c in range(2, 12) if t.char_at(2, c).underscore] == [9]
+        ),
+        message="the cursor on the a and the b underlined",
+    )
+
+
+def test_a_click_on_the_second_half_of_an_ideograph_lands_on_it(terminal, tmp_path):
+    term = _wide_text(
+        terminal, tmp_path, f"text.insert('1.0', {WIDE + 'ab'!r})\ntext.focus_set()"
+    )
+    term.wait_for_text(WIDE + "ab")
+    term.click(5, 2)
+    term.wait_for(lambda t: t.cursor_cell() == (2, 4), message="the cursor on 本")
+
+
+def test_a_tag_covers_every_cell_of_a_tab(terminal, tmp_path):
+    """The tagged tab's gap is reversed from where it starts to its stop:
+    the tag is looked up by the character a cell shows, not by column."""
+    term = _wide_text(
+        terminal,
+        tmp_path,
+        f"text.insert('1.0', {WIDE + chr(9) + 'z'!r})\n"
+        "text.tag_configure('hot', background='red')\n"
+        "text.tag_add('hot', '1.3')",
+    )
+    # Three ideographs end at cell 6 (column 8); the tab runs to the stop
+    # at 8 (column 10), where the z is.
+    term.wait_for(
+        lambda t: [c for c in range(2, 12) if t.char_at(2, c).bg == "red"] == [8, 9],
+        message="the two cells of the tab's gap coloured, and nothing else",
+    )
+
+
+def test_text_scrolled_into_an_ideograph_shows_a_blank(terminal, tmp_path):
+    term = terminal(cols=30, rows=10)
+    term.run_source(
+        program(
+            "text = tkcurses.Text(root, width=6, height=2, wrap='none')\n"
+            "text.place(x=1, y=1)\n"
+            f"text.insert('1.0', {WIDE * 3!r})\n"
+            "root.after(50, lambda: text.xview_scroll(1, 'units'))"
+        ),
+        workdir=tmp_path,
+    )
+    # One cell scrolled: a blank for the first ideograph's second half,
+    # then two, and a blank where the next has one cell of its two.
+    term.wait_for(
+        lambda t: BAR + " " + WIDE[1:] + " " + BAR in t.display[2],
+        message="half an ideograph at either edge shown as a blank",
+    )
+
+
+def test_a_tag_on_an_indented_line_colours_its_own_character(terminal, tmp_path):
+    """With a margin of three, the b is at column 6, and only it is red. The
+    tag used to be looked up by column, which put it on a margin blank."""
+    term = terminal(cols=30, rows=10)
+    term.run_source(
+        program(
+            "text = tkcurses.Text(root, width=12, height=4)\n"
+            "text.place(x=1, y=1)\n"
+            "text.insert('1.0', 'abcdef')\n"
+            "text.tag_configure('m', lmargin1=3)\n"
+            "text.tag_add('m', '1.0', '1.end')\n"
+            "text.tag_configure('hot', background='red')\n"
+            "text.tag_add('hot', '1.1')"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(
+        lambda t: (
+            [
+                (c, t.char_at(2, c).data)
+                for c in range(2, 14)
+                if t.char_at(2, c).bg == "red"
+            ]
+            == [(6, "b")]
+        ),
+        message="the b red, and nothing else",
+    )

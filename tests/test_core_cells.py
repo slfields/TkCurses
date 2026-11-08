@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pytest
 
-from tkcurses._core.cells import cells, char_cells, clip_cells, skip_cells
+from tkcurses._core.cells import cells, char_cells, clip_cells, pad_cells, skip_cells
 
 WIDE = "\u65e5"  # a CJK ideograph
 EMOJI = "\U0001f600"
@@ -91,3 +91,14 @@ def test_skipping_into_a_wide_character_leaves_a_blank_for_its_half():
 
 def test_skipping_takes_a_letters_marks_with_it():
     assert skip_cells("e" + ACUTE + "z", 1) == ("z", 0)
+
+
+def test_padding_fills_to_exactly_the_cells_asked_for():
+    assert pad_cells(WIDE + "a", 6) == WIDE + "a   "
+    assert pad_cells("abc", 2) == "ab"
+    assert pad_cells("abc", -1) == ""
+
+
+def test_padding_replaces_a_wide_character_cut_at_the_end_with_a_space():
+    assert pad_cells("a" + WIDE, 2) == "a "
+    assert cells(pad_cells("a" + WIDE * 2, 4)) == 4

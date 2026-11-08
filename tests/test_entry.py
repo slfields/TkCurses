@@ -1359,3 +1359,59 @@ def test_a_text_too_long_to_fit_starts_at_the_left(entry, justify):
     entry.configure(justify=justify)
     entry.insert(0, "x" * 30)
     assert entry._char_bbox(0)[0] == 1
+
+
+# ------------------------------------------------------------ wide text
+#
+# An ideograph takes two cells; the view, the fractions a scrollbar is told
+# and a character's box count cells, while indices count characters.
+# TkCurses-9t4l.
+
+WIDE = "日本語"
+
+
+def test_a_wide_characters_box_is_two_cells_wide(entry):
+    entry.insert(0, WIDE + "ab")
+    x0 = entry._char_bbox(0)[0]
+    assert [entry._char_bbox(i)[0] - x0 for i in range(5)] == [0, 2, 4, 6, 7]
+    assert [entry._char_bbox(i)[2] for i in range(5)] == [2, 2, 2, 1, 1]
+
+
+def test_the_fractions_a_scrollbar_is_told_count_cells(entry):
+    """Twenty cells of a forty-cell text: half of it, not twenty of
+    twenty-five characters."""
+    entry.insert(0, WIDE * 5 + "x" * 10)
+    assert entry.xview() == (0.0, 0.5)
+
+
+def test_moveto_lands_on_the_character_at_that_fraction_of_the_cells(entry):
+    entry.insert(0, WIDE * 5 + "x" * 10)
+    entry.xview("moveto", 0.25)  # cell 10, the sixth ideograph
+    assert entry._field.view == 5
+    assert entry.xview()[0] == 0.25
+
+
+def test_a_page_of_wide_text_moves_a_page_of_cells(entry):
+    """A page is the width less two: eighteen cells, nine ideographs."""
+    entry.insert(0, WIDE * 10)
+    entry.xview("scroll", 1, "pages")
+    assert entry._field.view == 9
+    entry.xview("scroll", -1, "pages")
+    assert entry._field.view == 0
+
+
+def test_a_page_that_ends_inside_a_wide_character_moves_past_it(entry):
+    """Eighteen cells on from the start of ``a`` plus ideographs is the
+    second half of the ninth; the page goes on to the tenth rather than
+    falling short of a page."""
+    entry.insert(0, "a" + WIDE * 10)
+    entry.xview("scroll", 1, "pages")
+    assert entry._field.view == 10
+
+
+def test_a_masked_field_measures_its_mask_not_its_text(entry):
+    """``show`` draws one asterisk a character, ideographs or not."""
+    entry.configure(show="*")
+    entry.insert(0, WIDE + "ab")
+    x0 = entry._char_bbox(0)[0]
+    assert [entry._char_bbox(i)[0] - x0 for i in range(5)] == [0, 1, 2, 3, 4]

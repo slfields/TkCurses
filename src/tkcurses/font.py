@@ -48,6 +48,7 @@ import itertools
 from typing import TYPE_CHECKING, Any
 
 import tkcurses
+from tkcurses._core.cells import cells
 
 if TYPE_CHECKING:
     from tkcurses import Misc
@@ -248,9 +249,11 @@ class Font:
         """How many cells ``text`` needs.
 
         Exact, which it never is in a proportional font: a character cell is
-        a character cell, so a widget laid out from this will fit.
+        a character cell, so a widget laid out from this will fit. A CJK
+        ideograph or most emoji is two of them and a combining accent none,
+        as the terminal draws them.
         """
-        return len(text)
+        return cells(text)
 
     def metrics(self, *options: str, **kw: Any) -> Any:
         """Line metrics, in cells.

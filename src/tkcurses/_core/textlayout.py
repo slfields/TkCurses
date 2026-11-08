@@ -61,6 +61,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from tkcurses._core.cells import cells, char_cells
 from tkcurses._core.errors import TclError
 
 if TYPE_CHECKING:
@@ -73,6 +74,7 @@ __all__ = [
     "char_at",
     "column_of",
     "columns_of",
+    "glyphs",
     "parse_tabs",
     "render",
 ]
@@ -254,7 +256,8 @@ def _walk(
     for index, character in enumerate(text):
         out.append(column)
         if character != "\t":
-            column += 1
+            # In cells: an ideograph takes two, a combining mark none.
+            column += char_cells(character)
             continue
         number = stops.index_after(column) if style == WORDPROCESSOR else tab
         target = _aligned(stops, number, _run_after(text, index), column)
@@ -312,9 +315,11 @@ def _numeric_offset(run: str) -> int:
     digits rather than "the number"; and the comma counts even with no digit
     near it. The manual's third rule is the only one it describes exactly.
     """
+    # Found by character, answered in cells: what comes before the point is
+    # how far left of the stop the run begins.
     separators = [i for i, ch in enumerate(run) if ch in _DECIMAL_POINTS]
     if separators:
-        return separators[-1]
+        return cells(run[: separators[-1]])
     digits = [i for i, ch in enumerate(run) if ch.isdigit()]
     if digits:
         # The FIRST run of digits, so ab12cd34 aligns on 12. Walk from the
@@ -322,8 +327,8 @@ def _numeric_offset(run: str) -> int:
         last = digits[0]
         while last + 1 < len(run) and run[last + 1].isdigit():
             last += 1
-        return last + 1
-    return len(run)
+        return cells(run[: last + 1])
+    return cells(run)
 
 
 def _aligned(stops: TabStops, number: int, run: str, column: int) -> int:
@@ -343,7 +348,7 @@ def _aligned(stops: TabStops, number: int, run: str, column: int) -> int:
     """
     stop = stops.nth(number)
     alignment = stops.align(number)
-    length = len(run)
+    length = cells(run)
     if alignment == "right":
         return stop - length
     if alignment == "center":
@@ -373,12 +378,38 @@ def render(
     fix, putting the blanks where the layout says they are rather than where
     the terminal guesses.
     """
+    return "".join(glyphs(text, start=start, stops=stops, style=style))
+
+
+def glyphs(
+    text: str,
+    *,
+    start: int = 0,
+    stops: TabStops | None = None,
+    style: str = TABULAR,
+) -> list[str]:
+    """The line as it is drawn, one entry per cell from column ``start``.
+
+    A tab's cells are blanks. A wide character is in its first cell and its
+    second is ``""``, which the terminal fills from the first; a combining
+    mark is added to the cell before it, which it joins. So an entry's
+    position is its column, and joined the entries are :func:`render`.
+    """
     laid, end = _walk(text, start, stops, style)
     out = [" "] * (end - start)
     for index, character in enumerate(text):
-        if character != "\t":
-            out[laid[index] - start] = character
-    return "".join(out)
+        if character == "\t":
+            continue
+        at = laid[index] - start
+        size = char_cells(character)
+        if size == 0:
+            if at > 0:
+                out[at - 1] += character
+            continue
+        out[at] = character
+        for extra in range(1, size):
+            out[at + extra] = ""
+    return out
 
 
 def column_of(

@@ -47,7 +47,7 @@ from __future__ import annotations
 import unicodedata
 from functools import lru_cache
 
-__all__ = ["cells", "char_cells", "clip_cells", "skip_cells"]
+__all__ = ["cells", "char_cells", "clip_cells", "pad_cells", "skip_cells"]
 
 #: Format characters that DO take a cell: the soft hyphen, drawn as a hyphen,
 #: and the Arabic and Syriac prepended concatenation marks, drawn as a sign.
@@ -98,6 +98,16 @@ def clip_cells(text: str, width: int) -> str:
         if used > width:
             return text[:index]
     return text
+
+
+def pad_cells(text: str, width: int) -> str:
+    """``text`` cut or padded with spaces to exactly ``width`` cells.
+
+    ``str.ljust`` in cells: a wide character that would straddle the end is
+    replaced by the space it leaves.
+    """
+    text = clip_cells(text, width)
+    return text + " " * (max(0, width) - cells(text))
 
 
 def skip_cells(text: str, count: int) -> tuple[str, int]:

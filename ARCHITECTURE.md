@@ -2741,10 +2741,53 @@ window's last cell is inserted where it starts rather than at the last
 cell; `clip_text`; `wrap`, `measure` and so `wraplength`; and the Label
 family's anchoring, justification, cutting and underline (Label, Button,
 Checkbutton, Radiobutton, Menubutton, Message and their themed forms).
-What does not yet, each filed: the entries' cursor, view and clicks
-(`TkCurses-9t4l`), the Text widget's layout and indices (`TkCurses-l8w7`),
-and the Listbox, Scale's label and the other widgets that slice their text
-by characters (`TkCurses-r9k2`).
+What does not yet: the `curses` compatibility module's cursor
+(`TkCurses-z9eg`).
+
+**The widgets that lay out rows and columns of their own**
+(`TkCurses-r9k2`): Listbox, Scale's label, Menu and menubar, ttk.Notebook's
+tabs, ttk.Treeview, Canvas text, LabelFrame's caption, Message's `aspect`
+and `font.Font.measure`. Each measured with `len()`; each now measures with
+`cells` and pads with `pad_cells`, which is `str.ljust` in cells and leaves
+a space where a wide character would straddle the end. Two consequences
+worth knowing:
+
+- A Treeview cell is cut at its column. It was padded with `ljust`, which
+  pads and never cuts, so a value longer than its column - ASCII included -
+  pushed every column after it out of line under its heading.
+- A Notebook's strip and a Canvas's composed cells are built one entry per
+  cell. A wide character goes in its first cell and `""` in its second,
+  which joins to nothing and which `_write_line` skips, so the terminal's
+  own drawing of the character fills it; a combining mark is appended to
+  the cell before.
+
+**The entries** (Entry, Spinbox and the ttk entries, `TkCurses-9t4l`).
+Indices and the view's first character stay characters, as Tk's API needs;
+`TextField` turns them into columns through a `measure` function, which an
+entry replaces with one that counts the mask when `show` is set - one
+asterisk a character, whatever it hides. A click on either half of a wide
+character names it; the cursor stands on the first of its cells; scrolling
+to the cursor makes room for both. The view never starts on a combining
+mark, which has no cell of its own. `xview`'s fractions and its pages are
+cells, as Tk's are pixels - measured on Tk 9.0.2 with `TkFixedFont`, an
+ideograph is 13 pixels to a letter's 8 and the fractions follow the pixels,
+not the characters. A page that would end inside a wide character goes on
+past it; rounding back would leave a page of ideographs one short each
+time.
+
+**Text** (`TkCurses-l8w7`). Indices stay characters; rows, columns and
+the view are cells. `wrap_spans` breaks a non-ASCII line by a running sum
+of cells and a binary search per row, cached by line because a Text lays
+out every line on every redraw. A character wider than the whole row
+still takes a row of its own: without that the loop never advances, and
+when the guard was switched off to check its test, the test session grew
+to 10 GB and was killed by the kernel - so the test runs that case in a
+child process capped at 512 MB and 20 seconds. A row is drawn from
+`textlayout.glyphs`, one entry a cell, with the character each cell shows
+beside it; tags are looked up by that character, so a tag colours both
+halves of an ideograph, and half of one at a scrolled edge is a blank.
+Up and Down keep the column in cells, as Tk keeps the x position, and a
+numeric tab aligns on the cells before the point.
 
 ### Screen Buffer
 
