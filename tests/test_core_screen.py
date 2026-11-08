@@ -306,3 +306,50 @@ def test_repr_reports_size_and_dirtiness():
     assert "dirty=False" in repr(buffer)
     buffer.write(0, 0, "x")
     assert "dirty=True" in repr(buffer)
+
+
+# Laid out in cells, as the terminal draws it. An ideograph fills its cell
+# and the next, which holds "" and is not painted; a combining mark joins the
+# character before it. TkCurses-z9eg.
+
+WIDE = "日"
+
+
+def _row(buffer, row=0):
+    return [buffer.cell(row, column).char for column in range(buffer.width)]
+
+
+def test_a_wide_character_fills_two_cells():
+    buffer = ScreenBuffer(6, 1)
+    assert buffer.write(0, 0, WIDE + "a") == 3
+    assert _row(buffer) == [WIDE, "", "a", " ", " ", " "]
+
+
+def test_a_combining_mark_joins_the_cell_before_it():
+    buffer = ScreenBuffer(4, 1)
+    assert buffer.write(0, 0, "éx") == 2
+    assert _row(buffer) == ["é", "x", " ", " "]
+
+
+def test_a_wide_character_cut_by_an_edge_leaves_a_blank():
+    right = ScreenBuffer(3, 1)
+    right.write(0, 0, "ab" + WIDE)
+    assert _row(right) == ["a", "b", " "]
+    left = ScreenBuffer(3, 1)
+    left.write(0, -1, WIDE + "b")
+    assert _row(left) == [" ", "b", " "]
+
+
+def test_writing_over_the_first_half_of_a_wide_character_blanks_the_second():
+    buffer = ScreenBuffer(4, 1)
+    buffer.write(0, 0, WIDE + WIDE)
+    buffer.write(0, 2, "q")
+    assert _row(buffer) == [WIDE, "", "q", " "]
+
+
+def test_writing_over_the_second_half_leaves_the_first():
+    """As ncurses does, measured by running the same program through both."""
+    buffer = ScreenBuffer(4, 1)
+    buffer.write(0, 0, WIDE + WIDE)
+    buffer.write(0, 1, "z")
+    assert _row(buffer) == [WIDE, "z", WIDE, ""]

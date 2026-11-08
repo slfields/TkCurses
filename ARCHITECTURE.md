@@ -1933,6 +1933,19 @@ reproduced every time with a one-second pause before `mainloop()`, and once
 in 25 rounds under CPU load without one. They now start drawing from inside
 the loop.
 
+**Except while a dialog waits** (`TkCurses-ubwt`). A dialog called at the
+top level of a program - `messagebox.askyesno(...)` before `mainloop()` -
+waits in `wait_window`, and Ctrl-C there printed a `KeyboardInterrupt`
+traceback from `select()`: measured in `messagebox`, `simpledialog`,
+`filedialog`, `colorchooser` and `dialog.Dialog`. Decided with the user:
+it cancels the dialog, exactly as Escape does. So `_wait_until`, when no
+loop is running, takes Ctrl-C the way `mainloop()` does - noted, answered
+between callbacks - and the answer is an Escape key routed as if typed, so
+each dialog does what its own Escape binding does. The tests run each
+dialog twice, once cancelled by Escape and once by Ctrl-C, and require the
+same result. A dialog opened from a callback inside `mainloop()` is not
+covered by this: measured, one Ctrl-C there leaves the dialog open.
+
 Three behaviours fall out of that, and all three are what a person expects:
 
 | the application | Ctrl-C does |
@@ -2741,8 +2754,16 @@ window's last cell is inserted where it starts rather than at the last
 cell; `clip_text`; `wrap`, `measure` and so `wraplength`; and the Label
 family's anchoring, justification, cutting and underline (Label, Button,
 Checkbutton, Radiobutton, Menubutton, Message and their themed forms).
-What does not yet: the `curses` compatibility module's cursor
-(`TkCurses-z9eg`).
+So does the `curses` compatibility module (`TkCurses-z9eg`), the one
+thing that writes through `ScreenBuffer.write`, which now lays text out
+in cells - an ideograph in its first cell and `""` in its second, which the repaint skips; a combining mark joined to the cell
+before it, and painted with `addstr`, since `addch` takes one code point -
+and `addstr`, `addnstr`, `addch`, `insstr` and `insch` move the cursor and
+shift the line by cells. Writing over half of an ideograph follows ncurses,
+measured by running one program under both modules in the harness and
+comparing the screens (`test_wide_text_draws_the_same_thing_either_way`):
+over its first cell, the second is blanked; over its second, the first is
+left as it was.
 
 **The widgets that lay out rows and columns of their own**
 (`TkCurses-r9k2`): Listbox, Scale's label, Menu and menubar, ttk.Notebook's

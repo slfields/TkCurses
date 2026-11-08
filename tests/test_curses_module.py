@@ -406,3 +406,31 @@ def test_touchwin_marks_whole_rows(window):
     window.addstr(0, 2, "ab")
     window.touchwin()
     assert window._touched[0] == (0, 19)
+
+
+# The cursor moves by the cells text takes, as curses moves it: two for an
+# ideograph, none for a combining mark. It moved one a character.
+
+
+def test_the_cursor_moves_past_wide_text_by_its_cells(window):
+    window.addstr(0, 0, "日本")
+    assert window.getyx() == (0, 4)
+    window.addch("日")
+    assert window.getyx() == (0, 6)
+
+
+def test_a_combining_mark_does_not_move_the_cursor(window):
+    window.addstr(0, 0, "café")
+    assert window.getyx() == (0, 4)
+
+
+def test_insstr_pushes_the_line_on_by_the_cells_it_inserts(window):
+    window.addstr(0, 0, "abcdef")
+    window.insstr(0, 1, "日")
+    assert text(window, 0).startswith("a日bcdef")
+    assert window._buffer.cell(0, 3).char == "b"
+
+
+def test_wide_text_is_clipped_to_the_window_in_cells(window):
+    window.addstr(0, 16, "日本語")
+    assert text(window, 0)[16:] == "日本"

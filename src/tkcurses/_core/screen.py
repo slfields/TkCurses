@@ -41,6 +41,7 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from tkcurses._core.cells import char_cells
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.geometry import Rect, Size
 
@@ -83,6 +84,40 @@ class Cell:
         self.attr = attr
         self.dirty = True
         return True
+
+
+def _cell_entries(text: str, skip: int, available: int) -> list[str]:
+    """``text`` as it fills cells: one entry a cell, from ``skip`` cells in.
+
+    A wide character's second cell is ``""``; a combining mark is added to
+    the character it follows; a wide character cut by the left or the right
+    edge is a blank, its visible half.
+    """
+    out: list[str] = []
+    used = 0  # cells of text passed, skipped ones included
+    lead: int | None = None  # where the last character shown is
+    for character in text:
+        size = char_cells(character)
+        if size == 0:
+            if lead is not None:
+                out[lead] += character
+            continue
+        if len(out) >= available:
+            break
+        if used + size <= skip:
+            used += size
+            lead = None
+            continue
+        if used < skip or len(out) + size > available:
+            out.append(BLANK)  # straddles an edge: the half that shows
+            used += size
+            lead = None
+            continue
+        lead = len(out)
+        out.append(character)
+        out.extend([""] * (size - 1))
+        used += size
+    return out
 
 
 class ScreenBuffer:
@@ -163,29 +198,52 @@ class ScreenBuffer:
         Text running past the right edge is truncated, and a negative column
         starts the visible portion at the left edge, so a partly off-screen
         widget draws its visible part instead of failing.
+
+        Laid out in cells, as a terminal does: a wide character fills its
+        cell and the next, which holds ``""``; a combining mark joins the
+        character before it; and a wide character cut by either edge leaves
+        a blank. Writing over the first half of a wide character blanks its
+        second, as curses does, rather than leave half a character showing.
         """
         if not (0 <= row < self._height) or not text:
             return 0
         start = max(0, col)
         skip = start - col
-        if skip >= len(text):
-            return 0
         available = self._width - start
         # Guard before slicing: a negative end index silently yields a prefix
         # rather than nothing, which would then be written out of bounds.
         if available <= 0:
             return 0
-        visible = text[skip : skip + available]
+        if text.isascii():
+            if skip >= len(text):
+                return 0
+            entries: list[str] = list(text[skip : skip + available])
+        else:
+            entries = _cell_entries(text, skip, available)
+            if not entries:
+                return 0
+        line = self._cells[row]
+        end = start + len(entries)
         changed_lo: int | None = None
         changed_hi = start
-        for offset, char in enumerate(visible):
-            if self._cells[row][start + offset].set(char, fg, bg, attr):
-                if changed_lo is None:
-                    changed_lo = start + offset
-                changed_hi = start + offset
+
+        def put(column: int, char: str) -> None:
+            nonlocal changed_lo, changed_hi
+            if line[column].set(char, fg, bg, attr):
+                changed_lo = column if changed_lo is None else min(changed_lo, column)
+                changed_hi = max(changed_hi, column)
+
+        # Only the second half is blanked. Measured against ncurses through
+        # the test harness: "z" written on the second cell of an ideograph
+        # leaves the ideograph in the first, and written on its first cell
+        # blanks the second.
+        for offset, char in enumerate(entries):
+            put(start + offset, char)
+        if end < self._width and line[end].char == "":
+            put(end, BLANK)
         if changed_lo is not None:
             self._mark(row, changed_lo, changed_hi)
-        return len(visible)
+        return len(entries)
 
     def fill(
         self,
@@ -622,16 +680,29 @@ class CursesScreen:
             for row in range(region.top, region.bottom + 1):
                 for col in range(region.left, region.right + 1):
                     cell = buffer.cell(row, col)
+                    if cell.char == "":
+                        # A wide character's second cell, which drawing the
+                        # character before it has already filled.
+                        continue
                     attr = self.attribute_resolver(cell.fg, cell.bg, cell.attr)
                     char = cell.char if glyphs is None else cell.char.translate(glyphs)
+                    # A letter and the combining marks on it are one cell
+                    # and several characters, which addch refuses.
+                    single = len(char) == 1
                     if row == last_row and col == last_col:
                         # Writing the last cell scrolls the screen and raises;
                         # insch puts the character there without advancing.
                         with contextlib.suppress(curses.error):
-                            stdscr.insch(row, col, char, attr)
+                            if single:
+                                stdscr.insch(row, col, char, attr)
+                            else:
+                                stdscr.insstr(row, col, char, attr)
                     else:
                         with contextlib.suppress(curses.error):
-                            stdscr.addch(row, col, char, attr)
+                            if single:
+                                stdscr.addch(row, col, char, attr)
+                            else:
+                                stdscr.addstr(row, col, char, attr)
                     painted += 1
         stdscr.noutrefresh()
         if self.cursor is not None:

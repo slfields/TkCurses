@@ -2892,11 +2892,6 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         A row's ``image`` and a tag's ``image``, ``imageanchor`` and
         ``font`` are accepted and not drawn.
 
-        Not yet sized as tkinter's is: it asks for no width, and
-        ``height`` counts the border and headings as well as the rows.
-        Pack it with ``fill``, or grid it with ``sticky``, as the
-        samples do.
-
     Sample output (columns, displaycolumns):
         # size: 40x6
         tree = ttk.Treeview(root, columns=("size", "kind"), displaycolumns=("kind",), height=2)

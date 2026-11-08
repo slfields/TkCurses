@@ -337,3 +337,49 @@ def test_clearok_puts_the_widgets_back_without_a_main_loop(terminal, tmp_path):
         lambda t: t.contains("curses text") and t.contains("a widget"),
         message="the window and the widget",
     )
+
+
+#: Text that is not one cell a character, the same way. An ideograph takes
+#: two cells and a combining mark none; the cursor, insstr's shift and
+#: writing over half of an ideograph all follow from that.
+WIDE_PROGRAM = """
+import {module} as curses
+
+
+def main(stdscr):
+    stdscr.addstr(0, 0, "\\u65e5\\u672c")
+    stdscr.addstr("x")
+    stdscr.addstr(1, 0, "cafe\\u0301")
+    stdscr.addstr("!")
+    stdscr.addstr(2, 0, "abcdef")
+    stdscr.insstr(2, 1, "\\u65e5")
+    stdscr.addstr(3, 0, "\\u65e5\\u672c\\u8a9e")
+    stdscr.addstr(3, 1, "z")
+    stdscr.addstr(4, 0, "\\u65e5\\u672c")
+    stdscr.addstr(4, 2, "q")
+    stdscr.addch(5, 0, "\\u65e5")
+    stdscr.addch("y")
+    stdscr.addstr(7, 0, "done")
+    stdscr.refresh()
+    stdscr.getch()
+
+
+curses.wrapper(main)
+"""
+
+
+def test_wide_text_draws_the_same_thing_either_way(terminal, tmp_path):
+    """In cells, as curses counts them: it advanced one a character."""
+    screens = []
+    for module in ("tkcurses.curses", "curses"):
+        term = terminal(cols=30, rows=9)
+        term.run_source(WIDE_PROGRAM.format(module=module), workdir=tmp_path)
+        term.wait_for_text("done")
+        term.wait_for_idle()
+        screens.append(term)
+    ours, theirs = screens
+    assert ours.display == theirs.display, (
+        f"tkcurses.curses:\n{ours.describe()}\n\nstdlib curses:\n{theirs.describe()}"
+    )
+    ours.send(b"q")
+    theirs.send(b"q")

@@ -71,6 +71,7 @@ import contextlib
 import curses as _curses
 from typing import TYPE_CHECKING, Any
 
+from tkcurses._core.cells import cells, char_cells, clip_cells, skip_cells
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.screen import BLANK, CursesScreen, ScreenBuffer
 
@@ -663,16 +664,21 @@ class Window:
         return 0 <= y < self._height and 0 <= x < self._width
 
     def _put(self, y: int, x: int, text: str, attr: int) -> None:
-        """Write into the storage, clipped to this window."""
+        """Write into the storage, clipped to this window.
+
+        Clipped in cells: a wide character takes two and a combining mark
+        none, and one cut by the window's left edge shows as a blank.
+        """
         if not text or not (0 <= y < self._height):
             return
         start = max(0, x)
-        visible = text[start - x :][: max(0, self._width - start)]
+        rest, blanks = skip_cells(text, start - x)
+        visible = clip_cells(BLANK * blanks + rest, max(0, self._width - start))
         if visible:
             self._buffer.write(
                 self._offset_y + y, self._offset_x + start, visible, attr=attr
             )
-            self._mark(y, start, start + len(visible) - 1)
+            self._mark(y, start, start + max(1, cells(visible)) - 1)
 
     def _mark(self, row: int, first: int, last: int) -> None:
         """Widen the range of one row that the next refresh will copy."""
@@ -713,14 +719,15 @@ class Window:
         char = rest[0] if rest else BLANK
         text = chr(char) if isinstance(char, int) else str(char)
         self._put(y, x, text[:1], self._styled(rest, 1))
-        self._advance(y, x, 1)
+        self._advance(y, x, char_cells(text[:1]))
 
     def addstr(self, *args: Any) -> None:
         """Put a string at the cursor, or at a given ``y, x``."""
         y, x, rest = self._place(args)
         text = str(rest[0]) if rest else ""
         self._put(y, x, text, self._styled(rest, 1))
-        self._advance(y, x, len(text))
+        # In cells, as curses moves: two for an ideograph, none for a mark.
+        self._advance(y, x, cells(text))
 
     def addnstr(self, *args: Any) -> None:
         """Put at most ``n`` characters of a string."""
@@ -729,21 +736,21 @@ class Window:
         count = int(rest[1]) if len(rest) > 1 else len(text)
         clipped = text[: max(0, count)]
         self._put(y, x, clipped, self._styled(rest, 2))
-        self._advance(y, x, len(clipped))
+        self._advance(y, x, cells(clipped))
 
     def insch(self, *args: Any) -> None:
         """Insert a character, pushing the rest of the line right."""
         y, x, rest = self._place(args)
         char = rest[0] if rest else BLANK
         text = chr(char) if isinstance(char, int) else str(char)
-        self._shift_right(y, x, 1)
+        self._shift_right(y, x, char_cells(text[:1]))
         self._put(y, x, text[:1], self._styled(rest, 1))
 
     def insstr(self, *args: Any) -> None:
         """Insert a string, pushing the rest of the line right."""
         y, x, rest = self._place(args)
         text = str(rest[0]) if rest else ""
-        self._shift_right(y, x, len(text))
+        self._shift_right(y, x, cells(text))
         self._put(y, x, text, self._styled(rest, 1))
 
     def echochar(self, ch: Any, attr: int = 0) -> None:

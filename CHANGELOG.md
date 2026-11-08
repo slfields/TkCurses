@@ -70,6 +70,12 @@ All notable changes to TkCurses. The format follows
 - Clicking a ttk.Treeview heading runs its `command`, when the button is
   released over the heading it was pressed on, as Tk's does. It was
   stored and never called. The table example sorts by its headings.
+- The `curses` compatibility module measures text in cells, as curses
+  does: an ideograph moves the cursor two cells and a combining mark
+  none, `insstr` shifts the line by the cells it inserts, and wide text
+  is drawn whole rather than overwritten by what follows it.
+- Ctrl-C in a dialog shown before `mainloop()` cancels it, as Escape
+  does. It printed a KeyboardInterrupt traceback.
 
 ## [0.3.0rc2] - 2026-11-07
 

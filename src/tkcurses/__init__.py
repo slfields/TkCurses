@@ -3114,10 +3114,24 @@ class Misc:
         that no longer exists.
         """
         root = self._root()
-        while not ready():
-            if not root.winfo_exists():
-                return
-            root.update()
+        # Before mainloop nothing takes Ctrl-C, and the KeyboardInterrupt
+        # came out of select() as a traceback. The wait takes it as mainloop
+        # does - noted, answered between callbacks - and the answer is a
+        # cancel. Inside mainloop the loop's own handling stands.
+        release = None
+        if isinstance(root, Tk) and not root._running:
+            release = root._catch_interrupts()
+            if release is not None:
+                root._interrupt_cancels = True
+        try:
+            while not ready():
+                if not root.winfo_exists():
+                    return
+                root.update()
+        finally:
+            if release is not None and isinstance(root, Tk):
+                root._interrupt_cancels = False
+                release()
 
     def quit(self) -> None:
         """Ask the main loop to stop.
@@ -5562,6 +5576,9 @@ class Tk(BaseWidget, Wm):
         self._motion_asserted = False
         #: A Ctrl-C the loop has yet to answer; see :meth:`_catch_interrupts`.
         self._interrupt_pending = False
+        #: Set while a dialog shown before mainloop waits: a Ctrl-C then
+        #: cancels the dialog, as Escape does, instead of closing everything.
+        self._interrupt_cancels = False
         #: Tracebacks that would have landed on the screen, kept until the
         #: terminal is handed back.
         self._held_reports: list[str] = []
@@ -5807,6 +5824,9 @@ class Tk(BaseWidget, Wm):
             second Ctrl-C while a callback has still not returned raises
             KeyboardInterrupt inside it, so a program stuck in a callback
             can still be stopped.
+
+            A dialog shown before ``mainloop()`` is cancelled by Ctrl-C, as
+            Escape cancels it, rather than raising KeyboardInterrupt.
         """
         # This docstring once claimed the terminal was restored before it was
         # true - measured, Ctrl-C left cbreak, the hidden cursor, the
@@ -5892,10 +5912,18 @@ class Tk(BaseWidget, Wm):
         self._interrupt_pending = True
 
     def _answer_interrupt(self) -> None:
-        """Copy or close for a Ctrl-C noted since the last pass."""
+        """Copy or close for a Ctrl-C noted since the last pass.
+
+        While a dialog shown before mainloop waits, the answer is the
+        Escape key instead, delivered as if typed, so the dialog cancels
+        exactly as its own Escape binding says.
+        """
         if not self._interrupt_pending:
             return
         self._interrupt_pending = False
+        if self._interrupt_cancels:
+            self._guard(self._route, KeyEvent(keycode=27, keysym="Escape"))
+            return
         if not self._copy_on_interrupt():
             self._close_requested()
 
