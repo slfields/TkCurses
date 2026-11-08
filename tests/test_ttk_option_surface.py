@@ -197,19 +197,16 @@ def test_every_themed_widget_answers_to_class_and_style(real_root, our_root):
         assert "class" in ours, f"{name} should take -class, as ttk does"
 
 
-def test_a_themed_widget_is_wider_than_ttk_on_purpose(our_root):
-    """The other direction, recorded rather than treated as a defect.
+@pytest.mark.parametrize("name", THEMED)
+def test_we_take_no_option_ttk_refuses(name, real_root, our_root):
+    """The other direction: a program that runs here runs on tkinter.
 
-    ttk moves appearance into the style database and drops the classic
-    options; we keep them and HONOUR them - measured, a themed Label given
-    background="red" draws red. Code written for ttk never passes them, so a
-    wider surface breaks nothing, and in a terminal the style database is
-    thinner than ttk's so the direct options are worth having.
+    Each themed widget is built on a classic one and used to take all of its
+    options - 335 across the twenty - which Tk's themed widgets refuse.
     """
-    label = tkcurses.ttk.Label(our_root)
-    assert "background" in options_of(label)
-    label.configure(background="red")
-    assert label.cget("background") == "red"
+    theirs = options_of(getattr(tkinter.ttk, name)(real_root))
+    ours = options_of(getattr(tkcurses.ttk, name)(our_root))
+    assert not sorted(ours - theirs), f"ttk.{name} takes {sorted(ours - theirs)}"
 
 
 # ----------------------------------------------------------------- -class

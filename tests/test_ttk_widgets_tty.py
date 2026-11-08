@@ -1467,3 +1467,35 @@ root.mainloop()
         ),
         message="the heading and the row",
     )
+
+
+def test_a_notebook_packed_plainly_draws_its_tabs_and_page(terminal, tmp_path):
+    """It asked for no size and drew nothing, tabs included."""
+    source = """
+import tkcurses
+from tkcurses import ttk
+
+root = tkcurses.Tk()
+book = ttk.Notebook(root)
+book.add(ttk.Label(book, text='first page'), text='One')
+book.add(ttk.Label(book, text='page'), text='Two')
+book.pack()
+root.after(4000, root.quit)
+root.mainloop()
+"""
+    term = terminal(cols=40, rows=12)
+    term.run_source(source, workdir=tmp_path)
+    term.wait_for(
+        lambda t: (
+            any("One" in line and "Two" in line for line in t.display)
+            and any("first page" in line for line in t.display)
+        ),
+        message="the tabs and the page",
+    )
+    # The page fills the frame under the tabs: on the row right below its
+    # top edge, from border to border. It was placed a cell further in and
+    # two smaller each way, which at this size left it no rows at all.
+    top = next(r for r, line in enumerate(term.display) if "┌┘" in line)
+    page = term.display[top + 1].strip()
+    assert page.startswith("│") and page.endswith("│"), term.describe()
+    assert "first page" in page, term.describe()

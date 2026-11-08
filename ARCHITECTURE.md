@@ -2842,6 +2842,15 @@ needed three rows, drew a border on the first and last, and showed one.
 be circular — a frame one row tall draws no border, would ask for no room for
 one, and would stay one row tall.
 
+**A container may state its own request** (`TkCurses-bell`). The layout
+engine propagates what pack, grid or the panes report; `place` reports
+nothing, as in Tk. A ttk.Notebook places its pages, so it asked for
+nothing. A container with an `_own_request()` method has that propagated
+instead - the Notebook's is its largest page shown, its border and the
+tab row - and the engine already lays it out again when a placed page's
+request changes, so a page whose size depends on its own children is
+counted once that is settled.
+
 ### X11 to Curses Color Mapping
 
 TkCurses translates tkinter's X11 color names to curses colors. The
@@ -3673,6 +3682,19 @@ the validation pair, and ttk's mixin declares it **empty** — which has to be
 said rather than inherited, because every themed widget is built on a classic
 one. The most derived declaration wins, and ttk's mixin comes first in every
 themed MRO.
+
+**A themed widget takes Tk's ttk options and nothing else**
+(`TkCurses-jo7l`). It inherits every classic option from the widget it is
+built on, and the drawing reads them - a Notebook's `relief`, a Treeview's
+`sunken` border - but measured on Tk 9.0.2, `ttk.Button(overrelief=...)` and
+`cget("troughcolor")` on a ttk.Scrollbar are `unknown option`, and `keys()`
+lists the ttk options alone: 335 classic names across the twenty themed
+widgets. So the option spec keeps them as defaults and `_public_options()`
+narrows what a program may name, in `_checked`, `cget`, `keys` and
+`configure()`. The names are `ttk._TK_OPTIONS`, recorded from real tkinter
+into `tests/support/tk_ttk_options.json`. A themed widget that needs a
+classic default other than the classic widget's declares it in its own
+`_widget_options` - the constructor would refuse it through `kw`.
 
 `bgimg` is the one synonym not offered, because `-backgroundimage` does not
 exist here yet (`TkCurses-yi4`); a synonym for a missing option would only

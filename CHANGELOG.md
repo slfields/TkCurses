@@ -6,6 +6,14 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+### Changed
+- The ttk widgets refuse the classic widgets' options, as Tk's do:
+  `ttk.Button(relief="flat")`, `cget("troughcolor")` on a ttk.Scrollbar
+  and the rest raise `unknown option`, and `keys()` and `configure()` list
+  Tk's ttk options alone. They were accepted - 335 names across the twenty
+  themed widgets - so a program that used one ran here and failed on
+  tkinter. Give a themed widget's appearance through its style.
+
 ### Fixed
 - Padding set on the root window or a Toplevel while the program runs
   moves their children at once; it waited for the terminal to be resized.
@@ -76,6 +84,11 @@ All notable changes to TkCurses. The format follows
   is drawn whole rather than overwritten by what follows it.
 - Ctrl-C in a dialog shown before `mainloop()` cancels it, as Escape
   does. It printed a KeyboardInterrupt traceback.
+- A ttk.Notebook asks for its largest page shown, its border and its tab
+  row, as Tk's does, or for `width` and `height` as its page area. It
+  asked for nothing, so one packed without `fill` drew nothing. Its page
+  is placed inside the border once rather than twice, a cell further in
+  and two smaller each way than the frame drawn round it.
 
 ## [0.3.0rc2] - 2026-11-07
 

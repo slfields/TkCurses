@@ -29,9 +29,7 @@ options, so one :class:`Style` call changes every widget that uses that
 style, and a theme changes them all.
 
 Differences from tkinter:
-    The themes are TkCurses's own; see :class:`Style`. And the themed
-    widgets also take the options of the classic widget each is built on
-    here, which tkinter's refuse.
+    The themes are TkCurses's own; see :class:`Style`.
 """
 
 from __future__ import annotations
@@ -41,7 +39,7 @@ import curses
 import functools
 import math
 import sys
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -52,7 +50,7 @@ from tkcurses._core.cells import cells, char_cells, clip_cells, pad_cells, skip_
 from tkcurses._core.colors import parse_color
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.errors import TclError
-from tkcurses._core.geometry import BORDER_WIDTH, Insets, Point, Rect
+from tkcurses._core.geometry import BORDER_WIDTH, Insets, Point, Rect, Size
 from tkcurses._core.pack import parse_anchor
 from tkcurses._core.text import align_offset, measure, wrap
 
@@ -629,6 +627,331 @@ def _state_option_flags(value: str) -> list[str]:
     return names
 
 
+_PUBLIC_CACHE: dict[type, frozenset[str]] = {}
+
+#: Each themed widget's options in Tk 9.0.2, which are all a program may
+#: name on it here. The classic widget each is built on has more, and keeps
+#: them as the defaults its drawing reads; Tk refuses them on a themed
+#: widget, so this does too. Recorded from real tkinter by
+#: ``tests/support/record_tk_ttk_options.py``, and held equal to that
+#: record by a test. Named by the class that has them, so a program's own
+#: subclass of one answers as it does.
+_TK_OPTIONS: dict[str, frozenset[str]] = {
+    "Button": frozenset(
+        {
+            "class",
+            "command",
+            "compound",
+            "cursor",
+            "default",
+            "image",
+            "justify",
+            "padding",
+            "state",
+            "style",
+            "takefocus",
+            "text",
+            "textvariable",
+            "underline",
+            "width",
+        }
+    ),
+    "Checkbutton": frozenset(
+        {
+            "class",
+            "command",
+            "compound",
+            "cursor",
+            "image",
+            "justify",
+            "offvalue",
+            "onvalue",
+            "padding",
+            "state",
+            "style",
+            "takefocus",
+            "text",
+            "textvariable",
+            "underline",
+            "variable",
+            "width",
+        }
+    ),
+    "Combobox": frozenset(
+        {
+            "background",
+            "class",
+            "cursor",
+            "exportselection",
+            "font",
+            "foreground",
+            "height",
+            "invalidcommand",
+            "justify",
+            "placeholder",
+            "placeholderforeground",
+            "postcommand",
+            "show",
+            "state",
+            "style",
+            "takefocus",
+            "textvariable",
+            "validate",
+            "validatecommand",
+            "values",
+            "width",
+            "xscrollcommand",
+        }
+    ),
+    "Entry": frozenset(
+        {
+            "background",
+            "class",
+            "cursor",
+            "exportselection",
+            "font",
+            "foreground",
+            "invalidcommand",
+            "justify",
+            "placeholder",
+            "placeholderforeground",
+            "show",
+            "state",
+            "style",
+            "takefocus",
+            "textvariable",
+            "validate",
+            "validatecommand",
+            "width",
+            "xscrollcommand",
+        }
+    ),
+    "Frame": frozenset(
+        {
+            "borderwidth",
+            "class",
+            "cursor",
+            "height",
+            "padding",
+            "relief",
+            "style",
+            "takefocus",
+            "width",
+        }
+    ),
+    "Label": frozenset(
+        {
+            "anchor",
+            "background",
+            "borderwidth",
+            "class",
+            "compound",
+            "cursor",
+            "font",
+            "foreground",
+            "image",
+            "justify",
+            "padding",
+            "relief",
+            "state",
+            "style",
+            "takefocus",
+            "text",
+            "textvariable",
+            "underline",
+            "width",
+            "wraplength",
+        }
+    ),
+    "LabeledScale": frozenset(
+        {
+            "borderwidth",
+            "class",
+            "cursor",
+            "height",
+            "padding",
+            "relief",
+            "style",
+            "takefocus",
+            "width",
+        }
+    ),
+    "Labelframe": frozenset(
+        {
+            "borderwidth",
+            "class",
+            "cursor",
+            "height",
+            "labelanchor",
+            "labelwidget",
+            "padding",
+            "relief",
+            "style",
+            "takefocus",
+            "text",
+            "underline",
+            "width",
+        }
+    ),
+    "Menubutton": frozenset(
+        {
+            "class",
+            "compound",
+            "cursor",
+            "direction",
+            "image",
+            "justify",
+            "menu",
+            "padding",
+            "state",
+            "style",
+            "takefocus",
+            "text",
+            "textvariable",
+            "underline",
+            "width",
+        }
+    ),
+    "Notebook": frozenset(
+        {"class", "cursor", "height", "padding", "style", "takefocus", "width"}
+    ),
+    "OptionMenu": frozenset(
+        {
+            "class",
+            "compound",
+            "cursor",
+            "direction",
+            "image",
+            "justify",
+            "menu",
+            "padding",
+            "state",
+            "style",
+            "takefocus",
+            "text",
+            "textvariable",
+            "underline",
+            "width",
+        }
+    ),
+    "Panedwindow": frozenset(
+        {"class", "cursor", "height", "orient", "style", "takefocus", "width"}
+    ),
+    "Progressbar": frozenset(
+        {
+            "anchor",
+            "class",
+            "cursor",
+            "font",
+            "foreground",
+            "justify",
+            "length",
+            "maximum",
+            "mode",
+            "orient",
+            "phase",
+            "style",
+            "takefocus",
+            "text",
+            "value",
+            "variable",
+            "wraplength",
+        }
+    ),
+    "Radiobutton": frozenset(
+        {
+            "class",
+            "command",
+            "compound",
+            "cursor",
+            "image",
+            "justify",
+            "padding",
+            "state",
+            "style",
+            "takefocus",
+            "text",
+            "textvariable",
+            "underline",
+            "value",
+            "variable",
+            "width",
+        }
+    ),
+    "Scale": frozenset(
+        {
+            "class",
+            "command",
+            "cursor",
+            "from",
+            "length",
+            "orient",
+            "state",
+            "style",
+            "takefocus",
+            "to",
+            "value",
+            "variable",
+        }
+    ),
+    "Scrollbar": frozenset(
+        {"class", "command", "cursor", "orient", "style", "takefocus"}
+    ),
+    "Separator": frozenset({"class", "cursor", "orient", "style", "takefocus"}),
+    "Sizegrip": frozenset({"class", "cursor", "style", "takefocus"}),
+    "Spinbox": frozenset(
+        {
+            "background",
+            "class",
+            "command",
+            "cursor",
+            "exportselection",
+            "font",
+            "foreground",
+            "format",
+            "from",
+            "increment",
+            "invalidcommand",
+            "justify",
+            "placeholder",
+            "placeholderforeground",
+            "show",
+            "state",
+            "style",
+            "takefocus",
+            "textvariable",
+            "to",
+            "validate",
+            "validatecommand",
+            "values",
+            "width",
+            "wrap",
+            "xscrollcommand",
+        }
+    ),
+    "Treeview": frozenset(
+        {
+            "class",
+            "columns",
+            "cursor",
+            "displaycolumns",
+            "height",
+            "padding",
+            "selectmode",
+            "selecttype",
+            "show",
+            "striped",
+            "style",
+            "takefocus",
+            "titlecolumns",
+            "titleitems",
+            "xscrollcommand",
+            "yscrollcommand",
+        }
+    ),
+}
+
+
 class Widget:
     """What every themed widget has: a style, and a set of state flags.
 
@@ -676,6 +999,29 @@ class Widget:
     #: has no window-system options to fix: the classic widgets' rule,
     #: TkCurses-gm66.7, does not reach one.
     _creation_only: ClassVar[frozenset[str]] = frozenset()
+
+    @classmethod
+    def _public_options(cls) -> Collection[str]:
+        """Tk's options for this themed widget, and no classic one.
+
+        Measured on Tk 9.0.2: ``ttk.Button(overrelief="raised")`` and
+        ``cget("troughcolor")`` on a ttk.Scrollbar are ``unknown option``,
+        and ``keys()`` lists the ttk options alone. These used to be taken,
+        335 of them across the twenty themed widgets, so a program using
+        one ran here and failed on tkinter.
+        """
+        cached = _PUBLIC_CACHE.get(cls)
+        if cached is None:
+            # A mixin: the spec is the classic widget's, which comes after
+            # this in every themed MRO.
+            spec: dict[str, Any] = cls._option_spec()  # type: ignore[attr-defined]
+            cached = frozenset(spec)
+            for klass in cls.__mro__:
+                if klass.__module__ == __name__ and klass.__name__ in _TK_OPTIONS:
+                    cached = frozenset(spec.keys() & _TK_OPTIONS[klass.__name__])
+                    break
+            _PUBLIC_CACHE[cls] = cached
+        return cached
 
     def winfo_class(self) -> str:
         """The themed class name - ``TButton``, not ``Button``.
@@ -1075,12 +1421,6 @@ class Separator(Widget, tkcurses.Frame):
 
     Standard options, described in :doc:`/reference/options`: ``class``,
     ``cursor``, ``orient``, ``style`` and ``takefocus``.
-
-    Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic widget it is built on - ``relief``, ``background`` and
-        ``borderwidth`` among them. tkinter refuses them as unknown
-        options, so a program that uses one runs only on TkCurses.
     """
 
     # The rail characters: ─ under the default theme, - under ascii, ═ under
@@ -1091,7 +1431,10 @@ class Separator(Widget, tkcurses.Frame):
     #: Measured: the one element its layout has.
     _only_element = "separator"
 
+    # A classic option, so a program cannot name it - Tk's themed widget
+    # has none - but the drawing reads it.
     _widget_options: ClassVar[dict[str, Any]] = {
+        "relief": "flat",
         "orient": "horizontal",
         "foreground": "",
         "background": "",
@@ -1112,7 +1455,6 @@ class Separator(Widget, tkcurses.Frame):
             name: Path component, generated when omitted.
             **kw: ``orient``, ``style``, and the standard options.
         """
-        kw.setdefault("relief", "flat")
         super().__init__(master, cnf, name=name, **kw)
         self._apply_requested_size()
 
@@ -1185,11 +1527,6 @@ class Sizegrip(Widget, tkcurses.Frame):
     ``cursor``, ``style`` and ``takefocus``.
 
     Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic widget it is built on - ``relief``, ``background`` and
-        ``borderwidth`` among them. tkinter refuses them as unknown
-        options, so a program that uses one runs only on TkCurses.
-
         The main window's size is the terminal's, which a program cannot
         change, so a grip in it is drawn and does nothing.
     """
@@ -1203,6 +1540,10 @@ class Sizegrip(Widget, tkcurses.Frame):
     # wm_resizable is honoured per axis.
 
     _ttk_class = "TSizegrip"
+
+    # A classic option, so a program cannot name it - Tk's themed widget
+    # has none - but the drawing reads it.
+    _widget_options: ClassVar[dict[str, Any]] = {"relief": "flat"}
 
     #: Measured over the whole of Tk's.
     _only_element = "sizegrip"
@@ -1224,7 +1565,6 @@ class Sizegrip(Widget, tkcurses.Frame):
         """
         #: Where a drag started, and how big the window was then.
         self._drag: tuple[int, int, int, int] | None = None
-        kw.setdefault("relief", "flat")
         super().__init__(master, cnf, name=name, **kw)
         self._request_size(1, 1)
         self._install_class_bindings()
@@ -1352,11 +1692,6 @@ class Progressbar(Widget, tkcurses.Frame):
     ``orient``, ``style``, ``takefocus``, ``text`` and ``wraplength``.
 
     Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic widget it is built on - ``relief``, ``background`` and
-        ``borderwidth`` among them. tkinter refuses them as unknown
-        options, so a program that uses one runs only on TkCurses.
-
         ``phase``, which Tk counts up while the bar is running for a
         theme to animate with, is not available yet.
 
@@ -1396,7 +1731,10 @@ class Progressbar(Widget, tkcurses.Frame):
             return "pbar"
         return "trough"
 
+    # A classic option, so a program cannot name it - Tk's themed widget
+    # has none - but the drawing reads it.
     _widget_options: ClassVar[dict[str, Any]] = {
+        "relief": "flat",
         "orient": "horizontal",
         "mode": "determinate",
         "maximum": 100.0,
@@ -1432,7 +1770,6 @@ class Progressbar(Widget, tkcurses.Frame):
                 ``style``, and the standard options.
         """
         self._timer: str | None = None
-        kw.setdefault("relief", "flat")
         super().__init__(master, cnf, name=name, **kw)
         self._apply_requested_size()
 
@@ -1770,13 +2107,6 @@ class Combobox(Widget, _EntryCommands):
     ``foreground``, ``height``, ``justify``, ``placeholder``,
     ``placeholderforeground``, ``state``, ``style``, ``takefocus``,
     ``textvariable``, ``width`` and ``xscrollcommand``.
-
-    Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic :class:`~tkcurses.Entry` - ``relief``, ``borderwidth``
-        and ``highlightthickness`` among them. tkinter refuses them as
-        unknown options, so a program that uses one runs only on
-        TkCurses.
 
     Sample output (show):
         pin = ttk.Combobox(root, show="*", values=("1234", "0000"), width=10)
@@ -2256,15 +2586,8 @@ class Notebook(Widget, tkcurses.Frame):
     ``width``.
 
     Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic widget it is built on - ``relief``, ``background`` and
-        ``borderwidth`` among them. tkinter refuses them as unknown
-        options, so a program that uses one runs only on TkCurses.
-
         A tab's ``image``, ``compound`` and ``underline`` are accepted
-        and not drawn. And it does not yet ask for the size its pages
-        need: pack it with ``fill``, or grid it with ``sticky``, as the
-        sample does.
+        and not drawn.
     """
 
     # Measured against Tk 9.0.2: <<NotebookTabChanged>> fires on a
@@ -2296,7 +2619,10 @@ class Notebook(Widget, tkcurses.Frame):
             return "label" if start <= x < start + cells(label) else "padding"
         return ""
 
+    # A classic option, so a program cannot name it - Tk's themed widget
+    # has none - but the drawing reads it.
     _widget_options: ClassVar[dict[str, Any]] = {
+        "relief": "solid",
         "height": 0,
         "width": 0,
         "padding": "",
@@ -2338,7 +2664,6 @@ class Notebook(Widget, tkcurses.Frame):
         # Bordered: Tk frames the page area and sits the tabs on its edge, and
         # a notebook with nothing drawn around it is a row of words above some
         # text - there is no way to see where a page ends.
-        kw.setdefault("relief", "solid")
         super().__init__(master, cnf, name=name, **kw)
         self._install_class_bindings()
 
@@ -2547,20 +2872,25 @@ class Notebook(Widget, tkcurses.Frame):
         current = self._current
         for index, tab in enumerate(self._tabs):
             if index == current:
-                # Relative, with the border taken off as a negative offset.
-                # Not arithmetic on self._rect: _settle runs before the
-                # notebook has been laid out, so the width read there is
-                # zero and the page is placed zero cells wide - which is
-                # what ate the right and bottom border. The layout engine
-                # resolves relwidth at the moment it knows the answer.
+                # Relative, so the layout engine resolves it when it knows
+                # the size. Not arithmetic on self._rect: _settle runs before
+                # the notebook has been laid out, so the width read there is
+                # zero and the page is placed zero cells wide - which is what
+                # ate the right and bottom border.
+                #
+                # In the content area, which place already measures inside
+                # the border: only the tab row is taken off, less the border
+                # row it shares. It used to take the border off again, a cell
+                # too far in and two too small each way - hidden while the
+                # notebook was given room to spare, and a page with no rows
+                # at all once it asked for exactly its page's size.
                 edge = BORDER_WIDTH if self._bordered else 0
                 tab.child.place(
-                    x=edge,
-                    y=STRIP_HEIGHT,
+                    x=0,
+                    y=STRIP_HEIGHT - edge,
                     relwidth=1.0,
-                    width=-2 * edge,
                     relheight=1.0,
-                    height=-(STRIP_HEIGHT + edge),
+                    height=-(STRIP_HEIGHT - edge),
                 )
             else:
                 # Both: place_forget takes it out of the layout, _unmap takes
@@ -2569,6 +2899,7 @@ class Notebook(Widget, tkcurses.Frame):
                 # drawn over the new one.
                 tab.child.place_forget()
                 tab.child._unmap()
+        self._apply_requested_size()
         self._invalidate_layout()
         # The pages are this widget's children, so they belong above its own
         # panel - and a page shown, hidden and shown again comes back at
@@ -2579,6 +2910,34 @@ class Notebook(Widget, tkcurses.Frame):
         if stack is not None:
             self._restack_descendants(stack)
         self._redraw()
+
+    def _own_request(self) -> Size:
+        """The largest page shown, the border round it, and the tab row.
+
+        ``width`` and ``height`` above zero set the page area instead, as
+        ttk_notebook(n) says. Measured on Tk 9.0.2, a notebook packed
+        plainly with one page holding a Label asks for 65x49 pixels - the
+        page, the tab row and the padding - where this asked for nothing and
+        drew nothing. Asked by the layout engine, so a page whose own size
+        is settled there is counted once it is.
+        """
+        pages = [self._tabs[index].child._requested for index in self._shown]
+        width = int(self._options["width"])
+        height = int(self._options["height"])
+        if width <= 0:
+            width = max((page.width for page in pages), default=0)
+        if height <= 0:
+            height = max((page.height for page in pages), default=0)
+        edge = BORDER_WIDTH if self._bordered else 0
+        spans = self._tab_spans()
+        strip = spans[-1][2] + 1 + TAB_INSET if spans else 0
+        return Size(max(width + 2 * edge, strip), STRIP_HEIGHT + height + edge)
+
+    def _apply_requested_size(self) -> None:
+        """Ask for :meth:`_own_request` - not a Frame's request, which
+        waits for children packed or gridded in it and so was nothing."""
+        size = self._own_request()
+        self._request_size(size.width, size.height)
 
     def _tab_spans(self) -> list[tuple[int, int, int]]:
         """Each shown tab as ``(index, first column, last column)``.
@@ -2881,11 +3240,6 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
     ``xscrollcommand`` and ``yscrollcommand``.
 
     Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic widget it is built on - ``relief``, ``background`` and
-        ``borderwidth`` among them. tkinter refuses them as unknown
-        options, so a program that uses one runs only on TkCurses.
-
         ``selecttype``, which selects cells rather than rows, is not
         available yet.
 
@@ -2906,6 +3260,13 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         tree.heading("size", text="Size")
         tree.insert("", "end", text="report.txt", values=("12 KB",))
         tree.pack(fill="both", expand=True)
+
+    Sample output (striped):
+        # size: 40x7
+        tree = ttk.Treeview(root, striped=True, height=4)
+        for name in ("one", "two", "three", "four"):
+            tree.insert("", "end", text=name)
+        tree.pack(fill="both", expand=True)
     """
 
     # It reports Treeview, not TTreeview - the one themed widget without the
@@ -2922,7 +3283,10 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
 
     _ttk_class = "Treeview"
 
+    # A classic option, so a program cannot name it - Tk's themed widget
+    # has none - but the drawing reads it.
     _widget_options: ClassVar[dict[str, Any]] = {
+        "relief": "sunken",
         # Tk 9.0's alternating row tint - TkCurses-xe9.4. A boolean,
         # default 0; Tk rejects anything else with
         # 'expected boolean value but got "..."'.
@@ -3024,7 +3388,6 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         #: The heading a press landed on, until the release decides whether
         #: to run its command - ``State(heading)`` in Tk's treeview.tcl.
         self._pressed_heading: str | None = None
-        kw.setdefault("relief", "sunken")
         self._check_titles(tkcurses._given(cnf, kw))
         self._check_display(tkcurses._given(cnf, kw))
         super().__init__(master, cnf, name=name, **kw)
@@ -4595,13 +4958,6 @@ class LabeledScale(Widget, tkcurses.Frame):
     Standard options, described in :doc:`/reference/options`:
     ``borderwidth``, ``class``, ``cursor``, ``height``, ``padding``,
     ``relief``, ``style``, ``takefocus`` and ``width``.
-
-    Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic widget it is built on - ``background``,
-        ``highlightthickness`` and ``padx`` among them. tkinter refuses
-        them as unknown options, so a program that uses one runs only on
-        TkCurses.
     """
 
     # It is a composite, not a widget class: winfo_class() answers TFrame,
@@ -4620,7 +4976,9 @@ class LabeledScale(Widget, tkcurses.Frame):
 
     #: ttk.LabeledScale carries -padding; ours did not. See Treeview for why
     #: this list is per widget rather than given to everything themed.
-    _widget_options: ClassVar[dict[str, Any]] = {"padding": ""}
+    # A classic option, so a program cannot name it - Tk's themed widget
+    # has none - but the drawing reads it.
+    _widget_options: ClassVar[dict[str, Any]] = {"relief": "flat", "padding": ""}
 
     def __init__(
         self,
@@ -4645,7 +5003,6 @@ class LabeledScale(Widget, tkcurses.Frame):
                 ``"bottom"`` to put it below.
             **kw: The standard frame options.
         """
-        kw.setdefault("relief", "flat")
         super().__init__(master, name=name, **kw)
         self._variable = variable if variable is not None else tkcurses.IntVar(self)
         # Tk does this, and it is the reason a variable handed in does not
@@ -4660,13 +5017,8 @@ class LabeledScale(Widget, tkcurses.Frame):
         # The classic Scale defaults to VERTICAL - measured on Tk 9.0.2 -
         # and a composite built on that one drew nothing at all on a single
         # row until it was told otherwise.
-        self.scale = Scale(
-            self,
-            name="scale",
-            variable=self._variable,
-            from_=from_,
-            to=to,
-            relief="flat",
+        self.scale = _FlatScale(
+            self, name="scale", variable=self._variable, from_=from_, to=to
         )
         label_row, scale_row = (0, 1) if compound == LABEL_ABOVE else (1, 0)
         self.label.place(x=0, y=label_row, relwidth=1.0, height=1)
@@ -4722,12 +5074,6 @@ class OptionMenu(Widget, tkcurses.OptionMenu):
     ``takefocus``, ``text``, ``textvariable``, ``underline`` and ``width``.
 
     Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic :class:`~tkcurses.OptionMenu` - ``relief``,
-        ``background`` and ``borderwidth`` among them. tkinter refuses
-        them as unknown options, so a program that uses one runs only on
-        TkCurses.
-
         ``padding`` is not available yet.
     """
 
@@ -4741,6 +5087,10 @@ class OptionMenu(Widget, tkcurses.OptionMenu):
     # all it is accepted, not refused.
 
     _ttk_class = "TMenubutton"
+
+    # A classic option, so a program cannot name it - Tk's themed widget
+    # has none - but the drawing reads it.
+    _widget_options: ClassVar[dict[str, Any]] = {"indicatoron": True}
 
     def _element_at(self, x: int, y: int) -> Any:
         """As a Menubutton: the arrow is ``Menubutton.indicator``."""
@@ -4766,7 +5116,6 @@ class OptionMenu(Widget, tkcurses.OptionMenu):
             command: Called with the chosen value, after the variable is set.
             **kw: Anything else a menubutton takes.
         """
-        kw.setdefault("indicatoron", True)
         kw.setdefault("textvariable", variable)
         # Straight to Menubutton: the classic OptionMenu's constructor
         # refuses to be built with nothing to show, and this one must accept
@@ -4824,13 +5173,6 @@ class Label(Widget, tkcurses.Label):
     ``font``, ``foreground``, ``image``, ``justify``, ``padding``,
     ``relief``, ``state``, ``style``, ``takefocus``, ``text``,
     ``textvariable``, ``underline``, ``width`` and ``wraplength``.
-
-    Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic :class:`~tkcurses.Label` - ``activebackground``,
-        ``highlightthickness`` and ``padx`` among them. tkinter refuses
-        them as unknown options, so a program that uses one runs only on
-        TkCurses.
     """
 
     # Nothing is bound to TLabel - a label answers no gestures - so the
@@ -4877,12 +5219,6 @@ class Scale(Widget, tkcurses.Scale):
 
     Standard options, described in :doc:`/reference/options`: ``class``,
     ``cursor``, ``orient``, ``state``, ``style`` and ``takefocus``.
-
-    Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic :class:`~tkcurses.Scale` - ``relief``, ``background``
-        and ``borderwidth`` among them. tkinter refuses them as unknown
-        options, so a program that uses one runs only on TkCurses.
 
     Sample output (from, to, value, length):
         ttk.Scale(root, from_=0, to=10, value=5, length=12).pack(pady=1)
@@ -4942,6 +5278,17 @@ class Scale(Widget, tkcurses.Scale):
             self.set(float(value))
 
 
+class _FlatScale(Scale):
+    """The scale in a :class:`LabeledScale`, drawn with no border.
+
+    ``relief`` is a classic option a program cannot give a ttk.Scale, as on
+    Tk; the composite needs one on a single row, so it is this class's
+    default instead.
+    """
+
+    _widget_options: ClassVar[dict[str, Any]] = {"relief": "flat"}
+
+
 class Frame(Widget, tkcurses.Frame):
     """A container, drawn from the theme, as ``ttk.Frame``.
 
@@ -4955,13 +5302,6 @@ class Frame(Widget, tkcurses.Frame):
     Standard options, described in :doc:`/reference/options`:
     ``borderwidth``, ``class``, ``cursor``, ``height``, ``padding``,
     ``relief``, ``style``, ``takefocus`` and ``width``.
-
-    Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic widget it is built on - ``background``,
-        ``highlightthickness`` and ``padx`` among them. tkinter refuses
-        them as unknown options, so a program that uses one runs only on
-        TkCurses.
     """
 
     _ttk_class = "TFrame"
@@ -4995,13 +5335,6 @@ class Labelframe(Widget, tkcurses.LabelFrame):
     ``borderwidth``, ``class``, ``cursor``, ``height``, ``padding``,
     ``relief``, ``style``, ``takefocus``, ``text``, ``underline`` and
     ``width``.
-
-    Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic :class:`~tkcurses.LabelFrame` - ``background``, ``font``
-        and ``highlightthickness`` among them. tkinter refuses them as
-        unknown options, so a program that uses one runs only on
-        TkCurses.
 
     Sample output (labelanchor):
         for anchor in ("nw", "n", "ne"):
@@ -5053,13 +5386,6 @@ class Panedwindow(Widget, tkcurses.PanedWindow):
     Standard options, described in :doc:`/reference/options`: ``class``,
     ``cursor``, ``height``, ``orient``, ``style``, ``takefocus`` and
     ``width``.
-
-    Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic :class:`~tkcurses.PanedWindow` - ``relief``,
-        ``background`` and ``borderwidth`` among them. tkinter refuses
-        them as unknown options, so a program that uses one runs only on
-        TkCurses.
     """
 
     # ttk.Panedwindow.__mro__ begins Panedwindow, Widget, PanedWindow on Tk
@@ -5262,11 +5588,6 @@ class Button(Widget, tkcurses.Button):
     ``underline`` and ``width``.
 
     Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic :class:`~tkcurses.Button` - ``relief``, ``background``
-        and ``borderwidth`` among them. tkinter refuses them as unknown
-        options, so a program that uses one runs only on TkCurses.
-
         It has :meth:`flash`, which in tkinter only the classic Button
         has.
     """
@@ -5314,12 +5635,6 @@ class Checkbutton(Widget, tkcurses.Checkbutton):
     ``underline`` and ``width``.
 
     Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic :class:`~tkcurses.Checkbutton` - ``relief``,
-        ``background`` and ``borderwidth`` among them. tkinter refuses
-        them as unknown options, so a program that uses one runs only on
-        TkCurses.
-
         It has :meth:`deselect`, :meth:`flash`, :meth:`select` and
         :meth:`toggle`, which in tkinter only the classic Checkbutton
         has.
@@ -5372,12 +5687,6 @@ class Radiobutton(Widget, tkcurses.Radiobutton):
     ``underline`` and ``width``.
 
     Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic :class:`~tkcurses.Radiobutton` - ``relief``,
-        ``background`` and ``borderwidth`` among them. tkinter refuses
-        them as unknown options, so a program that uses one runs only on
-        TkCurses.
-
         It has :meth:`deselect`, :meth:`flash` and :meth:`select`, which
         in tkinter only the classic Radiobutton has.
     """
@@ -5435,13 +5744,6 @@ class Menubutton(Widget, tkcurses.Menubutton):
     ``compound``, ``cursor``, ``image``, ``justify``, ``padding``,
     ``state``, ``style``, ``takefocus``, ``text``, ``textvariable``,
     ``underline`` and ``width``.
-
-    Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic :class:`~tkcurses.Menubutton` - ``relief``,
-        ``background`` and ``borderwidth`` among them. tkinter refuses
-        them as unknown options, so a program that uses one runs only on
-        TkCurses.
     """
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
@@ -5485,13 +5787,6 @@ class Entry(Widget, _EntryCommands):
     ``foreground``, ``justify``, ``placeholder``, ``placeholderforeground``,
     ``state``, ``style``, ``takefocus``, ``textvariable``, ``width`` and
     ``xscrollcommand``.
-
-    Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic :class:`~tkcurses.Entry` - ``relief``, ``borderwidth``
-        and ``highlightthickness`` among them. tkinter refuses them as
-        unknown options, so a program that uses one runs only on
-        TkCurses.
 
     Sample output (show):
         password = ttk.Entry(root, show="*", width=16)
@@ -5555,12 +5850,6 @@ class Spinbox(Widget, _EntryCommands, tkcurses.Spinbox):
     ``xscrollcommand``.
 
     Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic :class:`~tkcurses.Spinbox` - ``relief``, ``borderwidth``
-        and ``activebackground`` among them. tkinter refuses them as
-        unknown options, so a program that uses one runs only on
-        TkCurses.
-
         It has :meth:`invoke`, which in tkinter only the classic Spinbox
         has.
 
@@ -5637,13 +5926,6 @@ class Scrollbar(Widget, tkcurses.Scrollbar):
 
     Standard options, described in :doc:`/reference/options`: ``class``,
     ``cursor``, ``orient``, ``style`` and ``takefocus``.
-
-    Differences from tkinter:
-        It also takes options tkinter's does not, which it has from the
-        classic :class:`~tkcurses.Scrollbar` - ``relief``,
-        ``background`` and ``borderwidth`` among them. tkinter refuses
-        them as unknown options, so a program that uses one runs only on
-        TkCurses.
     """
 
     _ttk_class = "TScrollbar"

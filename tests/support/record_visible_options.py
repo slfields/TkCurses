@@ -31,10 +31,8 @@ Run from the repository root::
 
 The themed widgets are measured too, under ``ttk.Button`` and so on, but
 only for the options Tk's own ttk widget has - ``tk_ttk_options.json``,
-recorded from Tk by ``record_tk_ttk_options.py``. TkCurses's accept the
-classic widget's as well, and those are not part of the themed widget's
-interface (TkCurses-jo7l). An option Tk has and TkCurses lacks is
-``missing``.
+recorded from Tk by ``record_tk_ttk_options.py``, which are also all
+TkCurses's take. An option Tk has and TkCurses lacks is ``missing``.
 
 It writes ``visible_options.json`` beside itself, which
 ``tests/test_docstrings.py`` holds the documentation to. Each option is one
@@ -151,15 +149,13 @@ BASES = {
     ),
     "ttk.Notebook": (
         "ttk.Notebook(root, **kw)",
-        # Given a size: one packed plainly asks for none (TkCurses-bell).
-        "w.pack(padx=1, pady=1, fill='both', expand=1);"
+        "w.pack(padx=1, pady=1);"
         " w.add(ttk.Label(w, text='first page'), text='One');"
         " w.add(ttk.Label(w, text='second'), text='Two')",
     ),
     "ttk.Treeview": (
         "ttk.Treeview(root, **{'columns': ('size',), 'height': 4, **kw})",
-        # Given a width: one packed plainly asks for none (TkCurses-9v9j).
-        "w.pack(padx=1, pady=1, fill='x');"
+        "w.pack(padx=1, pady=1);"
         " w.heading('#0', text='Name'); w.heading('size', text='Size');"
         " top = w.insert('', 'end', text='Folder', open=True);"
         " w.insert(top, 'end', text='File', values=('3',));"

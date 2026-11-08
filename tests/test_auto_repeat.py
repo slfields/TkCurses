@@ -362,7 +362,9 @@ def test_with_jump_the_drag_scrolls_once_at_the_release(root, clock):
 
 def test_a_ttk_scrollbar_neither_repeats_nor_jumps(root, clock):
     calls = []
-    bar = ttk.Scrollbar(root, command=lambda *a: calls.append(a), jump=True)
+    with pytest.raises(TclError, match='unknown option "-jump"'):
+        ttk.Scrollbar(root, jump=True)
+    bar = ttk.Scrollbar(root, command=lambda *a: calls.append(a))
     laid_out(bar, 1, 10)
     bar.set(0.2, 0.4)
     press(bar, 0, 0)

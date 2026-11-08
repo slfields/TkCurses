@@ -1685,15 +1685,11 @@ def test_a_padded_container_asks_its_parent_for_the_room(padded_root):
     assert (outer.width, outer.height) == (5 + 1 + 3, 5 + 2 + 4)
 
 
-def test_padding_adds_to_padx_and_pady_rather_than_replacing_them(padded_root):
-    """A themed widget still answers to both, and a caller meant each."""
-    from tkcurses._core.geometry import Rect
-
-    both = Frame(padded_root, name="both", relief="flat", padding=1, padx=2, pady=3)
-    both._allocate(Rect(0, 0, 20, 20))
-    both._map()
-    content = both._content_rect()
-    assert (content.x, content.y) == (2 + 1, 3 + 1)
+def test_a_themed_frame_refuses_padx_and_pady(padded_root):
+    """Tk's ttk.Frame has ``padding`` and neither of the classic two."""
+    for option in ("padx", "pady"):
+        with pytest.raises(TclError, match=f'unknown option "-{option}"'):
+            Frame(padded_root, **{option: 2})
 
 
 @pytest.mark.parametrize(
@@ -2982,7 +2978,7 @@ def test_identify_outside_the_widget_is_empty(root):
 def test_identify_follows_the_drawn_rings(root):
     """A bordered button: the edge is the border, the text area the label,
     and with padding the band between them is padding."""
-    widget = Button(root, name="w", text="Hi", padx=1, relief="raised")
+    widget = Button(root, name="w", text="Hi", padding=(1, 0))
     widget.place(x=0, y=0, width=8, height=3)
     root.update_layout()
     area = widget._text_area()
@@ -2993,7 +2989,7 @@ def test_identify_follows_the_drawn_rings(root):
 
 def test_identify_answers_no_border_where_none_is_drawn(root):
     """A flat label draws no border, so its edge is padding, not border."""
-    widget = Label(root, name="w", text="Hi", padx=1)
+    widget = Label(root, name="w", text="Hi", padding=(1, 0))
     widget.place(x=0, y=0, width=6, height=1)
     root.update_layout()
     assert widget.identify(0, 0) == "padding"
@@ -3853,3 +3849,57 @@ def test_a_click_on_a_heading_takes_the_focus_and_selects_nothing(root, filled):
 def test_a_heading_without_a_command_is_clicked_quietly(root, tree):
     _click_heading(tree, _column_x(tree, "size"))
     root.update()
+
+
+# A Notebook asks for its largest page shown, the border round it, and the
+# tab row, as Tk's does. It inherited a Frame's request, which waits for
+# children packed or gridded in it, and its pages are placed: it asked for
+# nothing, so one packed plainly drew nothing. Measured on Tk 9.0.2: one
+# page holding a Label asks for 65x49 pixels.
+
+STRIP = 3  # the tab row
+EDGE = 1  # the border, each side and below
+
+
+def test_a_notebook_asks_for_its_page_and_tabs(root):
+    book = Notebook(root, name="nb")
+    book.add(Label(book, text="a" * 30), text="One")
+    assert book.winfo_reqwidth() == 30 + 2 * EDGE
+    assert book.winfo_reqheight() == STRIP + 1 + EDGE
+
+
+def test_a_notebook_is_at_least_as_wide_as_its_tabs(root):
+    book = Notebook(root, name="nb")
+    book.add(Label(book, text="x"), text="A long tab title")
+    spans = book._tab_spans()
+    assert book.winfo_reqwidth() == spans[-1][2] + 1 + 1
+
+
+def test_a_notebook_asks_for_its_largest_page_once_it_is_laid_out(root):
+    book = Notebook(root, name="nb")
+    page = Frame(book)
+    for n in range(6):
+        Label(page, text=f"row {n}").pack()
+    book.add(page, text="Rows")
+    book.add(Label(book, text="short"), text="Two")
+    book.pack()
+    root.update_layout()
+    assert book.winfo_reqheight() == STRIP + 6 + EDGE
+
+
+def test_a_notebooks_width_and_height_set_the_page_area(root):
+    book = Notebook(root, name="nb", width=30, height=5)
+    book.add(Label(book, text="x"), text="One")
+    assert (book.winfo_reqwidth(), book.winfo_reqheight()) == (
+        30 + 2 * EDGE,
+        STRIP + 5 + EDGE,
+    )
+
+
+def test_a_hidden_page_is_not_counted(root):
+    book = Notebook(root, name="nb")
+    wide = Label(book, text="w" * 40)
+    book.add(Label(book, text="x"), text="One")
+    book.add(wide, text="Two")
+    book.hide(wide)
+    assert book.winfo_reqwidth() < 40

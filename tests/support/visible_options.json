@@ -4007,17 +4007,14 @@
    ]
   },
   "height": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    3,
-    9
-   ]
+   "value": 3
   },
   "padding": {
    "kind": "visible",
    "state": "plain",
-   "value": 9
+   "value": 3
   },
   "style": {
    "kind": "visible",
@@ -4729,11 +4726,9 @@
    "value": "tree"
   },
   "striped": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    1
-   ]
+   "value": 1
   },
   "style": {
    "kind": "visible",

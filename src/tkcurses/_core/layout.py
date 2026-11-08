@@ -246,7 +246,13 @@ class LayoutEngine:
         sizer = manager
         if paned is not None and (manager is None or not manager.slaves(container)):
             sizer = paned
-        if sizer is not None and getattr(sizer, "propagates", True):
+        # A container that knows its own request - a Notebook, whose pages
+        # are placed, and place sizes nothing - says so, and pack, grid and
+        # panes do not overrule it.
+        own = getattr(container, "_own_request", None)
+        if own is not None:
+            self._propagate(container, own())
+        elif sizer is not None and getattr(sizer, "propagates", True):
             self._propagate(
                 container, container._outer_size(sizer.requested(container))
             )

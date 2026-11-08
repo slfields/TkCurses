@@ -60,7 +60,7 @@ import threading
 import time
 import traceback
 import weakref
-from collections.abc import MutableMapping
+from collections.abc import Collection, MutableMapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
@@ -3580,6 +3580,17 @@ class BaseWidget(Misc):
             cached = _SPEC_CACHE[cls] = spec
         return cached
 
+    @classmethod
+    def _public_options(cls) -> Collection[str]:
+        """The options a program may name, a subset of :meth:`_option_spec`.
+
+        Every one, unless a class narrows it. The themed widgets do: each is
+        built on a classic one and keeps that widget's options as the
+        defaults its drawing reads, but answers only Tk's ttk option names to
+        a program, as Tk's does.
+        """
+        return cls._option_spec().keys()
+
     def _initial_options(self, given: dict[str, Any]) -> dict[str, Any]:
         """Resolve this widget's starting options.
 
@@ -3610,10 +3621,11 @@ class BaseWidget(Misc):
     def _checked(self, given: dict[str, Any]) -> dict[str, Any]:
         """Resolve aliases and reject anything this widget does not accept."""
         spec = self._option_spec()
+        public = self._public_options()
         resolved: dict[str, Any] = {}
         for name, value in given.items():
             option = _keyword_option(name, spec, self._option_synonyms)
-            if option not in spec:
+            if option not in spec or option not in public:
                 raise TclError(f'unknown option "-{name}"')
             check = self._value_checks_of().get(option) or _OPTION_VALUES.get(option)
             resolved[option] = value if check is None else check(self, value)
@@ -3755,7 +3767,8 @@ class BaseWidget(Misc):
         """
         given = _given(cnf, kw)
         if not given:
-            return dict(self._options)
+            public = self._public_options()
+            return {k: v for k, v in self._options.items() if k in public}
         checked = self._checked(given)
         for option in checked:
             if option in self._creation_only:
@@ -3776,6 +3789,8 @@ class BaseWidget(Misc):
             TclError: If this widget has no such option.
         """
         option = self._option_synonyms.get(key, key)
+        if option not in self._public_options():
+            raise TclError(f'unknown option "-{key}"')
         try:
             return self._options[option]
         except KeyError:
@@ -3783,7 +3798,7 @@ class BaseWidget(Misc):
 
     def keys(self) -> list[str]:
         """The option names this widget accepts, sorted."""
-        return sorted(self._option_spec())
+        return sorted(self._public_options())
 
     def _configure_query(self, key: str) -> tuple[Any, ...]:
         """``configure(key)``: Tk's five-tuple for one option.

@@ -234,10 +234,15 @@ def test_the_overrelief_is_drawn_as_the_box(root):
 
 
 def test_a_ttk_button_has_no_overrelief_binding(root):
-    """ttk's buttons follow ttk's procedures, which have no overrelief."""
-    button = ttk.Button(root, relief="flat", overrelief="raised")
+    """ttk's buttons follow ttk's procedures, which have no overrelief -
+    nor the option: Tk refuses both it and ``relief`` on a ttk.Button."""
+    for option in ("relief", "overrelief"):
+        with pytest.raises(TclError, match=f'unknown option "-{option}"'):
+            ttk.Button(root, **{option: "raised"})
+    button = ttk.Button(root)
+    relief = button._options["relief"]
     button.event_generate("<Enter>")
-    assert button.cget("relief") == "flat"
+    assert button._options["relief"] == relief
 
 
 # ------------------------------------------------------------------ offrelief
