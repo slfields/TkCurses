@@ -496,19 +496,33 @@ def test_scenario_39_first_line_and_hanging_indents_are_opposites(uat_terminal):
     term.wait_for_text("Widget")
     term.wait_for_idle()
 
-    def rows():
+    def rows(display=None):
         """Paragraph rows with leading spaces kept - they are the indent."""
         out = []
-        for line in term.display:
+        for line in term.display if display is None else display:
             if "│" not in line:
                 continue
             out.append(line.split("│")[1])
         # Past the table's four rows: the paragraph is what follows.
         return [row for row in out if row.strip()][4:]
 
+    # Each wait names the paragraph rows the assertions read, not the status
+    # line: the status can arrive before the paragraph is redrawn, and a
+    # sample between them failed Python 3.12 in a release run.
+    def shows(first_indented):
+        def check(t):
+            got = rows(t.display)
+            return (
+                len(got) > 1
+                and got[0].startswith("      ") == first_indented
+                and got[1].startswith("      ") != first_indented
+            )
+
+        return check
+
     term.send(b"\x10")  # Ctrl-P, first-line
     term.wait_for_text("FIRST-LINE")
-    term.wait_for_idle()
+    term.wait_for(shows(first_indented=True), message="a first-line indent")
     first = rows()
     assert first[0].startswith("      "), f"first line should be indented: {first[0]!r}"
     assert not first[1].startswith(" "), f"the rest should be flush: {first[1]!r}"
@@ -517,7 +531,7 @@ def test_scenario_39_first_line_and_hanging_indents_are_opposites(uat_terminal):
     term.wait_for_text("no margins")
     term.send(b"\x07")  # Ctrl-G, hanging
     term.wait_for_text("hanging indent")
-    term.wait_for_idle()
+    term.wait_for(shows(first_indented=False), message="a hanging indent")
     hung = rows()
     assert not hung[0].startswith(" "), f"first line should be flush: {hung[0]!r}"
     assert hung[1].startswith("      "), f"the rest should be indented: {hung[1]!r}"
