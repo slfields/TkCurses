@@ -25,7 +25,7 @@ events; [common widgets](widgets.md); and
 [Porting a tkinter program](porting.md) is for someone bringing one over.
 [Terminals](terminals.md) is about where a program runs: what a terminal can
 show, which keys it can send, the mouse, the clipboard, and the settings
-that adjust TkCurses to a terminal. [Examples](examples.md) are twelve
+that adjust TkCurses to a terminal. [Examples](examples.md) are thirteen
 complete programs, each with the screen it draws.
 
 [How TkCurses works](how-it-works.md) follows a key press and a redraw

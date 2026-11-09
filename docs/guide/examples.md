@@ -1,6 +1,6 @@
 # Examples
 
-Twelve complete programs, each a single file in the
+Thirteen complete programs, each a single file in the
 [`examples`](https://github.com/slfields/TkCurses/tree/master/examples)
 directory. Run one from a checkout with:
 
@@ -176,6 +176,23 @@ moving it four cells right.
 The mouse handlers turn the event's position into canvas coordinates with
 `canvasx` and `canvasy`, as a Tk program does; here that also turns a row
 into the half-row a canvas counts in.
+
+## A recipe card
+
+A Text holding more than text: the bowl is a PhotoImage embedded with
+`image_create`, and the Spinbox, the Checkbuttons and the button at the end
+are widgets embedded with `window_create`. Each takes one index in the text
+and moves with it, as a character would, and a line grows to hold the
+tallest thing on it. The Spinbox has the focus, and Up and Down change the
+number of people: each quantity is a tagged range, rewritten with `replace`.
+Ticking an ingredient greys its line with a tag. The text is read-only, so
+the quantities are written with it turned on for a moment. The screen is
+taken after asking for five people.
+
+```{tkcurses-example} examples/recipe.py
+:size: 60x24
+:keys: ["<Up>"]
+```
 
 ## A picture
 

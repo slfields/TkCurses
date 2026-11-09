@@ -7,6 +7,19 @@ All notable changes to TkCurses. The format follows
 ## [Unreleased]
 
 ### Added
+- Text's embedded windows and images: `window_create` and `image_create`,
+  with `window_cget`, `window_configure`, `window_names`, `image_cget`,
+  `image_configure` and `image_names`, measured against Tk 9.0.2. Each
+  takes one index, as many cells as it is wide, and a line grows to hold
+  the tallest thing on it, placed by `align`, `padx`, `pady` and
+  `stretch`. A window's path and an image's name are indices; `get`,
+  `search` and `count -chars` pass over them and `dump` reports them.
+  Deleting a window's index destroys it, creating one is not an undo step,
+  and undoing a deletion brings back the text and not the window, as in
+  Tk.
+- A recipe card example, `examples/recipe.py`: a read-only Text with a
+  picture, a Spinbox that rescales the quantities, a Checkbutton on each
+  ingredient and a button in it.
 - Canvas arcs: `create_arc` with Tk's `start`, `extent` and `style`,
   read back as Tk reads them - `start` between 0 and 360, `extent` modulo
   360, a style by any unambiguous prefix - and drawn on the half-cell

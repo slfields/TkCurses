@@ -72,9 +72,8 @@ Missing pieces are tracked as issues. The larger ones:
 
 - Some of Tk 9.0's options are refused by some widgets, both classic and
   themed. Unknown options raise `TclError`, as Tk's do.
-- Some methods are missing: the Canvas tag and transform family, `Text.dump`,
-  `Text.count` and embedded windows, tear-off menus, the `Wm` icon family, the
-  `busy` family, and the geometry managers' method aliases.
+- Some methods are missing: tear-off menus, the `Wm` icon family, the `busy`
+  family, and the geometry managers' method aliases.
 - `tkinter.Tcl()` and `CallWrapper` are not provided: there is no Tcl
   interpreter for them to work with.
 - The option database matches an option's own name (`highlightthickness`)

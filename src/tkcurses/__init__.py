@@ -95,7 +95,15 @@ from tkcurses._core.canvas import (
     polygon_pixels,
     rectangle_pixels,
 )
-from tkcurses._core.cells import cells, char_cells, clip_cells, pad_cells, skip_cells
+from tkcurses._core.cells import (
+    EMBEDDED,
+    cells,
+    char_cells,
+    clip_cells,
+    is_embedded,
+    pad_cells,
+    skip_cells,
+)
 from tkcurses._core.clipboard import CLIPBOARD, PRIMARY
 from tkcurses._core.colors import (
     ColorDepth,
@@ -13038,6 +13046,128 @@ def _spaced(
     return out
 
 
+#: Tk's ``-align`` for an embedded window or image, as its refusal lists them.
+_EMBED_ALIGNS = ("baseline", "bottom", "center", "top")
+#: Each kind's options and their defaults, as Tk 9.0.2's configure lists them.
+_EMBED_OPTIONS: dict[str, dict[str, Any]] = {
+    "window": {
+        "align": "center",
+        "create": "",
+        "padx": 0,
+        "pady": 0,
+        "stretch": 0,
+        "window": "",
+    },
+    "image": {"align": "center", "image": "", "name": "", "padx": 0, "pady": 0},
+}
+
+
+class _Embedded:
+    """One window or image embedded in a Text: what its character stands for.
+
+    The text holds a reserved character in its place, so it is one index as
+    in Tk; this says how wide that character is, how tall its line has to
+    be, and what to do when the character is deleted.
+    """
+
+    def __init__(self, owner: Text, kind: str, options: dict[str, Any]) -> None:
+        self.owner = owner
+        self.kind = kind
+        self.options = options
+        self.char = ""
+        #: An image's name, unique in its text: its ``name`` or its image's,
+        #: then ``#1`` and on, as Tk names them.
+        self.image_name = ""
+
+    @property
+    def name(self) -> str:
+        """What ``dump`` reports and an index may name: the window's path or
+        the image's name."""
+        if self.kind == "image":
+            return self.image_name
+        return str(self.options.get("window") or "")
+
+    def widget(self) -> BaseWidget | None:
+        """The embedded window, if there is one and it is alive."""
+        path = str(self.options.get("window") or "")
+        widget = self.owner.tk.widgets.get(path) if path else None
+        return widget if isinstance(widget, BaseWidget) else None
+
+    def image(self) -> Image | None:
+        """The embedded image, if it still exists."""
+        return self.owner.tk.images.get(str(self.options.get("image") or ""))
+
+    def content(self) -> tuple[int, int]:
+        """Its own size in cells, padding left out."""
+        if self.kind == "image":
+            image = self.image()
+            return (image.width(), image.cell_height()) if image else (0, 0)
+        widget = self.widget()
+        if widget is None:
+            return (0, 0)
+        return (widget.winfo_reqwidth(), widget.winfo_reqheight())
+
+    def _padding(self) -> tuple[int, int]:
+        return (
+            max(0, int(self.options.get("padx") or 0)),
+            max(0, int(self.options.get("pady") or 0)),
+        )
+
+    def cells(self) -> int:
+        """How wide its character is: its width and ``padx`` either side."""
+        padx, _ = self._padding()
+        return self.content()[0] + 2 * padx
+
+    def rows(self) -> int:
+        """How tall it is with ``pady`` above and below."""
+        _, pady = self._padding()
+        return self.content()[1] + 2 * pady
+
+    def reach(self) -> tuple[int, int]:
+        """The rows it needs above and below the text row it is on.
+
+        Measured on Tk 9.0.2: a centred window taller than the text makes
+        its line taller and the text sits in the middle. ``top`` hangs from
+        the line's top, so the text is at the top; ``bottom`` and
+        ``baseline`` stand on the text row.
+        """
+        height = self.rows()
+        if height <= 1:
+            return (0, 0)
+        align = str(self.options.get("align") or "center")
+        if align == "top" or (self.options.get("stretch") and align != "baseline"):
+            return (0, height - 1)
+        if align == "center":
+            above = (height - 1) // 2
+            return (above, height - 1 - above)
+        return (height - 1, 0)
+
+    def place(self, row: int, above: int, below: int) -> tuple[int, int]:
+        """Its own top row and height, for a text row and the rows its line
+        has above and below it."""
+        _, pady = self._padding()
+        height = self.content()[1]
+        align = str(self.options.get("align") or "center")
+        if self.options.get("stretch") and align != "baseline":
+            return row - above + pady, max(0, above + below + 1 - 2 * pady)
+        if align == "top":
+            return row - above + pady, height
+        if align == "bottom":
+            return row + below - pady - height + 1, height
+        if align == "center":
+            return row - (height + 2 * pady - 1) // 2 + pady, height
+        return row - (height + 2 * pady - 1) + pady, height
+
+    def lost(self) -> None:
+        """Its character was deleted: Tk destroys the window, and the image's
+        name is free again."""
+        EMBEDDED.pop(self.char, None)
+        widget = self.widget()
+        self.owner._release_window(self)
+        if widget is not None and widget.winfo_exists():
+            widget.destroy()
+
+
 class _TagStyles(MutableMapping[str, dict[str, Any]]):
     """A Text's tag styles: its peers', with ``sel`` its own.
 
@@ -13255,6 +13385,9 @@ class Text(_Drawable, XView, YView):
         self._buffer: TextBuffer = (
             TextBuffer() if creator is None else creator._buffer.peer()
         )
+        #: The windows this text lays out, and what each was last given.
+        self._embedded_windows: dict[BaseWidget, _Embedded] = {}
+        self._embed_places: dict[BaseWidget, Rect | None] = {}
         # The view: its first row, kept as an index (see _top), and how far
         # it is scrolled sideways (see _left).
         self._top_row = 0
@@ -13599,9 +13732,15 @@ class Text(_Drawable, XView, YView):
         leaves the peer, its text and its marks as they were.
         """
         alive = not self._destroyed
+        store = self._buffer._store
         super().destroy()
         if alive:
             self._buffer.detach()
+            if not store.views:
+                # The last view of the text: nothing can show what it
+                # embeds, so nothing need say how wide those are.
+                for char in store.embeds:
+                    EMBEDDED.pop(char, None)
 
     # ------------------------------------------------------------- bindings
 
@@ -13906,6 +14045,10 @@ class Text(_Drawable, XView, YView):
                 self._display_position(last, rows)[1]
                 - self._display_position(first, rows)[1]
             )
+        if name in ("indices", "displayindices"):
+            # An embedded window or image is an index and not a character:
+            # measured on Tk 9.0.2, -indices counts it and -chars does not.
+            return self._buffer.offset_of(last) - self._buffer.offset_of(first)
         return len(self._buffer.get(first, last))
 
     def dump(
@@ -13916,19 +14059,19 @@ class Text(_Drawable, XView, YView):
         **kw: Any,
     ) -> list[tuple[str, str, str]] | None:
         """What lies from ``index1`` up to ``index2``, as ``(key, value,
-        index)`` triples: ``text``, ``mark``, ``tagon`` and ``tagoff``.
-        One character's worth when ``index2`` is not given.
+        index)`` triples: ``text``, ``mark``, ``tagon``, ``tagoff``,
+        ``window`` and ``image``. One character's worth when ``index2`` is
+        not given.
 
-        ``text``, ``mark`` and ``tag`` set true choose which; none, or
-        ``all``, means every kind. With ``command``, it is called with each
-        triple and nothing is returned.
+        ``text``, ``mark``, ``tag``, ``window`` and ``image`` set true choose
+        which; none, or ``all``, means every kind. With ``command``, it is
+        called with each triple and nothing is returned.
 
         Raises:
             TclError: If a keyword is not one Tk takes, in Tk's words.
 
         Differences from tkinter:
-            There are no embedded images or windows, so ``image`` and
-            ``window`` find nothing. Of several marks at one index, those
+            Of several marks at one index, those
             with left gravity come first, then the rest most recently set
             first; Tk lists them in the order its storage holds them, which
             is usually that and can differ after edits.
@@ -13949,6 +14092,7 @@ class Text(_Drawable, XView, YView):
             text="text" in chosen,
             tags="tag" in chosen,
             marks="mark" in chosen,
+            embeds=frozenset(chosen & {"window", "image"}),
         )
         found = [(key, value, str(index)) for key, value, index in triples]
         if command is None:
@@ -13956,6 +14100,451 @@ class Text(_Drawable, XView, YView):
         for triple in found:
             command(*triple)
         return None
+
+    # --------------------------------------------- embedded windows, images
+
+    def window_create(
+        self, index: Any, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> None:
+        """Embed a widget in the text at ``index``, where it takes one index
+        and as many cells as it is wide.
+
+        The text becomes the widget's geometry manager - ``winfo_manager``
+        answers ``text`` - and moves it with the text and the view; a line
+        holding a widget taller than one row grows to fit it. ``align`` puts
+        it against the line: ``top``, ``center``, ``bottom`` or
+        ``baseline``. ``padx`` and ``pady`` add space round it, ``stretch``
+        makes it as tall as its line, and ``create``, a function answering a
+        widget, makes one the first time it is shown if ``window`` is empty.
+        The widget must be the text's child or a child of one of its
+        ancestors. Deleting its index destroys it, and an undo does not bring
+        it back, as in Tk.
+
+        Sample output:
+            # size: 40x6
+            text = tk.Text(root, width=36, height=4)
+            text.insert("1.0", "Press  to go on.")
+            text.window_create("1.6", window=tk.Button(text, text="OK"))
+            text.pack()
+
+        Raises:
+            TclError: If an option or its value is not one Tk takes, in Tk's
+                words.
+
+        Differences from tkinter:
+            A window shows in the text it was created in, not in its peers,
+            which keep its place blank. ``create`` is a Python function
+            rather than a Tcl script.
+        """
+        self._embed("window", index, _given(cnf, kw))
+
+    def image_create(
+        self, index: Any, cnf: dict[str, Any] | None = None, **kw: Any
+    ) -> str:
+        """Embed an image in the text at ``index``, and answer its name.
+
+        The image takes one index, is drawn on the half-cell plane - a cell
+        to two pixel rows - and follows the image as it changes. Its name is
+        ``name``, or the image's own, with ``#1``, ``#2`` and on added when
+        that is already taken in this text, as Tk names them. ``align``,
+        ``padx`` and ``pady`` are as for :meth:`window_create`.
+
+        Sample output:
+            # size: 40x6
+            dot = tk.PhotoImage(width=4, height=4)
+            dot.put("orange", to=(0, 0, 4, 4))
+            text = tk.Text(root, width=36, height=4)
+            text.insert("1.0", "A dot:  and more text.")
+            text.image_create("1.7", image=dot)
+            text.pack()
+
+        Raises:
+            TclError: If an option or its value is not one Tk takes, in Tk's
+                words.
+        """
+        holder = self._embed("image", index, _given(cnf, kw))
+        return holder.image_name
+
+    def _embed(self, kind: str, index: Any, given: dict[str, Any]) -> _Embedded:
+        """Make an embedded window or image, with its options checked first."""
+        options = dict(_EMBED_OPTIONS[kind])
+        for name, value in given.items():
+            options[name] = self._embed_value(kind, name, value)
+        at = self._resolve(index)
+        holder = _Embedded(self, kind, options)
+        if kind == "image":
+            holder.image_name = self._unique_image_name(
+                str(options["name"] or options["image"])
+            )
+        holder.char = self._buffer.embed(at, holder)
+        EMBEDDED[holder.char] = holder.cells
+        if kind == "image" and holder.image():
+            image = holder.image()
+            assert image is not None
+            image._watch(self, self._embeds_changed)
+        if kind == "window" and options["window"]:
+            self._hold_window(holder)
+        self._embeds_changed()
+        return holder
+
+    def _embed_value(self, kind: str, option: str, value: Any) -> Any:
+        """An embedded window's or image's option, checked as Tk checks it.
+
+        Raises:
+            TclError: In Tk 9.0.2's words.
+        """
+        if option not in _EMBED_OPTIONS[kind]:
+            raise TclError(f'unknown option "-{option}"')
+        if option == "align":
+            return _tcl_index(value, _EMBED_ALIGNS, "align")
+        if option in ("padx", "pady"):
+            return _signed_distance(self, value)
+        if option == "stretch":
+            return _tcl_boolean(self, value)
+        if option == "image":
+            return _image_name(self, value)
+        if option == "window":
+            return self._embeddable(value)
+        if option == "name":
+            return str(value)
+        return value  # create: a function, called when it is first shown
+
+    def _embeddable(self, value: Any) -> str:
+        """A window that may be embedded here, as its path.
+
+        Raises:
+            TclError: ``bad window path name`` for no such widget, and
+                ``can't embed`` for a toplevel, this text, or a widget not
+                inside the text's master - Tk 9.0.2's words.
+        """
+        if value is None or value == "":
+            return ""
+        try:
+            widget = value if isinstance(value, Misc) else self.nametowidget(str(value))
+        except (KeyError, TclError):
+            raise TclError(f'bad window path name "{value}"') from None
+        parent = widget.master
+        allowed = parent is not None and any(
+            parent is ancestor for ancestor in self._ancestry()
+        )
+        if (
+            widget is self
+            or widget._is_toplevel
+            or not allowed
+            or not isinstance(widget, BaseWidget)
+        ):
+            raise TclError(f"can't embed {widget} in {self}")
+        return str(widget)
+
+    def _unique_image_name(self, base: str) -> str:
+        """``base``, or ``base#1`` and on when this text has it already."""
+        taken = set(self.image_names())
+        if base not in taken:
+            return base
+        number = 1
+        while f"{base}#{number}" in taken:
+            number += 1
+        return f"{base}#{number}"
+
+    def _embedded(self, kind: str, index: Any) -> _Embedded:
+        """The window or image embedded at an index.
+
+        Raises:
+            TclError: If there is none of that kind there, in Tk's words.
+        """
+        holder = self._buffer.embedded_at(self._resolve(index))
+        if not isinstance(holder, _Embedded) or holder.kind != kind:
+            raise TclError(f'no embedded {kind} at index "{index}"')
+        return holder
+
+    def window_cget(self, index: Any, option: str) -> Any:
+        """One option of the window embedded at ``index``."""
+        return self._embed_cget(self._embedded("window", index), option)
+
+    def image_cget(self, index: Any, option: str) -> Any:
+        """One option of the image embedded at ``index``."""
+        return self._embed_cget(self._embedded("image", index), option)
+
+    def _embed_cget(self, holder: _Embedded, option: str) -> Any:
+        name = option.lstrip("-")
+        if name not in holder.options:
+            raise TclError(f'unknown option "-{name}"')
+        return holder.options[name]
+
+    def window_configure(
+        self, index: Any, cnf: dict[str, Any] | str | None = None, **kw: Any
+    ) -> Any:
+        """Set options of the window embedded at ``index``, or with none
+        given, answer them all as Tk's configure lists them."""
+        return self._embed_configure(self._embedded("window", index), cnf, kw)
+
+    window_config = window_configure
+
+    def image_configure(
+        self, index: Any, cnf: dict[str, Any] | str | None = None, **kw: Any
+    ) -> Any:
+        """Set options of the image embedded at ``index``, or with none given,
+        answer them all as Tk's configure lists them."""
+        return self._embed_configure(self._embedded("image", index), cnf, kw)
+
+    def _embed_configure(
+        self, holder: _Embedded, cnf: dict[str, Any] | str | None, kw: dict[str, Any]
+    ) -> Any:
+        defaults = _EMBED_OPTIONS[holder.kind]
+
+        def entry(name: str) -> tuple[str, str, str, str, Any]:
+            return (name, "", "", str(defaults[name]), holder.options[name])
+
+        if isinstance(cnf, str):
+            name = cnf.lstrip("-")
+            if name not in defaults:
+                raise TclError(f'unknown option "-{name}"')
+            return entry(name)
+        given = _given(cnf, kw)
+        if not given:
+            return {name: entry(name) for name in defaults}
+        checked = {
+            name: self._embed_value(holder.kind, name, value)
+            for name, value in given.items()
+        }
+        if "window" in checked and checked["window"] != holder.options["window"]:
+            self._release_window(holder)
+        holder.options.update(checked)
+        if checked.get("window"):
+            self._hold_window(holder)
+        if "image" in checked and holder.image() is not None:
+            image = holder.image()
+            assert image is not None
+            image._watch(self, self._embeds_changed)
+        self._embeds_changed()
+        return None
+
+    def window_names(self) -> tuple[str, ...]:
+        """The paths of every window embedded in the text."""
+        return tuple(
+            holder.name
+            for holder in self._buffer._store.embeds.values()
+            if holder.kind == "window" and holder.name
+        )
+
+    def image_names(self) -> tuple[str, ...]:
+        """The names of every image embedded in the text."""
+        return tuple(
+            holder.image_name
+            for holder in self._buffer._store.embeds.values()
+            if holder.kind == "image"
+        )
+
+    def _hold_window(self, holder: _Embedded) -> None:
+        """Become the geometry manager of a holder's window, taking it from
+        wherever it was - another annotation leaves holding no window, as
+        measured on Tk 9.0.2."""
+        widget = holder.widget()
+        if widget is None:
+            return
+        owner = holder.owner
+        for other in self._buffer._store.embeds.values():
+            if (
+                other is not holder
+                and other.kind == "window"
+                and other.name == holder.name
+            ):
+                other.owner._release_window(other)
+                other.options["window"] = ""
+        if widget._manager_container is not owner or widget._manager != "text":
+            widget._leave_manager()
+        if owner._embed_manager is None:
+            owner._embed_manager = EmbedLayout(owner)
+        owner._embed_manager.add(widget)
+        owner._embedded_windows[widget] = holder
+        widget._manager = "text"
+        widget._manager_container = owner
+        owner._embed_places.pop(widget, None)
+        owner.tk.layout.invalidate(owner)
+
+    def _release_window(self, holder: _Embedded) -> None:
+        """Stop laying out a holder's window, unmapping it, and leave the
+        holder's options alone - its caller decides what they say."""
+        widget = holder.widget()
+        if widget is None or self._embedded_windows.get(widget) is not holder:
+            return
+        # Forgotten first, so that _embedded_lost, which leaving the layout
+        # calls, finds nothing to empty.
+        del self._embedded_windows[widget]
+        self._embed_places.pop(widget, None)
+        widget._leave_manager()
+        if widget._mapped:
+            widget._unmap()
+
+    def _embedded_lost(self, widget: BaseWidget) -> None:
+        """A window left the text - packed elsewhere, or destroyed - and its
+        annotation is left holding none, as Tk's is."""
+        holder = self._embedded_windows.pop(widget, None)
+        self._embed_places.pop(widget, None)
+        if holder is not None:
+            holder.options["window"] = ""
+            self._embeds_changed()
+
+    def _embeds_changed(self) -> None:
+        """Repaint after an embedded window or image changed, and lay the
+        windows out again."""
+        self._redraw()
+        self._report_view()
+        if self._embedded_windows:
+            self.tk.layout.invalidate(self)
+
+    def _embedded_rect(self, widget: BaseWidget, area: Rect) -> Rect | None:
+        """Where an embedded window goes on the screen, or None while its
+        line is out of view."""
+        del area  # the text's own area, inside its border and padding
+        place = self._embed_place(widget)
+        self._embed_places[widget] = place
+        if place is None:
+            return None
+        drawing = self._text_area()
+        return Rect(
+            self.winfo_rootx() + drawing.x + place.x,
+            self.winfo_rooty() + drawing.y + place.y,
+            place.width,
+            place.height,
+        )
+
+    def _embed_place(self, widget: BaseWidget) -> Rect | None:
+        """A window's cells relative to the text area, or None."""
+        holder = self._embedded_windows.get(widget)
+        if holder is None:
+            return None
+        return self._embed_layout().get(holder.char)
+
+    def _embed_layout(self) -> dict[str, Rect]:
+        """Where each embedded object in or near the view is drawn, by its
+        character, in cells relative to the text area - the part out of
+        view included, so a window half scrolled off is still clipped
+        rather than dropped."""
+        store = self._buffer._store
+        if not store.embeds:
+            return {}
+        area = self._text_area()
+        rows = self._display_lines()
+        reach = max((holder.rows() for holder in store.embeds.values()), default=1)
+        first = max(0, self._top - reach)
+        last = min(len(rows), self._top + area.height + reach)
+        lines = self._buffer.lines
+        style = str(self._options["tabstyle"])
+        out: dict[str, Rect] = {}
+        for number in range(first, last):
+            line, start, stop = rows[number]
+            if line <= 0 or line > len(lines):
+                continue
+            text = lines[line - 1][start:stop]
+            placed = [
+                (index, store.embeds[char])
+                for index, char in enumerate(text)
+                if char in store.embeds
+            ]
+            if not placed:
+                continue
+            above, below = self._row_reach(text)
+            left, _ = self._row_margins(line, start)
+            laid = columns_of(text, start=left, stops=self._stops, style=style)
+            for index, holder in placed:
+                padx = max(0, int(holder.options.get("padx") or 0))
+                top, height = holder.place(number - self._top, above, below)
+                width = holder.content()[0]
+                if top + height <= 0 or top >= area.height:
+                    continue
+                column = laid[index] + padx - self._left
+                if column + width <= 0 or column >= area.width:
+                    continue
+                out[holder.char] = Rect(column, top, width, height)
+        return out
+
+    def _row_reach(self, text: str) -> tuple[int, int]:
+        """The rows a display row's embedded objects need above and below it."""
+        embeds = self._buffer._store.embeds
+        above = below = 0
+        for char in text:
+            holder = embeds.get(char)
+            if holder is not None:
+                up, down = holder.reach()
+                above, below = max(above, up), max(below, down)
+        return above, below
+
+    def _follow_embeds(self) -> None:
+        """Lay the embedded windows out again if any has moved."""
+        if not self._embedded_windows:
+            return
+        laid = self._embed_layout()
+        for widget, holder in self._embedded_windows.items():
+            if self._embed_places.get(widget, False) != laid.get(holder.char):
+                self.tk.layout.invalidate(self)
+                return
+
+    def _create_embedded_windows(self) -> None:
+        """Run ``create`` for each window annotation that has none yet and
+        is in view, as Tk does when one is about to be shown."""
+        for char, holder in list(self._buffer._store.embeds.items()):
+            if (
+                holder.kind != "window"
+                or holder.owner is not self
+                or holder.options["window"]
+                or not callable(holder.options["create"])
+                or char not in self._embeds_in_view()
+            ):
+                continue
+            made = holder.options["create"]()
+            if made:
+                holder.options["window"] = self._embeddable(made)
+                self._hold_window(holder)
+
+    def _embeds_in_view(self) -> set[str]:
+        """The embedded characters on the rows in view."""
+        rows = self._display_lines()
+        area = self._text_area()
+        lines = self._buffer.lines
+        found: set[str] = set()
+        for line, start, stop in rows[self._top : self._top + area.height]:
+            if 0 < line <= len(lines):
+                found.update(
+                    char for char in lines[line - 1][start:stop] if is_embedded(char)
+                )
+        return found
+
+    def _paint_images(self, area: Rect, attribute: int) -> None:
+        """Draw each embedded image in view over the blank cells it owns."""
+        store = self._buffer._store
+        window = self._window
+        if window is None or not any(
+            holder.kind == "image" for holder in store.embeds.values()
+        ):
+            return
+        dispatcher = CursesDispatcher.get()
+        colors = self.tk.colors
+        background = str(self._options["background"] or "black")
+        for char, place in self._embed_layout().items():
+            holder = store.embeds.get(char)
+            image = None if holder is None else holder.image()
+            if image is None:
+                continue
+            first_row = max(0, -place.y) * ROWS_PER_CELL
+            last_row = (min(area.height, place.y + place.height) - place.y) * (
+                ROWS_PER_CELL
+            )
+            first_column = max(0, -place.x)
+            last_column = min(area.width, place.x + place.width) - place.x
+            visible = image.lit((first_column, first_row, last_column, last_row))
+            for (x, y), (glyph, fore, back) in compose(visible).items():
+                column, row = place.x + x, place.y + y
+                if not (0 <= row < area.height and 0 <= column < area.width):
+                    continue
+                look = (
+                    attribute
+                    if colors is None
+                    else colors.attribute_for(fore, back or background)
+                )
+                self._write_line(
+                    dispatcher, window, area.y + row, area.x + column, glyph, look
+                )
 
     def delete(self, first: Any, last: Any = None) -> None:
         """Delete a range, or one character from ``first``.
@@ -14899,12 +15488,30 @@ class Text(_Drawable, XView, YView):
         )
         spaced = above > 0 or between > 0 or below > 0
         rows: list[tuple[int, int, int]] = []
+        embedding = bool(self._buffer._store.embeds)
         for number, line in enumerate(self._buffer.lines, start=1):
             wrapped = self._wrap_line(number, line, width, mode)
+            if embedding and not line.isascii():
+                wrapped = self._embed_rows(wrapped, line)
             if spaced:
                 wrapped = _spaced(wrapped, above, between, below)
             rows.extend(wrapped)
         return rows or [(1, 0, 0)]
+
+    def _embed_rows(
+        self, wrapped: list[tuple[int, int, int]], line: str
+    ) -> list[tuple[int, int, int]]:
+        """One line's rows, each grown to hold the embedded windows and images
+        on it: blank rows above and below, as spacing is, which hold no
+        index. Measured on Tk 9.0.2, a line holding a widget three times
+        the text's height is that tall, with the text in the middle."""
+        out: list[tuple[int, int, int]] = []
+        for number, start, stop in wrapped:
+            above, below = self._row_reach(line[start:stop])
+            out.extend([(-number, start, stop)] * above)
+            out.append((number, start, stop))
+            out.extend([(-number, start, stop)] * below)
+        return out
 
     def _text_rows(self) -> list[tuple[int, int, int]]:
         """The display rows that hold text, leaving out the spacing.
@@ -15338,10 +15945,18 @@ class Text(_Drawable, XView, YView):
         """Paint this widget, and any peer, since what changed here may be
         theirs too: the text, a shared tag, a shared tag's style."""
         self._paint()
+        self._settle_embeds()
         for peer in self._peer_widgets():
             peer._clamp_view()
             peer._paint()
+            peer._settle_embeds()
             peer._report_view()
+
+    def _settle_embeds(self) -> None:
+        """Make the windows due to be made, and lay out any that moved."""
+        if self._buffer._store.embeds:
+            self._create_embedded_windows()
+            self._follow_embeds()
 
     def _paint(self) -> None:
         """Paint the border, the visible rows, their tags, and the cursor."""
@@ -15371,6 +15986,7 @@ class Text(_Drawable, XView, YView):
                 self._draw_row(
                     dispatcher, window, area, offset, rows[row], lines, attribute
                 )
+            self._paint_images(area, attribute)
             self._draw_cursor(dispatcher, window, area, rows, attribute)
 
     def _draw_row(
@@ -15431,6 +16047,17 @@ class Text(_Drawable, XView, YView):
             return [" "] * left + list(text), margin + list(range(len(text)))
         style = str(self._options["tabstyle"])
         drawn = glyphs(text, start=left, stops=self._stops, style=style)
+        if self._buffer._store.embedding:
+            # An embedded window or image owns its cells and draws itself:
+            # the character standing for it is never written.
+            blank = False
+            for at, glyph in enumerate(drawn):
+                if glyph and is_embedded(glyph[0]):
+                    drawn[at], blank = " ", True
+                elif glyph == "" and blank:
+                    drawn[at] = " "
+                else:
+                    blank = False
         owners: list[int | None] = [None] * len(drawn)
         laid = columns_of(text, start=left, stops=self._stops, style=style)
         for index, column in enumerate(laid):

@@ -4917,7 +4917,7 @@ Multi-line text editor.
 | `debug(boolean=None)` | ○ | One flag for every Text, as Tk's; checks nothing |
 | `delete(index1, index2=None)` | ✓ | Delete text |
 | `dlineinfo(index)` | ○ | Display line info |
-| `dump(index1, index2=None, command=None, **kw)` | ○ | Text, marks and toggles in Tk's order; nothing embedded to report |
+| `dump(index1, index2=None, command=None, **kw)` | ○ | Text, marks, toggles, windows and images in Tk's order |
 | `edit(*args)` | ✓ | Tk's `edit` subcommands, `canundo` and `canredo` included |
 | `edit_modified(arg=None)` | ✓ | Modified flag |
 | `edit_redo()` | ✓ | Redo edit |
@@ -4925,10 +4925,10 @@ Multi-line text editor.
 | `edit_separator()` | ✓ | Undo separator |
 | `edit_undo()` | ✓ | Undo edit |
 | `get(index1, index2=None)` | ✓ | Get text |
-| `image_cget(index, option)` | ☐ | Not implemented; TkCurses-r0gw |
-| `image_configure(index, **kw)` | ☐ | Not implemented; TkCurses-r0gw |
-| `image_create(index, **kw)` | ☐ | Not implemented; TkCurses-r0gw |
-| `image_names()` | ✗ | N/A |
+| `image_cget(index, option)` | ✓ | Embedded image's option |
+| `image_configure(index, **kw)` | ✓ | Embedded image's options |
+| `image_create(index, **kw)` | ✓ | Embed an image; answers its unique name |
+| `image_names()` | ✓ | Embedded images' names |
 | `index(index)` | ✓ | Parse index |
 | `insert(index, chars, *args)` | ✓ | Text and tag-list pairs, as Tk takes them |
 | `mark_gravity(markName, direction)` | ✓ | Mark gravity |
@@ -4958,10 +4958,10 @@ Multi-line text editor.
 | `tag_raise(tagName, aboveThis)` | ✓ | Raise tag |
 | `tag_ranges(tagName)` | ✓ | Tag ranges |
 | `tag_remove(tagName, index1, index2)` | ✓ | Remove tag |
-| `window_cget(index, option)` | ☐ | Not implemented; TkCurses-r0gw |
-| `window_configure(index, **kw)` | ☐ | Not implemented; TkCurses-r0gw |
-| `window_create(index, **kw)` | ☐ | Not implemented; TkCurses-r0gw |
-| `window_names()` | ☐ | Not implemented; TkCurses-r0gw |
+| `window_cget(index, option)` | ✓ | Embedded window's option |
+| `window_configure(index, **kw)` | ✓ | Embedded window's options |
+| `window_create(index, **kw)` | ○ | Embed a widget; shown only in the text that made it, not its peers |
+| `window_names()` | ✓ | Embedded windows' paths |
 
 **Tag bindings follow tkTextTag.c's TkTextBindProc** (`TkCurses-mzj`), read
 in Tk's C and measured on Tk 9.0.2 with generated events. They run before the
@@ -4998,8 +4998,8 @@ newline too far.
 manual says: "no insertions or deletions are allowed". Measured on Tk 9.0.2,
 `insert` and `delete` are ignored **silently**: nothing is raised and the
 modified flag does not move. Tags, marks and the selection still change. (Tk's
-`image_create` and `window_create` still embed while disabled; neither is
-implemented here yet, `TkCurses-r0gw`.) Ours used to accept both edits from
+`image_create` and `window_create` still embed while disabled, and so do
+ours.) Ours used to accept both edits from
 code, and a test asserted it, unmeasured. Fill a read-only display with
 tkinter's idiom: `state="normal"`, insert, `state="disabled"`.
 
@@ -5100,6 +5100,54 @@ index "t.first"` - so a tag made by `tag_configure` alone is known to the
 buffer from then on. The others: `bad comparison operator "<>": must be <,
 <=, ==, >=, >, or !=`, `bad mark gravity "up": must be left or right`, `there
 is no mark named "nomark"`.
+
+**Embedded windows and images** (`TkCurses-r0gw`). Each stands in the text
+as one character from the last private-use plane (U+100000 on), unique and
+never reused, so that it is one index as Tk's segment is and every index,
+mark and tag rule already in the buffer applies to it unchanged. Those
+characters are never text: `get`, `search` and `count -chars` pass over
+them, `dump` reports them as `window` or `image`, and `_core/cells.py`'s
+`char_cells` asks the object how wide it is - a window's requested width or
+an image's, plus `padx` either side - ahead of its cache, since a window's
+width changes. A display row holding one gets blank rows above and below
+it, encoded as spacing rows are (a negative line number), so a line grows
+to its tallest object; `align` decides how many go above. Images are drawn
+on the half-cell plane after the rows; windows are laid out by the
+`EmbedLayout` the Canvas uses, the Text answering `_embedded_rect`.
+
+Measured on Tk 9.0.2, and followed:
+
+- `window_create` answers nothing; `image_create` answers the name, which
+  is `name` or the image's, then `#1`, `#2` for one already in the text.
+- Creating at `end` puts it before the final newline. `index(path)` and
+  `index(name)` work, with modifiers.
+- `count -indices` and `-xpixels` count it; `-chars` does not. A search
+  for `cd` matches across a window between them; the regexp `c.d` does
+  not.
+- The window must be the text's child or a child of one of its
+  ancestors: `can't embed .x in .t` otherwise, and for a toplevel or the
+  text itself.
+- Deleting its index destroys the window. Embedding it again, or packing
+  it, leaves its old annotation holding `window ""`.
+- **Creating one is not an undo step, but it joins the history.**
+  Undoing the insertion it landed in removes it too, which destroys the
+  window; undoing a deletion brings the text back without it. Here the
+  undo and redo stacks are rebased when one is created (`_Store._rebase`),
+  as if its character had always been part of the edit it fell in; after
+  any edit, a character whose object is gone is taken out again,
+  unrecorded (`_Store.tidy`).
+- A line holding a widget taller than the text is that tall, with the
+  text in the middle for `center`.
+
+Kept from Tk, though it looks odd: a window scrolled partly out of view is
+placed at full size and only clipped by the text's own window, so it can
+cover the text's border. tkTextWind.c's `TkTextEmbWinDisplayProc` does the
+same, and X clips a child only to its parent.
+
+Not followed: Tk shows a window in one peer at a time, whichever displayed
+it last. Peers here share the index and draw a blank where the window is;
+only the text that created it lays it out. tkinter could not measure peer
+display, and one window cannot be in two places in a terminal either.
 
 ---
 
@@ -5791,7 +5839,7 @@ the canvas answers from the item's point, `anchor`, `width` and `height` and
 the view. A redraw compares those rectangles with the last ones applied and
 queues a layout only on a change, so moving, scrolling and a window's own
 new request all reach it without a redraw ever laying out twice. The same
-layout is meant for a Text's embedded windows (`TkCurses-r0gw`).
+layout lays out a Text's embedded windows; see the Text class.
 
 Measured on Tk 9.0.2 and kept: a window wholly out of view, or whose item is
 hidden, is unmapped rather than clipped to nothing, as `DisplayWinItem`

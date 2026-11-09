@@ -159,7 +159,6 @@ NOT_INSTANTIATED = frozenset(
 #:   TkCurses-67u  the ttk.Treeview tag API
 #:   TkCurses-d5u  the themed-element identify
 #:   TkCurses-6lh  scan_mark / scan_dragto
-#:   TkCurses-r0gw tk.Text embedded windows and images
 #:   TkCurses-k1i  the tk.Wm icon, group and aspect family
 #:   TkCurses-0ap  tk.Misc busy, visual and screen introspection
 #:   TkCurses-zmf  the geometry-manager method aliases (bbox, anchor, size,
@@ -245,16 +244,6 @@ GAPS: dict[str, dict[str, str]] = {
         "proxy_place": "TkCurses-xy2",
         "sash": "TkCurses-xy2",
         "sash_mark": "TkCurses-xy2",
-    },
-    "tk.Text": {
-        "image_cget": "TkCurses-r0gw",
-        "image_configure": "TkCurses-r0gw",
-        "image_create": "TkCurses-r0gw",
-        "window_cget": "TkCurses-r0gw",
-        "window_config": "TkCurses-r0gw",
-        "window_configure": "TkCurses-r0gw",
-        "window_create": "TkCurses-r0gw",
-        "window_names": "TkCurses-r0gw",
     },
     "tk.Wm": {
         "aspect": "TkCurses-k1i",

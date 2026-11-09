@@ -198,6 +198,12 @@ view. The same scrollbar connection works for a `Listbox`, a `Canvas` and
 a `Treeview`, and for sideways scrolling with `xview` and
 `xscrollcommand`.
 
+A `Text` can hold widgets and pictures as well as text: `window_create`
+puts a widget at an index and `image_create` an image. Each takes one
+index and moves with the text, and a line grows to hold the tallest thing
+on it. The [recipe card](examples.md#a-recipe-card) has a Spinbox,
+Checkbuttons, a button and a picture in its text.
+
 ## Grouping: frames, tabs and panes
 
 The containers hold other widgets. A `Frame` is invisible unless it is

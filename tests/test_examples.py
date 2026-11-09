@@ -55,7 +55,7 @@ def test_every_example_is_on_the_page_and_nothing_else_is():
     shown = DIRECTIVE.findall(PAGE.read_text())
     files = sorted(f"examples/{path.name}" for path in EXAMPLES.glob("*.py"))
     assert sorted(shown) == files
-    assert len(files) == 12
+    assert len(files) == 13
 
 
 def test_every_example_carries_the_notice():
@@ -509,3 +509,25 @@ def test_notes_asks_before_deleting(terminal, tmp_path):
     term.send_keys("<Return>")
     term.wait_for_text("Saved 1 notes")
     assert json.loads(store.read_text()) == [{"title": "Ideas", "text": "eggs"}]
+
+
+@pytest.mark.tty
+def test_the_recipe_scales_ticks_and_clears(terminal, tmp_path):
+    """The Spinbox in the text rescales the quantities; a Checkbutton in the
+    text ticks its line, and the button at the end clears it."""
+    term = start(terminal, tmp_path, "recipe", cols=60, rows=24)
+    term.wait_for(
+        lambda t: t.contains("[ ] 300 g plain flour") and t.contains("Clear the ticks"),
+        message="the card",
+    )
+    term.send_keys("<Up>")
+    term.wait_for(
+        lambda t: t.contains("Serves 5") and t.contains("[ ] 375 g plain flour"),
+        message="five people's flour",
+    )
+    row, column = term.find_text("[ ] 375 g plain flour")
+    term.click(column + 1, row)
+    term.wait_for_text("[x] 375 g plain flour")
+    row, column = term.find_text("Clear the ticks")
+    term.click(column + 1, row)
+    term.wait_for_text("[ ] 375 g plain flour")

@@ -71,6 +71,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from tkcurses._core.cells import EMBEDDED_FIRST, EMBEDDED_LAST
 from tkcurses._core.errors import TclError
 
 if TYPE_CHECKING:
@@ -82,6 +83,8 @@ __all__ = ["Index", "TextBuffer", "TextIndexError"]
 #: letters, digits and underscores are word characters and everything else is
 #: a single-character word of its own.
 _WORD = re.compile(r"\w")
+#: Any character reserved for an embedded window or image.
+EMBEDDED_CHARACTER = re.compile(f"[{EMBEDDED_FIRST}-{EMBEDDED_LAST}]")
 
 #: ``+3 chars``, ``-2 lines``, and the compact ``+3c`` / ``-2l`` Tk also takes.
 #: The pieces of a modifier list: a sign, or a run of anything else up to
@@ -252,6 +255,156 @@ class _Store:
         #: Whatever the widgets over this store share that is not text - tag
         #: styles and the modified flag. This module never reads it.
         self.shared: dict[str, Any] = {}
+        #: The windows and images embedded in the text, by the character
+        #: that stands for each; see :meth:`embed`. Each answers ``kind``,
+        #: ``name`` and ``lost()``.
+        self.embeds: dict[str, Any] = {}
+        #: Which reserved character the next embedded object takes. Never
+        #: reused, so a character an undo puts back is never mistaken for a
+        #: later object's.
+        self.embed_clock = itertools.count(ord(EMBEDDED_FIRST))
+        #: Whether anything was ever embedded here, which is what makes the
+        #: tidying after an edit worth doing at all.
+        self.embedding = False
+
+    # ---------------------------------------------------------- embedding
+
+    def embed(self, at: int, holder: Any) -> str:
+        """Put an embedded object's character into the text at ``at``.
+
+        Not an edit: Tk's ``window create`` and ``image create`` are not
+        undone, measured on Tk 9.0.2. The history is rebased instead, as if
+        the character had always been there, so an insertion it landed in
+        takes it along - undoing that insertion removes the window too,
+        as Tk's does.
+        """
+        number = next(self.embed_clock)
+        if number > ord(EMBEDDED_LAST):
+            raise TclError("too many embedded windows and images")
+        character = chr(number)
+        self.embeds[character] = holder
+        self.embedding = True
+        self.text = self.text[:at] + character + self.text[at:]
+        self.version += 1
+        self.shift(at, 1)
+        self._rebase(at, inserted=True)
+        return character
+
+    def _remove_character(self, at: int) -> None:
+        """Take one character out without recording it, and rebase."""
+        self.text = self.text[:at] + self.text[at + 1 :]
+        self.version += 1
+        self.shift(at + 1, -1, floor=at)
+        self._rebase(at, inserted=False)
+
+    def tidy(self) -> None:
+        """Settle the embedded objects after the text changed.
+
+        One whose character was deleted is lost - a window is destroyed,
+        as Tk destroys it. A character put back by an undo or a redo whose
+        object is gone is taken out again, unrecorded: measured on Tk 9.0.2,
+        undoing a deletion brings the text back and not the window.
+        """
+        if not self.embedding:
+            return
+        lost = [char for char in self.embeds if char not in self.text]
+        for char in lost:
+            self.embeds.pop(char).lost()
+        dead = [
+            match.start()
+            for match in EMBEDDED_CHARACTER.finditer(self.text)
+            if match.group() not in self.embeds
+        ]
+        for at in reversed(dead):
+            self._remove_character(at)
+
+    def _rebase(self, at: int, *, inserted: bool) -> None:
+        """Rewrite the undo and redo stacks for a character put in at, or
+        taken out from, ``at`` without being recorded.
+
+        Each record holds offsets into the text as it was when it was
+        applied, so a character that appears or vanishes outside the record
+        moves every one of them. Walked from the present: the undo stack
+        newest first, through each edit's own before and after; the redo
+        stack in the order a redo would apply it. A record whose own text
+        holds the character's place takes the character in, or gives it up,
+        and the walk on that side stops, since before or after it the
+        character does not exist.
+        """
+        step = 1 if inserted else -1
+        character = self.text[at] if inserted else ""
+        position = at
+        done = [edit for group in reversed(self.done) for edit in reversed(group)]
+        rewritten = {}
+        for edit in done:
+            length = len(edit.text)
+            if edit.inserted:
+                inside = (
+                    edit.at < position < edit.at + length
+                    if inserted
+                    else edit.at <= position < edit.at + length
+                )
+                if inside:
+                    rewritten[id(edit)] = _Edit(
+                        edit.at,
+                        self._spliced(edit.text, position - edit.at, character),
+                        inserted=True,
+                        view=edit.view,
+                    )
+                    break
+                if position >= edit.at + length:
+                    position -= length
+                else:
+                    rewritten[id(edit)] = _Edit(
+                        edit.at + step, edit.text, inserted=True, view=edit.view
+                    )
+            elif position < edit.at:
+                rewritten[id(edit)] = _Edit(
+                    edit.at + step, edit.text, inserted=False, view=edit.view
+                )
+            else:
+                position += length
+        position = at
+        undone = [edit for group in reversed(self.undone) for edit in group]
+        for edit in undone:
+            length = len(edit.text)
+            if edit.inserted:
+                if position < edit.at:
+                    rewritten[id(edit)] = _Edit(
+                        edit.at + step, edit.text, inserted=True, view=edit.view
+                    )
+                else:
+                    position += length
+            elif position < edit.at:
+                rewritten[id(edit)] = _Edit(
+                    edit.at + step, edit.text, inserted=False, view=edit.view
+                )
+            elif position >= edit.at + length:
+                position -= length
+            else:
+                rewritten[id(edit)] = _Edit(
+                    edit.at,
+                    self._spliced(edit.text, position - edit.at, character),
+                    inserted=False,
+                    view=edit.view,
+                )
+                break
+        if rewritten:
+            self.done = [
+                [rewritten.get(id(edit), edit) for edit in group] for group in self.done
+            ]
+            self.undone = [
+                [rewritten.get(id(edit), edit) for edit in group]
+                for group in self.undone
+            ]
+
+    @staticmethod
+    def _spliced(recorded: str, at: int, character: str) -> str:
+        """A record's text with ``character`` put in at ``at``, or with the
+        character there taken out when ``character`` is empty."""
+        if character:
+            return recorded[:at] + character + recorded[at:]
+        return recorded[:at] + recorded[at + 1 :]
 
     # -------------------------------------------------------------- edits
 
@@ -868,6 +1021,12 @@ class TextBuffer:
                     )
                 edge = ranges[0][0] if which == "first" else ranges[-1][1]
                 return self.index_of(edge)
+        # An embedded image's name or window's path, after marks and tags.
+        for char, holder in self._store.embeds.items():
+            if holder.name and holder.name == base:
+                at = self._text.find(char)
+                if at >= 0:
+                    return self.index_of(at)
         raise TextIndexError(f'bad text index "{base}"')
 
     def _apply_modifier(self, index: Index, modifier: tuple[str, int]) -> Index:
@@ -934,11 +1093,17 @@ class TextBuffer:
         """The text between two indices, or one character from ``first``."""
         start = self.offset_of(self.index(first))
         if last is None:
-            return self._text[start : start + 1]
-        stop = self.offset_of(self.index(last))
-        if stop < start:
-            start, stop = stop, start
-        return self._text[start:stop]
+            text = self._text[start : start + 1]
+        else:
+            stop = self.offset_of(self.index(last))
+            if stop < start:
+                start, stop = stop, start
+            text = self._text[start:stop]
+        # An embedded window or image is an index and not text: Tk's get
+        # leaves it out, measured on Tk 9.0.2.
+        if self._store.embedding:
+            return EMBEDDED_CHARACTER.sub("", text)
+        return text
 
     def insert(self, index: Index | str, text: str) -> Index:
         """Insert ``text``, returning the index just past what was inserted.
@@ -950,7 +1115,30 @@ class TextBuffer:
             return self.index(index)
         at = min(self.offset_of(self.index(index)), len(self._text) - 1)
         self._store.insert(self._global(at), text, self._key)
+        self._store.tidy()
         return self.index_of(at + len(text))
+
+    def embed(self, index: Index | str, holder: Any) -> str:
+        """Embed an object at ``index``, as ``insert`` would put a character
+        there, and answer the character that stands for it."""
+        at = min(self.offset_of(self.index(index)), len(self._text) - 1)
+        return self._store.embed(self._global(at), holder)
+
+    def embedded_at(self, index: Index | str) -> Any:
+        """The object embedded at ``index``, or None."""
+        at = self.offset_of(self.index(index))
+        return self._store.embeds.get(self._text[at : at + 1])
+
+    def embedded_in(self, first: int, last: int) -> list[tuple[int, Any]]:
+        """Each embedded object between two offsets of this view, with its
+        offset, in order."""
+        if not self._store.embeds:
+            return []
+        return [
+            (first + match.start(), self._store.embeds[match.group()])
+            for match in EMBEDDED_CHARACTER.finditer(self._text, first, last)
+            if match.group() in self._store.embeds
+        ]
 
     def delete(self, first: Index | str, last: Index | str | None = None) -> None:
         """Delete from ``first`` up to but not including ``last``.
@@ -986,6 +1174,7 @@ class TextBuffer:
             newline = self._global(len(self._text) - 1)
             for name, ranges in self._store.tags.items():
                 self._store.tags[name] = _cut(ranges, newline, newline + 1)
+        self._store.tidy()
 
     @contextlib.contextmanager
     def grouped(self, mode: str) -> Iterator[None]:
@@ -1017,6 +1206,7 @@ class TextBuffer:
         text: bool = True,
         tags: bool = True,
         marks: bool = True,
+        embeds: frozenset[str] = frozenset(),
     ) -> list[tuple[str, str, Index]]:
         """What lies from ``first`` up to ``last``, in Tk's ``dump`` order.
 
@@ -1076,7 +1266,14 @@ class TextBuffer:
                 )
             for at, here in standing.items():
                 before.setdefault(at, []).extend(("mark", n) for *_, n in sorted(here))
-        breaks = {start, *before}
+        # An embedded window or image breaks the text either side of it, is
+        # reported after the marks at its index if its kind is asked for,
+        # and is never text. ``embeds`` names the kinds to report.
+        placed = dict(self.embedded_in(start, stop))
+        for at, holder in placed.items():
+            if holder.kind in embeds:
+                before.setdefault(at, []).append((holder.kind, holder.name))
+        breaks = {start, *before, *placed, *(at + 1 for at in placed)}
         breaks.update(
             i + 1 for i in range(start, stop) if self._text[i] == "\n" and i + 1 < stop
         )
@@ -1086,7 +1283,7 @@ class TextBuffer:
             index = self.index_of(at)
             out.extend((key, value, index) for key, value in before.get(at, ()))
             following = ordered[number + 1] if number + 1 < len(ordered) else stop
-            if text and following > at:
+            if text and following > at and at not in placed:
                 out.append(("text", self._text[at:following], index))
         if at_end and stop in before:
             index = self.index_of(stop)
@@ -1192,14 +1389,28 @@ class TextBuffer:
             return self._regexp_in(
                 pattern, begin, end, backwards=backwards, nocase=nocase
             )
-        haystack = self._text[begin:end]
+        haystack, places = self._searchable(self._text[begin:end])
         needle = pattern
         if nocase:
             haystack, needle = haystack.lower(), needle.lower()
         at = haystack.rfind(needle) if backwards else haystack.find(needle)
         if at < 0:
             return None
-        return begin + at, len(pattern)
+        if places is None:
+            return begin + at, len(pattern)
+        first, last = places[at], places[at + len(pattern) - 1] + 1
+        return begin + first, last - first
+
+    def _searchable(self, text: str) -> tuple[str, list[int] | None]:
+        """Text as a search sees it - embedded windows and images left out,
+        as Tk's search passes over them, measured on Tk 9.0.2 - and where
+        each character of that came from, or None when nothing was."""
+        if not self._store.embedding or not EMBEDDED_CHARACTER.search(text):
+            return text, None
+        places = [
+            at for at, char in enumerate(text) if not EMBEDDED_CHARACTER.match(char)
+        ]
+        return EMBEDDED_CHARACTER.sub("", text), places
 
     def _regexp_in(
         self,
@@ -1218,12 +1429,24 @@ class TextBuffer:
         """
         expression = re.compile(pattern, re.IGNORECASE if nocase else 0)
         best: tuple[int, int] | None = None
-        for line_start, line in self._lines_between(begin, end):
+        for line_start, whole in self._lines_between(begin, end):
+            line, places = self._searchable(whole)
             for match in expression.finditer(line):
-                at = line_start + match.start()
+                if places is None:
+                    at = line_start + match.start()
+                    length = match.end() - match.start()
+                else:
+                    edge = [*places, len(whole)]
+                    at = line_start + edge[match.start()]
+                    finish = (
+                        edge[match.end() - 1] + 1
+                        if match.end() > match.start()
+                        else edge[match.start()]
+                    )
+                    length = line_start + finish - at
                 if not begin <= at < end:
                     continue
-                hit = (at, match.end() - match.start())
+                hit = (at, length)
                 if not backwards:
                     return hit
                 best = hit
@@ -1346,6 +1569,7 @@ class TextBuffer:
         group = store.done.pop()
         ranges = store.replay(reversed(group), forward=False, moved=moved)
         store.undone.append(group)
+        store.tidy()
         # TkUndoRevert, in tkUndo.c, pops the separator under the group it
         # takes back and frees it, so with nothing to put one back the next
         # edit joins the group below - autoseparators put one back. Measured
@@ -1369,6 +1593,7 @@ class TextBuffer:
         ranges = store.replay(group, forward=True, moved=moved)
         store.done.append(group)
         store.separate = True
+        store.tidy()
         return self._indices_of(ranges)
 
     def _indices_of(self, ranges: list[tuple[int, int]]) -> list[Index]:

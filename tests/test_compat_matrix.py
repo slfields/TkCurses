@@ -60,7 +60,8 @@ def row(modules, module, table, name):
         # A documented difference makes a method partial.
         ("tkinter", "Text", "dump", compat.PARTIAL),
         ("tkinter", "Text", "tag_bind", compat.SUPPORTED),
-        ("tkinter", "Text", "window_create", compat.MISSING),
+        ("tkinter", "Text", "window_create", compat.PARTIAL),
+        ("tkinter", "Text", "image_create", compat.SUPPORTED),
         ("tkinter", "Listbox", "itemconfigure", compat.SUPPORTED),
         ("tkinter", "Canvas", "create_image", compat.PARTIAL),
         ("tkinter", "Canvas", "create_window", compat.PARTIAL),

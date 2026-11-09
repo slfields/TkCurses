@@ -269,8 +269,7 @@ and 32 rows; `subsample` makes it smaller. See [Images](../reference/images.md).
 ## What is not there
 
 A few parts of tkinter have nothing behind them here: `tkinter.Tcl()` and
-anything that evaluates Tcl, the Canvas transform family, embedded windows
-in a Text, and tear-off menus. The [README](https://github.com/slfields/TkCurses#known-gaps)
+anything that evaluates Tcl, and tear-off menus. The [README](https://github.com/slfields/TkCurses#known-gaps)
 lists what is still missing. Calling one raises an error rather than
 quietly doing nothing.
 

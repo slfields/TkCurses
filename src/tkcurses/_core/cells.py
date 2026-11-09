@@ -46,8 +46,35 @@ from __future__ import annotations
 
 import unicodedata
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
-__all__ = ["cells", "char_cells", "clip_cells", "pad_cells", "skip_cells"]
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+__all__ = [
+    "EMBEDDED",
+    "cells",
+    "char_cells",
+    "clip_cells",
+    "is_embedded",
+    "pad_cells",
+    "skip_cells",
+]
+
+#: The last private-use plane, which a Text reserves for what it embeds: an
+#: embedded window or image stands in its text as one of these characters,
+#: so that it takes one index as Tk's does, and this table says how many
+#: cells it is wide. Characters from that plane are never text in a Text.
+EMBEDDED_FIRST = "\U00100000"
+EMBEDDED_LAST = "\U0010fffd"
+#: Each embedded character in use, and what says how wide it is now.
+EMBEDDED: dict[str, Callable[[], int]] = {}
+
+
+def is_embedded(character: str) -> bool:
+    """Whether a character is one of those reserved for embedding."""
+    return EMBEDDED_FIRST <= character <= EMBEDDED_LAST
+
 
 #: Format characters that DO take a cell: the soft hyphen, drawn as a hyphen,
 #: and the Arabic and Syriac prepended concatenation marks, drawn as a sign.
@@ -57,12 +84,25 @@ _FORMAT_WITH_WIDTH = frozenset(
 )
 
 
-@lru_cache(maxsize=4096)
 def char_cells(character: str) -> int:
-    """The cells one character takes on a terminal: 0, 1 or 2."""
+    """The cells one character takes on a terminal: 0, 1 or 2 - or, for a
+    character a Text embeds, as many as the window or image is wide."""
     if character < "\u0300":
         # Latin, the common case, without asking the database.
         return 1
+    if character >= EMBEDDED_FIRST:
+        # Before the cache: an embedded window's width changes with it.
+        width = EMBEDDED.get(character)
+        if width is not None:
+            return width()
+        if character <= EMBEDDED_LAST:
+            return 0  # one whose window or image has gone
+    return _char_cells(character)
+
+
+@lru_cache(maxsize=4096)
+def _char_cells(character: str) -> int:
+    """:func:`char_cells` for a character the Unicode database decides."""
     category = unicodedata.category(character)
     if category in ("Mn", "Me", "Mc"):
         return 0
