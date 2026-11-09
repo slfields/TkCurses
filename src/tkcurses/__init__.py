@@ -15748,7 +15748,8 @@ class Text(_Drawable, XView, YView):
         self._see(index, sideways=True)
 
     def yview_pickplace(self, *what: Any) -> None:
-        """Bring an index into view vertically, as :meth:`see` does.
+        """Bring an index into view vertically, as :meth:`see` does - or,
+        given a whole number, put that line, counted from 0, at the top.
 
         Tk keeps it only for old programs; :meth:`see` is its replacement.
 
@@ -15759,7 +15760,13 @@ class Text(_Drawable, XView, YView):
             raise TclError(
                 f'wrong # args: should be "{self._w} yview -pickplace lineNum|index"'
             )
-        self._see(what[0], sideways=False)
+        # A whole number is a line counted from 0, put at the top as plain
+        # yview puts it: tkTextDisp.c tries the number before the index.
+        number = _tcl_number(what[0])
+        if isinstance(number, int) and not isinstance(number, bool):
+            self._yview_to(number)
+        else:
+            self._see(what[0], sideways=False)
 
     def _see(self, index: Any, *, sideways: bool) -> None:
         target = self._resolve(index)
@@ -15794,11 +15801,56 @@ class Text(_Drawable, XView, YView):
         With no arguments returns ``(first, last)`` as fractions, which is
         what a Scrollbar's ``set`` wants. Otherwise takes ``("moveto", f)`` or
         ``("scroll", n, "units"|"pages")``, which is what a Scrollbar sends.
+
+        Tk's older form is taken too, for old programs: one index puts the
+        line holding it at the top of the view, and a whole number is a
+        line counted from 0, so ``yview(3)`` shows line 4 at the top.
+        ``yview("-pickplace", index)`` brings the index into view as
+        :meth:`see` does.
+
+        Raises:
+            TclError: For a bad index, or ``-pickplace`` without exactly one
+                index, in Tk's words.
         """
         if not args:
             return self._view_fractions()
-        self._scroll(args, vertical=True)
+        first = str(args[0])
+        # tkTextDisp.c's TkTextYviewCmd: "-pickplace" by any prefix of two
+        # letters or more, and then exactly one index; or one argument alone.
+        pickplace = len(first) >= 2 and "-pickplace".startswith(first)
+        if pickplace:
+            self.yview_pickplace(*args[1:])
+        elif len(args) == 1:
+            self._yview_to(args[0])
+        else:
+            self._scroll(args, vertical=True)
         return None
+
+    def _yview_to(self, where: Any) -> None:
+        """Put the display line holding an index, or a line counted from 0,
+        at the top of the view - as far as the end of the text allows.
+
+        Measured on Tk 9.0.2: ``0`` and ``-1`` are line 1, ``0x3`` and
+        ``" 3"`` are line 4, ``2.5`` is the index 2.5, ``6.25`` in a line
+        wrapped at 20 puts 6.20 at the top, and a number or index past the
+        end leaves the view as full as ``end`` does.
+        """
+        number = _tcl_number(where)
+        if isinstance(number, int) and not isinstance(number, bool):
+            target = self._resolve(f"{max(0, number) + 1}.0")
+        else:
+            target = self._resolve(where)
+        rows = self._display_lines()
+        row = self._row_of(target, rows)
+        # The display line's own top: past the blank rows above its text,
+        # which spacing and a tall embedded window put there.
+        line, start, stop = rows[row] if 0 <= row < len(rows) else (0, 0, 0)
+        while row > 0 and rows[row - 1] == (-line, start, stop):
+            row -= 1
+        height = self._view_size()[1]
+        self._set_top(max(0, min(row, max(0, len(rows) - height))), rows)
+        self._redraw()
+        self._report_view(rows)
 
     def xview(self, *args: Any) -> tuple[float, float] | None:
         """Read or move the horizontal view, in the same shape."""

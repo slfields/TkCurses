@@ -4944,7 +4944,8 @@ Multi-line text editor.
 | `scan_dragto(x, y, gain=10)` | ○ | tkTextDisp.c's arithmetic, in cells |
 | `search(pattern, index, **kw)` | ✓ | Find text |
 | `see(index)` | ○ | Scroll to index |
-| `yview_pickplace(*what)` | ✓ | As `see`, vertically |
+| `yview_pickplace(*what)` | ✓ | As `see`, vertically; a whole number is a line put at the top |
+| `yview(*args)` | ✓ | `moveto`, `scroll`, and Tk's older index and `-pickplace` forms; TkCurses-lg0p |
 | `tag_add(tagName, index1, *args)` | ✓ | Add tag |
 | `tag_unbind(tagName, sequence, funcid=None)` | ✓ | Unbind tag |
 | `tag_bind(tagName, sequence, func, add=None)` | ✓ | TkTextBindProc's rules; peers share them |
@@ -4962,6 +4963,17 @@ Multi-line text editor.
 | `window_configure(index, **kw)` | ✓ | Embedded window's options |
 | `window_create(index, **kw)` | ○ | Embed a widget; shown only in the text that made it, not its peers |
 | `window_names()` | ✓ | Embedded windows' paths |
+
+**`yview`'s older form counts lines from 0** (`TkCurses-lg0p`). text(n)
+keeps `yview ?-pickplace? lineNum|index` for old programs without saying
+what a bare number means. tkTextDisp.c's `TkTextYviewCmd` tries it as a
+whole number first and makes a B-tree line of it, so it counts from 0:
+measured on Tk 9.0.2, `yview 3` shows line 4 at the top, `0` and `-1`
+line 1, and `0x3` line 4. Only when it is no whole number is it an index
+(`2.5` is the index 2.5), whose display line goes to the top - or, with
+`-pickplace`, into view as `see` puts it. A whole number goes to the top
+even with `-pickplace`. Past the end, the view stays as full as `end`
+leaves it.
 
 **Tag bindings follow tkTextTag.c's TkTextBindProc** (`TkCurses-mzj`), read
 in Tk's C and measured on Tk 9.0.2 with generated events. They run before the

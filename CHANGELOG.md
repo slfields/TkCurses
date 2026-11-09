@@ -97,6 +97,12 @@ All notable changes to TkCurses. The format follows
   "name": no such variable`), as tkinter does; it returned `None`.
 
 ### Fixed
+- `Text.yview` takes Tk's older form, `yview(index)` and
+  `yview("-pickplace", index)`, as Tk 9.0.2 does: an index puts its display
+  line at the top, a whole number is a line counted from 0, and
+  `-pickplace` brings the index into view as `see` does. It used to refuse
+  them. `yview_pickplace` given a whole number now puts that line at the
+  top, as Tk's does.
 - A Canvas item's `anchor` is checked when it is given, refused in Tk's
   words; a text item's bad anchor used to fail when it was drawn.
 - `Text.insert` reads Tk's `chars tagList chars tagList ...`: it took every
