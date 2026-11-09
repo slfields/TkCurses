@@ -187,12 +187,7 @@ NOT_INSTANTIATED = frozenset(
 #: A gap not listed here is a test failure, which is the point: this list may
 #: shrink and must never silently grow.
 GAPS: dict[str, dict[str, str]] = {
-    "tk.Canvas": {
-        "create_arc": "TkCurses-aj1.16.1",
-        "create_bitmap": "TkCurses-aj1.16.1",
-        "create_image": "TkCurses-aj1.16.1",
-        "create_window": "TkCurses-aj1.16.1",
-    },
+    "tk.Canvas": {},
     "tk.Grid": {
         "location": "TkCurses-zmf",
     },

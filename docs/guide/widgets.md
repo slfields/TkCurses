@@ -300,8 +300,9 @@ and the program carries on with the answer once the user has given it:
 ## Drawing: Canvas and images
 
 A `Canvas` is a surface to draw on. Each `create_` method adds an *item* -
-a line, rectangle, oval, polygon or text - and answers its id, which can
-later be moved, changed or deleted. Across the canvas a unit is one cell;
+a line, rectangle, oval, arc, polygon, text, image or bitmap, or a widget
+placed with `create_window` - and answers its id, which can later be
+moved, changed or deleted. Across the canvas a unit is one cell;
 down it, a unit is half a cell, so that shapes come out the right way up
 and round things look round.
 

@@ -5743,15 +5743,15 @@ coordinates are in pixels, `width` and `height` are in cells.
 | `canvasx(screenx, gridspacing=None)` | ○ | Window column to canvas pixel, as `event.x` is; `gridspacing` ignored (TkCurses-0n21) |
 | `canvasy(screeny, gridspacing=None)` | ○ | Window row to canvas pixel (its upper half) |
 | `coords(tagOrId, *args)` | ○ | Get/set coords, in pixels |
-| `create_arc(...)` | ✗ | N/A (TkCurses-aj1.16.1) |
-| `create_bitmap(...)` | ✗ | Likewise (TkCurses-aj1.16.1) |
-| `create_image(...)` | ✗ | Possible now the planes match (TkCurses-aj1.16.1) |
+| `create_arc(...)` | ○ | Rasterised; `start`, `extent` and `style` as Tk reads them |
+| `create_bitmap(...)` | ○ | `@file` drawn as pixels; a built-in name is one cell's glyph |
+| `create_image(...)` | ○ | On the half-cell plane, one image pixel a canvas pixel; follows its image |
 | `create_line(...)` | ○ | Rasterised to pixels |
 | `create_oval(...)` | ○ | Rasterised; round, not elliptical |
 | `create_polygon(...)` | ○ | Rasterised to pixels |
 | `create_rectangle(...)` | ○ | Rasterised to pixels |
 | `create_text(...)` | ○ | Snaps to a cell row; a glyph is a whole cell |
-| `create_window(...)` | ✗ | N/A (TkCurses-aj1.16.1) |
+| `create_window(...)` | ○ | The canvas manages the widget; `width`/`height` in pixels; top snaps to a row |
 | `dchars(tagOrId, first, last=None)` | ✓ | Characters of a text item, points of a line or polygon |
 | `delete(tagOrId)` | ✓ | Delete item |
 | `dtag(tagOrId, tagToDelete=None)` | ✓ | Remove tag |
@@ -5781,6 +5781,28 @@ coordinates are in pixels, `width` and `height` are in cells.
 | `tag_lower(tagOrId, belowThis)` | ✓ | Lower item |
 | `tag_raise(tagOrId, aboveThis)` | ✓ | Raise item |
 | `type(tagOrId)` | ✓ | Get item type |
+
+**A window item makes the canvas a geometry manager** (`TkCurses-aj1.16.1`),
+as it is in Tk (tkCanvWind.c registers one called `canvas`). Here that is a
+fourth layout beside a container's main manager, place's and a paned window's
+panes: `_core/embed.py`'s `EmbedLayout`, which the engine applies last and
+which keeps no options - it asks the canvas for each window's rectangle, and
+the canvas answers from the item's point, `anchor`, `width` and `height` and
+the view. A redraw compares those rectangles with the last ones applied and
+queues a layout only on a change, so moving, scrolling and a window's own
+new request all reach it without a redraw ever laying out twice. The same
+layout is meant for a Text's embedded windows (`TkCurses-r0gw`).
+
+Measured on Tk 9.0.2 and kept: a window wholly out of view, or whose item is
+hidden, is unmapped rather than clipped to nothing, as `DisplayWinItem`
+does; a second item given the window takes it, and the first reads back
+`window ""`; packing, gridding or placing it takes it from its item; deleting
+the item unmaps it and leaves it with no manager; destroying it empties the
+item, whose bbox goes back to Tk's single pixel. The window must be a child
+of the canvas or of one of its ancestors, and not a toplevel or the canvas,
+else `can't use .x in a window item of this canvas`. Not kept: `width` and
+`height` are canvas pixels, so `height` counts half-rows, and the window's
+top snaps to a whole row, because a widget is drawn in cells.
 
 **Scrolling options, measured on Tk 9.0.2** (`TkCurses-gm66.10`).
 `xscrollincrement` and `yscrollincrement` are the unit `scroll N units` moves

@@ -160,10 +160,12 @@ cell, a curve moves in steps of half a row.
 
 ## Shapes
 
-A scene of rectangles, ovals, polygons, a line and text on a Canvas. Each
-movable shape's items share a tag, so `move` takes the house - walls,
-roof and door - as one. Tab chooses a shape and the arrows move it, or
-drag one with the mouse. The screen is taken after choosing the house and
+A scene of rectangles, ovals, polygons, a line and text on a Canvas, with
+a pond that is an arc cut off by its chord and a cloud that is a
+PhotoImage. Each movable shape's items share a tag, so `move` takes the
+house - walls, roof and door - as one. Tab chooses a shape and the arrows
+move it, or drag one with the mouse. The Reset button is a widget placed on
+the canvas with `create_window`, and puts every shape back with `moveto`. The screen is taken after choosing the house and
 moving it four cells right.
 
 ```{tkcurses-example} examples/shapes.py

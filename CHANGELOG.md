@@ -7,6 +7,22 @@ All notable changes to TkCurses. The format follows
 ## [Unreleased]
 
 ### Added
+- Canvas arcs: `create_arc` with Tk's `start`, `extent` and `style`,
+  read back as Tk reads them - `start` between 0 and 360, `extent` modulo
+  360, a style by any unambiguous prefix - and drawn on the half-cell
+  plane as a pieslice, a chord or an open arc.
+- Canvas images and bitmaps: `create_image` draws a photo or bitmap image
+  on the half-cell plane, one image pixel to one canvas pixel, and follows
+  it as it changes; `create_bitmap` draws an XBM file's bits, or one of
+  Tk's ten built-in bitmaps as a character in a cell. Both have Tk's
+  `active` and `disabled` variants and `anchor`, and an image's `bbox` is
+  Tk's to the pixel.
+- Canvas windows: `create_window` makes the canvas the geometry manager
+  of a widget, which moves with its item and with the view and leaves the
+  screen when the item is hidden or scrolled wholly out of sight. A second
+  item, or pack, grid or place, takes the widget from its item; deleting
+  the item releases it, and destroying it empties the item - each as Tk
+  9.0.2 does.
 - Text's `edit`, `count`, `dump`, `replace`, `tag_bind` and `tag_unbind`,
   `scan_mark` and `scan_dragto`, `yview_pickplace` and `debug`, measured
   against Tk 9.0.2. Tag bindings follow Tk's rules: the tags under the
@@ -68,6 +84,8 @@ All notable changes to TkCurses. The format follows
   "name": no such variable`), as tkinter does; it returned `None`.
 
 ### Fixed
+- A Canvas item's `anchor` is checked when it is given, refused in Tk's
+  words; a text item's bad anchor used to fail when it was drawn.
 - `Text.insert` reads Tk's `chars tagList chars tagList ...`: it took every
   argument after the text for a tag name, so `insert("1.0", "a", "t1",
   "b", "t2")` inserted only `a`. A tag list given, even an empty one, now

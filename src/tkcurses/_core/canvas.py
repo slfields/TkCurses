@@ -248,6 +248,115 @@ def filled_oval_pixels(x0: int, y0: int, x1: int, y1: int) -> list[tuple[int, in
     return _dedupe(drawn + oval_pixels(x0, y0, x1, y1))
 
 
+# ---------------------------------------------------------------------- arcs
+#
+# Tk's arc: part of the oval inscribed in the box, from ``start`` degrees
+# through ``extent`` more, counter-clockwise from three o'clock on the
+# screen, so with y down a point at angle a is (cx + rx cos a, cy - ry sin a)
+# - an angle on the oval, not around its centre. Measured on Tk 9.0.2.
+
+
+def _arc_frame(x0: int, y0: int, x1: int, y1: int) -> tuple[float, float, float, float]:
+    """The oval's centre and radii, as ``(cx, cy, rx, ry)``."""
+    left, right = sorted((x0, x1))
+    top, bottom = sorted((y0, y1))
+    radius_x, radius_y = (right - left) / 2, (bottom - top) / 2
+    return left + radius_x, top + radius_y, radius_x, radius_y
+
+
+def _arc_point(
+    frame: tuple[float, float, float, float], degrees: float
+) -> tuple[int, int]:
+    centre_x, centre_y, radius_x, radius_y = frame
+    angle = math.radians(degrees)
+    return (
+        round(centre_x + radius_x * math.cos(angle)),
+        round(centre_y - radius_y * math.sin(angle)),
+    )
+
+
+def arc_curve_pixels(
+    x0: int, y0: int, x1: int, y1: int, start: float, extent: float
+) -> list[tuple[int, int]]:
+    """The curved part of an arc, walked from ``start`` through ``extent``
+    degrees as :func:`oval_pixels` walks the whole oval: samples closer
+    than a pixel, so the curve is connected at any size."""
+    frame = _arc_frame(x0, y0, x1, y1)
+    _, _, radius_x, radius_y = frame
+    steps = max(2, int(8 * (radius_x + radius_y) * abs(extent) / 360) + 1)
+    return _dedupe(
+        _arc_point(frame, start + extent * step / steps) for step in range(steps + 1)
+    )
+
+
+def arc_ends(
+    x0: int, y0: int, x1: int, y1: int, start: float, extent: float
+) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int]]:
+    """The centre and the two ends of an arc."""
+    frame = _arc_frame(x0, y0, x1, y1)
+    centre = (round(frame[0]), round(frame[1]))
+    return centre, _arc_point(frame, start), _arc_point(frame, start + extent)
+
+
+def arc_outline_pixels(
+    x0: int, y0: int, x1: int, y1: int, start: float, extent: float, style: str
+) -> list[tuple[int, int]]:
+    """An arc's outline: the curve, closed by the chord for ``chord`` and by
+    the two radii for ``pieslice``."""
+    curve = arc_curve_pixels(x0, y0, x1, y1, start, extent)
+    centre, first, last = arc_ends(x0, y0, x1, y1, start, extent)
+    if style == "pieslice":
+        return _dedupe([*curve, *line_pixels([first, centre, last])])
+    if style == "chord":
+        return _dedupe([*curve, *line_pixels([first, last])])
+    return curve
+
+
+def _in_sector(
+    frame: tuple[float, float, float, float],
+    x: int,
+    y: int,
+    start: float,
+    extent: float,
+) -> bool:
+    """Whether a pixel's angle on the oval lies within the arc's sweep."""
+    centre_x, centre_y, radius_x, radius_y = frame
+    across = (x - centre_x) / radius_x if radius_x else 0.0
+    up = (centre_y - y) / radius_y if radius_y else 0.0
+    if across == 0 and up == 0:
+        return True
+    angle = math.degrees(math.atan2(up, across))
+    low = start if extent >= 0 else start + extent
+    return (angle - low) % 360 <= abs(extent) + 1e-9
+
+
+def filled_arc_pixels(
+    x0: int, y0: int, x1: int, y1: int, start: float, extent: float, style: str
+) -> list[tuple[int, int]]:
+    """Every pixel inside an arc: the sector for ``pieslice``, the part cut
+    off by the chord for ``chord``, nothing for ``arc``, whose fill Tk
+    ignores."""
+    if style == "arc" or extent == 0:
+        return []
+    frame = _arc_frame(x0, y0, x1, y1)
+    inside = filled_oval_pixels(x0, y0, x1, y1)
+    if style == "pieslice":
+        shape = [(x, y) for x, y in inside if _in_sector(frame, x, y, start, extent)]
+    else:
+        # The chord's side the arc is on: the side its middle is on.
+        _, first, last = arc_ends(x0, y0, x1, y1, start, extent)
+        middle = _arc_point(frame, start + extent / 2)
+
+        def side(x: float, y: float) -> float:
+            return (last[0] - first[0]) * (y - first[1]) - (last[1] - first[1]) * (
+                x - first[0]
+            )
+
+        want = side(*middle)
+        shape = [(x, y) for x, y in inside if side(x, y) * want >= 0]
+    return _dedupe([*shape, *arc_outline_pixels(x0, y0, x1, y1, start, extent, style)])
+
+
 # ------------------------------------------------------------------ polygons
 
 

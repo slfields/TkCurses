@@ -83,8 +83,10 @@ from tkcurses._core.bindings import (
     pattern_for_event,
 )
 from tkcurses._core.canvas import (
+    arc_outline_pixels,
     bbox_of,
     compose,
+    filled_arc_pixels,
     filled_oval_pixels,
     filled_polygon_pixels,
     filled_rectangle_pixels,
@@ -108,6 +110,7 @@ from tkcurses._core.config import TkCursesConfig
 from tkcurses._core.direct import DirectPainter
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.editing import TextField, run_end, run_start
+from tkcurses._core.embed import EmbedLayout
 from tkcurses._core.errors import TclError, TkCursesError
 from tkcurses._core.events import (
     MOD_ALT,
@@ -934,7 +937,21 @@ def _screen_distance(widget: Any, value: Any) -> int:
 _TAG_COLOUR_OPTIONS = frozenset({"background", "foreground", "lmargincolor"})
 
 #: A Canvas item's options that name a colour; "" is none, a hollow shape.
-_ITEM_COLOUR_OPTIONS = frozenset({"fill", "outline"})
+_ITEM_COLOUR_OPTIONS = frozenset(
+    {
+        "fill",
+        "outline",
+        *(
+            f"{state}{part}ground"
+            for state in ("", "active", "disabled")
+            for part in ("fore", "back")
+        ),
+    }
+)
+_ITEM_IMAGE_OPTIONS = frozenset({"image", "activeimage", "disabledimage"})
+_ITEM_BITMAP_OPTIONS = frozenset({"bitmap", "activebitmap", "disabledbitmap"})
+#: Tk's anchors, in the order its refusal lists them.
+_ANCHOR_NAMES = ("n", "ne", "e", "se", "s", "sw", "w", "nw", "center")
 
 
 def _colour_or_terminals(widget: Any, value: Any) -> Any:
@@ -1810,6 +1827,8 @@ class Misc:
         #: reason: Tk lets pack or grid lay out children of a paned window
         #: beside its panes, measured on Tk 9.0.2. TkCurses-ect9.
         self._paned_manager: PanedLayout | None = None
+        #: The windows a Canvas's items or a Text's characters position.
+        self._embed_manager: EmbedLayout | None = None
         self._layout_propagate = True
         #: The stacked window this widget draws into, once it has one.
         self._panel: Panel | None = None
@@ -2727,6 +2746,11 @@ class Misc:
         self._requested = requested
         if self.master is not None:
             self.tk.layout.invalidate(self.master)
+        host = self._manager_container
+        if host is not None and host is not self.master:
+            # Laid out by something other than its master - a canvas holding
+            # a window of its parent's - which has to hear the new size.
+            self.tk.layout.invalidate(host)
         if self._manager == "labelframe" and isinstance(
             self._manager_container, LabelFrame
         ):
@@ -3041,6 +3065,8 @@ class Misc:
             return self._place_manager
         if name == "panedwindow":
             return self._paned_manager
+        if name in ("canvas", "text"):
+            return self._embed_manager
         return self._layout_manager
 
     def _managed_layout(self, name: str) -> Layout | None:
@@ -4219,6 +4245,7 @@ class BaseWidget(Misc):
             self._layout_manager is not None
             or self._place_manager is not None
             or self._paned_manager is not None
+            or self._embed_manager is not None
         ):
             # A container given a new size has to place its children again.
             # Propagation travels upward - what a widget needs - and this is
@@ -16402,8 +16429,34 @@ class Canvas(_Drawable, XView, YView):
         "tags": (),
     }
     _ITEM_OPTIONS: ClassVar[dict[str, dict[str, Any]]] = {
+        "arc": {
+            "extent": 90.0,
+            "fill": "",
+            "outline": "white",
+            "start": 0.0,
+            "style": "pieslice",
+        },
+        "bitmap": {
+            "activebackground": "",
+            "activebitmap": "",
+            "activeforeground": "",
+            "anchor": "center",
+            "background": "",
+            "bitmap": "",
+            "disabledbackground": "",
+            "disabledbitmap": "",
+            "disabledforeground": "",
+            "foreground": "white",
+        },
+        "image": {
+            "activeimage": "",
+            "anchor": "center",
+            "disabledimage": "",
+            "image": "",
+        },
         "line": {"fill": "white"},
         "rectangle": {"fill": "", "outline": "white"},
+        "window": {"anchor": "center", "height": 0, "width": 0, "window": ""},
         "oval": {"fill": "", "outline": "white"},
         "polygon": {"fill": "white", "outline": ""},
         "text": {
@@ -16482,6 +16535,12 @@ class Canvas(_Drawable, XView, YView):
         self._anchor = 0
         self._scan_mark = (0, 0, 0, 0)
         self._insert_at: tuple[int, int] | None = None
+        #: File bitmaps made for items, by file and colours.
+        self._bitmap_files: dict[tuple[str, str, str], Image] = {}
+        #: Each embedded widget and the window item showing it, and where
+        #: each was last put, so a redraw re-lays them out only on a change.
+        self._windows: dict[BaseWidget, int] = {}
+        self._window_places: dict[BaseWidget, Rect | None] = {}
         super().__init__(master, cnf, name=name, **kw)
         self._apply_requested_size()
         self._install_class_bindings()
@@ -16561,6 +16620,94 @@ class Canvas(_Drawable, XView, YView):
 
     # ----------------------------------------------------------- making items
 
+    def create_arc(self, *args: Any, **kw: Any) -> int:
+        """Draw part of the oval in a box: ``start`` degrees counter-clockwise
+        from three o'clock, through ``extent`` more, closed as ``style``
+        says - ``pieslice`` by two radii, ``chord`` by a straight line, or
+        ``arc``, open and never filled. Returns the item id.
+
+        Angles are measured on the oval, as Tk measures them, so a quarter
+        of a wide box is a quarter of its outline. ``start`` reads back
+        between 0 and 360, and ``extent`` modulo 360.
+
+        Sample output:
+            # size: 40x10
+            canvas = tk.Canvas(root, width=36, height=8)
+            canvas.create_arc(1, 1, 13, 13, extent=270, fill="red")
+            canvas.create_arc(13, 1, 25, 13, start=30, extent=200, style="chord",
+                              fill="cyan")
+            canvas.create_arc(25, 1, 35, 13, start=-60, extent=240, style="arc")
+            canvas.pack()
+        """
+        return self._create("arc", args, kw, least=2, exactly=2)
+
+    def create_bitmap(self, *args: Any, **kw: Any) -> int:
+        """Show a bitmap at a point, placed by ``anchor``. Returns the item id.
+
+        ``bitmap="@file"`` draws the XBM file's bits on the half-cell plane,
+        in ``foreground`` on ``background``. One of Tk's ten built-in names
+        draws as one character standing for it, in a cell of its own, like a
+        text item's. Each option has an ``active`` variant, shown while the
+        pointer is over the item, and a ``disabled`` one.
+
+        Differences from tkinter:
+            A built-in bitmap is one cell, so its ``bbox`` is that cell and
+            not Tk's 16 pixels or so.
+        """
+        return self._create("bitmap", args, kw, least=1, exactly=1)
+
+    def create_image(self, *args: Any, **kw: Any) -> int:
+        """Show an image at a point, placed by ``anchor``. Returns the item id.
+
+        The image is drawn on the canvas's half-cell plane, one image pixel
+        to one canvas pixel, and follows the image: a ``put`` or a resize
+        shows at once. ``activeimage`` is shown while the pointer is over
+        the item, ``disabledimage`` while it or the canvas is disabled.
+
+        Sample output:
+            # size: 40x10
+            dot = tk.PhotoImage(width=12, height=12)
+            dot.put("red", to=(0, 0, 12, 12))
+            dot.put("yellow", to=(3, 3, 9, 9))
+            canvas = tk.Canvas(root, width=36, height=8)
+            canvas.create_image(18, 8, image=dot)
+            canvas.create_image(2, 2, image=dot, anchor="nw")
+            canvas.pack()
+
+        Differences from tkinter:
+            An image that is deleted while an item shows it leaves the item
+            with nothing to draw and no ``bbox``; Tk keeps the old extent.
+        """
+        return self._create("image", args, kw, least=1, exactly=1)
+
+    def create_window(self, *args: Any, **kw: Any) -> int:
+        """Show a widget at a point on the canvas. Returns the item id.
+
+        The canvas becomes the widget's geometry manager - ``winfo_manager``
+        answers ``canvas`` - and moves it with the item and with the view,
+        taking it off the screen while the item is hidden or wholly out of
+        view. ``width`` and ``height`` set its size, 0 meaning the size it
+        asks for. The widget must be the canvas's child or a child of one of
+        its ancestors, and not a toplevel. Given to a second item, or packed,
+        gridded or placed, it leaves the first; destroyed, the item is left
+        with no window.
+
+        Sample output:
+            # size: 40x10
+            canvas = tk.Canvas(root, width=36, height=8)
+            canvas.create_oval(2, 2, 34, 14, outline="cyan")
+            button = tk.Button(canvas, text="Inside")
+            canvas.create_window(18, 8, window=button)
+            canvas.pack()
+
+        Differences from tkinter:
+            ``width`` and ``height`` are canvas pixels, like the item's
+            point: a cell is one pixel wide and two high, so ``height=6`` is
+            three rows. A window's top snaps to a whole row, as a text item's
+            does, because a widget is drawn in cells.
+        """
+        return self._create("window", args, kw, least=1, exactly=1)
+
     def create_line(self, *args: Any, **kw: Any) -> int:
         """Draw a run of connected straight segments. Returns the item id."""
         return self._create("line", args, kw, least=2)
@@ -16608,6 +16755,8 @@ class Canvas(_Drawable, XView, YView):
             options=self._checked_item_options(kind, options),
         )
         self._items.append(item)
+        if kind == "window":
+            self._embed(item)
         self._redraw()
         return item.ident
 
@@ -16632,6 +16781,39 @@ class Canvas(_Drawable, XView, YView):
         TkCurses-f760."""
         if option in _ITEM_COLOUR_OPTIONS:
             _colour_or_terminals(self, value)
+        if option == "anchor":
+            return _tcl_index(value, _ANCHOR_NAMES, "anchor")
+        if option in _ITEM_IMAGE_OPTIONS:
+            name = _image_name(self, value)
+            image = self.tk.images.get(name)
+            if image is not None:
+                # One watch per canvas: an image shown by several items
+                # repaints the canvas once.
+                image._watch(self, self._redraw)
+            return name
+        if option in _ITEM_BITMAP_OPTIONS:
+            return _bitmap(self, value)
+        if option in ("width", "height"):
+            return _signed_distance(self, value)
+        if option == "window":
+            return self._window_value(value)
+        # Measured on Tk 9.0.2: start reads back in [0, 360), so -30 is 330;
+        # extent is fmod 360, so 400 is 40 and 360 is 0; a style is taken by
+        # any unambiguous prefix.
+        if option == "start":
+            return _tcl_float(self, value) % 360.0
+        if option == "extent":
+            return math.fmod(_tcl_float(self, value), 360.0)
+        if option == "style":
+            word = str(value)
+            styles = [
+                s for s in ("arc", "chord", "pieslice") if word and s.startswith(word)
+            ]
+            if len(styles) != 1:
+                raise TclError(
+                    f'bad -style option "{word}": must be arc, chord, or pieslice'
+                )
+            return styles[0]
         return value
 
     # ----------------------------------------------------------- finding them
@@ -16884,6 +17066,13 @@ class Canvas(_Drawable, XView, YView):
             self._anchor_item = None
         for ident in doomed:
             self._insert_index.pop(ident, None)
+        for widget, ident in list(self._windows.items()):
+            if ident in doomed:
+                # Measured on Tk 9.0.2: deleting the item unmaps the window
+                # and leaves it with no manager.
+                del self._windows[widget]
+                widget._leave_manager()
+                widget._unmap()
         self._redraw()
 
     def itemconfigure(
@@ -16910,6 +17099,8 @@ class Canvas(_Drawable, XView, YView):
                 if option not in spec_for_kind:
                     raise TclError(f'unknown option "-{name}"')
                 item.options[option] = self._checked_item_value(option, value)
+            if item.kind == "window":
+                self._embed(item)
         self._redraw()
         return None
 
@@ -16955,6 +17146,35 @@ class Canvas(_Drawable, XView, YView):
         """One item's extent, in pixels."""
         if item.kind == "text":
             return self._text_bbox(item)
+        if item.kind == "window":
+            return self._window_box(item)
+        if item.kind in ("image", "bitmap"):
+            cell = self._bitmap_cell(item)
+            if cell is not None:
+                column, row, _ = cell
+                return (column, row * 2, column, row * 2 + 1)
+            placed = self._picture(item)
+            if placed is None:
+                return None
+            picture, (x0, y0) = placed
+            # Measured on Tk 9.0.2: a 10x6 image centred on (50, 50) is
+            # (45, 47, 55, 53) - its own size exactly, the far edges one past.
+            return (x0, y0, x0 + picture.width(), y0 + picture.height())
+        if item.kind == "arc":
+            # The part drawn, as Tk's: a quarter's box is a quarter of the
+            # oval's, and a pieslice's takes in the centre.
+            (x0, y0), (x1, y1) = item.points()[:2]
+            return bbox_of(
+                arc_outline_pixels(
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                    float(item.options["start"]),
+                    float(item.options["extent"]),
+                    str(item.options["style"]),
+                )
+            )
         return bbox_of(item.points())
 
     def _text_bbox(self, item: _CanvasItem) -> tuple[int, int, int, int] | None:
@@ -17668,12 +17888,258 @@ class Canvas(_Drawable, XView, YView):
                     pixels.update(dict.fromkeys(shape, fill))
             if outline:
                 pixels.update(dict.fromkeys(edge(x0, y0, x1, y1), outline))
+        elif item.kind == "arc":
+            (x0, y0), (x1, y1) = points[0], points[1]
+            start = float(item.options["start"])
+            extent = float(item.options["extent"])
+            style = str(item.options["style"])
+            if fill and style != "arc":
+                pixels.update(
+                    dict.fromkeys(
+                        filled_arc_pixels(x0, y0, x1, y1, start, extent, style), fill
+                    )
+                )
+            if outline:
+                pixels.update(
+                    dict.fromkeys(
+                        arc_outline_pixels(x0, y0, x1, y1, start, extent, style),
+                        outline,
+                    )
+                )
+        elif item.kind in ("image", "bitmap"):
+            placed = self._picture(item)
+            if placed is not None:
+                picture, (x0, y0) = placed
+                # Only the part of the picture the view can show, as a Label
+                # asks for: a large photograph otherwise hands over every
+                # pixel on every repaint.
+                width, height = self._plane_size()
+                region = (
+                    self._left - x0,
+                    self._top - y0,
+                    self._left - x0 + width,
+                    self._top - y0 + height,
+                )
+                for (x, y), colour in picture.lit(region).items():
+                    pixels[(x0 + x, y0 + y)] = colour
         elif item.kind == "polygon":
             if fill:
                 pixels.update(dict.fromkeys(filled_polygon_pixels(points), fill))
             if outline:
                 pixels.update(dict.fromkeys(polygon_pixels(points), outline))
         return pixels
+
+    # -------------------------------------------------------------- windows
+
+    def _window_value(self, value: Any) -> str:
+        """A window item's ``window``: a widget or its path, checked as Tk
+        checks it, and stored as the path.
+
+        Raises:
+            TclError: If there is no such widget, or it is a toplevel, the
+                canvas itself, or not inside the canvas's master, in Tk
+                9.0.2's words.
+        """
+        if value is None or value == "":
+            return ""
+        try:
+            widget = value if isinstance(value, Misc) else self.nametowidget(str(value))
+        except (KeyError, TclError):
+            raise TclError(f'bad window path name "{value}"') from None
+        if not isinstance(widget, BaseWidget):
+            raise TclError(f"can't use {widget} in a window item of this canvas")
+        parent = widget.master
+        allowed = parent is not None and any(
+            parent is ancestor for ancestor in self._ancestry()
+        )
+        if widget is self or widget._is_toplevel or not allowed:
+            raise TclError(f"can't use {widget} in a window item of this canvas")
+        return str(widget)
+
+    def _embed(self, item: _CanvasItem) -> None:
+        """Make the canvas the geometry manager of an item's window, taking
+        it from wherever it was - another item included - and letting go of
+        the window the item showed before."""
+        path = str(item.options.get("window") or "")
+        widget = cast("BaseWidget", self.nametowidget(path)) if path else None
+        for held, ident in list(self._windows.items()):
+            if ident == item.ident and held is not widget:
+                del self._windows[held]
+                held._leave_manager()
+                held._unmap()
+        if widget is None:
+            return
+        previous = self._windows.get(widget)
+        if previous == item.ident:
+            return
+        if previous is not None:
+            # Measured: the item that had it reads back window "".
+            self._windows.pop(widget)
+            other = self._item(previous)
+            if other is not None:
+                other.options["window"] = ""
+        else:
+            widget._leave_manager()
+        if self._embed_manager is None:
+            self._embed_manager = EmbedLayout(self)
+        self._embed_manager.add(widget)
+        self._windows[widget] = item.ident
+        widget._manager = "canvas"
+        widget._manager_container = self
+        self._window_places.pop(widget, None)
+        self.tk.layout.invalidate(self)
+
+    def _embedded_lost(self, widget: BaseWidget) -> None:
+        """A window left the canvas - packed elsewhere, or destroyed - and
+        its item shows nothing now, as Tk's does."""
+        ident = self._windows.pop(widget, None)
+        self._window_places.pop(widget, None)
+        item = None if ident is None else self._item(ident)
+        if item is not None:
+            item.options["window"] = ""
+
+    def _window_extent(self, item: _CanvasItem) -> tuple[int, int, int, int] | None:
+        """A window item's place on the plane, ``(x, y, width, rows)``: its
+        top-left pixel, snapped to a row, its width in cells and its height
+        in rows. None with no window."""
+        path = str(item.options.get("window") or "")
+        if not path:
+            return None
+        widget = self.nametowidget(path)
+        width = int(item.options.get("width") or 0)
+        height = int(item.options.get("height") or 0)
+        width = width if width > 0 else widget.winfo_reqwidth()
+        rows = -(-height // 2) if height > 0 else widget.winfo_reqheight()
+        x, y = item.points()[0]
+        across, down = parse_anchor(str(item.options.get("anchor") or "center"))
+        left = x - int(width * across)
+        top = y - int(rows * 2 * down)
+        return left, top - top % 2, width, rows
+
+    def _window_box(self, item: _CanvasItem) -> tuple[int, int, int, int] | None:
+        """A window item's extent: the window's, or Tk's single pixel at the
+        item's point when it has none."""
+        extent = self._window_extent(item)
+        if extent is None:
+            x, y = item.points()[0]
+            return (x, y, x + 1, y + 1)
+        left, top, width, rows = extent
+        return (left, top, left + width, top + rows * 2)
+
+    def _embedded_rect(self, widget: BaseWidget, area: Rect) -> Rect | None:
+        """Where an embedded window goes on the screen, or None to take it
+        off: its item is hidden, or the window is wholly out of view, which
+        Tk unmaps rather than clipping to nothing (tkCanvWind.c,
+        ``DisplayWinItem``)."""
+        place = self._window_place(widget)
+        self._window_places[widget] = place
+        if place is None:
+            return None
+        del area  # the drawing area is the canvas's own, inside its border
+        drawing = self._text_area()
+        return Rect(
+            self.winfo_rootx() + drawing.x + place.x,
+            self.winfo_rooty() + drawing.y + place.y,
+            place.width,
+            place.height,
+        )
+
+    def _window_place(self, widget: BaseWidget) -> Rect | None:
+        """A window's cells relative to the drawing area, or None when it is
+        not to be shown."""
+        ident = self._windows.get(widget)
+        item = None if ident is None else self._item(ident)
+        if item is None:
+            return None
+        state = str(item.options.get("state") or "") or str(self._options["state"])
+        if state == "hidden":
+            return None
+        extent = self._window_extent(item)
+        if extent is None:
+            return None
+        left, top, width, rows = extent
+        column = left - self._left
+        row = top // 2 - self._top // 2
+        drawing = self._text_area()
+        if (
+            column + width <= 0
+            or row + rows <= 0
+            or column >= drawing.width
+            or row >= drawing.height
+        ):
+            return None
+        return Rect(column, row, width, rows)
+
+    def _follow_windows(self) -> None:
+        """Lay the embedded windows out again if any has moved: the item, the
+        view or the window's own size changed. Called from every redraw,
+        which every one of those ends in; checking first keeps a redraw that
+        moved nothing from laying anything out."""
+        for widget in self._windows:
+            if self._window_places.get(widget, False) != self._window_place(widget):
+                self.tk.layout.invalidate(self)
+                return
+
+    def _has_active_look(self, ident: int | None) -> bool:
+        """Whether an item draws differently while the pointer is over it."""
+        item = None if ident is None else self._item(ident)
+        return item is not None and any(
+            name.startswith("active") and value for name, value in item.options.items()
+        )
+
+    def _variant(self, item: _CanvasItem, option: str) -> Any:
+        """An item option as it is drawn now: the ``disabled`` variant while
+        the item or the canvas is disabled, the ``active`` one while the
+        pointer is over it, each only when it is set."""
+        state = str(item.options.get("state") or "") or str(self._options["state"])
+        if state == "disabled":
+            chosen = item.options.get(f"disabled{option}")
+        elif item.ident == self._current:
+            chosen = item.options.get(f"active{option}")
+        else:
+            chosen = None
+        return chosen if chosen else item.options.get(option)
+
+    def _picture(self, item: _CanvasItem) -> tuple[Image, tuple[int, int]] | None:
+        """An image or file bitmap item's picture and its top-left pixel."""
+        picture: Image | None
+        if item.kind == "image":
+            picture = self.tk.images.get(str(self._variant(item, "image") or ""))
+        else:
+            bitmap = str(self._variant(item, "bitmap") or "")
+            if not bitmap.startswith("@"):
+                return None
+            fore = str(self._variant(item, "foreground") or "white")
+            back = str(self._variant(item, "background") or "")
+            key = (bitmap, fore, back)
+            if key not in self._bitmap_files:
+                try:
+                    made = _file_bitmap(self, bitmap[1:], fore)
+                except TclError:
+                    return None
+                if back:
+                    made.configure(background=back)
+                self._bitmap_files[key] = made
+            picture = self._bitmap_files[key]
+        if picture is None:
+            return None
+        x, y = item.points()[0]
+        across, down = parse_anchor(str(item.options.get("anchor") or "center"))
+        return picture, (
+            x - int(picture.width() * across),
+            y - int(picture.height() * down),
+        )
+
+    def _bitmap_cell(self, item: _CanvasItem) -> tuple[int, int, str] | None:
+        """A built-in bitmap's cell, as ``(column, cell row, glyph)``."""
+        if item.kind != "bitmap":
+            return None
+        glyph = _BITMAP_GLYPHS.get(str(self._variant(item, "bitmap") or ""))
+        if glyph is None:
+            return None
+        x, y = item.points()[0]
+        across, down = parse_anchor(str(item.options.get("anchor") or "center"))
+        return x - int(across), y // 2 - int(down), glyph
 
     def _text_origin(self, item: _CanvasItem) -> tuple[int, int, list[str]] | None:
         """Where a text item starts, as ``(column, cell row, lines)``.
@@ -17699,6 +18165,8 @@ class Canvas(_Drawable, XView, YView):
 
     def _redraw(self) -> None:
         """Paint the border, then every item in the order it was made."""
+        if self._windows:
+            self._follow_windows()
         window = self._window
         if window is None or self.tk.screen is None:
             return
@@ -17742,6 +18210,13 @@ class Canvas(_Drawable, XView, YView):
                 continue
             if item.kind == "text":
                 self._compose_text(item, pixels, cells, base)
+            elif (cell := self._bitmap_cell(item)) is not None:
+                column, row, character = cell
+                pixels.pop((column, row * 2), None)
+                pixels.pop((column, row * 2 + 1), None)
+                fore = str(self._variant(item, "foreground") or "")
+                back = str(self._variant(item, "background") or "") or None
+                cells[(column, row)] = (character, self._ink(fore, back, base))
             else:
                 drawn = self._item_pixels(item)
                 pixels.update(drawn)
@@ -17899,7 +18374,10 @@ def _canvas_mouse(event: Event) -> None:
     found = canvas._item_at(x, y)
     if found != canvas._current:
         canvas._deliver(canvas._current, "<Leave>", event)
+        before = canvas._current
         canvas._current = found
+        if canvas._has_active_look(before) or canvas._has_active_look(found):
+            canvas._redraw()
         canvas._deliver(found, "<Enter>", event)
     sequences: dict[str, str] = {
         EventType.ButtonPress: f"<Button-{event.num}>",

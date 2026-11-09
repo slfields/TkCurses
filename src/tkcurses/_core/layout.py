@@ -265,6 +265,11 @@ class LayoutEngine:
         placed = getattr(container, "_place_manager", None)
         if placed is not None:
             placed.apply(container, container._content_rect())
+        # Then the windows a Canvas or a Text positions itself, over all of
+        # it: Tk draws an embedded window above the content it sits in.
+        embedded = getattr(container, "_embed_manager", None)
+        if embedded is not None:
+            embedded.apply(container, container._content_rect())
 
     def _propagate(self, container: Any, requested: Size) -> None:
         """Record what a container needs and tell its parent, if it should.
@@ -289,8 +294,14 @@ class LayoutEngine:
             parent._layout_manager is not None
             or getattr(parent, "_place_manager", None) is not None
             or getattr(parent, "_paned_manager", None) is not None
+            or getattr(parent, "_embed_manager", None) is not None
         ):
             self.invalidate(parent)
+        # A window embedded in a canvas that is not its master: the canvas
+        # sizes it, and has to hear that it wants another size.
+        host = getattr(container, "_manager_container", None)
+        if host is not None and host is not parent:
+            self.invalidate(host)
 
     # ----------------------------------------------------------- diagnostics
 

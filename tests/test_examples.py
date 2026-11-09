@@ -335,6 +335,24 @@ def test_the_shapes_move_with_the_arrows(terminal, tmp_path):
 
 
 @pytest.mark.tty
+def test_the_reset_button_on_the_canvas_puts_the_shapes_back(terminal, tmp_path):
+    """The button is a window item: the canvas lays it out, and a click on it
+    reaches it. moveto then puts each moved shape where it began."""
+    term = start(terminal, tmp_path, "shapes", cols=40, rows=14)
+    term.wait_for_text("Reset")
+    row, column = term.find_text("~~")
+    term.send_keys("<Tab>", "<Tab>", "<Tab>")
+    term.wait_for_text("Moving the bird")
+    term.send_keys("<Right>", "<Right>", "<Down>", "<Down>")
+    term.wait_for(lambda t: t.find_text("~~") == (row + 1, column + 2))
+    reset_row, reset_column = term.find_text("Reset")
+    term.click(reset_column + 1, reset_row)
+    term.wait_for(
+        lambda t: t.find_text("~~") == (row, column), message="the bird back home"
+    )
+
+
+@pytest.mark.tty
 def test_a_shape_is_dragged_with_the_mouse(terminal, tmp_path):
     term = start(terminal, tmp_path, "shapes", cols=40, rows=14)
     term.wait_for_text("Moving the sun")

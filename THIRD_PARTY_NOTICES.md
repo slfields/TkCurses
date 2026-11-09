@@ -37,7 +37,11 @@ it. The scripts, as installed with Tcl 9.0.2 and Tk 9.0.2:
 | Tcl `word.tcl` | `tcl_wordBreakBefore`, `tcl_wordBreakAfter` | word boundaries (`_core/editing.py`) |
 | Tk `unix/tkUnixButton.c` (C) | `TkpDisplayButton` | the relief an indicatorless checkbutton or radiobutton is drawn in (`__init__.py`) |
 | Tk `generic/tkBind.c` (C) | `Tk_BindEvent`, `MatchPatterns`, the promotion lists, `IsBetterMatch`, `CountSpecialized` | multi-event binding sequences and how matches are ranked (`_core/bindings.py`) |
-| Tk `generic/tkText.c` (C) | `DeleteIndexRange`, `TextPushUndoAction`, the autoseparator test in `TextInsertCmd` and `TextDeleteCmd` | where a Text's view goes when text is deleted, a deletion to the end taking whole lines, where undo and redo put the cursor, and when an edit starts a new undo group (`_core/textbuffer.py`) |
+| Tk `generic/tkText.c` (C) | `DeleteIndexRange`, `TextPushUndoAction`, the autoseparator test in `TextInsertCmd` and `TextDeleteCmd`; `TextReplaceCmd` and the `replace` subcommand's insertion-cursor rule | where a Text's view goes when text is deleted, a deletion to the end taking whole lines, where undo and redo put the cursor, when an edit starts a new undo group, and how `replace` groups its edits and keeps the cursor (`_core/textbuffer.py`, `__init__.py`) |
+| Tk `generic/tkTextTag.c` (C) | `TkTextBindProc`, `TkTextPickCurrent`, `TagBindEvent` | which tags a Text's tag bindings reach, when the character under the pointer is picked, and the `<Enter>` and `<Leave>` a tag hears (`__init__.py`) |
+| Tk `generic/tkTextDisp.c` (C) | `TkTextScanCmd` | a Text's `scan_dragto` (`__init__.py`) |
+| Tk `generic/tkCanvas.c` (C) | the `find closest` search; the `scan` subcommand | a Canvas's `find_closest` with `halo` and `start`, and its `scan_dragto` (`__init__.py`) |
+| Tk `generic/tkCanvWind.c` (C) | `DisplayWinItem` | when a Canvas's embedded window is unmapped (`__init__.py`) |
 | Tk `generic/tkGrid.c` (C) | `ResolveConstraints`, `AdjustOffsets`, and `ArrangeGrid`'s use of them with `TkComputeAnchor` | how big each grid row and column is, and where the grid sits (`_core/grid.py`) |
 | Tk `generic/tkPanedWindow.c` (C) | `ArrangePanes`, `MoveSash`, `ComputeGeometry` and `IsStretchable` | a classic PanedWindow's pane sizes, `stretch`, and how a sash moves (`_core/paned.py`) |
 | Tk `generic/tkUndo.c` (C) | `TkUndoRevert`, `TkUndoApply` | the separators an undo or a redo leaves behind (`_core/textbuffer.py`) |

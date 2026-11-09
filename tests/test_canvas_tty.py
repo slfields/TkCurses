@@ -482,3 +482,80 @@ def test_the_focus_items_cursor_is_the_terminals(terminal, tmp_path):
         workdir=tmp_path,
     )
     term.wait_for(lambda t: t.cursor_cell() == (1, 5), message="the cursor in hello")
+
+
+def test_a_quarter_pieslice_inks_only_the_upper_right(terminal, tmp_path):
+    """Angles run counter-clockwise from three o'clock, as Tk's do."""
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program("c.create_arc(0, 0, 20, 20, extent=90, fill='red', outline='red')"),
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda t: (2, 15) in inked(t), message="the slice")
+    term.wait_for_idle()
+    cells = inked(term)
+    assert all(column >= 10 and row <= 5 for row, column in cells)
+    assert (2, 15) in cells
+
+
+def test_an_image_item_draws_and_follows_its_image(terminal, tmp_path):
+    """A 4x4 photo at (10, 4) fills cells 10-13 of rows 2 and 3; a put()
+    after the loop starts shows without anything asked of the canvas."""
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "photo = tkcurses.PhotoImage(width=4, height=4)\n"
+            "photo.put('red', to=(0, 0, 4, 4))\n"
+            "c.create_image(10, 4, image=photo, anchor='nw')\n"
+            "def grow():\n"
+            "    photo.configure(width=6)\n"
+            "    photo.put('red', to=(4, 0, 6, 4))\n"
+            "root.after(300, grow)"
+        ),
+        workdir=tmp_path,
+    )
+    first = {(row, column) for row in (2, 3) for column in range(10, 14)}
+    term.wait_for(lambda t: first <= inked(t), message="the image")
+    grown = first | {(row, column) for row in (2, 3) for column in (14, 15)}
+    term.wait_for(lambda t: inked(t) == grown, message="the image, wider")
+
+
+def test_a_built_in_bitmap_draws_as_its_glyph(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program("c.create_bitmap(5, 6, bitmap='question', anchor='nw')"),
+        workdir=tmp_path,
+    )
+    term.wait_for_cell(3, 5, lambda cell: cell.data == "?")
+
+
+def test_a_button_in_a_canvas_is_clicked_and_follows_the_view(terminal, tmp_path):
+    """The canvas lays the button out; a click reaches it; scrolling the
+    view moves it, and scrolling it out of sight takes it off the screen."""
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "c.configure(scrollregion=(0, 0, 200, 40))\n"
+            "said = tkcurses.Label(root, text='', borderwidth=0)\n"
+            "said.place(x=0, y=11)\n"
+            "b = tkcurses.Button(c, text='Go',"
+            " command=lambda: said.configure(text='pressed'))\n"
+            "c.create_window(10, 4, window=b, anchor='nw')\n"
+            "root.bind('<Key-l>', lambda e: c.xview_scroll(4, 'units'))\n"
+            "root.bind('<Key-f>', lambda e: c.xview_moveto(1))"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text("Go")
+    row, column = next(
+        (r, line.index("Go")) for r, line in enumerate(term.display) if "Go" in line
+    )
+    term.click(column, row)
+    term.wait_for_text("pressed")
+    term.send(b"l")
+    term.wait_for(
+        lambda t: "Go" in t.display[row] and t.display[row].index("Go") < column,
+        message="the button, moved left",
+    )
+    term.send(b"f")
+    term.wait_for(lambda t: not any("Go" in line for line in t.display))
