@@ -320,6 +320,8 @@ class Application:
         #: see them.
         self.variable_traces: dict[str, dict[str, tuple[Any, ...]]] = {}
         self.trace_counter = itertools.count(1)
+        #: Tk's text debug flag, which every Text shares; see Text.debug.
+        self.text_debug = False
 
         #: The drag in progress, if any. tkinter keeps this on the root as a
         #: name-mangled attribute; it belongs with the rest of the per-tree

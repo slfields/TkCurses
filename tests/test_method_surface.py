@@ -159,7 +159,7 @@ NOT_INSTANTIATED = frozenset(
 #:   TkCurses-67u  the ttk.Treeview tag API
 #:   TkCurses-d5u  the themed-element identify
 #:   TkCurses-6lh  scan_mark / scan_dragto
-#:   TkCurses-mzj  tk.Text count / dump / edit / embedded windows
+#:   TkCurses-r0gw tk.Text embedded windows and images
 #:   TkCurses-k1i  the tk.Wm icon, group and aspect family
 #:   TkCurses-0ap  tk.Misc busy, visual and screen introspection
 #:   TkCurses-zmf  the geometry-manager method aliases (bbox, anchor, size,
@@ -252,24 +252,14 @@ GAPS: dict[str, dict[str, str]] = {
         "sash_mark": "TkCurses-xy2",
     },
     "tk.Text": {
-        "count": "TkCurses-mzj",
-        "debug": "TkCurses-mzj",
-        "dump": "TkCurses-mzj",
-        "edit": "TkCurses-mzj",
-        "image_cget": "TkCurses-mzj",
-        "image_configure": "TkCurses-mzj",
-        "image_create": "TkCurses-mzj",
-        "replace": "TkCurses-mzj",
-        "scan_dragto": "TkCurses-6lh",
-        "scan_mark": "TkCurses-6lh",
-        "tag_bind": "TkCurses-mzj",
-        "tag_unbind": "TkCurses-mzj",
-        "window_cget": "TkCurses-mzj",
-        "window_config": "TkCurses-mzj",
-        "window_configure": "TkCurses-mzj",
-        "window_create": "TkCurses-mzj",
-        "window_names": "TkCurses-mzj",
-        "yview_pickplace": "TkCurses-mzj",
+        "image_cget": "TkCurses-r0gw",
+        "image_configure": "TkCurses-r0gw",
+        "image_create": "TkCurses-r0gw",
+        "window_cget": "TkCurses-r0gw",
+        "window_config": "TkCurses-r0gw",
+        "window_configure": "TkCurses-r0gw",
+        "window_create": "TkCurses-r0gw",
+        "window_names": "TkCurses-r0gw",
     },
     "tk.Wm": {
         "aspect": "TkCurses-k1i",

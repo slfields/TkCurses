@@ -38,6 +38,7 @@ See ARCHITECTURE.md for the full specification.
 from __future__ import annotations
 
 import contextlib
+import copy
 
 # Imported under a private name, and it matters. The compatibility module is
 # tkcurses.curses, and importing it makes Python bind that submodule as the
@@ -13250,6 +13251,15 @@ class Text(_Drawable, XView, YView):
         self._autoscan: str | None = None
         # The screen cell the terminal's cursor goes in; see _draw_cursor.
         self._insert_at: tuple[int, int] | None = None
+        # tkTextTag.c's curTagArrayPtr and BUTTON_DOWN: the tags of the
+        # character last picked under the pointer, lowest priority first, and
+        # whether a button is held, which stops the pick. See _pick_current.
+        self._current_tags: list[str] = []
+        self._button_down = False
+        # scan mark: x, y, the sideways scroll then, and how far the drag has
+        # scrolled down so far - tkTextDisp.c's scanMarkX, scanMarkY,
+        # scanMarkXPixel and scanTotalYScroll.
+        self._scan = (0, 0, 0, 0)
         # Peers share tag styles and their order, except sel's: Tk's manual,
         # and measured on Tk 9.0.2 - a sel colour set in one is not the other's.
         shared = self._buffer.shared
@@ -13274,8 +13284,10 @@ class Text(_Drawable, XView, YView):
         self._buffer.auto_separators = self._auto_separators
         self._buffer.max_undo = _as_int(self._options["maxundo"], 0)
         self._stops = parse_tabs(self._options["tabs"], self.winfo_fpixels)
-        self._buffer.mark_set("insert", "1.0")
+        # current first, so that insert is the later of the two: dump lists
+        # marks at one index newest first, and Tk's lists insert first.
         self._buffer.mark_set("current", "1.0")
+        self._buffer.mark_set("insert", "1.0")
         # The selection is a tag like any other, which is why sel.first works
         # as an index. Its colours are the widget's select colours, and in Tk
         # each follows the other: see _SELECTION_TAG_OPTIONS.
@@ -13708,8 +13720,15 @@ class Text(_Drawable, XView, YView):
             return self._buffer.get(self._resolve(first))
         return self._buffer.get(self._resolve(first), self._resolve(last))
 
-    def insert(self, index: Any, chars: str, *tags: str) -> None:
-        """Insert text, optionally tagging everything inserted.
+    def insert(self, index: Any, chars: str, *args: Any) -> None:
+        """Insert text before ``index``.
+
+        As in Tk, the arguments after ``chars`` are a tag list, then more
+        text and its tag list, and so on: ``insert("end", "a", "bold", "b",
+        ("red", "big"))`` puts in ``a`` with ``bold`` and ``b`` with ``red``
+        and ``big``. A tag list is a tuple, or a string of names separated
+        by spaces. Text given a tag list, even an empty one, has exactly
+        those tags; text given none has the tags on both sides of it.
 
         A disabled Text ignores it, silently, as Tk's does. The usual way to
         keep a Text read-only and still fill it is to set the state to
@@ -13719,11 +13738,197 @@ class Text(_Drawable, XView, YView):
         # Tk 9.0.2 nothing is raised either. TkCurses-aah.
         if not self._editable:
             return
-        start = self._resolve(index)
-        end = self._buffer.insert(start, chars)
-        for tag in tags:
-            self.tag_add(tag, start, end)
+        self._insert_chunks(self._resolve(index), chars, args)
         self._after_edit()
+
+    def _insert_chunks(self, at: Index, chars: Any, args: tuple[Any, ...]) -> None:
+        """Insert ``chars`` and the text-and-tag-list pairs after it.
+
+        Measured on Tk 9.0.2: ``insert 1.0 a t1 b t2`` tags ``a`` with t1
+        and ``b`` with t2, a tag list "my tag" is two tags, and text given
+        a list, even ``()``, loses the tags it would have taken from both
+        sides. This took every argument for a tag name until TkCurses-mzj.
+        """
+        pieces = [chars, *args]
+        for number in range(0, len(pieces), 2):
+            text = str(pieces[number])
+            end = self._buffer.insert(at, text)
+            start = self._buffer.index_of(self._buffer.offset_of(end) - len(text))
+            if number + 1 < len(pieces):
+                given = pieces[number + 1]
+                names = (
+                    given.split()
+                    if isinstance(given, str)
+                    else [str(name) for name in given]
+                )
+                for name in self._buffer.tag_names():
+                    self._buffer.tag_remove(name, start, end)
+                for name in names:
+                    self.tag_add(name, start, end)
+            at = end
+
+    def replace(self, index1: Any, index2: Any, chars: str, *args: Any) -> None:
+        """Replace the text from ``index1`` up to ``index2`` with ``chars``,
+        taking tag lists as :meth:`insert` does.
+
+        One step for undo. The cursor stays where it is unless it was inside
+        what was replaced, when it keeps its distance from the start, as far
+        as the new text reaches - tkText.c's rule.
+
+        Raises:
+            TclError: If ``index2`` is before ``index1``, in Tk's words.
+        """
+        first, last = self._resolve(index1), self._resolve(index2)
+        if self._buffer.compare(first, ">", last):
+            raise TclError(f'index "{index2}" before "{index1}" in the text')
+        if not self._editable:
+            return
+        cursor = self._buffer.mark_index("insert")
+        keep: int | None = None
+        if (
+            cursor is not None
+            and self._buffer.compare(first, "<", cursor)
+            and self._buffer.compare(last, ">", cursor)
+        ):
+            length = sum(len(str(piece)) for piece in (chars, *args)[::2])
+            keep = min(len(self._buffer.get(first, cursor)), length)
+        start = self._buffer.offset_of(first)
+        with self._buffer.grouped("replace"):
+            self._buffer.delete(first, last)
+            self._insert_chunks(self._buffer.index_of(start), chars, args)
+        if keep is not None:
+            self._buffer.mark_set("insert", self._buffer.index_of(start + keep))
+        self._after_edit()
+
+    _COUNT_OPTIONS = (
+        "chars",
+        "displaychars",
+        "displayindices",
+        "displaylines",
+        "indices",
+        "lines",
+        "update",
+        "xpixels",
+        "ypixels",
+    )
+
+    def count(
+        self, index1: Any, index2: Any, *options: str, return_ints: bool = False
+    ) -> Any:
+        """Count what lies between two indices: ``chars``, ``indices``,
+        ``lines``, ``displaylines``, ``xpixels``, ``ypixels``,
+        ``displaychars`` or ``displayindices``, ``indices`` when none is
+        named. Negative when ``index1`` is after ``index2``. ``update`` is
+        accepted and changes nothing.
+
+        Shaped as tkinter shapes it: a tuple, one count per option, or None
+        when the only count is 0; with ``return_ints``, a bare number for a
+        single option.
+
+        Raises:
+            TclError: If an option is not one of those, in Tk's words.
+
+        Differences from tkinter:
+            Pixels are cells: ``xpixels`` counts columns and ``ypixels``
+            rows, spacing included. Nothing is ever elided or embedded, so
+            ``displaychars`` and ``displayindices`` count what ``chars``
+            does.
+        """
+        wanted = []
+        for option in options:
+            word = f"-{option}"
+            found = [
+                name for name in self._COUNT_OPTIONS if f"-{name}".startswith(word)
+            ]
+            exact = f"-{option}"[1:] in self._COUNT_OPTIONS
+            if not (exact or len(found) == 1) or word == "-":
+                raise TclError(
+                    f'bad option "{word}": must be -chars, -displaychars,'
+                    " -displayindices, -displaylines, -indices, -lines, -update,"
+                    " -xpixels, or -ypixels"
+                )
+            wanted.append(str(option) if exact else found[0])
+        first, last = self._resolve(index1), self._resolve(index2)
+        sign = 1
+        if self._buffer.compare(first, ">", last):
+            first, last, sign = last, first, -1
+        counts = [name for name in wanted if name != "update"] or ["indices"]
+        values = [sign * self._count(name, first, last) for name in counts]
+        result: Any = values[0] if len(values) == 1 else tuple(values)
+        # tkinter's own post-processing of Tk's answer, step for step.
+        if not return_ints:
+            if not result:
+                result = None
+            elif len(options) <= 1:
+                result = (result,)
+        return result
+
+    def _count(self, name: str, first: Index, last: Index) -> int:
+        """One of :meth:`count`'s measures, with ``first`` not after ``last``."""
+        if name == "lines":
+            return last.line - first.line
+        if name == "displaylines":
+            rows = self._text_rows()
+            return self._row_of(last, rows) - self._row_of(first, rows)
+        if name == "ypixels":
+            rows = self._display_lines()
+            return self._row_of(last, rows) - self._row_of(first, rows)
+        if name == "xpixels":
+            rows = self._display_lines()
+            return (
+                self._display_position(last, rows)[1]
+                - self._display_position(first, rows)[1]
+            )
+        return len(self._buffer.get(first, last))
+
+    def dump(
+        self,
+        index1: Any,
+        index2: Any = None,
+        command: Callable[..., Any] | None = None,
+        **kw: Any,
+    ) -> list[tuple[str, str, str]] | None:
+        """What lies from ``index1`` up to ``index2``, as ``(key, value,
+        index)`` triples: ``text``, ``mark``, ``tagon`` and ``tagoff``.
+        One character's worth when ``index2`` is not given.
+
+        ``text``, ``mark`` and ``tag`` set true choose which; none, or
+        ``all``, means every kind. With ``command``, it is called with each
+        triple and nothing is returned.
+
+        Raises:
+            TclError: If a keyword is not one Tk takes, in Tk's words.
+
+        Differences from tkinter:
+            There are no embedded images or windows, so ``image`` and
+            ``window`` find nothing. Of several marks at one index, those
+            with left gravity come first, then the rest most recently set
+            first; Tk lists them in the order its storage holds them, which
+            is usually that and can differ after edits.
+        """
+        kinds = ("all", "image", "mark", "tag", "text", "window")
+        chosen = {key for key, value in kw.items() if value}
+        for key in chosen:
+            if key not in kinds:
+                raise TclError(
+                    f'bad option "-{key}": must be -all, -command, -image, -mark,'
+                    " -tag, -text, or -window"
+                )
+        if not chosen or "all" in chosen:
+            chosen = set(kinds)
+        triples = self._buffer.dump(
+            self._resolve(index1),
+            self._resolve(index2) if index2 else None,
+            text="text" in chosen,
+            tags="tag" in chosen,
+            marks="mark" in chosen,
+        )
+        found = [(key, value, str(index)) for key, value, index in triples]
+        if command is None:
+            return found
+        for triple in found:
+            command(*triple)
+        return None
 
     def delete(self, first: Any, last: Any = None) -> None:
         """Delete a range, or one character from ``first``.
@@ -14033,6 +14238,80 @@ class Text(_Drawable, XView, YView):
         self._set_modified(self.getboolean(arg))
         return None
 
+    _EDIT_OPTIONS = (
+        "canundo",
+        "canredo",
+        "modified",
+        "redo",
+        "reset",
+        "separator",
+        "undo",
+    )
+
+    def edit(self, *args: Any) -> Any:
+        """Tk's ``edit`` command: ``canundo``, ``canredo``, ``modified``,
+        ``redo``, ``reset``, ``separator`` or ``undo``, then its arguments.
+
+        ``canundo`` and ``canredo`` answer 1 or 0, and are 0 while ``undo``
+        is off. The others do what :meth:`edit_modified`, :meth:`edit_redo`,
+        :meth:`edit_reset`, :meth:`edit_separator` and :meth:`edit_undo` do.
+
+        Raises:
+            TclError: If the option is not one of those, or has the wrong
+                number of arguments, in Tk's words.
+        """
+        if not args:
+            raise TclError(f'wrong # args: should be "{self._w} edit option ?arg ...?"')
+        word = str(args[0])
+        found = [name for name in self._EDIT_OPTIONS if name.startswith(word)]
+        name = (
+            word
+            if word in self._EDIT_OPTIONS
+            else (found[0] if word and len(found) == 1 else "")
+        )
+        if not name:
+            raise TclError(
+                f'bad edit option "{word}": must be canundo, canredo, modified,'
+                " redo, reset, separator, or undo"
+            )
+        rest = args[1:]
+        if name == "modified":
+            if len(rest) > 1:
+                raise TclError(
+                    f'wrong # args: should be "{self._w} edit modified ?boolean?"'
+                )
+            if not rest:
+                return self.edit_modified()
+            self.edit_modified(rest[0])
+            return ""
+        if rest:
+            raise TclError(f'wrong # args: should be "{self._w} edit {name}"')
+        undoing = self.getboolean(self._options["undo"])
+        if name == "canundo":
+            return int(undoing and self._buffer.can_undo)
+        if name == "canredo":
+            return int(undoing and self._buffer.can_redo)
+        if name == "undo":
+            return self.edit_undo()
+        if name == "redo":
+            return self.edit_redo()
+        if name == "reset":
+            self.edit_reset()
+        else:
+            self.edit_separator()
+        return ""
+
+    def debug(self, boolean: Any = None) -> bool | None:
+        """Read or set the debug flag, which Tk's text widgets share.
+
+        Tk checks its text storage's consistency while it is on. Here it is
+        kept and answered, and checks nothing: there is no B-tree to check.
+        """
+        if boolean is None:
+            return bool(self.tk.text_debug)
+        self.tk.text_debug = self.getboolean(boolean)
+        return None
+
     def _claimed_signal_keys(self) -> set[str]:
         """The tty's signal keys this Text needs while it has the focus.
 
@@ -14133,6 +14412,11 @@ class Text(_Drawable, XView, YView):
             self._tag_options.pop(name, None)
             if name in self._tag_order:
                 self._tag_order.remove(name)
+            # Tk forgets a deleted tag's bindings with it.
+            tag = self._tag_binding_tag(name)
+            for sequence in self.tk.bindings.sequences(tag):
+                self.tk.bindings.unbind(tag, parse_sequence(sequence))
+        self._current_tags = [name for name in self._current_tags if name not in names]
         self._redraw()
 
     def tag_names(self, index: Any = None) -> tuple[str, ...]:
@@ -14222,6 +14506,176 @@ class Text(_Drawable, XView, YView):
     def tag_lower(self, name: str, below: str | None = None) -> None:
         """Move a tag down the priority order."""
         self._reorder(name, below, offset=0)
+
+    #: The kinds of event a tag can be bound to, by pattern type: Tk refuses
+    #: the rest.
+    _TAG_EVENT_TYPES = frozenset(
+        ("Key", "KeyRelease", "Button", "ButtonRelease", "Motion", "Enter", "Leave")
+    )
+
+    def _tag_binding_tag(self, name: str) -> str:
+        """Where a text tag's bindings are kept: peers share them, as Tk's
+        do, and no widget's binding tags can name it."""
+        shared = self._buffer.shared
+        if "bindings" not in shared:
+            shared["bindings"] = next(_TEXT_BINDING_IDS)
+        return f"\0text-tag\0{shared['bindings']}\0{name}"
+
+    def tag_bind(
+        self,
+        tagName: str,
+        sequence: str | None = None,
+        func: Callable[[Event], Any] | None = None,
+        add: bool | str | None = None,
+    ) -> Any:
+        """Bind an event on the characters a tag covers.
+
+        A mouse event reaches the tags of the character under the pointer,
+        which also hear ``<Enter>`` and ``<Leave>`` as the pointer moves onto
+        and off them; a key event reaches the tags under the pointer, or,
+        with none there, those at the insertion cursor. They run before the
+        widget's own bindings, lowest priority tag first, as in Tk.
+
+        Returns, as :meth:`Misc.bind` does, a handle :meth:`tag_unbind`
+        takes, the callbacks bound to ``sequence``, or the sequences bound.
+
+        Raises:
+            TclError: For an event other than a key, button, motion, enter,
+                leave or virtual one, in Tk's words.
+        """
+        tag = self._tag_binding_tag(tagName)
+        if sequence is None:
+            return self.tk.bindings.sequences(tag)
+        pattern = parse_sequence(sequence)
+        if func is None:
+            return tuple(
+                binding.func for binding in self.tk.bindings.bindings(tag, pattern)
+            )
+        if not pattern.is_virtual and pattern.type not in self._TAG_EVENT_TYPES:
+            raise TclError(
+                "requested illegal events; only key, button, motion, enter, leave,"
+                " and virtual events may be used"
+            )
+        self._note_tag(tagName)
+        return self.tk.bindings.bind(tag, pattern, func, add=bool(add))
+
+    def tag_unbind(
+        self,
+        tagName: str,
+        sequence: str,
+        funcid: str | None = None,
+    ) -> None:
+        """Remove a tag's bindings for ``sequence``, or the one ``funcid`` names."""
+        self.tk.bindings.unbind(
+            self._tag_binding_tag(tagName), parse_sequence(sequence), funcid
+        )
+
+    def _dispatch(self, event: Event, patterns: list[EventPattern]) -> bool:
+        """Run the tag bindings first, then the widget's, as Tk's text
+        widget does from its own event handler (tkTextTag.c's
+        TkTextBindProc)."""
+        if not self._destroyed and patterns:
+            self._tag_dispatch(event, patterns)
+        return super()._dispatch(event, patterns)
+
+    def _tag_dispatch(self, event: Event, patterns: list[EventPattern]) -> None:
+        """TkTextBindProc, step for step."""
+        kind = patterns[0].type
+        repick = False
+        if kind == "Button":
+            self._button_down = True
+        elif kind == "ButtonRelease":
+            self._button_down = False
+            repick = True
+        elif kind in ("Enter", "Leave"):
+            self._button_down = False
+            self._pick_current(event, leaving=kind == "Leave")
+            return
+        elif kind == "Motion":
+            self._pick_current(event)
+        if self._current_tags:
+            self._run_tag_bindings(list(self._current_tags), event, patterns)
+        elif kind in ("Key", "KeyRelease"):
+            # Measured, and so says the comment in Tk's: "Key events fire
+            # independently of the 'current' mark and use the 'insert' mark."
+            self._run_tag_bindings(self._sorted_tags("insert"), event, patterns)
+        if repick and not self._destroyed:
+            self._pick_current(event)
+
+    def _sorted_tags(self, index: Any) -> list[str]:
+        """The tags at an index, lowest priority first, as Tk's SortTags."""
+        order = {name: rank for rank, name in enumerate(self._tag_order)}
+        return sorted(
+            self._buffer.tag_names(self._resolve(index)), key=lambda n: order.get(n, -1)
+        )
+
+    def _pick_current(self, event: Event, *, leaving: bool = False) -> None:
+        """TkTextPickCurrent: put ``current`` on the character under the
+        pointer, tell the tags it left that the pointer left, and the tags
+        it came to that it came. Nothing while a button is held - the
+        simulated grab - and no tags past a line's end."""
+        if self._button_down or self._destroyed:
+            return
+        index: Index | None = None
+        new: list[str] = []
+        if not leaving:
+            index, nearby = self._pointer_index(int(event.x), int(event.y))
+            if not nearby:
+                new = self._sorted_tags(index)
+        old = self._current_tags
+        gone = [name for name in old if name not in new]
+        came = [name for name in new if name not in old]
+        if gone:
+            self._run_tag_bindings(
+                gone, _crossing(event, "Leave"), [EventPattern(type="Leave")]
+            )
+        if index is not None:
+            self._buffer.mark_set("current", index)
+        self._current_tags = new
+        if came and not self._destroyed:
+            self._run_tag_bindings(
+                came, _crossing(event, "Enter"), [EventPattern(type="Enter")]
+            )
+
+    def _pointer_index(self, x: int, y: int) -> tuple[Index, bool]:
+        """The index at a cell, and whether the cell is only near it - past
+        the end of its row, below the text, or outside the text area - as
+        TkTextPixelIndex's ``nearby``."""
+        index = self._index_at_cell(x, y)
+        area = self._text_area()
+        width, height = self._view_size()
+        if not (area.x <= x < area.x + width and area.y <= y < area.y + height):
+            return index, True
+        rows = self._display_lines()
+        row = self._top + (y - area.y)
+        if row >= len(rows) or rows[row][0] <= 0:
+            return index, True
+        line, start, stop = rows[row]
+        end = self._column_in(line, start, stop, self._row_last(line, start, stop))
+        return index, x - area.x + self._left >= end
+
+    def _run_tag_bindings(
+        self, names: list[str], event: Event, patterns: list[EventPattern]
+    ) -> None:
+        """Run what is bound on each of ``names``, as one binding tag each,
+        the virtual events the event raises included."""
+        if not names:
+            return
+        all_patterns = list(patterns)
+        raised: dict[str, Any] = {}
+        for pattern in patterns:
+            if not pattern.is_virtual:
+                for virtual, rank in self.tk.virtual_events.raised_ranks(
+                    pattern
+                ).items():
+                    raised[virtual] = rank
+                    all_patterns.append(EventPattern(type="Virtual", detail=virtual))
+        self.tk.bindings.dispatch(
+            tuple(self._tag_binding_tag(name) for name in names),
+            event,
+            all_patterns,
+            raised,
+        )
 
     def _reorder(self, name: str, other: str | None, *, offset: int) -> None:
         """Shared by tag_raise and tag_lower."""
@@ -14657,6 +15111,23 @@ class Text(_Drawable, XView, YView):
         # column width // 2 from the left. A Text one row tall is the exception:
         # Tk's centring in pixels leaves that row half in view, which in cells
         # is out of it, so here it stays in view. TkCurses-5co5.
+        self._see(index, sideways=True)
+
+    def yview_pickplace(self, *what: Any) -> None:
+        """Bring an index into view vertically, as :meth:`see` does.
+
+        Tk keeps it only for old programs; :meth:`see` is its replacement.
+
+        Raises:
+            TclError: Unless given exactly one index, in Tk's words.
+        """
+        if len(what) != 1:
+            raise TclError(
+                f'wrong # args: should be "{self._w} yview -pickplace lineNum|index"'
+            )
+        self._see(what[0], sideways=False)
+
+    def _see(self, index: Any, *, sideways: bool) -> None:
         target = self._resolve(index)
         width, height = self._view_size()
         first = self._top
@@ -14664,7 +15135,7 @@ class Text(_Drawable, XView, YView):
         row = self._row_of(target, rows)
         first = _see_offset(first, row, height, min((height + 1) // 2, height - 1))
         self._set_top(max(0, min(first, max(0, len(rows) - height))), rows)
-        if self._wrap_mode() == "none":
+        if sideways and self._wrap_mode() == "none":
             # Clamped as xview is, to the widest row now in view, which
             # leaves a cursor past its end out of view, as Tk's.
             left = _see_offset(self._left_value, target.char, width, width // 2)
@@ -14726,6 +15197,55 @@ class Text(_Drawable, XView, YView):
         elif self._wrap_mode() == "none":
             self._left_value = max(0, min(current, max(0, total - span)))
             self._left_key = (self._top_row, self._top_key)
+        self._redraw()
+        self._report_view(rows)
+
+    def scan_mark(self, x: Any, y: Any) -> None:
+        """Remember where a scan starts.
+
+        Raises:
+            TclError: If ``x`` or ``y`` is not an integer, in Tk's words.
+        """
+        self._scan = (
+            _tcl_integer(None, x),
+            _tcl_integer(None, y),
+            self._left_value,
+            0,
+        )
+
+    def scan_dragto(self, x: Any, y: Any, gain: Any = 10) -> None:
+        """Scroll by ``gain`` times how far ``(x, y)`` is from the mark, as
+        Tk's ``scan dragto`` does: sideways only while ``wrap`` is
+        ``none``, and a drag that runs into an edge starts again from there,
+        so the view moves as soon as the pointer turns back.
+
+        Differences from tkinter:
+            ``x`` and ``y`` are columns and rows, as ``event.x`` and
+            ``event.y`` are here, so ``gain`` multiplies cells.
+        """
+        mark_x, mark_y, mark_left, total = self._scan
+        x, y = _tcl_integer(None, x), _tcl_integer(None, y)
+        factor = _tcl_integer(None, gain)
+        rows = self._display_lines()
+        width, height = self._view_size()
+        # tkTextDisp.c's TkTextScanCmd.
+        if self._wrap_mode() == "none":
+            limit = max(0, self._widest_in_view(rows) - width)
+            left = mark_left + factor * (mark_x - x)
+            if left < 0 or left > limit:
+                left = mark_left = 0 if left < 0 else limit
+                mark_x = x
+            self._left_value = left
+            self._left_key = (self._top_row, self._top_key)
+        scroll = factor * (mark_y - y)
+        if scroll != total:
+            before = self._top
+            limit = max(0, len(rows) - height)
+            self._set_top(max(0, min(before + scroll - total, limit)), rows)
+            total = scroll
+            if self._top == before:
+                total, mark_y = 0, y
+        self._scan = (mark_x, mark_y, mark_left, total)
         self._redraw()
         self._report_view(rows)
 
@@ -15510,6 +16030,18 @@ def _text_redo(event: Event) -> None:
     """text.tcl's ``<<Redo>>``, and Alt-z."""
     with contextlib.suppress(TclError):
         event.widget.edit_redo()
+
+
+#: Numbers the stores whose text tags have bindings; see Text._tag_binding_tag.
+_TEXT_BINDING_IDS = itertools.count(1)
+
+
+def _crossing(event: Event, kind: str) -> Event:
+    """A copy of ``event`` as the ``<Enter>`` or ``<Leave>`` Tk makes of it
+    when the character under the pointer changes."""
+    made: Event = copy.copy(event)
+    made.type = EventType.Enter if kind == "Enter" else EventType.Leave
+    return made
 
 
 def _text_paste_selection(event: Event) -> None:

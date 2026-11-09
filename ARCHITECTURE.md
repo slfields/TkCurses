@@ -4913,23 +4913,24 @@ Multi-line text editor.
 | `__init__(master=None, cnf={}, **kw)` | ○ | Scrollable text area |
 | `bbox(index)` | ○ | Cell bounding box |
 | `compare(index1, op, index2)` | ✓ | Compare indices |
-| `count(index1, index2, *options)` | ☐ | Count items - not implemented; TkCurses-mzj |
-| `debug(boolean=None)` | ✗ | N/A |
+| `count(index1, index2, *options, return_ints=False)` | ○ | Tk's options; pixels are cells; shaped as tkinter shapes it (TkCurses-mzj) |
+| `debug(boolean=None)` | ○ | One flag for every Text, as Tk's; checks nothing |
 | `delete(index1, index2=None)` | ✓ | Delete text |
 | `dlineinfo(index)` | ○ | Display line info |
-| `dump(index1, index2, command, **kw)` | ☐ | Dump contents - not implemented; TkCurses-mzj |
+| `dump(index1, index2=None, command=None, **kw)` | ○ | Text, marks and toggles in Tk's order; nothing embedded to report |
+| `edit(*args)` | ✓ | Tk's `edit` subcommands, `canundo` and `canredo` included |
 | `edit_modified(arg=None)` | ✓ | Modified flag |
 | `edit_redo()` | ✓ | Redo edit |
 | `edit_reset()` | ✓ | Clear undo stack |
 | `edit_separator()` | ✓ | Undo separator |
 | `edit_undo()` | ✓ | Undo edit |
 | `get(index1, index2=None)` | ✓ | Get text |
-| `image_cget(index, option)` | ✗ | N/A |
-| `image_configure(index, **kw)` | ✗ | N/A |
-| `image_create(index, **kw)` | ✗ | N/A |
+| `image_cget(index, option)` | ☐ | Not implemented; TkCurses-r0gw |
+| `image_configure(index, **kw)` | ☐ | Not implemented; TkCurses-r0gw |
+| `image_create(index, **kw)` | ☐ | Not implemented; TkCurses-r0gw |
 | `image_names()` | ✗ | N/A |
 | `index(index)` | ✓ | Parse index |
-| `insert(index, chars, *args)` | ✓ | Insert text |
+| `insert(index, chars, *args)` | ✓ | Text and tag-list pairs, as Tk takes them |
 | `mark_gravity(markName, direction)` | ✓ | Mark gravity |
 | `mark_names()` | ✓ | List marks |
 | `mark_set(markName, index)` | ✓ | Set mark |
@@ -4938,14 +4939,15 @@ Multi-line text editor.
 | `mark_previous(index)` | ✓ | Previous mark |
 | `peer_create(newPathName, cnf={}, **kw)` | ✓ | A Text at that path, sharing the contents; TkCurses-gm66.13 |
 | `peer_names()` | ✓ | The other peers' paths, oldest first |
-| `replace(index1, index2, chars)` | ☐ | Replace text - not implemented; TkCurses-mzj |
-| `scan_mark(x, y)` | ☐ | Scan start - not implemented; TkCurses-6lh |
-| `scan_dragto(x, y)` | ☐ | Scan drag - not implemented; TkCurses-6lh |
+| `replace(index1, index2, chars, *args)` | ✓ | One undo step; the cursor kept as tkText.c keeps it |
+| `scan_mark(x, y)` | ○ | In cells |
+| `scan_dragto(x, y, gain=10)` | ○ | tkTextDisp.c's arithmetic, in cells |
 | `search(pattern, index, **kw)` | ✓ | Find text |
 | `see(index)` | ○ | Scroll to index |
+| `yview_pickplace(*what)` | ✓ | As `see`, vertically |
 | `tag_add(tagName, index1, *args)` | ✓ | Add tag |
-| `tag_unbind(tagName, sequence, funcid)` | ☐ | Unbind tag - not implemented; TkCurses-mzj |
-| `tag_bind(tagName, sequence, func)` | ☐ | Bind tag event - not implemented; TkCurses-mzj |
+| `tag_unbind(tagName, sequence, funcid=None)` | ✓ | Unbind tag |
+| `tag_bind(tagName, sequence, func, add=None)` | ✓ | TkTextBindProc's rules; peers share them |
 | `tag_cget(tagName, option)` | ✓ | Get tag option |
 | `tag_configure(tagName, **kw)` | ○ | Configure tag (attrs) |
 | `tag_delete(*tagNames)` | ✓ | Delete tags |
@@ -4956,17 +4958,48 @@ Multi-line text editor.
 | `tag_raise(tagName, aboveThis)` | ✓ | Raise tag |
 | `tag_ranges(tagName)` | ✓ | Tag ranges |
 | `tag_remove(tagName, index1, index2)` | ✓ | Remove tag |
-| `window_cget(index, option)` | ☐ | Embedded widget - not implemented; TkCurses-mzj |
-| `window_configure(index, **kw)` | ☐ | Configure widget - not implemented; TkCurses-mzj |
-| `window_create(index, **kw)` | ☐ | Embed widget - not implemented; TkCurses-mzj |
-| `window_names()` | ☐ | List widgets - not implemented; TkCurses-mzj |
+| `window_cget(index, option)` | ☐ | Not implemented; TkCurses-r0gw |
+| `window_configure(index, **kw)` | ☐ | Not implemented; TkCurses-r0gw |
+| `window_create(index, **kw)` | ☐ | Not implemented; TkCurses-r0gw |
+| `window_names()` | ☐ | Not implemented; TkCurses-r0gw |
+
+**Tag bindings follow tkTextTag.c's TkTextBindProc** (`TkCurses-mzj`), read
+in Tk's C and measured on Tk 9.0.2 with generated events. They run before the
+widget's own bindings, from the widget's event handler. The tags an event
+reaches are those of the character under the pointer **as of the last pick**,
+lowest priority first; with none there, a key event reaches the tags at
+`insert`. A pick happens on Motion, Enter, Leave and a button's release,
+never while a button is held (Tk's simulated grab), and finds no tags past
+the end of a row. When the picked tags change, the ones left hear `<Leave>`
+and the ones reached `<Enter>`. The order is fixed at the pick: TagBindEvent
+does not sort again, so a `tag_raise` shows at the next one. Without hover
+reporting a terminal reports no motion between clicks, so the pick comes from
+the `<Enter>` before each click and is cleared by the `<Leave>` after it
+(`TkCurses-70gx`), which is enough for a link. Tk also re-picks after an
+edit moves the text under a still pointer; nothing here does.
+
+**`dump` lists marks at one index in an order of its own.** Measured, Tk's
+order at one index is tag-offs, tag-ons, marks, then text. Tag-offs come in
+the order the tags were made and tag-ons the other way round. Marks follow
+the order Tk's B-tree segments happen to hold them: newest set first, a
+left-gravity mark ahead, but edits can reorder them. Here it is that rule,
+always. A tag already on at the first index is not reported; one that stops
+there is.
+
+**`insert` reads Tk's `chars ?tagList chars tagList ...?`** (`TkCurses-mzj`).
+It took every argument after the first as a tag name for the first text until
+then, so `insert("1.0", "a", "t1", "b", "t2")` inserted only `a`, with three
+tags. A tag list given, even `()`, replaces the tags the text would inherit
+from both sides; measured, `insert("1.1", "W", ())` between two tagged
+characters leaves `W` untagged. Text given a list at `end` was tagged a
+newline too far.
 
 **A disabled Text refuses edits from code too** (`TkCurses-aah`), as the
 manual says: "no insertions or deletions are allowed". Measured on Tk 9.0.2,
 `insert` and `delete` are ignored **silently**: nothing is raised and the
 modified flag does not move. Tags, marks and the selection still change. (Tk's
 `image_create` and `window_create` still embed while disabled; neither is
-implemented here yet, `TkCurses-mzj`.) Ours used to accept both edits from
+implemented here yet, `TkCurses-r0gw`.) Ours used to accept both edits from
 code, and a test asserted it, unmeasured. Fill a read-only display with
 tkinter's idiom: `state="normal"`, insert, `state="disabled"`.
 

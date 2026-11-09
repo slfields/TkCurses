@@ -7,6 +7,13 @@ All notable changes to TkCurses. The format follows
 ## [Unreleased]
 
 ### Added
+- Text's `edit`, `count`, `dump`, `replace`, `tag_bind` and `tag_unbind`,
+  `scan_mark` and `scan_dragto`, `yview_pickplace` and `debug`, measured
+  against Tk 9.0.2. Tag bindings follow Tk's rules: the tags under the
+  pointer hear its events and its crossings, a key goes to the tags at the
+  cursor when the pointer is on none, and a click on tagged text reaches
+  them in a terminal without hover reporting. `replace` is one step for
+  undo and keeps the cursor where Tk keeps it.
 - The rest of the Canvas's item methods, measured against Tk 9.0.2:
   `find` and `addtag` with Tk's search commands, `find_above`,
   `find_below`, `find_enclosed` and the `addtag_*` family; `halo` and
@@ -61,6 +68,12 @@ All notable changes to TkCurses. The format follows
   "name": no such variable`), as tkinter does; it returned `None`.
 
 ### Fixed
+- `Text.insert` reads Tk's `chars tagList chars tagList ...`: it took every
+  argument after the text for a tag name, so `insert("1.0", "a", "t1",
+  "b", "t2")` inserted only `a`. A tag list given, even an empty one, now
+  replaces the tags the text would take from either side, a tag list may be
+  a string of names separated by spaces, and text inserted at `end` with a
+  tag list is tagged where it went rather than a character on.
 - A `Menubutton` is flat by default, as in Tk; an `OptionMenu` is raised
   and two wide, as tkinter makes it. The themed Frame, Label and
   Labelframe answer `cget("relief")` with `""`, the theme's, as Tk does,

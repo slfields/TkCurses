@@ -65,6 +65,7 @@ marks too, so the window grows and shrinks with edits as Tk's does.
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import re
 from dataclasses import dataclass
@@ -73,7 +74,7 @@ from typing import TYPE_CHECKING, Any
 from tkcurses._core.errors import TclError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Iterator
 
 __all__ = ["Index", "TextBuffer", "TextIndexError"]
 
@@ -214,6 +215,10 @@ class _Store:
         #: cached split is checked against.
         self.version = 0
         self.marks: dict[str, tuple[int, str]] = {}
+        #: When each mark was last set, by a clock that only goes up: the
+        #: order ``dump`` lists marks that share an index in.
+        self.mark_stamps: dict[str, int] = {}
+        self.mark_clock = itertools.count()
         self.tags: dict[str, list[tuple[int, int]]] = {}
         #: Applied edits, newest last, in groups that undo together. A
         #: separator closes the open group; see :meth:`TextBuffer.edit_separator`.
@@ -982,6 +987,112 @@ class TextBuffer:
             for name, ranges in self._store.tags.items():
                 self._store.tags[name] = _cut(ranges, newline, newline + 1)
 
+    @contextlib.contextmanager
+    def grouped(self, mode: str) -> Iterator[None]:
+        """Make the edits inside one undo group, as Tk's ``replace`` does.
+
+        tkText.c's TextReplaceCmd: a separator before the group when
+        auto-separators are on and the last edit was not of this kind, none
+        between the edits inside, and the group remembered as ``mode`` so
+        that the next edit of another kind starts a new one.
+        """
+        store = self._store
+        recording = store.undo_enabled and not store.replaying
+        if recording and store.auto_separators and store.last_edit_mode != mode:
+            store.separate = True
+        saved = store.auto_separators
+        store.auto_separators = False
+        try:
+            yield
+        finally:
+            store.auto_separators = saved
+            if recording:
+                store.last_edit_mode = mode
+
+    def dump(
+        self,
+        first: Index | str,
+        last: Index | str | None = None,
+        *,
+        text: bool = True,
+        tags: bool = True,
+        marks: bool = True,
+    ) -> list[tuple[str, str, Index]]:
+        """What lies from ``first`` up to ``last``, in Tk's ``dump`` order.
+
+        One character from ``first`` when ``last`` is None. Measured on Tk
+        9.0.2: text is broken at each line's end and wherever a tag starts
+        or stops or a mark stands; at one index the tags that stop come
+        first, then those that start, then the marks, then the text. A tag
+        already on at ``first`` is not reported, but one stopping there is;
+        one stopping exactly at ``last`` only when ``last`` is the end of
+        the text.
+        """
+        size = len(self._text)
+        start = self.offset_of(self.index(first))
+        stop = (
+            min(start + 1, size) if last is None else self.offset_of(self.index(last))
+        )
+        if stop <= start:
+            return []
+        at_end = stop >= size
+        before: dict[int, list[tuple[str, str]]] = {}
+        if tags:
+            names = [
+                name
+                for name in (self._visible(key) for key in self._store.tags)
+                if name is not None
+            ]
+            offs: dict[int, list[tuple[int, str]]] = {}
+            ons: dict[int, list[tuple[int, str]]] = {}
+            for rank, name in enumerate(names):
+                for low, high in self._local_ranges(name):
+                    if low >= high:
+                        continue
+                    if start <= low < stop:
+                        ons.setdefault(low, []).append((rank, name))
+                    if start <= high < stop or (at_end and high == stop):
+                        offs.setdefault(high, []).append((rank, name))
+            # Measured: those stopping in the order the tags were made, those
+            # starting the other way round.
+            for at, found in offs.items():
+                before.setdefault(at, []).extend(
+                    ("tagoff", n) for _, n in sorted(found)
+                )
+            for at, found in ons.items():
+                before.setdefault(at, []).extend(
+                    ("tagon", n) for _, n in sorted(found, reverse=True)
+                )
+        if marks:
+            standing: dict[int, list[tuple[int, int, str]]] = {}
+            for key, (offset, gravity) in self._store.marks.items():
+                mark_name = self._visible(key)
+                local = self._local(offset)
+                if mark_name is None or local is None or not start <= local < stop:
+                    continue
+                stamp = self._store.mark_stamps.get(key, -1)
+                standing.setdefault(local, []).append(
+                    (0 if gravity == "left" else 1, -stamp, mark_name)
+                )
+            for at, here in standing.items():
+                before.setdefault(at, []).extend(("mark", n) for *_, n in sorted(here))
+        breaks = {start, *before}
+        breaks.update(
+            i + 1 for i in range(start, stop) if self._text[i] == "\n" and i + 1 < stop
+        )
+        ordered = sorted(at for at in breaks if start <= at < stop)
+        out: list[tuple[str, str, Index]] = []
+        for number, at in enumerate(ordered):
+            index = self.index_of(at)
+            out.extend((key, value, index) for key, value in before.get(at, ()))
+            following = ordered[number + 1] if number + 1 < len(ordered) else stop
+            if text and following > at:
+                out.append(("text", self._text[at:following], index))
+        if at_end and stop in before:
+            index = self.index_of(stop)
+            out.extend((key, value, index) for key, value in before[stop])
+        return out
+
     # ---------------------------------------------------------------- search
 
     def search(
@@ -1277,6 +1388,7 @@ class TextBuffer:
         gravity = self._store.marks.get(key, (0, "right"))[1]
         offset = self._global(self.offset_of(self.index(index)))
         self._store.marks[key] = (offset, gravity)
+        self._store.mark_stamps[key] = next(self._store.mark_clock)
 
     def view_top(self, index: Index | None = None) -> Index | None:
         """Where the widget showing this view has the top of its own view:
@@ -1307,6 +1419,7 @@ class TextBuffer:
         """Remove marks. Unknown names are ignored, as in Tk."""
         for name in names:
             self._store.marks.pop(self._mark_key(name), None)
+            self._store.mark_stamps.pop(self._mark_key(name), None)
 
     def mark_names(self) -> tuple[str, ...]:
         """Every mark, in the order they were first set.

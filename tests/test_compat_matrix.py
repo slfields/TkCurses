@@ -57,8 +57,10 @@ def row(modules, module, table, name):
         # A geometry manager's method is looked for on the widgets, where a
         # program calls it, not on TkCurses's own Grid class.
         ("tkinter", "Grid", "grid_columnconfigure", compat.SUPPORTED),
-        ("tkinter", "Text", "dump", compat.MISSING),
-        ("tkinter", "Text", "tag_bind", compat.MISSING),
+        # A documented difference makes a method partial.
+        ("tkinter", "Text", "dump", compat.PARTIAL),
+        ("tkinter", "Text", "tag_bind", compat.SUPPORTED),
+        ("tkinter", "Text", "window_create", compat.MISSING),
         ("tkinter", "Listbox", "itemconfigure", compat.SUPPORTED),
         ("tkinter", "Canvas", "create_image", compat.MISSING),
         ("tkinter", "Wm", "iconbitmap", compat.MISSING),
