@@ -304,11 +304,7 @@ def test_a_new_variable_is_made_from_the_items(root):
     assert widget.cget("listvariable") == "fresh"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="TkCurses-4v9f: traces belong to each Variable, not to the name",
-)
-def test_a_listbox_bound_by_name_does_not_hear_writes_made_elsewhere(root):
+def test_a_listbox_bound_by_name_hears_writes_made_elsewhere(root):
     """Measured on Tk 9.0.2: Tk's Listbox shows what setvar wrote."""
     widget = Listbox(root, listvariable="items")
     root.setvar("items", ("a", "b"))

@@ -278,3 +278,44 @@ def test_a_boxed_widget_keeps_its_box_by_default(root, name):
 
     assert getattr(tkcurses, name)(root)._bordered
     assert not getattr(tkcurses, name)(root, borderwidth=0)._bordered
+
+
+#: (class, Tk's relief), measured on Tk 9.0.2 through tkinter. The themed
+#: ones answer "", the theme's, and are drawn as their class draws.
+TK_RELIEFS = [
+    ("Menubutton", "flat"),
+    ("OptionMenu", "raised"),
+    ("ttk.Frame", ""),
+    ("ttk.Label", ""),
+    ("ttk.Labelframe", ""),
+]
+
+
+@pytest.mark.parametrize("name, relief", TK_RELIEFS)
+def test_the_relief_defaults_to_tks(root, name, relief):
+    import tkcurses
+    from tkcurses import ttk
+
+    module, _, cls = name.rpartition(".")
+    owner = ttk if module else tkcurses
+    args = (tkcurses.StringVar(root), "a") if cls == "OptionMenu" else ()
+    assert getattr(owner, cls)(root, *args).cget("relief") == relief
+
+
+def test_a_themed_labelframe_answers_the_theme_and_draws_its_groove(root):
+    from tkcurses import ttk
+
+    frame = ttk.Labelframe(root, text="Group")
+    assert frame.cget("relief") == ""
+    assert frame._drawn_relief() == "groove"
+    assert frame._bordered
+    frame.configure(relief="flat")
+    assert not frame._bordered
+
+
+def test_an_option_menu_is_raised_two_wide_as_tkinter_makes_it(root):
+    import tkcurses
+
+    menu = tkcurses.OptionMenu(root, tkcurses.StringVar(root), "a")
+    assert (menu.cget("borderwidth"), menu.cget("highlightthickness")) == (2, 2)
+    assert menu._bordered

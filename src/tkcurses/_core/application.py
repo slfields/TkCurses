@@ -38,6 +38,7 @@ constantly, and a global registry would leak bindings from one into the next.
 from __future__ import annotations
 
 import fnmatch
+import itertools
 import weakref
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -310,6 +311,15 @@ class Application:
 
         #: Values behind ``getvar``/``setvar`` and the Variable classes.
         self.variables: dict[str, Any] = {}
+
+        #: Traces on those values, by variable name and then by handle: each
+        #: is ``(modes, callback, listed)``. By name, as Tcl keeps them, so
+        #: every Variable of one name, ``setvar`` and a widget bound by name
+        #: all fire and hear the same traces. ``listed`` is False for a
+        #: widget's own, which Tk keeps in C where ``trace info`` cannot
+        #: see them.
+        self.variable_traces: dict[str, dict[str, tuple[Any, ...]]] = {}
+        self.trace_counter = itertools.count(1)
 
         #: The drag in progress, if any. tkinter keeps this on the root as a
         #: name-mangled attribute; it belongs with the rest of the per-tree

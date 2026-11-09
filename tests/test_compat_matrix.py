@@ -59,7 +59,7 @@ def row(modules, module, table, name):
         ("tkinter", "Grid", "grid_columnconfigure", compat.SUPPORTED),
         ("tkinter", "Text", "dump", compat.MISSING),
         ("tkinter", "Text", "tag_bind", compat.MISSING),
-        ("tkinter", "Listbox", "itemconfigure", compat.MISSING),
+        ("tkinter", "Listbox", "itemconfigure", compat.SUPPORTED),
         ("tkinter", "Canvas", "create_image", compat.MISSING),
         ("tkinter", "Wm", "iconbitmap", compat.MISSING),
         ("tkinter", "Functions", "Tcl", compat.MISSING),

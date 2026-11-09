@@ -195,3 +195,42 @@ def test_uncoloured_states_look_as_they_did(terminal, tmp_path):
         "tkcurses.Button(root, text='Go', state='active').place(x=0, y=0)",
     )
     term.wait_for_cell(1, 3, lambda cell: cell.data == "G" and cell.reverse)
+
+
+def test_a_menu_entrys_own_colours_win_over_the_menus(terminal, tmp_path):
+    term = run(
+        terminal,
+        tmp_path,
+        "v = tkcurses.IntVar(value=1)\n"
+        "m = tkcurses.Menu(root, activebackground='red', selectcolor='green')\n"
+        "m.add_command(label='Open', activebackground='blue')\n"
+        "m.add_checkbutton(label='Wrap', variable=v, selectcolor='magenta')\n"
+        "m.add_command(label='Save', background='cyan')\n"
+        "m.add_separator(background='cyan')\n"
+        "m.post(2, 1)\n"
+        "m.activate(0)",
+    )
+    term.wait_for_cell(
+        2, 8, lambda cell: cell.data == "O" and cell.bg == "blue", message="active"
+    )
+    term.wait_for_cell(3, 5, lambda cell: cell.data == "x" and cell.fg == "magenta")
+    term.wait_for_cell(4, 8, lambda cell: cell.data == "S" and cell.bg == "cyan")
+    term.wait_for_cell(5, 8, lambda cell: cell.data == "─" and cell.bg == "cyan")
+
+
+def test_a_listbox_item_is_drawn_in_its_own_colours(terminal, tmp_path):
+    term = run(
+        terminal,
+        tmp_path,
+        "b = tkcurses.Listbox(root, height=4, width=10, selectbackground='blue')\n"
+        "b.insert('end', 'plain', 'red', 'chosen', 'mine')\n"
+        "b.itemconfigure(1, background='red')\n"
+        "b.itemconfigure(3, selectbackground='green')\n"
+        "b.selection_set(2)\n"
+        "b.selection_set(3)\n"
+        "b.place(x=0, y=0)",
+    )
+    term.wait_for_cell(2, 2, lambda cell: cell.data == "r" and cell.bg == "red")
+    term.wait_for_cell(1, 2, lambda cell: cell.data == "p" and cell.bg != "red")
+    term.wait_for_cell(3, 2, lambda cell: cell.data == "c" and cell.bg == "blue")
+    term.wait_for_cell(4, 2, lambda cell: cell.data == "m" and cell.bg == "green")

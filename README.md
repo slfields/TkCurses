@@ -82,7 +82,8 @@ Missing pieces are tracked as issues. The larger ones:
   written for Tk may not apply.
 - Most invalid option values are stored instead of refused, where Tk would
   raise `TclError`.
-- `<Enter>` and `<Leave>` are not delivered when the pointer crosses a widget.
+- `<Enter>` and `<Leave>` are made from clicks and drags, since a terminal
+  reports the pointer only while a button is held.
 
 ## Requirements
 

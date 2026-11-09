@@ -317,6 +317,8 @@ def candidates(option: str, default: object) -> list[object]:
         values = ["IMAGE2"]
     elif name == "compound":
         values = ["left", "top"]
+    elif name == "bitmap":
+        values = ["info", "gray50"]
     elif name == "show":
         values = ["*"]
     elif name == "selectmode":

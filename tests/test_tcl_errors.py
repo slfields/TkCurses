@@ -342,16 +342,11 @@ def test_a_ttk_labels_width_is_not_checked_at_all(root, make):
     ],
 )
 @pytest.mark.parametrize("name", [5, "g"])
-def test_a_variable_named_rather_than_given_is_refused_for_now(
-    root, make, option, name
-):
-    """Tk binds to the global variable of that name; ours cannot yet, and
-    says so as a TclError instead of crashing on ``trace_add``."""
-    with refused(
-        f'variable "{name}" is a name, not a Variable: binding a widget to a'
-        " global variable by name is TkCurses-4v9f"
-    ):
-        make(root, **{option: name})
+def test_a_variable_named_rather_than_given_is_bound(root, make, option, name):
+    """Measured on Tk 9.0.2: a name is accepted, binds to the variable of
+    that name, and reads back as given."""
+    widget = make(root, **{option: name})
+    assert widget.cget(option) == str(name)
 
 
 def test_no_variable_at_all_is_still_none(root):

@@ -28,7 +28,7 @@ Sample output:
     # size: 50x10
     from tkcurses import dialog
     dialog.Dialog(root, title="Quit", text="Quit without saving?",
-                  bitmap="", default=1, strings=("Quit", "Cancel"))
+                  bitmap="warning", default=1, strings=("Quit", "Cancel"))
 
 Unlike the other dialogs, *making* a :class:`Dialog` shows it and waits,
 and the answer is left on it as ``num``: the index in ``strings`` of the
@@ -37,7 +37,8 @@ is the index of the button Return presses, and moving the focus to
 another button moves Return with it; below zero, Return does nothing.
 
 Differences from tkinter:
-    ``bitmap`` is accepted and not drawn: a terminal has no stock icons.
+    ``bitmap`` is drawn as one character, as every Tk bitmap is here: the
+    ten names Tk has each become a single glyph.
 """
 # The rules come from Tk's own dialog.tcl. destroy() does nothing, as in
 # tkinter, because by the time anyone could call it the window is gone.
@@ -72,14 +73,24 @@ class _ButtonRow(_Dialog):
 
     def body(self, window: Toplevel) -> Misc | None:
         text = str(self.options.get("text") or "")
+        bitmap = str(self.options.get("bitmap") or "")
+        top: Misc = window
+        if bitmap:
+            # dialog.tcl: "label $w.bitmap -bitmap $bitmap", packed on the
+            # left of the message in the top frame.
+            top = tkcurses.Frame(window)
+            top.pack(padx=1, pady=1)
+            tkcurses.Label(top, bitmap=bitmap).pack(side="left", padx=(0, 1))
         if text:
             # Wrapped, as dialog.tcl wraps it: "option add
             # *Dialog.msg.wrapLength 3i" on X11, which in Tk's default font
             # is about forty characters. A long message - a file's whole path
             # - was otherwise cut by the window. TkCurses-tyd9.
-            tkcurses.Label(window, text=text, justify="left", wraplength=40).pack(
-                padx=1, pady=1
-            )
+            message = tkcurses.Label(top, text=text, justify="left", wraplength=40)
+            if bitmap:
+                message.pack(side="left")
+            else:
+                message.pack(padx=1, pady=1)
         row = tkcurses.Frame(window)
         row.pack(pady=1)
         default = _default_index(self.options.get("default"))

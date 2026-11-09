@@ -1231,3 +1231,50 @@ def test_the_navigation_events_are_defined_as_tk_defines_them(root):
     for virtual, sequences in expected.items():
         assert root.event_info(virtual) == sequences
     assert "<<SelectNone>>" not in root.event_info()
+
+
+# ------------------------------------------------- per-item options, Tk's
+
+
+def test_an_item_has_four_colours_of_its_own(root):
+    box = Listbox(root)
+    box.insert("end", "a", "b", "c")
+    assert set(box.itemconfigure(0)) == {
+        "background", "foreground", "selectbackground", "selectforeground",
+        "bg", "fg",
+    }  # fmt: skip
+    box.itemconfigure(1, bg="red", foreground="blue")
+    assert (box.itemcget(1, "background"), box.itemcget(1, "fg")) == ("red", "blue")
+    assert box.itemcget(0, "background") == ""
+    assert box.itemconfigure(1, "background") == ("background", "", "", "", "red")
+
+
+@pytest.mark.parametrize(
+    "call, message",
+    [
+        (lambda box: box.itemcget(1, "nonsense"), 'unknown option "-nonsense"'),
+        (lambda box: box.itemconfigure(9, bg="red"), 'item number "9" out of range'),
+        (lambda box: box.itemcget(-1, "bg"), 'item number "-1" out of range'),
+        (lambda box: box.itemconfigure(1, bg="notacolour"), 'unknown color name "notacolour"'),
+    ],
+)  # fmt: skip
+def test_what_tk_refuses_an_item_is_refused(root, call, message):
+    box = Listbox(root)
+    box.insert("end", "a", "b", "c")
+    with pytest.raises(TclError) as caught:
+        call(box)
+    assert str(caught.value) == message
+
+
+def test_an_items_colours_go_with_it(root):
+    """Measured on Tk 9.0.2: deleting above it or inserting above it moves
+    the item and its colour together."""
+    box = Listbox(root)
+    box.insert("end", "a", "b", "c")
+    box.itemconfigure(1, bg="red")
+    box.delete(0)
+    assert box.itemcget(0, "bg") == "red"
+    box.insert(0, "z")
+    assert (box.itemcget(0, "bg"), box.itemcget(1, "bg")) == ("", "red")
+    box.delete(1)
+    assert [box.itemcget(i, "bg") for i in range(box.size())] == ["", ""]

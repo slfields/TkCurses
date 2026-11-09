@@ -3674,7 +3674,7 @@ Base mixin providing common widget functionality.
 | `keys()` | ✓ | List option names |
 | **Utility** | | |
 | `nametowidget(name)` | ✓ | Path to widget object |
-| `getvar(name)` | ✓ | Get Variable value (internal storage) |
+| `getvar(name)` | ✓ | Get Variable value, firing read traces; an unset name is refused, as in Tk |
 | `setvar(name, value)` | ✓ | Set Variable value (internal storage) |
 | `getint(s)` | ✓ | Parse integer |
 | `getdouble(s)` | ✓ | Parse float |
@@ -3863,7 +3863,7 @@ Window manager interface for toplevel windows.
 | `wm_command(value=None)` | ✗ | N/A |
 | `wm_deiconify()` | ○ | Show window |
 | `wm_focusmodel(model=None)` | ○ | Focus behavior |
-| `wm_forget(window)` | ✓ | Remove from WM |
+| `wm_forget(window)` | ✓ | Unmapped until a geometry manager takes it; the root and non-windows are left alone |
 | `wm_frame()` | ○ | Returns self |
 | `wm_geometry(newGeometry=None)` | ○ | Cell geometry "WxH+X+Y" (see below) |
 | `wm_grid(baseW, baseH, wInc, hInc)` | ○ | Cell grid sizing |
@@ -3875,7 +3875,7 @@ Window manager interface for toplevel windows.
 | `wm_iconphoto(default, *args)` | ✗ | N/A |
 | `wm_iconposition(x=None, y=None)` | ✗ | N/A |
 | `wm_iconwindow(pathName=None)` | ✗ | N/A |
-| `wm_manage(widget)` | ○ | Manage as toplevel |
+| `wm_manage(widget)` | ✓ | A classic Frame, LabelFrame or Toplevel becomes a window, centred at its requested size; pack, grid and place refuse it, in Tk's words |
 | `wm_maxsize(width, height)` | ○ | Max cell size |
 | `wm_minsize(width, height)` | ○ | Min cell size |
 | `wm_overrideredirect(boolean)` | ○ | Borderless mode |
@@ -4260,7 +4260,7 @@ Static text display.
 | `background`/`bg` | color | Cell background |
 | `font` | font | Attribute (bold/underline) |
 | `image` | PhotoImage | A pixel plane, composed into cells |
-| `bitmap` | bitmap | ✗ N/A (the built-in named bitmaps) |
+| `bitmap` | bitmap | ○ Tk's ten names as one glyph each; `@file` drawn as its XBM bits |
 | `compound` | position | none/left/right/top/bottom/center |
 | `width` | chars | Cells |
 | `height` | lines | Cells |
@@ -4416,8 +4416,8 @@ Single-line text input.
 | `icursor(index)` | ○ | Position cursor |
 | `index(index)` | ✓ | Get index position |
 | `insert(index, string)` | ✓ | Insert text |
-| `scan_mark(x)` | ☐ | Scan start - not implemented; TkCurses-6lh |
-| `scan_dragto(x)` | ☐ | Scan drag - not implemented; TkCurses-6lh |
+| `scan_mark(x)` | ✓ | Scan start, on Entry and Spinbox; TkCurses-5kg |
+| `scan_dragto(x)` | ✓ | Ten times the drag, as `EntryScanTo`; TkCurses-5kg |
 | `selection_adjust(index)` | ✓ | Adjust selection |
 | `selection_clear()` | ✓ | Clear selection |
 | `selection_from(index)` | ✓ | Selection start |
@@ -4678,9 +4678,9 @@ stands in for the other.
 **Active is what Tk would have made active, so far as a terminal sees it.** A
 button held down is active: Tk only presses an active button, the pointer
 being over it, and `tk::ButtonInvoke` sets `active` for its flash when Space
-presses one. Nothing here reports the pointer crossing a widget, so hovering
-activates nothing - the buttons' `<Enter>` binding (gm66.5, below) is reached
-only by `event_generate`, `TkCurses-70gx` - and a program's `state="active"` and a Scrollbar's
+presses one. The pointer is seen only from a press to its release (see "Enter
+and Leave" below), so a button is active while it is held over, and hovering
+alone activates nothing; a program's `state="active"` and a Scrollbar's
 `activate()` are honoured as given.
 
 As everywhere here, `""` is accepted for each, where Tk refuses it for
@@ -4740,11 +4740,33 @@ always has.
 
 **What is not done.** Tk sinks a Button's `relief` while it is held
 (`tk::ButtonDown`); a press here is drawn by its ▌ ▐ markers, so a held button
-keeps its relief, and `<Enter>` while held does not sink it either. Tk's
+keeps its relief, and `<Enter>` while held does not sink it either - though a
+held button dragged off loses its markers, as Tk's loses its sunken relief
+(`tk::ButtonLeave`), and gets them back on `<Enter>`. Tk's
 `tk::CheckEnter` also blends `selectcolor` with `activebackground` under the
-pointer; that is not done. And nothing reports the pointer entering or leaving
-a widget yet, so `overrelief` is reached by `event_generate("<Enter>")` (`TkCurses-70gx`). The
-ttk widgets built on these keep ttk's bindings, which have no overrelief.
+pointer; that is not done. `overrelief` shows from the press to the release,
+the only time the pointer is known to be over it. The ttk widgets built on
+these keep ttk's bindings, which have no overrelief.
+
+**Enter and Leave** (`TkCurses-70gx`). A terminal reports the pointer only
+while a button is held, unless hover reporting (DEC 1003) is on, and it is
+off by default: it sends a report for every cell crossed and takes the
+terminal's own selection away. So `Tk._route` makes the crossings from the
+reports there are, as X11 makes them under the implicit grab:
+
+- a press first leaves the widget the pointer was last known over and
+  enters the one pressed - `<Enter>` before `<ButtonPress>`, Tk's order;
+- while held, only the widget pressed is told the pointer left it or came
+  back; nothing else is entered, as nothing else would be under the grab;
+- a release ends the visit with `<Leave>`, because nothing will report the
+  pointer going and a widget must not stay active under a pointer long
+  gone. With hover reporting on, the release enters whatever is under the
+  pointer instead, as X11's ungrab does, and motion is followed from there.
+
+Widgets outside a `grab_set` hear no crossings, as they hear no presses.
+Only the widget under the pointer is told, not its ancestors: Tk's virtual
+crossings (`NotifyVirtual`) are not made, though a binding on a toplevel
+still sees each child's through the binding tags.
 
 **A held mouse button repeats, as Tk's bindings repeat it** (`TkCurses-gm66.6`).
 A terminal reports a press and, much later, a release, with nothing between;
@@ -4796,8 +4818,8 @@ the first is still down, stops the repeat and puts the held button up
 Tk's Scale and Scrollbar schedule the next step at 0 ms for ever. Tk's Scale
 skips a step to catch up after a slow `command`; here the after-queue starts
 counting once the command has returned. Tk cancels a Spinbox's repeat when a
-held pointer comes back over it (`<B1-Enter>`), and nothing reports the
-pointer crossing a widget yet (`TkCurses-70gx`). And the ttk widgets keep
+held pointer comes back over it (`<B1-Enter>`), and that binding is not made
+here. And the ttk widgets keep
 their own procedures, which repeat with fixed timing (`ttk::Repeatedly`) and
 are not taken here: a ttk Scale still jumps on button 1, and a ttk Spinbox
 steps on the press without repeating (`TkCurses-1wos`).
@@ -5071,8 +5093,8 @@ Scrollable selection list.
 | `selection_includes(index)` | ✓ | Check selection |
 | `selection_set(first, last=None)` | ✓ | Set selection |
 | `size()` | ✓ | Item count |
-| `itemcget(index, option)` | ☐ | Get item option - not implemented; TkCurses-5kg |
-| `itemconfigure(index, **kw)` | ☐ | Configure item - not implemented; TkCurses-5kg |
+| `itemcget(index, option)` | ✓ | An item's own colour, `""` where it has none |
+| `itemconfigure(index, **kw)` | ✓ | `background`, `foreground`, `selectbackground`, `selectforeground`, kept with the item as rows come and go; TkCurses-5kg |
 
 **It scrolls sideways, as of `TkCurses-019`** — `xview` and `-xscrollcommand`
 were missing outright, so a horizontal scrollbar could not be attached at all.
@@ -5926,25 +5948,34 @@ alignment "bogus": must be left, right, center, or numeric`. Then `tab stop
 "-3" is not at a positive distance` and `tabs must be monotonically
 increasing, but "3" is smaller than or equal to the previous tab`.
 
-**A variable option given a name** (`textvariable=5`) is taken by Tk, which
-binds the widget to the global variable of that name. Here traces belong to
-each `Variable` object rather than to the name, so a widget bound that way
-would miss every write made through another; it is refused instead, as a
-`TclError` that names `TkCurses-4v9f`, rather than the `AttributeError` it
-crashed with.
+**A variable option given a name** (`textvariable=5`) binds the widget to the
+variable of that name, as Tk binds it to the Tcl global (`TkCurses-4v9f`).
+What makes that work is where the traces live: by name, in
+`Application.variable_traces` beside the values in `Application.variables`,
+as Tcl keeps them - not on each `Variable` object, as they were. So
+`setvar`, every `Variable` of that name, and every widget bound to it fire
+and hear the same traces, and `getvar` fires the read traces. Measured on
+Tk 9.0.2 through tkinter, and held by `tests/test_variable_names.py`:
 
-Listbox's `listvariable` takes a name and is kept, but it binds **one way**:
-the Listbox writes its items into the shared value, and `getvar` and any
-`Variable` of that name read them, but a write made elsewhere never reaches
-it. Measured: after `setvar("items", ("a", "b"))` Tk's Listbox shows `a b`
-and ours still shows nothing, and the same for `Variable(name="items").set`.
-It stays because a program relying on the direction that works keeps
-working; `test_a_listbox_bound_by_name_does_not_hear_writes_made_elsewhere`
-is a strict xfail that will pass when it is fixed.
+- A name binds both ways: `setvar("g", "x")` reaches a Label bound to `g`,
+  and so does `StringVar(name="g").set`.
+- A **classic** widget bound to a variable that does not exist creates it
+  from itself: a Label, Button, Menubutton or Message from its text, an
+  Entry empty, a Spinbox at `from`, a Checkbutton at its offvalue (`0`), a
+  Radiobutton empty, a Scale at its value. A **themed** widget does not:
+  the name stays unset and reads as empty, which is why a `ttk.Checkbutton`
+  without a variable starts `alternate`.
+- A widget's own trace is not listed by `trace_info()`: Tk's are C-level,
+  out of `trace info`'s sight.
+- tkinter's `Variable.__del__` unsets the variable, and a widget bound to it
+  puts it straight back; a Label keeps its variable after every `StringVar`
+  of that name is collected. Here a collected `Variable` takes only the
+  traces it added, and the value goes only when no trace is left on the
+  name - the same result without the round trip.
+- `getvar` of a name nothing set is `can't read "g": no such variable`.
 
-**How names should bind is an open design question** (`TkCurses-4v9f`), and
-both of the above are holding positions until it is answered, not the
-design.
+The name given reads back from `cget` as an object equal to the name, as
+tkinter's `parsedVarName` does; it never creates or unsets the variable.
 
 Of the same sweep, 571 values Tk refuses were stored here (`TkCurses-m595`).
 All are refused now, with Tk's message, but `Spinbox`'s `buttoncursor`,

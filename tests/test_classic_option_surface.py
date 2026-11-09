@@ -58,34 +58,22 @@ CLASSIC = (
 #: owns them. A gap not listed here is a test failure, and a listed one that has
 #: been closed is too: this list may shrink and must never silently grow.
 KNOWN_GAPS: dict[str, dict[str, str]] = {
-    "Button": {
-        "TkCurses-l26": "bitmap",
-    },
+    "Button": {},
     "Canvas": {},
-    "Checkbutton": {
-        "TkCurses-l26": "bitmap",
-    },
+    "Checkbutton": {},
     "Entry": {},
     "Frame": {
         "TkCurses-yi4": "backgroundimage bgimg",
     },
-    "Label": {
-        "TkCurses-l26": "bitmap",
-    },
+    "Label": {},
     "LabelFrame": {},
     "Listbox": {},
     "Menu": {},
-    "Menubutton": {
-        "TkCurses-l26": "bitmap",
-    },
+    "Menubutton": {},
     "Message": {},
-    "OptionMenu": {
-        "TkCurses-l26": "bitmap",
-    },
+    "OptionMenu": {},
     "PanedWindow": {},
-    "Radiobutton": {
-        "TkCurses-l26": "bitmap",
-    },
+    "Radiobutton": {},
     "Scale": {},
     "Scrollbar": {},
     "Spinbox": {},

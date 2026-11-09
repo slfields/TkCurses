@@ -110,7 +110,7 @@ def test_insert_puts_an_entry_in_the_middle(menu):
 
 def test_delete_removes_one(menu):
     menu.delete(1)
-    assert menu.entrycget(1, "label") == ""  # the separator
+    assert menu.type(1) == "separator"
 
 
 def test_delete_removes_a_range(menu):
@@ -662,3 +662,52 @@ def test_none_leaves_the_menubar_where_it_is(window):
     assert window.cget("menu") is one
     assert _shows_bar(window)
     assert one.winfo_ismapped()
+
+
+#: The options each kind takes, measured on Tk 9.0.2 with entryconfigure.
+TK_ENTRY_OPTIONS = {
+    "command": {
+        "accelerator", "activebackground", "activeforeground", "background",
+        "bitmap", "columnbreak", "command", "compound", "font", "foreground",
+        "hidemargin", "image", "label", "state", "underline",
+    },
+    "separator": {"background"},
+}  # fmt: skip
+TK_ENTRY_OPTIONS["cascade"] = TK_ENTRY_OPTIONS["command"] | {"menu"}
+TK_ENTRY_OPTIONS["checkbutton"] = TK_ENTRY_OPTIONS["command"] | {
+    "indicatoron", "offvalue", "onvalue", "selectcolor", "selectimage", "variable",
+}  # fmt: skip
+TK_ENTRY_OPTIONS["radiobutton"] = TK_ENTRY_OPTIONS["command"] | {
+    "indicatoron", "selectcolor", "selectimage", "value", "variable",
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("kind", sorted(TK_ENTRY_OPTIONS))
+def test_each_kind_of_entry_takes_tks_options(kind):
+    import tkcurses
+
+    menu = tkcurses.Menu(tkcurses.Misc(), tearoff=0)
+    menu.add(kind)
+    assert set(menu.entryconfigure(0)) == TK_ENTRY_OPTIONS[kind]
+
+
+def test_a_separator_refuses_a_label_as_tk_does():
+    import tkcurses
+
+    menu = tkcurses.Menu(tkcurses.Misc(), tearoff=0)
+    with pytest.raises(tkcurses.TclError, match='unknown option "-label"'):
+        menu.add_separator(label="x")
+
+
+def test_an_entry_without_its_indicator_keeps_the_room_for_one():
+    import tkcurses
+
+    menu = tkcurses.Menu(tkcurses.Misc(), tearoff=0)
+    menu.add_checkbutton(label="Plain", indicatoron=0)
+    menu.add_checkbutton(label="Ticked")
+    menu.add_command(label="Bare", hidemargin=1)
+    assert [menu._indicator_for(entry) for entry in menu._entries] == [
+        "    ",
+        "[ ] ",
+        "",
+    ]

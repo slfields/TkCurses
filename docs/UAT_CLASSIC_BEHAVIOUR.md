@@ -129,8 +129,8 @@ These differences are expected. Note any others under *Faults found*:
 - Spacing is whole rows; Tk's is pixels.
 - A sash is never less than one cell wide. `proxyborderwidth` draws nothing,
   and `sashcursor` changes nothing: a terminal has no pointer shapes.
-- Nothing is activated by hovering, so `overrelief` is not shown by this
-  scenario.
+- Nothing is activated by hovering, so `overrelief` shows only while a
+  button is held down over it.
 
 ## Faults found by running it
 

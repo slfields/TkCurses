@@ -1341,8 +1341,11 @@ class Widget:
         One override rather than nine, because every one of them paints through
         ``_Drawable._draw_border``.
         """
-        options = getattr(self, "_options", {})
-        relief = str(options.get("relief", "") or tkcurses.FLAT)
+        relief = (
+            self._drawn_relief()  # type: ignore[attr-defined]
+            if hasattr(self, "_options")
+            else tkcurses.FLAT
+        )
         base: BorderStyle = super()._border_style()  # type: ignore[misc]
         if relief == tkcurses.FLAT:
             return base
@@ -5127,7 +5130,7 @@ class LabeledScale(Widget, tkcurses.Frame):
         self.label.place(x=0, y=label_row, relwidth=1.0, height=1)
         self.scale.place(x=0, y=scale_row, relwidth=1.0, height=1)
         self._request_size((int(to) and len(str(to))) or 1, 2)
-        self._variable.trace_add("write", lambda *_: self._follow())
+        self._trace = self._variable.trace_add("write", lambda *_: self._follow())
         self._follow()
 
     @property
@@ -5152,7 +5155,7 @@ class LabeledScale(Widget, tkcurses.Frame):
     def destroy(self) -> None:
         """Drop the trace before going, so it cannot fire into a dead label."""
         with contextlib.suppress(Exception):
-            self._variable.trace_remove("write", self._variable.trace_info()[-1][1])
+            self._variable.trace_remove("write", self._trace)
         super().destroy()
 
 
@@ -5295,6 +5298,7 @@ class Label(Widget, tkcurses.Label):
     _widget_options: ClassVar[dict[str, Any]] = {
         "padding": "",
         "compound": "",
+        "relief": "",
     }
 
 
@@ -5419,6 +5423,7 @@ class Frame(Widget, tkcurses.Frame):
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "padding": "",
+        "relief": "",
     }
 
 
@@ -5471,9 +5476,13 @@ class Labelframe(Widget, tkcurses.LabelFrame):
         "labelanchor": _label_anchor,
     }
 
+    #: Drawn when ``relief`` is ``""``, Tk's answer: the theme's.
+    _default_relief: ClassVar[str] = tkcurses.GROOVE
+
     _widget_options: ClassVar[dict[str, Any]] = {
         "padding": "",
         "underline": "",
+        "relief": "",
     }
 
 
@@ -5926,6 +5935,7 @@ class Menubutton(Widget, tkcurses.Menubutton):
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "padding": "",
+        "relief": "raised",
     }
 
 
@@ -5986,7 +5996,9 @@ class Spinbox(Widget, _EntryCommands, tkcurses.Spinbox):
 
     It steps through ``values`` if it has them, and otherwise from ``from``
     to ``to`` by ``increment``. :meth:`set` puts any text in it, checked
-    against neither.
+    against neither. Up and Down, and the arrows, generate
+    ``<<Increment>>`` and ``<<Decrement>>``, which do the stepping, so a
+    program can generate them to step it, or bind them to stop it.
 
     Sample output:
         spin = ttk.Spinbox(root, from_=1, to=10, width=6)
@@ -6018,7 +6030,8 @@ class Spinbox(Widget, _EntryCommands, tkcurses.Spinbox):
     ``xscrollcommand``.
 
     Differences from tkinter:
-        It has :meth:`invoke`, which in tkinter only the classic Spinbox
+        It has :meth:`invoke`, ``scan``, ``selection`` and
+        ``selection_element``, which in tkinter only the classic Spinbox
         has.
 
     Sample output (show):
@@ -6065,7 +6078,10 @@ class Spinbox(Widget, _EntryCommands, tkcurses.Spinbox):
         return "%.0f"
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
-        "width": tkcurses._tcl_integer
+        "width": tkcurses._tcl_integer,
+        "from": tkcurses._tcl_number_as_given,
+        "increment": tkcurses._tcl_number_as_given,
+        "to": tkcurses._tcl_number_as_given,
     }
 
     _ttk_class = "TSpinbox"

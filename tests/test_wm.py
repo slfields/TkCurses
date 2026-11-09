@@ -324,14 +324,11 @@ def test_an_unknown_attribute_is_refused(window):
 # --------------------------------------------------------------- unsupported
 
 
-def test_wm_manage_explains_what_it_needs(window):
-    with pytest.raises(TclError, match="geometry managers"):
-        window.wm_manage(window)
-
-
-def test_wm_forget_explains_what_it_needs(window):
-    with pytest.raises(TclError, match="geometry managers"):
-        window.wm_forget(window)
+def test_wm_manage_leaves_a_window_as_it_is(window):
+    """Measured on Tk 9.0.2: managing a toplevel already managed is a
+    no-op. The rest is in test_wm_manage_tty.py, which has a screen."""
+    window.wm_manage(window)
+    assert window.winfo_toplevel() is window
 
 
 # ------------------------------------------------------------------ dragging

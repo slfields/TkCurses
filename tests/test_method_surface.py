@@ -219,17 +219,10 @@ GAPS: dict[str, dict[str, str]] = {
         "select_item": "TkCurses-7jv",
         "select_to": "TkCurses-7jv",
     },
-    "tk.Entry": {
-        "scan_dragto": "TkCurses-6lh",
-        "scan_mark": "TkCurses-6lh",
-    },
     "tk.Grid": {
         "location": "TkCurses-zmf",
     },
     "tk.Listbox": {
-        "itemcget": "TkCurses-5kg",
-        "itemconfig": "TkCurses-5kg",
-        "itemconfigure": "TkCurses-5kg",
         "scan_dragto": "TkCurses-6lh",
         "scan_mark": "TkCurses-6lh",
     },
@@ -283,13 +276,6 @@ GAPS: dict[str, dict[str, str]] = {
         "proxy_place": "TkCurses-xy2",
         "sash": "TkCurses-xy2",
         "sash_mark": "TkCurses-xy2",
-    },
-    "tk.Spinbox": {
-        "scan": "TkCurses-6lh",
-        "scan_dragto": "TkCurses-6lh",
-        "scan_mark": "TkCurses-6lh",
-        "selection": "TkCurses-5kg",
-        "selection_element": "TkCurses-5kg",
     },
     "tk.Text": {
         "count": "TkCurses-mzj",

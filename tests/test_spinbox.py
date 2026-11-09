@@ -589,3 +589,129 @@ def test_a_ttk_spinbox_keeps_its_text_when_configured(root, start, construct, ch
     spin.insert(0, start)
     spin.configure(**change)
     assert spin.get() == start
+
+
+#: ttk.Spinbox's from, to and increment read back as written, measured on
+#: Tk 9.0.2: an integer wherever the text is one, a float otherwise.
+AS_GIVEN = [
+    (10, 10), ("10", 10), (" 10", 10), ("0x10", 16),
+    (2.5, 2.5), ("1e1", 10.0), (10.0, 10.0),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("option", ["from", "to", "increment"])
+@pytest.mark.parametrize("value, expected", AS_GIVEN)
+def test_a_themed_spinbox_reads_its_numbers_back_as_given(option, value, expected):
+    import tkcurses
+    from tkcurses import ttk
+
+    key = "from_" if option == "from" else option
+    got = ttk.Spinbox(tkcurses.Misc(), **{key: value}).cget(option)
+    assert (got, type(got)) == (expected, type(expected))
+
+
+def test_a_classic_spinbox_reads_them_back_as_floats():
+    import tkcurses
+
+    got = tkcurses.Spinbox(tkcurses.Misc(), from_=1, to=10).cget("to")
+    assert (got, type(got)) == (10.0, float)
+
+
+def test_a_themed_spinbox_steps_on_increment_and_decrement():
+    import tkcurses
+    from tkcurses import ttk
+
+    spin = ttk.Spinbox(tkcurses.Misc(), from_=0, to=5)
+    spin.set(1)
+    spin.event_generate("<<Increment>>")
+    assert spin.get() == "2"
+    spin.event_generate("<<Decrement>>")
+    spin.event_generate("<<Decrement>>")
+    spin.event_generate("<<Decrement>>")
+    assert spin.get() == "0"
+
+
+def test_the_up_key_steps_through_increment():
+    """So a program's own ``<<Increment>>`` binding sees the key, and can stop it."""
+    import tkcurses
+    from tkcurses import ttk
+
+    spin = ttk.Spinbox(tkcurses.Misc(), from_=0, to=5)
+    spin.set(1)
+    heard = []
+    spin.bind("<<Increment>>", lambda event: heard.append(event) or "break")
+    spin.event_generate("<Key-Up>")
+    assert len(heard) == 1
+    assert spin.get() == "1"
+    spin.unbind("<<Increment>>")
+    spin.event_generate("<Key-Up>")
+    assert spin.get() == "2"
+
+
+# ----------------------------------------- selection, element and scan, Tk's
+
+
+def test_the_selection_element_is_none_until_one_is_named(root):
+    spin = Spinbox(root, from_=0, to=9)
+    assert spin.selection_element() == "none"
+    assert spin.selection("element") == "none"
+    spin.selection_element("buttonup")
+    assert spin.selection_element() == "buttonup"
+    assert spin._arrow_relief("buttonup") == "sunken"
+    assert spin._arrow_relief("buttondown") == spin.cget("buttondownrelief")
+
+
+@pytest.mark.parametrize(
+    "name, message",
+    [
+        ("nonsense", 'bad selection element "nonsense": must be buttondown, buttonup, or none'),
+        ("", 'ambiguous selection element "": must be buttondown, buttonup, or none'),
+    ],
+)  # fmt: skip
+def test_a_selection_element_tk_lacks_is_refused(root, name, message):
+    with pytest.raises(TclError) as caught:
+        Spinbox(root).selection_element(name)
+    assert str(caught.value) == message
+
+
+def test_pressing_an_arrow_makes_it_the_selection_element(root):
+    """tk::spinbox::ArrowPress names it; ButtonUp names none."""
+    spin = laid_out(Spinbox(root, from_=0, to=9), width=14)
+    up = spin._arrow_columns()[0]
+    spin._handle(MouseEvent(button=1, state="pressed", x=up, y=0))
+    assert spin.selection_element() == "buttonup"
+    spin._handle(MouseEvent(button=1, state="released", x=up, y=0))
+    assert spin.selection_element() == "none"
+
+
+def test_selection_is_the_command_behind_the_named_forms(root):
+    spin = Spinbox(root)
+    spin.insert(0, "12345")
+    assert spin.selection("range", 1, 3) == ()
+    assert spin.selection("present") == (1,)
+    assert spin.selection_get() == "23"
+    spin.selection("clear")
+    assert spin.selection("present") == (0,)
+    with pytest.raises(TclError, match='bad selection option "nonsense": must be'):
+        spin.selection("nonsense")
+
+
+def test_scan_drags_the_view_ten_times_as_far(root):
+    """Measured on Tk 9.0.2, a field five wide holding a-z: a mark at 10 and
+    drags to 9, 12, -100 and -99 show 10, 0, 21 and 11 first - the mark
+    moving with the pointer at either end, as EntryScanTo moves it."""
+    entry = Entry(root, width=5)
+    entry._allocate(Rect(0, 0, 5, 1))
+    entry._map()
+    entry.insert(0, "abcdefghijklmnopqrstuvwxyz")
+    entry.xview(0)
+    entry.scan_mark(10)
+    seen = []
+    for x in (9, 12, -100, -99):
+        entry.scan_dragto(x)
+        seen.append(entry.index("@0"))
+    assert seen == [10, 0, 21, 11]
+    spin = Spinbox(root)
+    assert spin.scan("mark", 3) == ()
+    with pytest.raises(TclError, match='bad scan option "x": must be dragto or mark'):
+        spin.scan("x", 1)

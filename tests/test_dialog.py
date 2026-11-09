@@ -81,7 +81,7 @@ def test_options_come_from_the_dictionary_and_the_keywords_together():
 
 
 def test_the_stock_icon_name_is_still_importable():
-    """Nothing draws it - a terminal has no bitmaps - but code names it."""
+    """tkinter's dialog module exports it, and code names it."""
     assert DIALOG_ICON == "questhead"
 
 

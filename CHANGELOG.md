@@ -6,7 +6,55 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+### Added
+- `Listbox.itemconfigure` and `itemcget`: a row's own `background`,
+  `foreground`, `selectbackground` and `selectforeground`, drawn over the
+  list's and kept with the row as others are inserted or deleted.
+- `Spinbox.selection`, `selection_element` - the arrow drawn pressed,
+  which a press now names as in Tk - and `scan`, `scan_mark` and
+  `scan_dragto` on Entry and Spinbox, dragging the view ten times as far,
+  as Tk's do.
+- Menu entries take the options Tk gives them: their own `background`,
+  `foreground`, `activebackground` and `activeforeground`, drawn over the
+  menu's; `selectcolor`, `indicatoron` and `selectimage` on the check and
+  radio kinds; `hidemargin`, `font`, `image`, `bitmap` and `compound`. A
+  separator takes `background` and refuses the rest, as in Tk.
+- `bitmap` on Button, Checkbutton, Label, Menubutton, OptionMenu and
+  Radiobutton: Tk's ten built-in names, each drawn as one character
+  (`info` as ℹ, `warning` as ⚠, `error` as ✖, the grays as shades), and
+  `@file` drawn as the XBM file's bits. `dialog.Dialog` shows its bitmap
+  beside the message, as Tk's dialog does.
+- `<Enter>` and `<Leave>` are delivered to widgets, made from clicks and
+  drags as X11 makes them under the implicit grab: a click is a visit, and
+  a held press tells the widget pressed when the pointer leaves it and
+  comes back. A Button dragged off is drawn released until the pointer
+  returns, as in Tk, and `overrelief` and the active colours show while it
+  is held. With `TKCURSES_MOUSE_REPORT_HOVER=1` the pointer is followed
+  everywhere.
+- A `textvariable` or `variable` given a name binds to the variable of that
+  name, as in Tk: `setvar`, every `Variable` of that name and the widget
+  see each other's writes. Traces are kept by name, so a trace added through
+  one `Variable` fires for writes through another and through `setvar`, and
+  `getvar` fires read traces. A classic widget creates a missing variable
+  from itself, as Tk's do; a themed one leaves it unset. A Listbox bound by
+  name now hears writes made elsewhere.
+- `wm_manage` makes a Frame, LabelFrame or forgotten Toplevel a window of
+  its own, keeping its children and bindings, and `wm_forget` hands it
+  back to be packed, gridded or placed, as in Tk. They raised `TclError`.
+
+### Changed
+- `getvar` of a variable that was never set raises `TclError` (`can't read
+  "name": no such variable`), as tkinter does; it returned `None`.
+
 ### Fixed
+- A `Menubutton` is flat by default, as in Tk; an `OptionMenu` is raised
+  and two wide, as tkinter makes it. The themed Frame, Label and
+  Labelframe answer `cget("relief")` with `""`, the theme's, as Tk does,
+  and are drawn as before.
+- `ttk.Spinbox` steps on `<<Increment>>` and `<<Decrement>>`, which Up,
+  Down and its arrows generate, as in Tk, so a program can generate them
+  or bind them. Its `from`, `to` and `increment` read back as written -
+  `from_=10` is 10, not 10.0.
 - A border 0 wide is not drawn, whatever the relief, as in Tk, and every
   classic widget's `borderwidth` defaults to Tk's - 1 on most, 2 on a
   LabelFrame - where it was 0 with the box drawn by the relief alone. The

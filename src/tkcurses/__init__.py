@@ -900,6 +900,18 @@ def _tcl_float(widget: Any, value: Any) -> float:
     return float(number)
 
 
+def _tcl_number_as_given(widget: Any, value: Any) -> int | float:
+    """A double option a themed widget reads back as it was written.
+
+    Measured on Tk 9.0.2: ``ttk.Spinbox(from_="0x10").cget("from")`` is 16
+    and ``from_=10`` reads back 10, an integer wherever the text is one,
+    where the classic Spinbox answers 16.0 and 10.0.
+    """
+    number = _tcl_float(widget, value)
+    whole = _tcl_number(value)
+    return whole if isinstance(whole, int) else number
+
+
 def _as_int(value: Any, otherwise: int) -> int:
     """An integer option as stored, which the option database leaves a string."""
     try:
@@ -1310,6 +1322,64 @@ def _is_number(text: str) -> bool:
     return True
 
 
+#: Tk's built-in bitmaps, as one cell each. The names are Tk's - measured on
+#: Tk 9.0.2, exactly these ten and case counts - and the glyphs are ours: a
+#: 16-pixel picture cannot be drawn in a cell, so each is the character
+#: that reads as it. All are one cell wide, ambiguous width included.
+_BITMAP_GLYPHS: dict[str, str] = {
+    "error": "✖",
+    "gray12": "·",
+    "gray25": "░",
+    "gray50": "▒",
+    "gray75": "▓",
+    "hourglass": "⧗",
+    "info": "\u2139",  # INFORMATION SOURCE, which looks like an i
+    "questhead": "⍰",
+    "question": "?",
+    "warning": "⚠",
+}
+
+
+def _bitmap(widget: Any, value: Any) -> str:
+    """A ``bitmap``: one of Tk's ten names, ``@file`` naming an XBM file,
+    or ``""`` for none - refused otherwise in Tk 9.0.2's words."""
+    text = str(value)
+    if text == "" or text in _BITMAP_GLYPHS:
+        return text
+    if text.startswith("@"):
+        _file_bitmap(widget, text[1:])
+        return text
+    raise TclError(f'bitmap "{text}" not defined')
+
+
+def _file_bitmap(widget: Any, path: str, foreground: str = "white") -> Image:
+    """The XBM file ``bitmap="@path"`` names, as an image no one else sees.
+
+    Made with :class:`BitmapImage` and taken straight back out of the
+    application's images, so it is the widget's own and ``image_names()``
+    does not list it.
+
+    Raises:
+        TclError: If the file cannot be read, in Tk's words.
+    """
+    try:
+        if not path:  # BitmapImage takes file="" as none given
+            raise TclError(path)
+        image = BitmapImage(master=widget, file=path, foreground=foreground)
+    except TclError:
+        raise TclError(f'error reading bitmap file "{path}"') from None
+    widget.tk.images.pop(str(image), None)
+    return image
+
+
+def _entry_flag(menu: Any, value: Any) -> bool:
+    """A boolean menu-entry option, read as Tk reads one; unreadable is off."""
+    try:
+        return bool(_tcl_boolean(menu, value))
+    except TclError:
+        return False
+
+
 def _tcl_boolean(widget: Any, value: Any) -> int:
     """A boolean option, answered as Tk answers it: ``yes`` reads back 1.
 
@@ -1413,21 +1483,16 @@ def _element_borderwidth(widget: Any, value: Any) -> Any:
 def _variable(widget: Any, value: Any) -> Any:
     """A ``Variable``, or nothing - ``""`` read as None.
 
-    Tk also takes a NAME and binds to the global variable called that, but
-    traces here belong to each Variable object rather than to the name, so a
-    widget bound by name would not hear writes made through any other: a
-    TclError now, rather than the AttributeError it crashed with
-    (TkCurses-vgkb), until TkCurses-4v9f.
+    Anything else is a NAME, and binds to the variable called that, as in
+    Tk: ``textvariable=5`` is the variable ``5``, which ``setvar`` and any
+    ``Variable(name="5")`` share. The traces are kept by name, so each
+    hears the others' writes.
     """
-    del widget
     if value is None or value == "":
         return None
     if isinstance(value, Variable):
         return value
-    raise TclError(
-        f'variable "{value}" is a name, not a Variable: binding a widget to a'
-        " global variable by name is TkCurses-4v9f"
-    )
+    return _NamedVariable(widget, str(value))
 
 
 def _unchecked(widget: Any, value: Any) -> Any:
@@ -1455,6 +1520,7 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "activeborderwidth": _signed_distance,
     "activeforeground": _colour_or_terminals,
     "background": _colour_or_terminals,
+    "bitmap": _bitmap,
     "foreground": _colour_or_terminals,
     "highlightbackground": _colour_or_terminals,
     "highlightcolor": _colour_or_terminals,
@@ -1554,9 +1620,8 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "undo": _tcl_boolean,
     "autoseparators": _tcl_boolean,
     "textvariable": _variable,
-    # Not listvariable: Listbox takes a name, but only one way - it writes
-    # its items there and hears no write made elsewhere. Kept, as partial,
-    # while TkCurses-4v9f decides how names should bind.
+    # Not listvariable: Listbox keeps the name it was given and binds it
+    # itself, as the items it holds decide the variable's first value.
     "variable": _variable,
     "striped": _tcl_boolean,
     "troughcolor": _colour_or_terminals,
@@ -2532,7 +2597,21 @@ class Misc:
         """
         if getattr(self, "_overrideredirect", False):
             return False
-        return _draws_border(self._options)
+        return _draws_border(
+            {
+                "relief": self._drawn_relief(),
+                "borderwidth": self._options.get("borderwidth", 0),
+            }
+        )
+
+    #: The relief drawn when ``relief`` is ``""``, which only a themed widget
+    #: takes: Tk answers ``""`` there, the theme's, and the theme here is
+    #: drawn as this.
+    _default_relief: ClassVar[str] = FLAT
+
+    def _drawn_relief(self) -> str:
+        """The relief to draw: the option, or the default it stands for."""
+        return str(self._options.get("relief", "") or self._default_relief)
 
     @property
     def _border_drawn(self) -> bool:
@@ -2929,6 +3008,14 @@ class Misc:
         if previous is not container or (manager and manager != self._manager):
             self._leave_layout(previous)
 
+    def _leave_manager(self) -> None:
+        """Leave whichever geometry manager lays this widget out, if any."""
+        container = self._manager_container
+        if container is not None:
+            self._leave_layout(container)
+        self._manager = ""
+        self._manager_container = None
+
     def _leave_layout(self, container: Misc) -> None:
         """Take this widget out of one container's layout.
 
@@ -3235,12 +3322,15 @@ class Misc:
         if nothing ever does - which is Tk's behaviour too, and why the usual
         caller is a dialog that has already arranged for a button to set it.
         """
+        variable = (
+            name if isinstance(name, Variable) else _NamedVariable(self, str(name))
+        )
         written: list[bool] = []
-        handle = name.trace_add("write", lambda *_: written.append(True))
+        handle = variable._watch(lambda: written.append(True))
         try:
             self._wait_until(lambda: bool(written))
         finally:
-            name.trace_remove("write", handle)
+            variable._unwatch(handle)
 
     waitvar = wait_variable
 
@@ -3443,12 +3533,23 @@ class Misc:
         return widget
 
     def getvar(self, name: str = "PY_VAR") -> Any:
-        """Read an application variable."""
-        return self.tk.variables.get(name)
+        """Read an application variable, firing its read traces.
+
+        Raises:
+            TclError: If there is no variable of that name, in Tk's words.
+        """
+        name = str(name)
+        _fire_traces(self.tk, name, "read")
+        if name not in self.tk.variables:
+            raise TclError(f'can\'t read "{name}": no such variable')
+        return self.tk.variables[name]
 
     def setvar(self, name: str = "PY_VAR", value: Any = "1") -> None:
-        """Write an application variable."""
+        """Write an application variable, firing its write traces: every
+        Variable and widget bound to that name hears it."""
+        name = str(name)
         self.tk.variables[name] = value
+        _fire_traces(self.tk, name, "write")
 
     def getint(self, s: Any) -> int:
         """Parse an integer, accepting Tcl's ``0x``/``0o``/``0b`` prefixes."""
@@ -4478,6 +4579,9 @@ class Pack:
 
         def _map(self) -> None: ...
         def _unmap(self) -> None: ...
+
+        _is_toplevel: bool
+
         def _managed_layout(self, name: str) -> Layout | None: ...
         def _leave_layout(self, container: Misc) -> None: ...
         def _leave_for(self, container: Misc, manager: str = "") -> None: ...
@@ -4500,6 +4604,8 @@ class Pack:
         container = options.pop("in_", None) or options.pop("in", None) or self.master
         if container is None:
             raise TclError("cannot pack the root window")
+        if self._is_toplevel:
+            raise TclError(f"can't pack \"{self}\": it's a top-level window")
         before = options.pop("before", None)
         after = options.pop("after", None)
 
@@ -4718,6 +4824,9 @@ class Grid:
 
         def _map(self) -> None: ...
         def _unmap(self) -> None: ...
+
+        _is_toplevel: bool
+
         def _managed_layout(self, name: str) -> Layout | None: ...
         def _leave_layout(self, container: Misc) -> None: ...
         def _leave_for(self, container: Misc, manager: str = "") -> None: ...
@@ -4742,6 +4851,8 @@ class Grid:
         container = options.pop("in_", None) or options.pop("in", None) or self.master
         if container is None:
             raise TclError("cannot grid the root window")
+        if self._is_toplevel:
+            raise TclError(f"can't manage \"{self}\": it's a top-level window")
         layout = _grid_layout_of(container)
         # Two sources, and the live one wins: a widget being reconfigured
         # merges into the options it has now, while one that grid_remove()
@@ -4898,6 +5009,9 @@ class Place:
 
         def _map(self) -> None: ...
         def _unmap(self) -> None: ...
+
+        _is_toplevel: bool
+
         def _managed_layout(self, name: str) -> Layout | None: ...
         def _leave_layout(self, container: Misc) -> None: ...
         def _leave_for(self, container: Misc, manager: str = "") -> None: ...
@@ -4920,6 +5034,10 @@ class Place:
         container = options.pop("in_", None) or options.pop("in", None) or self.master
         if container is None:
             raise TclError("cannot place the root window")
+        if self._is_toplevel:
+            raise TclError(
+                f'can\'t use placer on top-level window "{self}"; use wm command instead'
+            )
         layout = _place_layout_of(container)
         current = self._managed_layout("place")
         remembered = (
@@ -5066,6 +5184,25 @@ _WM_STATES = ("normal", "iconic", "withdrawn")
 #: Attributes wm_attributes understands. Tk's list is mostly X11 compositing
 #: and has no meaning for a character cell window; these two do.
 _WM_ATTRIBUTES = ("-topmost", "-fullscreen")
+
+
+def _requested_size(widget: Any) -> tuple[int, int]:
+    """The size a widget asks for, at least one cell each way."""
+    return max(1, widget.winfo_reqwidth()), max(1, widget.winfo_reqheight())
+
+
+def _window_rect(widget: Any, width: int, height: int) -> Rect:
+    """Where a new window of this size goes: centred, clamped to the screen,
+    as a Toplevel's does when nothing has said."""
+    screen_width, screen_height = widget._screen_size()
+    width = clamp(width, 1, screen_width)
+    height = clamp(height, 1, screen_height)
+    return Rect(
+        max(0, (screen_width - width) // 2),
+        max(0, (screen_height - height) // 2),
+        width,
+        height,
+    )
 
 
 class Wm:
@@ -5616,34 +5753,60 @@ class Wm:
 
     # ------------------------------------------------------------ reparenting
 
-    def wm_manage(self, widget: Misc) -> None:  # noqa: ARG002 - tkinter signature
-        """Turn a managed widget into a toplevel.
+    def wm_manage(self, widget: Misc) -> None:
+        """Make ``widget`` a window of its own.
+
+        It leaves whichever geometry manager had it, keeps its master, its
+        children and its bindings, and is drawn where a new toplevel would
+        be, at the size it asks for. ``winfo_manager`` then answers ``wm``,
+        and packing, gridding or placing it is refused until
+        :meth:`wm_forget` hands it back. A Toplevel that was forgotten is a
+        window again; one that is a window already is left as it is.
 
         Raises:
-            TclError: Always.
-
-        Differences from tkinter:
-            Not available yet: taking a widget from its geometry manager and
-            giving it a window of its own is not implemented.
+            TclError: If ``widget`` is not a Frame, LabelFrame or Toplevel,
+                in Tk's words. A themed frame is not one, as in Tk.
         """
-        # TkCurses-113.
-        raise TclError(
-            "wm_manage needs the geometry managers, which are not implemented "
-            "yet (TkCurses-113)"
-        )
+        # Measured on Tk 9.0.2.
+        if isinstance(widget, Toplevel):
+            if not widget._is_toplevel:
+                widget._leave_manager()
+                del widget._is_toplevel  # back to the class's True
+                widget._allocate(widget._default_rect())
+                widget._map()
+            return
+        if not isinstance(widget, (Frame, LabelFrame)) or _is_ttk(widget):
+            raise TclError(
+                f'window "{widget}" is not manageable: must be a frame,'
+                " labelframe or toplevel"
+            )
+        if widget._is_toplevel:
+            return
+        widget._leave_manager()
+        widget._is_toplevel = True
+        widget._manager = "wm"
+        widget._allocate(_window_rect(widget, *_requested_size(widget)))
+        widget._map()
 
     manage = wm_manage
 
-    def wm_forget(self, window: Misc) -> None:  # noqa: ARG002 - tkinter signature
-        """Turn a toplevel back into a managed widget.
+    def wm_forget(self, window: Misc) -> None:
+        """Take ``window`` off the screen as a window, so that a geometry
+        manager can lay it out inside its master.
 
-        Raises:
-            TclError: Always, for the same reason as :meth:`wm_manage`.
+        It is unmapped until one does, and its children's
+        ``winfo_toplevel`` is its own again. The root, and a widget that is
+        not a window, are left alone, as in Tk.
         """
-        raise TclError(
-            "wm_forget needs the geometry managers, which are not implemented "
-            "yet (TkCurses-113)"
-        )
+        if (
+            not isinstance(window, BaseWidget)
+            or window.master is None
+            or not window._is_toplevel
+        ):
+            return
+        window._is_toplevel = False
+        window._manager = ""
+        window._unmap()
 
     forget = wm_forget
 
@@ -5754,6 +5917,11 @@ class Tk(BaseWidget, Wm):
 
         self._screen = CursesScreen()
         self._mouse_owner: Misc | None = None
+        #: The widget the pointer was last known to be over, which has had
+        #: ``<Enter>`` and not yet ``<Leave>``; see :meth:`_cross_before`.
+        self._pointer_widget: Misc | None = None
+        #: Whether the terminal reports the pointer between presses.
+        self._hover_reported = False
         self._input: InputHandler | None = None
         self._motion_asserted = False
         #: A Ctrl-C the loop has yet to answer; see :meth:`_catch_interrupts`.
@@ -5858,6 +6026,7 @@ class Tk(BaseWidget, Wm):
             with contextlib.suppress(AttributeError, _curses.error):
                 _curses.set_escdelay(settings.input.escape_delay)
             mouse = settings.mouse
+            self._hover_reported = bool(mouse.report_hover and mouse.enabled)
             self._input = InputHandler(
                 self._screen.stdscr,
                 click_interval=mouse.click_interval,
@@ -6301,11 +6470,75 @@ class Tk(BaseWidget, Wm):
         if isinstance(event, MouseEvent):
             if event.state in _PRESSES and self.tk.repeat is not None:
                 self._release_lost()
+            held = self._mouse_owner
             target = self._mouse_target(event)
-        else:
-            target = self.tk.focus or self
-        target = self._through_grab(target)
+            if event.is_scroll:
+                self._through_grab(target)._handle(event)
+                return
+            self._cross_before(event, held)
+            self._through_grab(target)._handle(event)
+            self._cross_after(event)
+            return
+        target = self._through_grab(self.tk.focus or self)
         target._handle(event)
+
+    # Crossings. The terminal does not report the pointer between presses -
+    # hover reporting (DEC 1003) is off by default, because it floods the
+    # application and takes the terminal's own selection away - so the
+    # pointer is known only from a press to its release, and <Enter> and
+    # <Leave> are made from those reports as X11 makes them under the
+    # implicit grab: the widget pressed hears the pointer leave and come
+    # back, and nothing else hears anything until the release. A release
+    # ends the visit, since nothing will say when the pointer goes, so a
+    # button is not left drawn active under a pointer long gone.
+
+    def _cross_before(self, event: MouseEvent, held: Misc | None) -> None:
+        """The crossings due before ``event`` is delivered."""
+        if event.state in _PRESSES:
+            self._cross_to(self._crossable(self._widget_at(event.x, event.y)), event)
+        elif held is not None and held.winfo_exists():
+            # Under the implicit grab only the widget pressed is entered or
+            # left - and not even that one if a modal grab took its press.
+            inside = _point_within(held, event.x, event.y)
+            self._cross_to(self._crossable(held) if inside else None, event)
+        elif event.state == "motion":
+            self._cross_to(self._crossable(self._widget_at(event.x, event.y)), event)
+
+    def _cross_after(self, event: MouseEvent) -> None:
+        """The crossings due after ``event``: a release ends the grab."""
+        if event.state not in ("released", "clicked"):
+            return
+        if self._hover_reported:
+            # X11's ungrab: the widget now under the pointer is entered.
+            self._cross_to(self._crossable(self._widget_at(event.x, event.y)), event)
+        else:
+            self._cross_to(None, event)
+
+    def _crossable(self, widget: Misc) -> Misc | None:
+        """``widget``, or None if a grab elsewhere keeps the pointer from it."""
+        grab = self.tk.grab
+        if grab is None or not grab.winfo_exists():
+            return widget
+        if any(each is grab for each in widget._ancestry()):
+            return widget
+        return None
+
+    def _cross_to(self, widget: Misc | None, event: MouseEvent) -> None:
+        """Move the pointer to ``widget``: ``<Leave>`` the old, ``<Enter>``
+        the new, in that order, as Tk delivers them."""
+        old = self._pointer_widget
+        if old is widget:
+            return
+        self._pointer_widget = widget
+        for each, sequence in ((old, "<Leave>"), (widget, "<Enter>")):
+            if each is not None and each.winfo_exists():
+                each.event_generate(
+                    sequence,
+                    x=event.x - each.winfo_rootx(),
+                    y=event.y - each.winfo_rooty(),
+                    x_root=event.x,
+                    y_root=event.y,
+                )
 
     def _release_lost(self) -> None:
         """Stop an auto-repeat whose release never arrived.
@@ -6972,8 +7205,9 @@ class Variable:
         self._master = master
         self._tk = master.tk
         self._name = name or f"PY_VAR{next(Variable._counter)}"
-        self._traces: dict[str, tuple[tuple[str, ...], Callable[..., Any]]] = {}
-        self._trace_ids = itertools.count(1)
+        #: The handles of the traces added through this object, which go
+        #: when it does, as tkinter deletes the commands it made for them.
+        self._own_traces: set[str] = set()
         if value is not None:
             self.initialize(value)
         elif self._name not in self._tk.variables:
@@ -7005,13 +7239,23 @@ class Variable:
     def __del__(self) -> None:
         """Forget the value when the last reference goes.
 
+        Its own traces go with it. The value is kept while anything else
+        still traces the name: tkinter unsets it, and a widget bound to it
+        puts it straight back - measured on Tk 9.0.2, a Label keeps its
+        variable alive after every StringVar of that name is collected.
+
         Guarded to the point of silence: this runs during garbage collection
         and at interpreter shutdown, where the application may already be
         half torn down and an exception here would be reported out of any
         useful context.
         """
         with contextlib.suppress(Exception):
-            self._tk.variables.pop(self._name, None)
+            traces = self._tk.variable_traces.get(self._name, {})
+            for handle in self._own_traces:
+                traces.pop(handle, None)
+            if not traces:
+                self._tk.variable_traces.pop(self._name, None)
+                self._tk.variables.pop(self._name, None)
 
     # --------------------------------------------------------------- value
 
@@ -7055,9 +7299,34 @@ class Variable:
         for one in modes:
             if one not in _TRACE_MODES:
                 raise TclError(f'bad operation "{one}"')
-        handle = f"{self._name}_trace{next(self._trace_ids)}"
-        self._traces[handle] = (modes, callback)
+        handle = self._add_trace(modes, callback, listed=True)
+        self._own_traces.add(handle)
         return handle
+
+    def _add_trace(
+        self, modes: tuple[str, ...], callback: Callable[..., Any], *, listed: bool
+    ) -> str:
+        """Put a trace on the name, where every Variable of it sees it."""
+        handle = f"{self._name}_trace{next(self._tk.trace_counter)}"
+        traces = self._tk.variable_traces.setdefault(self._name, {})
+        traces[handle] = (modes, callback, listed)
+        return handle
+
+    def _watch(self, callback: Callable[[], Any]) -> str:
+        """A widget's own write trace: fired like any other, and not listed
+        by :meth:`trace_info`, as Tk's are not."""
+        return self._add_trace(("write",), lambda *_: callback(), listed=False)
+
+    def _unwatch(self, handle: str) -> None:
+        """Drop a trace :meth:`_watch` added."""
+        self._drop_trace(handle)
+
+    def _drop_trace(self, handle: str) -> None:
+        traces = self._tk.variable_traces.get(self._name)
+        if traces is not None:
+            traces.pop(handle, None)
+            if not traces:
+                del self._tk.variable_traces[self._name]
 
     def trace_remove(
         self,
@@ -7067,13 +7336,19 @@ class Variable:
         """Remove a trace by the handle :meth:`trace_add` returned.
 
         The mode is accepted for tkinter's signature and not consulted: the
-        handle already identifies one registration.
+        handle already identifies one registration. Any Variable of the
+        same name can remove it, since the trace is on the name.
         """
-        self._traces.pop(cbname, None)
+        self._own_traces.discard(cbname)
+        self._drop_trace(cbname)
 
     def trace_info(self) -> list[tuple[tuple[str, ...], str]]:
-        """Every trace on this variable, as ``(modes, handle)`` pairs."""
-        return [(modes, handle) for handle, (modes, _) in self._traces.items()]
+        """Every trace on this variable's name, as ``(modes, handle)`` pairs,
+        whichever Variable of that name added it."""
+        traces = self._tk.variable_traces.get(self._name, {})
+        return [
+            (modes, handle) for handle, (modes, _, listed) in traces.items() if listed
+        ]
 
     def trace_variable(self, mode: str, callback: Callable[..., Any]) -> str:
         """Add a trace using the old single-letter modes.
@@ -7110,14 +7385,63 @@ class Variable:
             raise TclError(f'bad operation "{mode}"') from None
 
     def _fire(self, mode: str) -> None:
-        """Run the traces registered for ``mode``.
+        """Run the traces on this name registered for ``mode``."""
+        _fire_traces(self._tk, self._name, mode)
 
-        The list is copied first, so a callback may add or remove a trace -
-        including its own - without disturbing the pass it is in.
-        """
-        for modes, callback in list(self._traces.values()):
-            if mode in modes:
-                callback(self._name, "", mode)
+
+def _fire_traces(tk: Any, name: str, mode: str) -> None:
+    """Run the traces on variable ``name`` registered for ``mode``.
+
+    The list is copied first, so a callback may add or remove a trace -
+    including its own - without disturbing the pass it is in.
+    """
+    for modes, callback, _ in list(tk.variable_traces.get(name, {}).values()):
+        if mode in modes:
+            callback(name, "", mode)
+
+
+class _NamedVariable(Variable):
+    """A variable a widget was given by name.
+
+    It reads and writes the value of that name and neither creates it -
+    the widget seeds it, as Tk's do, from what it shows - nor unsets it
+    when collected. It compares equal to the name, so ``cget`` reads back
+    what was given, as tkinter's parsedVarName object does.
+    """
+
+    def __init__(self, master: Misc, name: str) -> None:
+        self._master = master
+        self._tk = master.tk
+        self._name = name
+        self._own_traces = set()
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, str):
+            return other == self._name
+        return super().__eq__(other)
+
+    def __hash__(self) -> int:
+        return hash(self._name)
+
+    def __del__(self) -> None:
+        with contextlib.suppress(Exception):
+            for handle in list(self._own_traces):
+                self._drop_trace(handle)
+
+
+def _seed_variable(widget: Any, variable: Variable, value: Any) -> None:
+    """Give a variable named for a widget its first value, if it has none.
+
+    Measured on Tk 9.0.2: a classic widget bound to a variable that does not
+    exist creates it from itself - a Label from its text, an Entry empty, a
+    Spinbox at ``from``, a Checkbutton with its offvalue, a Scale with its
+    value. A themed widget leaves it alone and reads it as empty: a
+    ``ttk.Checkbutton`` starts ``alternate`` for that reason.
+    """
+    if _is_ttk(widget):
+        return
+    if str(variable) not in variable._tk.variables:
+        variable._tk.variables[str(variable)] = value
 
 
 #: Trace modes Tk recognises. "array" is accepted for compatibility; nothing
@@ -7322,7 +7646,7 @@ class _Drawable(Widget):
         drew the relief's own characters and a theme change reached none of
         them - TkCurses-5vu, found by a person pressing Ctrl-T in UAT 40.
         """
-        return style_for_relief(str(self._options["relief"]) or FLAT)
+        return style_for_relief(self._drawn_relief())
 
     def _draw_border(
         self,
@@ -7705,8 +8029,31 @@ class _TextWidget(_Drawable):
         """
         name = str(self._options["image"])
         if not name:
-            return None
+            return self._bitmap_image()
         return self.tk.images.get(name)
+
+    def _bitmap_image(self) -> Image | None:
+        """The image ``bitmap="@file"`` names, kept until the file or the
+        colour changes; an image wins over a bitmap, as in Tk."""
+        bitmap = str(self._options.get("bitmap", ""))
+        if not bitmap.startswith("@"):
+            return None
+        key = (bitmap, str(self._options.get("foreground") or "white"))
+        cached = getattr(self, "_bitmap_cache", None)
+        if cached is None or cached[0] != key:
+            try:
+                image = _file_bitmap(self, bitmap[1:], key[1])
+            except TclError:
+                return None
+            cached = self._bitmap_cache = (key, image)
+        return cached[1]
+
+    def _bitmap_glyph(self) -> str:
+        """The cell a named ``bitmap`` draws as, or ``""``. An ``image``
+        wins over it, as Tk measures: the request becomes the image's."""
+        if str(self._options["image"]):
+            return ""
+        return _BITMAP_GLYPHS.get(str(self._options.get("bitmap", "")), "")
 
     def _drawn_image(self) -> Image | None:
         """The image painted, which a check or radio button may swap for its
@@ -7722,12 +8069,13 @@ class _TextWidget(_Drawable):
         """
         if self._variable_trace is not None:
             variable, handle = self._variable_trace
-            variable.trace_remove("write", handle)
+            variable._unwatch(handle)
             self._variable_trace = None
         variable = self._options["textvariable"]
         if variable is None:
             return
-        handle = variable.trace_add("write", lambda *_: self._variable_changed())
+        _seed_variable(self, variable, self._options["text"])
+        handle = variable._watch(self._variable_changed)
         self._variable_trace = (variable, handle)
         self._variable_changed()
 
@@ -7802,7 +8150,8 @@ class _TextWidget(_Drawable):
         lines = self._lines()
         text = Rect(0, 0, *measure(lines))
         image = self._image()
-        if image is None:
+        glyph = self._bitmap_glyph() if image is None else ""
+        if image is None and not glyph:
             # Including when there is no text either: an empty label still
             # occupies a row, because measure([""]) is one line high, and
             # that is what keeps a blank label from collapsing.
@@ -7810,8 +8159,13 @@ class _TextWidget(_Drawable):
         # In CELLS. The image is a plane of pixels half a cell tall, so its
         # height halves here and its width does not - see ARCHITECTURE.md's
         # "The pixel". Laying out in pixels would make every image twice as
-        # tall as it draws.
-        picture = Rect(0, 0, image.width(), image.cell_height())
+        # tall as it draws. A named bitmap is one glyph, laid out as an
+        # image is: Tk draws a bitmap in place of the text unless
+        # ``compound`` says otherwise, and so is it here.
+        if image is not None:
+            picture = Rect(0, 0, image.width(), image.cell_height())
+        else:
+            picture = Rect(0, 0, cells(glyph), 1)
         compound = str(self._options["compound"] or "none")
         if compound == "none" or not self._text():
             # An image and no text is just the image, however compound reads:
@@ -7946,6 +8300,26 @@ class _TextWidget(_Drawable):
             self._write_line(dispatcher, window, row, column, text, attribute)
         self._draw_underline(dispatcher, window, area, lines, attribute)
 
+    def _draw_bitmap_glyph(
+        self, dispatcher: CursesDispatcher, window: Any, area: Rect, place: Rect
+    ) -> None:
+        """Write a named bitmap's glyph where the layout put it, in the
+        widget's foreground, as Tk draws a bitmap's set bits."""
+        glyph = self._bitmap_glyph()
+        if not glyph:
+            return
+        content_width, content_height = self._content_size()
+        across, down = parse_anchor(str(self._options["anchor"]))
+        column = area.x + int((area.width - content_width) * across) + place.x
+        row = max(area.y, area.y + int((area.height - content_height) * down))
+        row += place.y
+        if (
+            area.y <= row < area.y + area.height
+            and area.x <= column < area.x + area.width
+        ):
+            attribute = self._background_attribute() | self._text_attribute()
+            self._write_line(dispatcher, window, row, column, glyph, attribute)
+
     def _cells_cut_before(self, column: int, area: Rect) -> int:
         """How many cells of a line starting at ``column`` the area cuts off.
 
@@ -7979,6 +8353,7 @@ class _TextWidget(_Drawable):
         painter = getattr(self.tk, "painter", None)
         image = self._drawn_image()
         if image is None:
+            self._draw_bitmap_glyph(dispatcher, window, area, place)
             return
         del layout
         content_width, content_height = self._content_size()
@@ -8073,9 +8448,20 @@ class _TextWidget(_Drawable):
         so its active colours show through a press. Here a press is ``_pressed``, on the widgets that
         have one.
         """
-        if getattr(self, "_pressed", False):
+        if self._held_down():
             return "active"
         return str(self._options["state"])
+
+    def _held_down(self) -> bool:
+        """True while drawn pressed: held, and the pointer not dragged off.
+
+        Tk's ``tk::ButtonLeave`` puts a held button's relief back and
+        ``tk::ButtonEnter`` sinks it again, so dragging off a button shows
+        that letting go there will not press it.
+        """
+        return bool(getattr(self, "_pressed", False)) and not getattr(
+            self, "_pointer_away", False
+        )
 
     def _background_attribute(self) -> int:
         """The widget's colours, or its state's if a program gave them.
@@ -8167,7 +8553,8 @@ class Label(_TextWidget):
 
     Standard options, described in :doc:`/reference/options`:
     ``activebackground``, ``activeforeground``, ``anchor``, ``background``,
-    ``borderwidth``, ``compound``, ``cursor``, ``disabledforeground``,
+    ``bitmap``, ``borderwidth``, ``compound``,
+    ``cursor``, ``disabledforeground``,
     ``font``, ``foreground``, ``height``, ``highlightbackground``,
     ``highlightcolor``, ``highlightthickness``, ``image``, ``justify``,
     ``padx``, ``pady``, ``relief``, ``state``, ``takefocus``, ``text``,
@@ -8181,6 +8568,7 @@ class Label(_TextWidget):
 
     _widget_options: ClassVar[dict[str, Any]] = {
         **_STATE_COLOUR_OPTIONS,
+        "bitmap": "",
         "borderwidth": 1,  # Tk's default
     }
 
@@ -8209,7 +8597,8 @@ class Button(_TextWidget):
 
     Standard options, described in :doc:`/reference/options`:
     ``activebackground``, ``activeforeground``, ``anchor``, ``background``,
-    ``borderwidth``, ``compound``, ``cursor``, ``disabledforeground``,
+    ``bitmap``, ``borderwidth``, ``compound``,
+    ``cursor``, ``disabledforeground``,
     ``font``, ``foreground``, ``height``, ``highlightbackground``,
     ``highlightcolor``, ``highlightthickness``, ``image``, ``justify``,
     ``padx``, ``pady``, ``relief``, ``repeatdelay``, ``repeatinterval``,
@@ -8234,6 +8623,7 @@ class Button(_TextWidget):
     _MARKER_WIDTH = 2
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "bitmap": "",
         "borderwidth": 1,  # Tk's default
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         **_STATE_COLOUR_OPTIONS,
@@ -8266,6 +8656,7 @@ class Button(_TextWidget):
             **kw: ``command``, ``state``, plus everything a Label takes.
         """
         self._pressed = False
+        self._pointer_away = False
         self._entered_relief: tuple[str, str] | None = None
         self._repeated = 0
         self._pointer_inside = False
@@ -8358,7 +8749,7 @@ class Button(_TextWidget):
         window = self._window
         if window is None or self.tk.screen is None:
             return
-        if self._pressed:
+        if self._held_down():
             left, right = self._PRESSED_MARKERS
         elif self.focus_get() is self:
             left, right = self._FOCUS_MARKERS
@@ -8402,6 +8793,7 @@ def _button_press(event: Event) -> None:
     # armed for one; Tk._release_lost stands in for it.
     button._repeated = 0
     button._pointer_inside = True
+    button._pointer_away = False
     delay = _repeat_option(button, "repeatdelay")
     if delay > 0:
         _repeat_after(button, delay, _button_auto_invoke, button)
@@ -8529,6 +8921,7 @@ def _button_release(event: Event) -> None:
     if not button._pressed:
         return
     button._pressed = False
+    button._pointer_away = False
     button._redraw()
     # tk::ButtonUp: a press that has auto-repeated has invoked already.
     if not button._disabled and _within(button, event) and not button._repeated:
@@ -8537,10 +8930,15 @@ def _button_release(event: Event) -> None:
 
 def _within(widget: Misc, event: Event) -> bool:
     """True if an event's position lies inside a widget."""
+    return _point_within(widget, event.x_root, event.y_root)
+
+
+def _point_within(widget: Misc, x: int, y: int) -> bool:
+    """True if the screen cell (x, y) lies inside a widget."""
     left, top = widget.winfo_rootx(), widget.winfo_rooty()
     return (
-        left <= event.x_root < left + widget.winfo_width()
-        and top <= event.y_root < top + widget.winfo_height()
+        left <= x < left + widget.winfo_width()
+        and top <= y < top + widget.winfo_height()
     )
 
 
@@ -8571,13 +8969,15 @@ def _button_enter(event: Event) -> None:
     Tk's ``tk::ButtonEnter`` and ``tk::CheckEnter``, their X11 versions, in
     ``button.tcl``. ``configure`` rather than a flag, as there, so ``cget``
     reads the relief that is showing. Tk sinks a button re-entered while held;
-    a press here is drawn by markers and not by a relief, so a held one keeps
-    the relief it has. Nothing reports the pointer crossing a widget yet, so
-    this is reached by ``event_generate``. TkCurses-gm66.5.
+    a press here is drawn by markers and not by a relief, so a held one is
+    drawn pressed again and keeps the relief it has.
     """
     button = event.widget
     if button._disabled:
         return
+    if button._pressed:
+        button._pointer_inside = True
+        button._pointer_away = False
     button.configure(state=ACTIVE)
     over = str(button.cget("overrelief"))
     if over and not button._pressed:
@@ -8593,8 +8993,14 @@ def _button_leave(event: Event) -> None:
     its change.
     """
     button = event.widget
+    if button._pressed:
+        # Drawn released while the pointer is off it: letting go here will
+        # not press it.
+        button._pointer_inside = False
+        button._pointer_away = True
     if not button._disabled:
         button.configure(state=NORMAL)
+    button._redraw()
     saved, button._entered_relief = button._entered_relief, None
     if saved is not None and saved[1] == str(button.cget("relief")):
         button.configure(relief=saved[0])
@@ -8622,6 +9028,7 @@ class _ChoiceWidget(_TextWidget):
     _INDICATOR_WIDTH = 4
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "bitmap": "",
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         **_STATE_COLOUR_OPTIONS,
         # The indicator's background, and an indicatorless button's while it
@@ -8658,6 +9065,7 @@ class _ChoiceWidget(_TextWidget):
                 the subclass declares, plus everything a Label takes.
         """
         self._pressed = False
+        self._pointer_away = False
         self._entered_relief: tuple[str, str] | None = None
         self._repeated = 0
         self._pointer_inside = False
@@ -8717,12 +9125,14 @@ class _ChoiceWidget(_TextWidget):
         """
         if self._value_trace is not None:
             previous, handle = self._value_trace
-            previous.trace_remove("write", handle)
+            previous._unwatch(handle)
             self._value_trace = None
         variable = self._options["variable"]
         if variable is None:
             return
-        handle = variable.trace_add("write", lambda *_: self._value_written())
+        # A Checkbutton's offvalue, and "" for a Radiobutton: Tk 9.0.2's.
+        _seed_variable(self, variable, self._options.get("offvalue", ""))
+        handle = variable._watch(self._value_written)
         self._value_trace = (variable, handle)
 
     def _value_written(self) -> None:
@@ -8889,7 +9299,7 @@ class _ChoiceWidget(_TextWidget):
         binding has copied one into the other. With an indicator, the relief
         is the widget's own. TkCurses-gm66.5.
         """
-        relief = str(self._options["relief"]) or FLAT
+        relief = self._drawn_relief()
         if not self._indicator_on and not _is_ttk(self):
             if self._indicator_state == "on":
                 relief = SUNKEN
@@ -8916,7 +9326,7 @@ class _ChoiceWidget(_TextWidget):
         attribute = self._background_attribute() | self._text_attribute()
         if self._selected_colour():
             attribute = self._coloured(attribute, "", self._options["selectcolor"])
-        if self._pressed and self._state_colours("active") is None:
+        if self._held_down() and self._state_colours("active") is None:
             attribute |= _curses.A_REVERSE
         with contextlib.suppress(_curses.error):
             self._write_line(
@@ -8980,7 +9390,8 @@ class Checkbutton(_ChoiceWidget):
 
     Standard options, described in :doc:`/reference/options`:
     ``activebackground``, ``activeforeground``, ``anchor``, ``background``,
-    ``borderwidth``, ``compound``, ``cursor``, ``disabledforeground``,
+    ``bitmap``, ``borderwidth``, ``compound``,
+    ``cursor``, ``disabledforeground``,
     ``font``, ``foreground``, ``height``, ``highlightbackground``,
     ``highlightcolor``, ``highlightthickness``, ``image``, ``justify``,
     ``padx``, ``pady``, ``relief``, ``state``, ``takefocus``, ``text``,
@@ -9115,7 +9526,8 @@ class Radiobutton(_ChoiceWidget):
 
     Standard options, described in :doc:`/reference/options`:
     ``activebackground``, ``activeforeground``, ``anchor``, ``background``,
-    ``borderwidth``, ``compound``, ``cursor``, ``disabledforeground``,
+    ``bitmap``, ``borderwidth``, ``compound``,
+    ``cursor``, ``disabledforeground``,
     ``font``, ``foreground``, ``height``, ``highlightbackground``,
     ``highlightcolor``, ``highlightthickness``, ``image``, ``justify``,
     ``padx``, ``pady``, ``relief``, ``state``, ``takefocus``, ``text``,
@@ -9469,12 +9881,13 @@ class Entry(_Drawable, XView):
         """Track the ``textvariable``, dropping any previous one."""
         if self._variable_trace is not None:
             variable, handle = self._variable_trace
-            variable.trace_remove("write", handle)
+            variable._unwatch(handle)
             self._variable_trace = None
         variable = self._options["textvariable"]
         if variable is None:
             return
-        handle = variable.trace_add("write", lambda *_: self._variable_changed())
+        _seed_variable(self, variable, self.get())
+        handle = variable._watch(self._variable_changed)
         self._variable_trace = (variable, handle)
         self._variable_changed()
 
@@ -9704,6 +10117,33 @@ class Entry(_Drawable, XView):
         self._redraw()
 
     select_adjust = selection_adjust
+
+    def scan_mark(self, x: Any) -> None:
+        """Remember ``x`` and the view, for a :meth:`scan_dragto` to come."""
+        self._scan_mark = (int(x), self._field.view)
+
+    def scan_dragto(self, x: Any) -> None:
+        """Move the view ten times as far as ``x`` is from the mark.
+
+        ``EntryScanTo`` in Tk's ``tkEntry.c``: a character a cell, and at
+        either end the mark moves with the pointer, so dragging back moves
+        the view at once.
+        """
+        x = int(x)
+        mark_x, mark_index = getattr(self, "_scan_mark", (x, self._field.view))
+        last = len(self._field.text) - 1
+        first = mark_index - 10 * (x - mark_x)
+        if first >= last:
+            first = mark_index = max(0, last)
+            mark_x = x
+        if first < 0:
+            first = mark_index = 0
+            mark_x = x
+        if first != self._field.view:
+            self.xview(first)
+            if self._field.view != first:
+                mark_index, mark_x = self._field.view, x
+        self._scan_mark = (mark_x, mark_index)
 
     def xview(self, *args: Any) -> Any:
         """Report or move the view, as Tk's entry does.
@@ -11000,7 +11440,8 @@ class Menubutton(_TextWidget):
 
     Standard options, described in :doc:`/reference/options`:
     ``activebackground``, ``activeforeground``, ``anchor``, ``background``,
-    ``borderwidth``, ``compound``, ``cursor``, ``disabledforeground``,
+    ``bitmap``, ``borderwidth``, ``compound``,
+    ``cursor``, ``disabledforeground``,
     ``font``, ``foreground``, ``height``, ``highlightbackground``,
     ``highlightcolor``, ``highlightthickness``, ``image``, ``justify``,
     ``padx``, ``pady``, ``relief``, ``state``, ``takefocus``, ``text``,
@@ -11022,12 +11463,13 @@ class Menubutton(_TextWidget):
     _INDICATOR = "▾"
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "bitmap": "",
         "borderwidth": 1,  # Tk's default
         **_STATE_COLOUR_OPTIONS,
         "direction": "below",
         "indicatoron": False,
         "menu": None,
-        "relief": "raised",
+        "relief": "flat",  # Tk's default
         "takefocus": True,
     }
 
@@ -11187,7 +11629,8 @@ class OptionMenu(Menubutton):
 
     Standard options, described in :doc:`/reference/options`:
     ``activebackground``, ``activeforeground``, ``anchor``, ``background``,
-    ``borderwidth``, ``compound``, ``cursor``, ``disabledforeground``,
+    ``bitmap``, ``borderwidth``, ``compound``,
+    ``cursor``, ``disabledforeground``,
     ``font``, ``foreground``, ``height``, ``highlightbackground``,
     ``highlightcolor``, ``highlightthickness``, ``image``, ``justify``,
     ``padx``, ``pady``, ``relief``, ``state``, ``takefocus``, ``text``,
@@ -11205,6 +11648,14 @@ class OptionMenu(Menubutton):
         menu.configure(indicatoron=0)
         menu.pack()
     """
+
+    #: tkinter's, which its OptionMenu passes and Tk 9.0.2 reads back: a
+    #: menubutton is flat, but the option menu is raised, two wide.
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "borderwidth": 2,
+        "highlightthickness": 2,
+        "relief": "raised",
+    }
 
     def __init__(
         self,
@@ -11686,12 +12137,13 @@ class LabelFrame(Frame):
         """Track the ``textvariable``, dropping any previous one."""
         if self._caption_trace is not None:
             previous, handle = self._caption_trace
-            previous.trace_remove("write", handle)
+            previous._unwatch(handle)
             self._caption_trace = None
         variable = self._options["textvariable"]
         if variable is None:
             return
-        handle = variable.trace_add("write", lambda *_: self._caption_changed())
+        _seed_variable(self, variable, self._options["text"])
+        handle = variable._watch(self._caption_changed)
         self._caption_trace = (variable, handle)
         self._caption_changed()
 
@@ -11964,6 +12416,8 @@ class Spinbox(Entry):
         """
         self._held_arrow: str | None = None
         self._repeated = 0
+        #: The arrow drawn pressed: ``selection element``.
+        self._selected_element = "none"
         super().__init__(master, cnf, name=name, **kw)
         self._order_range()
         # Construction is the first configure, from Tk's defaults of no
@@ -12086,8 +12540,12 @@ class Spinbox(Entry):
         themed = _is_ttk(self)
         _bind_entry_navigation(bind, name, themed=themed, lines=themed)
         if themed:
-            bind(name, "<Key-Up>", _spinbox_step(1))
-            bind(name, "<Key-Down>", _spinbox_step(-1))
+            # ttk/spinbox.tcl: the keys and the arrows generate the virtual
+            # events, and only those step, so a program can generate them.
+            bind(name, "<Key-Up>", _spinbox_generate("<<Increment>>"))
+            bind(name, "<Key-Down>", _spinbox_generate("<<Decrement>>"))
+            bind(name, "<<Increment>>", _spinbox_step(1))
+            bind(name, "<<Decrement>>", _spinbox_step(-1))
         else:
             bind(name, "<<PrevLine>>", _spinbox_step(1))
             bind(name, "<<NextLine>>", _spinbox_step(-1))
@@ -12150,6 +12608,79 @@ class Spinbox(Entry):
         self._field.text = text
         self._field.select_clear()
         self._changed()
+
+    def scan(self, *args: Any) -> tuple[()]:
+        """``scan mark x`` or ``scan dragto x``, as tkinter's Spinbox has it.
+
+        Raises:
+            TclError: For any other, in Tk's words.
+        """
+        if len(args) != 2:
+            raise TclError(f'wrong # args: should be "{self} scan mark|dragto x"')
+        option = str(args[0])
+        if option and "mark".startswith(option):
+            self.scan_mark(args[1])
+        elif option and "dragto".startswith(option):
+            self.scan_dragto(args[1])
+        else:
+            raise TclError(f'bad scan option "{option}": must be dragto or mark')
+        return ()
+
+    def _arrow_relief(self, element: str) -> str:
+        """How an arrow is drawn: sunken while it is the selection element,
+        as ``DisplayEntry`` in Tk's ``tkEntry.c`` draws it, and otherwise in
+        its ``buttonuprelief`` or ``buttondownrelief``."""
+        if getattr(self, "_selected_element", "none") == element:
+            return SUNKEN
+        return str(self._options[f"{element}relief"])
+
+    def selection_element(self, element: Any = None) -> Any:
+        """The arrow drawn pressed, or name one: buttonup, buttondown or none.
+
+        Tk's bindings name the arrow a press is on, and none on the
+        release; a program can do the same.
+
+        Raises:
+            TclError: For any other name, in Tk's words.
+        """
+        if element is None:
+            return self._selected_element
+        chosen = _tcl_index(
+            element, ("buttondown", "buttonup", "none"), "selection element"
+        )
+        if chosen != self._selected_element:
+            self._selected_element = chosen
+            self._redraw()
+        return None
+
+    def selection(self, *args: Any) -> Any:
+        """Tk's ``selection`` command, of which ``selection_range`` and the
+        rest are the named forms: adjust, clear, element, from, present,
+        range or to, with their arguments.
+
+        Answers as tkinter's does, a tuple of the numbers in the reply:
+        ``(1,)`` for a selection ``present``, ``()`` for most.
+
+        Raises:
+            TclError: For a subcommand Tk lacks, in Tk's words.
+        """
+        if not args:
+            raise TclError(f'wrong # args: should be "{self} selection option ?index?"')
+        option = _tcl_index(
+            args[0],
+            ("adjust", "clear", "element", "from", "present", "range", "to"),
+            "selection option",
+        )
+        rest = args[1:]
+        if option == "element":
+            return self.selection_element(*rest)
+        if option == "present":
+            return (int(self.selection_present()),)
+        if option == "clear":
+            self.selection_clear()
+        else:
+            getattr(self, f"selection_{option}")(*rest)
+        return ()
 
     def bbox(self, index: Any) -> tuple[int, int, int, int]:
         """The box of the character at ``index``, as ``(x, y, width, height)``.
@@ -12320,8 +12851,8 @@ class Spinbox(Entry):
         # really is needed - _write_line is what tells the two cases apart.
         up, down = self._ARROWS
         for column, arrow, relief in (
-            (up_column, up, self._options["buttonuprelief"]),
-            (down_column, down, self._options["buttondownrelief"]),
+            (up_column, up, self._arrow_relief("buttonup")),
+            (down_column, down, self._arrow_relief("buttondown")),
         ):
             self._write_line(
                 dispatcher,
@@ -12335,9 +12866,14 @@ class Spinbox(Entry):
 
 def _spinbox_step(amount: int) -> Callable[[Event], None]:
     """Step the value: spinbox.tcl's ``<<PrevLine>>`` and ``<<NextLine>>``,
-    which ``invoke buttonup`` and ``buttondown``, and ttk/spinbox.tcl's Up
-    and Down. Neither breaks."""
+    which ``invoke buttonup`` and ``buttondown``, and ttk/spinbox.tcl's
+    ``<<Increment>>`` and ``<<Decrement>>``. Neither breaks."""
     return lambda event: event.widget._step(amount)
+
+
+def _spinbox_generate(sequence: str) -> Callable[[Event], None]:
+    """ttk/spinbox.tcl's Up and Down: ``event generate %W <<Increment>>``."""
+    return lambda event: event.widget.event_generate(sequence)
 
 
 def _spinbox_click(event: Event) -> None:
@@ -12357,9 +12893,13 @@ def _spinbox_click(event: Event) -> None:
         return
     spinbox.focus_set()
     if _is_ttk(spinbox):
-        spinbox._step(1 if part == "buttonup" else -1)
+        # ttk::spinbox::Press: the arrow generates the event, which steps.
+        spinbox.event_generate(
+            "<<Increment>>" if part == "buttonup" else "<<Decrement>>"
+        )
         return
     spinbox._held_arrow = part
+    spinbox.selection_element(part)  # tk::spinbox::ArrowPress
     spinbox._repeated = 0
     delay = _repeat_option(spinbox, "repeatdelay")
     if delay > 0:
@@ -12386,6 +12926,8 @@ def _spinbox_release(event: Event) -> None:
     part, spinbox._held_arrow = spinbox._held_arrow, None
     if part is not None and not spinbox._repeated:
         spinbox._step(1 if part == "buttonup" else -1)
+    if part is not None:
+        spinbox.selection_element("none")  # tk::spinbox::ButtonUp
     _entry_release(event)
 
 
@@ -16317,7 +16859,11 @@ class Menu(_Drawable):
         is shown by its colours and ``activerelief``. ``highlightbackground``,
         ``highlightcolor`` and ``highlightthickness`` are accepted and draw
         nothing: the focus is shown by markers instead. So is ``cursor``: the
-        mouse pointer belongs to the terminal.
+        mouse pointer belongs to the terminal. Of an entry's own options,
+        ``font``, ``image``, ``bitmap``, ``compound`` and ``selectimage`` are
+        accepted and draw nothing: an entry is a row of text. Its colours,
+        ``selectcolor``, ``indicatoron`` and ``hidemargin`` are drawn, an
+        entry's colours over the menu's.
 
     Sample output (activerelief):
         # size: 40x7
@@ -16331,27 +16877,54 @@ class Menu(_Drawable):
     _clipped_by_master = False
 
     #: Entry kinds, and what each one accepts on top of the common options.
-    #: -columnbreak on every kind but a separator, which refuses it - as Tk
-    #: 9.0.2 does, measured ("unknown option"). TkCurses-aj1.13.1.
+    #: Measured on Tk 9.0.2 with entryconfigure on each kind: a separator
+    #: takes ``background`` and nothing else, and the check and radio kinds
+    #: add their indicator's options. TkCurses-aj1.13.1, TkCurses-g373.
     _ENTRY_OPTIONS: ClassVar[dict[str, dict[str, Any]]] = {
-        "command": {"columnbreak": 0},
-        "cascade": {"menu": None, "columnbreak": 0},
+        "command": {},
+        "cascade": {"menu": None},
         "checkbutton": {
             "onvalue": 1,
             "offvalue": 0,
             "variable": None,
-            "columnbreak": 0,
+            "indicatoron": 1,
+            "selectcolor": "",
+            "selectimage": "",
         },
-        "radiobutton": {"value": "", "variable": None, "columnbreak": 0},
-        "separator": {},
+        "radiobutton": {
+            "value": "",
+            "variable": None,
+            "indicatoron": 1,
+            "selectcolor": "",
+            "selectimage": "",
+        },
+        "separator": {"background": ""},
     }
+    #: What every kind but a separator takes.
     _COMMON_ENTRY_OPTIONS: ClassVar[dict[str, Any]] = {
         "accelerator": "",
+        "activebackground": "",
+        "activeforeground": "",
+        "background": "",
+        "bitmap": "",
+        "columnbreak": 0,
         "command": None,
+        "compound": "none",
+        "font": "",
+        "foreground": "",
+        "hidemargin": 0,
+        "image": "",
         "label": "",
         "state": "normal",
         "underline": -1,
     }
+
+    @classmethod
+    def _entry_spec(cls, kind: str) -> dict[str, Any]:
+        """Every option an entry of this kind takes, with its default."""
+        if kind == "separator":
+            return dict(cls._ENTRY_OPTIONS[kind])
+        return {**cls._COMMON_ENTRY_OPTIONS, **cls._ENTRY_OPTIONS[kind]}
 
     #: What a ticked checkbutton and a chosen radiobutton look like.
     _INDICATORS: ClassVar[dict[str, tuple[str, str]]] = {
@@ -16510,7 +17083,7 @@ class Menu(_Drawable):
         Raises:
             TclError: If an option is not one the kind takes.
         """
-        spec = {**self._COMMON_ENTRY_OPTIONS, **self._ENTRY_OPTIONS[kind]}
+        spec = self._entry_spec(kind)
         options = dict(spec)
         for name, value in given.items():
             option = _OPTION_ALIASES.get(name, name)
@@ -16674,10 +17247,7 @@ class Menu(_Drawable):
         given = _given(cnf, kw)
         if not given:  # every option None, which tkinter drops
             return None
-        spec_for_kind = {
-            **self._COMMON_ENTRY_OPTIONS,
-            **self._ENTRY_OPTIONS[entry.kind],
-        }
+        spec_for_kind = self._entry_spec(entry.kind)
         for name, value in given.items():
             option = _OPTION_ALIASES.get(name, name)
             if option not in spec_for_kind:
@@ -16804,8 +17374,16 @@ class Menu(_Drawable):
             variable.set(entry.options["value"])
 
     def _indicator_for(self, entry: MenuEntry) -> str:
-        """The tick or bullet an entry shows, or spaces to line up with one."""
-        if entry.kind not in self._INDICATORS:
+        """The tick or bullet an entry shows, or spaces to line up with one.
+
+        ``hidemargin`` gives up the spaces; ``indicatoron`` false shows
+        them in place of the indicator, as Tk draws no indicator then.
+        """
+        if entry.kind not in self._INDICATORS or not _entry_flag(
+            self, entry.options.get("indicatoron", 1)
+        ):
+            if _entry_flag(self, entry.options.get("hidemargin", 0)):
+                return ""
             return "    " if self._has_indicators() else ""
         on, off = self._INDICATORS[entry.kind]
         variable = entry.options.get("variable")
@@ -17035,12 +17613,7 @@ class Menu(_Drawable):
         column = 0
         for number, entry in enumerate(self._entries):
             text = f" {entry.label} "
-            style = attribute
-            if number == self._active:
-                style = self._in_state(style, "active")
-                style |= _part_relief(self._options["activerelief"])
-            if str(entry.options.get("state")) == "disabled":
-                style = self._in_state(style, "disabled")
+            style = self._entry_style(entry, attribute, number == self._active)
             self._write_line(
                 dispatcher,
                 window,
@@ -17074,12 +17647,7 @@ class Menu(_Drawable):
             width = min(place.width, area.width - place.x) if columned else area.width
             if width <= 0:
                 continue
-            style = attribute
-            if str(entry.options.get("state")) == "disabled":
-                style = self._in_state(style, "disabled")
-            if number == self._active:
-                style = self._in_state(style, "active")
-                style |= _part_relief(self._options["activerelief"])
+            style = self._entry_style(entry, attribute, number == self._active)
             if entry.kind == "separator":
                 self._write_line(
                     dispatcher,
@@ -17087,7 +17655,7 @@ class Menu(_Drawable):
                     area.y + row,
                     x - 1 if not columned else x,
                     "─" * (width + 2 if not columned else width),
-                    attribute,
+                    style,
                 )
                 continue
             text = self._indicator_for(entry) + entry.label
@@ -17123,6 +17691,38 @@ class Menu(_Drawable):
                 style,
             )
 
+    def _entry_style(self, entry: MenuEntry, attribute: int, active: bool) -> int:
+        """How one entry is drawn: its own colours, where it has them, win.
+
+        Tk's manual for the entry options: ``-background`` and the rest
+        "override" the menu's for this entry; when active, an entry's
+        ``-activeforeground`` and ``-activebackground`` do, falling back to
+        the menu's. A disabled entry keeps the menu's ``disabledforeground``.
+        """
+        own = entry.options
+        style = attribute
+        disabled = str(own.get("state")) == "disabled"
+        if disabled:
+            style = self._in_state(style, "disabled")
+        if active:
+            foreground, background = (
+                own.get("activeforeground"),
+                own.get("activebackground"),
+            )
+            if foreground or background:
+                menu = self._state_colours("active") or ("", "")
+                style = self._coloured(
+                    style, foreground or menu[0], background or menu[1]
+                )
+            else:
+                style = self._in_state(style, "active")
+            return style | _part_relief(self._options["activerelief"])
+        foreground = "" if disabled else own.get("foreground")
+        background = own.get("background")
+        if foreground or background:
+            style = self._coloured(style, foreground, background)
+        return style
+
     def _draw_chosen_mark(
         self,
         dispatcher: CursesDispatcher,
@@ -17138,7 +17738,7 @@ class Menu(_Drawable):
         Tk's manual: "the color to display in the indicator when the check
         button or radio button is selected". The mark, not the brackets.
         """
-        colour = self._options["selectcolor"]
+        colour = entry.options.get("selectcolor") or self._options["selectcolor"]
         if not colour or entry.kind not in self._INDICATORS:
             return
         mark = self._INDICATORS[entry.kind][0]
@@ -17146,6 +17746,8 @@ class Menu(_Drawable):
             return
         state = self._state_colours("active") if active else None
         background = state[1] if state is not None else ""
+        own = entry.options.get("activebackground" if active else "background")
+        background = own or background
         self._write_line(
             dispatcher,
             window,
@@ -17590,6 +18192,8 @@ class Listbox(_Drawable, XView, YView):
                 standard options.
         """
         self._items: list[str] = []
+        #: Each item's own colours, from itemconfigure, kept beside it.
+        self._item_options: list[dict[str, Any]] = []
         self._selection: set[int] = set()
         self._active = 0
         self._anchor = 0
@@ -17704,7 +18308,7 @@ class Listbox(_Drawable, XView, YView):
         existed = str(option) in self.tk.variables
         if isinstance(option, Variable):
             return option, existed
-        return Variable(self, name=str(option)), existed
+        return _NamedVariable(self, str(option)), existed
 
     def _follow_list_variable(self) -> None:
         """Attach to the ``listvariable``, dropping any previous one.
@@ -17720,7 +18324,7 @@ class Listbox(_Drawable, XView, YView):
         """
         if self._list_trace is not None:
             previous, handle = self._list_trace
-            previous.trace_remove("write", handle)
+            previous._unwatch(handle)
             self._list_trace = None
         variable, existed = self._list_variable()
         if variable is None:
@@ -17731,11 +18335,12 @@ class Listbox(_Drawable, XView, YView):
                 self._items = _tcl_list(self.tk.variables[name])
             except TclError as error:
                 raise TclError(f"{error}: invalid -listvariable value") from None
+            self._fit_item_options()
             self._selection = {i for i in self._selection if i < len(self._items)}
             self._refit()
         else:
             self.tk.variables[name] = tuple(self._items)
-        handle = variable.trace_add("write", lambda *_: self._list_written(variable))
+        handle = variable._watch(lambda: self._list_written(variable))
         self._list_trace = (variable, handle)
 
     def _list_written(self, variable: Variable) -> None:
@@ -17753,6 +18358,7 @@ class Listbox(_Drawable, XView, YView):
             self.tk.variables[name] = tuple(self._items)
             raise TclError(f'can\'t set "{name}": invalid listvar value') from None
         self._items = items
+        self._fit_item_options()
         self._selection = {i for i in self._selection if i < len(items)}
         self._clamp_view()
         self._refit()
@@ -17777,6 +18383,7 @@ class Listbox(_Drawable, XView, YView):
             return
         at = len(self._items) if index in ("end", END) else self.index(index)
         self._items[at:at] = [str(element) for element in elements]
+        self._fit_item_options(at, len(elements))
         self._shift_state(at, len(elements))
         self._publish_items()
         self._refit()
@@ -17796,6 +18403,7 @@ class Listbox(_Drawable, XView, YView):
             return
         count = stop - start + 1
         del self._items[start : stop + 1]
+        del self._item_options[start : stop + 1]
         self._selection = {
             i if i < start else i - count
             for i in self._selection
@@ -17830,6 +18438,98 @@ class Listbox(_Drawable, XView, YView):
     def size(self) -> int:
         """How many items there are."""
         return len(self._items)
+
+    #: The options an item takes, measured on Tk 9.0.2: its colours, with
+    #: ``bg`` and ``fg`` for the first two.
+    _ITEM_OPTIONS = ("background", "foreground", "selectbackground", "selectforeground")
+
+    def _fit_item_options(self, at: int | None = None, count: int = 0) -> None:
+        """Keep one option dict per item: ``count`` new ones at ``at``, or
+        the list cut or padded to the items, as Tk keeps them by position
+        when a ``listvariable`` changes the items under them."""
+        options = self._item_options
+        if at is not None:
+            options[at:at] = [{} for _ in range(count)]
+        del options[len(self._items) :]
+        options.extend({} for _ in range(len(self._items) - len(options)))
+
+    def _item_at(self, index: Any) -> int:
+        """The item an itemconfigure index names: ``end`` is the last one.
+
+        Raises:
+            TclError: If it names none, in Tk's words.
+        """
+        at = len(self._items) - 1 if index in ("end", END) else self.index(index)
+        if not 0 <= at < len(self._items):
+            # index() keeps a number on the list; Tk names the one given.
+            number = _tcl_number(index)
+            shown = number if isinstance(number, int) else at
+            raise TclError(f'item number "{shown}" out of range')
+        # A number past the end is clamped by index() onto the last item.
+        number = _tcl_number(index)
+        if isinstance(number, int) and not 0 <= number < len(self._items):
+            raise TclError(f'item number "{number}" out of range')
+        return at
+
+    def _item_option(self, option: str) -> str:
+        """The full name of an item option, or Tk's refusal."""
+        name = {"bg": "background", "fg": "foreground"}.get(option, option)
+        if name not in self._ITEM_OPTIONS:
+            raise TclError(f'unknown option "-{option}"')
+        return name
+
+    def itemcget(self, index: Any, option: str) -> Any:
+        """One option of one item, ``""`` where it has none of its own.
+
+        Raises:
+            TclError: If the index names no item or the option is not one.
+        """
+        at = self._item_at(index)
+        return self._item_options[at].get(self._item_option(option), "")
+
+    def itemconfigure(self, index: Any, cnf: Any = None, **kw: Any) -> Any:
+        """Set an item's own colours, or read them.
+
+        ``background``, ``foreground``, ``selectbackground`` and
+        ``selectforeground`` - ``bg`` and ``fg`` for short - are drawn over
+        the list's own for that item, and stay with it as items are
+        inserted or deleted around it. With no options it answers all of
+        them; with one name, that one, as tkinter's ``configure`` answers.
+
+        Sample output:
+            colours = tk.Listbox(root, height=4, width=12)
+            colours.insert("end", "plain", "red", "blue")
+            colours.itemconfigure(1, background="red")
+            colours.itemconfigure(2, foreground="blue")
+            colours.pack()
+
+        Raises:
+            TclError: If the index names no item, an option is not one, or
+                a colour is not a colour.
+        """
+        at = self._item_at(index)
+        own = self._item_options[at]
+        if isinstance(cnf, str) and not kw:
+            name = self._item_option(cnf)
+            return (name, "", "", "", own.get(name, ""))
+        given = _given(cnf if isinstance(cnf, dict) else None, kw)
+        if not cnf and not kw:
+            answer: dict[str, Any] = {
+                name: (name, "", "", "", own.get(name, ""))
+                for name in self._ITEM_OPTIONS
+            }
+            answer["bg"] = ("bg", "-background")
+            answer["fg"] = ("fg", "-foreground")
+            return answer
+        checked = {
+            self._item_option(option): _colour_or_terminals(self, value)
+            for option, value in given.items()
+        }
+        own.update(checked)
+        self._redraw()
+        return None
+
+    itemconfig = itemconfigure
 
     def _shift_state(self, at: int, count: int) -> None:
         """Move the selection, anchor and active item along after an insert.
@@ -18234,7 +18934,19 @@ class Listbox(_Drawable, XView, YView):
         the list was disabled. TkCurses-46ap.
         """
         selected = position in self._selection and not self._disabled
-        style = self._selection_attribute(attribute) if selected else attribute
+        own = self._item_options[position] if position < len(self._item_options) else {}
+        if selected:
+            style = self._selection_attribute(
+                attribute,
+                own.get("selectforeground") or None,
+                own.get("selectbackground") or None,
+            )
+        elif own.get("foreground") or own.get("background"):
+            style = self._coloured(
+                attribute, own.get("foreground"), own.get("background")
+            )
+        else:
+            style = attribute
         if position == self._active and self.focus_get() is self and not selected:
             style |= _curses.A_UNDERLINE
         left, right = self._SELECTED_MARKERS if selected else (" ", " ")
@@ -19966,12 +20678,13 @@ class Scale(_Drawable):
         """Track the ``variable``, dropping any previous one."""
         if self._variable_trace is not None:
             previous, handle = self._variable_trace
-            previous.trace_remove("write", handle)
+            previous._unwatch(handle)
             self._variable_trace = None
         variable = self._options["variable"]
         if variable is None:
             return
-        handle = variable.trace_add("write", lambda *_: self._variable_changed())
+        _seed_variable(self, variable, self._format(self._value))
+        handle = variable._watch(self._variable_changed)
         self._variable_trace = (variable, handle)
         self._variable_changed()
 

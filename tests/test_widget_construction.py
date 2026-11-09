@@ -105,7 +105,7 @@ def test_a_refused_option_leaves_the_object_in_children_without_a_window(root):
     ("make", "options"),
     [
         (Button, {"width": "abc"}),
-        (Label, {"textvariable": 5}),
+        (Label, {"bitmap": "nonsense"}),
         (Text, {"width": "abc"}),
         (ttk.Entry, {"width": "abc"}),
         (tkcurses.Scale, {"from_": "x"}),

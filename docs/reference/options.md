@@ -305,8 +305,28 @@ for compound in ("left", "top", "right"):
 
 ### bitmap
 
-One of Tk's built-in bitmaps by name. Not available: there are no bitmaps
-to name in a terminal. A `BitmapImage` can be given as an `image`.
+One of Tk's ten built-in bitmaps by name, or `@` and the path of an XBM
+file, on Button, Checkbutton, Label, Menubutton, OptionMenu and Radiobutton.
+As in Tk, a bitmap is drawn in place of the text unless `compound` says
+otherwise, and an `image` wins over it; any other name is refused with Tk's
+`bitmap "name" not defined`.
+
+A file is drawn as a `BitmapImage` of it would be, in the widget's
+foreground. A named bitmap is a 16-pixel picture with no room in a cell, so
+each is one character that reads as it:
+
+| Name | Glyph | Name | Glyph |
+|------|-------|------|-------|
+| `error` | ✖ | `hourglass` | ⧗ |
+| `gray12` | · | `info` | ℹ |
+| `gray25` | ░ | `questhead` | ⍰ |
+| `gray50` | ▒ | `question` | ? |
+| `gray75` | ▓ | `warning` | ⚠ |
+
+```{tkcurses-sample}
+for name in ("info", "warning", "error", "question"):
+    tk.Label(root, bitmap=name, text=name, compound="left").pack(anchor="w")
+```
 
 ## Size and spacing
 

@@ -1047,8 +1047,10 @@ def test_variables_are_shared_across_the_tree(tree):
     assert root.getvar("PY_VAR1") == "value"
 
 
-def test_an_unset_variable_reads_as_none(root):
-    assert root.getvar("PY_VAR9") is None
+def test_an_unset_variable_cannot_be_read(root):
+    """Measured on Tk 9.0.2, in its words."""
+    with pytest.raises(TclError, match=r'^can\'t read "PY_VAR9": no such variable$'):
+        root.getvar("PY_VAR9")
 
 
 @pytest.mark.parametrize(

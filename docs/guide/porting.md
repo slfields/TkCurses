@@ -217,8 +217,13 @@ in tkinter. Two things are different:
   because that is all most terminals are asked for. Setting
   `TKCURSES_MOUSE_REPORT_HOVER=1` asks for every movement, for a terminal
   that can keep up.
-- **`<Enter>` and `<Leave>` are not delivered** when the pointer crosses a
-  widget, so a hover effect or tooltip built on them does not appear.
+- **`<Enter>` and `<Leave>` come from clicks and drags.** A click is a visit:
+  `<Enter>` before the press and `<Leave>` after the release. While a button
+  is held, the widget pressed hears the pointer leave it and come back, as
+  under X11's implicit grab, and nothing else hears anything. So a button
+  dragged off looks released, as in Tk, but a hover effect or tooltip shows
+  only while the mouse button is down - unless hover reporting is on, when
+  the pointer is followed everywhere.
 
 ## Output and errors
 
