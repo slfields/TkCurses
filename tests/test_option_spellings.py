@@ -286,3 +286,45 @@ def test_a_themed_widget_offers_no_synonyms_at_all(name, our_root, real_root):
             getattr(real_ttk, name)(real_root, **{short: "red"})
         with pytest.raises(tkcurses.TclError):
             getattr(ttk, name)(our_root, name=f"x{short}", **{short: "red"})
+
+
+# justify, measured on Tk 9.0.2 on every widget that has it: "middle" and
+# "CENTER" are bad, "c" reads back "center", and "" is ambiguous - except on
+# the ttk label family, where "" is unset. Only Listbox checked it here.
+
+JUSTIFIED = [
+    "Label", "Button", "Entry", "Message", "Spinbox", "Checkbutton",
+    "Radiobutton", "Menubutton", "Listbox",
+    "ttk.Label", "ttk.Button", "ttk.Entry", "ttk.Combobox", "ttk.Spinbox",
+    "ttk.Checkbutton", "ttk.Radiobutton", "ttk.Menubutton", "ttk.Progressbar",
+]  # fmt: skip
+LABEL_FAMILY = {"ttk.Label", "ttk.Button", "ttk.Checkbutton", "ttk.Radiobutton",
+                "ttk.Menubutton", "ttk.Progressbar"}  # fmt: skip
+
+
+def _justified(name):
+    import tkcurses
+    from tkcurses import ttk
+
+    module, _, cls = name.rpartition(".")
+    return getattr(ttk if module else tkcurses, cls)
+
+
+@pytest.mark.parametrize("name", JUSTIFIED)
+def test_justify_is_checked_as_tk_checks_it(name):
+    import tkcurses
+
+    root = tkcurses.Misc()
+    widget_class = _justified(name)
+    for bad in ("middle", "CENTER"):
+        with pytest.raises(tkcurses.TclError, match=f'bad justification "{bad}"'):
+            widget_class(root, justify=bad)
+    assert widget_class(root, justify="c").cget("justify") == "center"
+    widget = widget_class(root)
+    with pytest.raises(tkcurses.TclError, match="bad justification"):
+        widget.configure(justify="middle")
+    if name in LABEL_FAMILY:
+        assert widget_class(root, justify="").cget("justify") == ""
+    else:
+        with pytest.raises(tkcurses.TclError, match='ambiguous justification ""'):
+            widget_class(root, justify="")

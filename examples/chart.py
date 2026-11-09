@@ -36,7 +36,7 @@ COLOURS = (
 
 root = tk.Tk()
 root.title("Sales")
-canvas = tk.Canvas(root, relief="flat", highlightthickness=0)
+canvas = tk.Canvas(root, highlightthickness=0)
 canvas.pack(fill="both", expand=True)
 
 

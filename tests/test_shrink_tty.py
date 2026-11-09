@@ -68,7 +68,7 @@ def test_a_frame_placed_smaller_leaves_no_old_border(terminal, tmp_path):
     term = terminal(cols=COLS, rows=10)
     term.run_source(
         program(
-            "frame = tkcurses.Frame(root, relief='solid', width=30, height=6)\n"
+            "frame = tkcurses.Frame(root, relief='solid', bd=1, width=30, height=6)\n"
             "frame.place(x=1, y=1)\n"
             "root.bind('<Key-s>', lambda e: frame.place(x=1, y=1, width=8, height=3))"
         ),

@@ -625,7 +625,18 @@ All widgets that render borders MUST:
 - Truncate text that would exceed `width-2` characters
 - Clip content that would exceed `height-2` rows
 
-This applies to: `Toplevel`, `Frame`, `LabelFrame`, `Listbox`, `Text`, `Canvas`, dialog boxes, menus, and any widget with `borderwidth > 0` or `relief != FLAT`.
+This applies to any widget with a `borderwidth` of 1 or more and a relief
+that is not flat - Tk's rule, that a border 0 wide is not drawn whatever its
+relief (`TkCurses-8b8c`). The defaults are Tk's (1 on most widgets, 2 on a
+LabelFrame, 0 on a Frame and a Canvas), so the boxes look as they did. Two
+exceptions. A flat border takes no cell: Tk keeps its pixels blank, and
+here that would put a blank ring round every Label, whose default is 1. A
+Toplevel's frame stands in for the window manager's and keeps the old rule
+- any width, or any relief - at a default of 1, not Tk's 0, so
+`borderwidth=0` is still how a program asks for a toplevel without one. An
+indicatorless Checkbutton or Radiobutton draws its border in its shown
+relief, which is sunken while it is on, so it has one at any width of 1 or
+more.
 
 ---
 
@@ -3442,7 +3453,7 @@ the docs build takes by running it, and each driven by
 `tests/test_examples.py` the way the page says to use it. Writing them
 finds bugs: the first six found a Treeview heading command never called
 (`TkCurses-fl9m`, fixed: it runs on release over the heading pressed)
-and a Canvas whose default relief was not Tk's; the next five
+and a Canvas whose default relief was not Tk's (`TkCurses-14tc`, fixed: flat, as Tk's); the next five
 (`TkCurses-q6d1`) found these, each measured against Tk 9.0 and filed
 rather than fixed alongside:
 
@@ -4372,8 +4383,21 @@ set, because the first computes its state before it creates the variable and
 is not redrawn when it does. Here the shared variable exists from the start
 and both show `(-)`.
 
-`ttk.Radiobutton` keeps two states: measured, real ttk's over an empty
-variable has no `alternate` state. `selectimage` and `tristateimage` replace
+**The themed buttons take their third state from the variable's
+existence, not its value** (`TkCurses-uz0z`). Measured on Tk 9.0.2:
+`ttk.Checkbutton` and `ttk.Radiobutton` set `selected` while the variable
+holds the on value, and `alternate` while the variable does not exist - one
+made with no variable starts that way, and unsetting it later adds
+`alternate` and keeps `selected`. An empty value is plain "off" on both;
+there is no `tristatevalue`. A write clears `alternate` and sets `selected`
+afresh, and a flag set by hand stays until then. Reading the window's
+pixels, the default theme draws `alternate` differently from off on both.
+So `_ThemedChoice` keeps the two flags from the variable and draws the
+indicator from them, and a button given no variable gets one left unset,
+as Tk leaves its own. The issue's example,
+`ttk.Checkbutton(variable=StringVar(value=''))`, reported `alternate` in Tk
+only because tkinter garbage-collects the inline variable, which unsets it;
+here a widget keeps its variable alive. `selectimage` and `tristateimage` replace
 `image` in those states, on both check and radio buttons; neither does
 anything without an `image`, and neither changes the size, which `image`
 alone decides - measured, a larger `selectimage` left the button 8x8.
@@ -5377,10 +5401,25 @@ it, and a `-textvariable` is overwritten and written to:
 `Spinbox(textvariable=StringVar(value="x"), to=10)` holds `0`, and so does
 the variable. `tests/test_spinbox.py` has the measured table.
 
-Two related differences remain. Tk swaps a `-from` that is above `-to`, where
-ours counts down (`TkCurses-fdl9.1`). Tk shows a fractional increment's
-decimals on every value, `1.0` and `2.0`, where ours strips them
-(`TkCurses-fdl9.2`).
+**The range, the step and the format, measured on Tk 9.0.2**
+(`TkCurses-fdl9.1`, `TkCurses-fdl9.2`). The classic spinbox swaps a `-from`
+above `-to`: `Spinbox(from_=10, to=0)` reports 0.0 and 10.0 and counts up.
+A step follows tkEntry.c's `SpinboxInvoke`: from the number the text starts
+with, stopping on an end it would pass (9.9 up by 0.3 to 10 is `10.0`) or,
+with `-wrap`, going to the other end; text with no number goes to `-from`;
+an empty range does not move. Numbers are written in tkEntry.c's
+`ComputeFormat`, which is not documented: `%.Nf` with enough decimals for
+multiples of the increment, counted from the most significant digit of the
+range, and `%.(N-1)e` when that is shorter - 0.5 shows `1.0`, `1.5`;
+0.001 to 1000 shows `0.000`; 1e-8 to 1e-6 shows `0.00e+00`. Because each
+step reads the text it shows, 1.5 from 0 goes `0`, `2`, `4`.
+
+ttk's is the script's (`ttk::spinbox::Spin`, `Adjust`, `FormatValue`), and
+differs: the range is kept as given, `-from` is the bottom and `-to` the top
+whichever is larger - with 10 and 0, both arrows take `5` to `10` - an empty
+range is not refused, and the format is `%.Nf` from the first significant
+digit of an increment below 1, else `%.0f`, so a value set to `1` steps
+`1.5`, `2.0`. `tests/test_spinbox.py` holds both tables.
 
 ---
 
@@ -5907,10 +5946,20 @@ is a strict xfail that will pass when it is fixed.
 both of the above are holding positions until it is answered, not the
 design.
 
-Not done: of the same sweep, 571 values Tk refuses are still stored
-(`TkCurses-m595`), and the options Tk has that we do not are `TkCurses-zkks`.
-`tests/test_option_values_against_tk.py` re-runs the comparison against real
-tkinter, where there is a display.
+Of the same sweep, 571 values Tk refuses were stored here (`TkCurses-m595`).
+All are refused now, with Tk's message, but `Spinbox`'s `buttoncursor`,
+which needs Tk's table of cursor names (`TkCurses-reba`). The rules were
+measured, not read: a two-choice message is "a or b", without the comma; a
+classic Scrollbar's `orient` takes `""` as horizontal and says
+"orientation"; a Canvas's `state` takes `""` and says "bad state value";
+`underline` does arithmetic (`3+1` is 4), keeps `end-1` as written and turns
+a negative into `""`; a themed widget takes `""` for a relief, a border
+width and a compound, keeps `state` unchecked, and checks `padding` - up to
+four distances - only on Frame, Labelframe and Notebook, the label family's
+taking anything. `tests/test_option_refusals.py` holds the edges, and
+`tests/test_option_values_against_tk.py` now also asserts this direction
+against real tkinter, where there is a display. The options Tk has that we
+do not are `TkCurses-zkks`.
 
 ---
 

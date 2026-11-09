@@ -941,5 +941,6 @@ def test_an_exact_name_wins_over_a_longer_one_it_begins(root):
     """Tcl_GetIndexFromObj's rule, for a table like the anchors: "n" is n,
     not an ambiguous prefix of n and ne."""
     assert _tcl_index("n", ("n", "ne"), "anchor") == "n"
-    with pytest.raises(TclError, match='ambiguous anchor "": must be n, or ne'):
+    # Two choices are "a or b", without the comma, as Tcl writes them.
+    with pytest.raises(TclError, match='ambiguous anchor "": must be n or ne'):
         _tcl_index("", ("n", "ne"), "anchor")

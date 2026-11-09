@@ -162,7 +162,7 @@ def test_labels_pack_alongside_frames(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(
         program(
-            "f = tkcurses.Frame(root, relief='solid')\n"
+            "f = tkcurses.Frame(root, relief='solid', bd=1)\n"
             "f.pack(fill='both', expand=True)\n"
             "for word in ('first', 'second', 'third'):\n"
             "    tkcurses.Label(f, text=word).pack(side='top')"
@@ -188,7 +188,7 @@ def test_text_too_wide_keeps_its_beginning(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(
         program(
-            "f = tkcurses.Frame(root, relief='solid', width=12, height=3)\n"
+            "f = tkcurses.Frame(root, relief='solid', bd=1, width=12, height=3)\n"
             "f.place(x=0, y=0)\n"
             "f.pack_propagate(False)\n"
             "tkcurses.Label(f, text='far too wide to fit', anchor='w')"

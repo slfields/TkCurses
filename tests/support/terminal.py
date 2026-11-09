@@ -188,6 +188,7 @@ class _Screen(pyte.Screen):
     def __init__(self, *args: object, **kwargs: object) -> None:
         self._dim = False
         self._dim_cells: set[tuple[int, int]] = set()
+        self._last_drawn = ""
         super().__init__(*args, **kwargs)
 
     def reset(self) -> None:
@@ -195,6 +196,7 @@ class _Screen(pyte.Screen):
         super().reset()
         self._dim = False
         self._dim_cells = set()
+        self._last_drawn = ""
 
     def select_graphic_rendition(self, *attrs: int, **kwargs: object) -> None:
         """Note dim on the way past, then let pyte handle the rest.
@@ -212,6 +214,8 @@ class _Screen(pyte.Screen):
     def draw(self, data: str) -> None:
         """Write characters, recording which cells came out dim."""
         row, start = self.cursor.y, self.cursor.x
+        if data:
+            self._last_drawn = data[-1]
         super().draw(data)
         end = self.cursor.x if self.cursor.y == row else self.columns
         for column in range(start, max(start, end)):
@@ -219,6 +223,19 @@ class _Screen(pyte.Screen):
                 self._dim_cells.add((row, column))
             else:
                 self._dim_cells.discard((row, column))
+
+    def repeat_last_character(self, count: int = 1, **kwargs: object) -> None:
+        """REP, ``CSI n b``: draw the last character again ``n`` times.
+
+        ECMA-48 8.3.103; the count defaults to one. ncurses sends it for a
+        run of one ASCII character when terminfo has ``rep`` - xterm does -
+        and the locale is not UTF-8: an Entry's ridge under ``LANG=C`` is
+        ``-`` then ``CSI 19 b``. pyte drops it, so such a rail read ``+-+``
+        where a terminal draws the whole of it.
+        """
+        del kwargs
+        if self._last_drawn:
+            self.draw(self._last_drawn * max(1, count))
 
     def is_dim(self, row: int, column: int) -> bool:
         """Whether one cell was drawn dim."""
@@ -354,6 +371,7 @@ class _ByteStream(pyte.ByteStream):
     csi: ClassVar[dict[str, str]] = {
         **pyte.ByteStream.csi,
         "Z": "cursor_back_tab",
+        "b": "repeat_last_character",
         "S": "scroll_up",
         "T": "scroll_down",
     }

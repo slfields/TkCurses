@@ -29,7 +29,7 @@ import tkcurses
 
 root = tkcurses.Tk()
 buffer = root.tk.screen.buffer
-frame = tkcurses.Frame(root, relief='solid')
+frame = tkcurses.Frame(root, relief='solid', bd=1)
 frame.pack(fill='both', expand=True)
 lb = tkcurses.Listbox(frame, width=16, height=5)
 lb.pack(side='left', fill='both')

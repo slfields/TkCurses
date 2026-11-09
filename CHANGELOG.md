@@ -7,6 +7,57 @@ All notable changes to TkCurses. The format follows
 ## [Unreleased]
 
 ### Fixed
+- A border 0 wide is not drawn, whatever the relief, as in Tk, and every
+  classic widget's `borderwidth` defaults to Tk's - 1 on most, 2 on a
+  LabelFrame - where it was 0 with the box drawn by the relief alone. The
+  boxes look as they did; `bd=0` now takes one away, and
+  `cget("borderwidth")` answers what Tk does. A Frame or Canvas given a
+  relief needs a `borderwidth` too, as in Tk. A Toplevel keeps its frame.
+- A value Tk refuses for an option is refused here too, with Tk's message,
+  where it used to be stored and ignored: `relief`, `borderwidth`,
+  `highlightthickness`, `anchor`, `compound`, `state`, `orient`,
+  `underline`, `wrap`, `padding` and the rest, on the classic and the
+  themed widgets alike, by their own rules. A program passing nonsense is
+  told so at once.
+- `askopenfilenames` and `askopenfiles` can choose several files: the
+  chooser's file list takes an extended selection - Shift or Control with
+  a click, Shift with Up and Down - and OK answers all of them. They
+  chose one at most.
+- The option database matches an option by Tk's database name or class -
+  `*Button.highlightThickness` or `*Button.HighlightThickness` - as Tk
+  does, and no longer by the all-lowercase spelling Tk ignores.
+  `option_get(name, className)` takes the option's name and class as in
+  tkinter, and gives `""` when nothing matches.
+- Canvas is flat by default, as in Tk, so it fills its space with no box
+  around it; it was sunken. Pass `relief="sunken"` for the old look.
+- Spinbox: a `from` above `to` is swapped, as Tk swaps it, rather than
+  counting down. Numbers are shown in Tk's own format - an increment of
+  0.5 shows `1.0`, `1.5`, `2.0` rather than `1`, `1.5`, `2` - and a step
+  that would pass an end stops on it rather than doing nothing. ttk.Spinbox
+  follows ttk's own rules for both, which differ.
+- The root window sends `<Configure>` with its size, then `<Map>`, when
+  it first appears, as Tk does, so a `<Configure>` binding learns the
+  starting size without waiting for a resize. A root withdrawn at start
+  sends them when it is first shown.
+- `tkcurses.curses`: `setscrreg()` sets the rows `scroll()` moves, and a
+  newline or a wrap on the bottom row of that region scrolls it, so a
+  header and footer stay put around a scrolling log. Text written by
+  `addstr`, `addnstr` and `addch` now wraps onto the next row and honours
+  a newline - clearing the rest of the row - as curses does, and running
+  off the bottom without `scrollok` raises `curses.error` as curses does.
+- ttk.Checkbutton and ttk.Radiobutton report `selected` while on, and
+  `alternate` while their variable does not exist - as one made without a
+  variable does until it is first set - so `instate()` and a style map see
+  them, and the indicator is drawn from those flags as a theme draws it.
+  A ttk.Checkbutton over an empty variable is off; it was drawn `[-]`.
+- `justify` is checked on every widget that has it, as Tk checks it:
+  `"middle"` is refused, `"c"` reads back `"center"`, and `""` is refused
+  except on the ttk label family and ttk.Progressbar, where it means unset.
+  Only Listbox checked it.
+- `font.Font` refuses an option a font does not have when it is made, as
+  Tk does - `Font(weight="bold", colour=1)` was accepted - and `cget`,
+  `configure`, `actual` and `metrics` refuse one with Tk's own message,
+  `bad option "-colour": must be -family, -size, ...`.
 - Ctrl-C in a dialog opened inside `mainloop()` cancels it, as Escape
   does and as it already did before `mainloop()`; it closed the whole
   application, and the dialog answered as if refused. A second Ctrl-C

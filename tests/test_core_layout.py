@@ -137,6 +137,7 @@ def test_a_run_asks_the_manager_for_a_size_and_applies_it(engine, root):
 
 def test_the_area_offered_excludes_the_border(engine, root):
     root._options["borderwidth"] = 1
+    root._options["relief"] = "solid"
     root._layout_manager = RecordingLayout()
     engine.invalidate(root)
     engine.run()

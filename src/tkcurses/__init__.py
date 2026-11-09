@@ -1172,9 +1172,121 @@ def _tcl_index(value: Any, table: tuple[str, ...], what: str) -> str:
     matches = [name for name in table if name.startswith(text)]
     if len(matches) == 1:
         return matches[0]
-    listed = ", ".join(table[:-1])
+    # Tcl's own punctuation: "a or b" for two, "a, b, or c" for more.
+    listed = ", ".join(table[:-1]) + ("," if len(table) > 2 else "")
     kind = "ambiguous" if matches else "bad"
-    raise TclError(f'{kind} {what} "{text}": must be {listed}, or {table[-1]}')
+    raise TclError(f'{kind} {what} "{text}": must be {listed} or {table[-1]}')
+
+
+def _choices(what: str, *table: str, empty: bool = False) -> Callable[[Any, Any], str]:
+    """A check for an option Tk reads with ``Tcl_GetIndexFromObj``: one of
+    ``table`` or a unique prefix of one, returned whole, in Tk's words when
+    it is neither. With ``empty``, ``""`` is a choice too, listed last."""
+
+    def check(widget: Any, value: Any) -> str:
+        del widget
+        if empty and value == "":
+            return ""
+        try:
+            return _tcl_index(value, table, what)
+        except TclError as error:
+            if not empty:
+                raise
+            kind = str(error).split(" ", 1)[0]
+            listed = ", ".join(table)
+            raise TclError(
+                f'{kind} {what} "{value}": must be {listed}, or ""'
+            ) from None
+
+    return check
+
+
+def _canvas_state(widget: Any, value: Any) -> str:
+    """A Canvas's ``state``: ``normal`` or ``disabled``, a prefix of either,
+    or ``""``. Measured on Tk 9.0.2, with its own message - ``hidden``,
+    which a canvas item takes, is refused."""
+    del widget
+    text = str(value)
+    if text == "":
+        return ""
+    for name in ("normal", "disabled"):
+        if name.startswith(text):
+            return name
+    raise TclError(f'bad state value "{text}": must be normal or disabled')
+
+
+def _scrollbar_orient(widget: Any, value: Any) -> str:
+    """A classic Scrollbar's ``orient``: a prefix of ``horizontal``, ``""``
+    included, or of ``vertical``. Measured on Tk 9.0.2."""
+    del widget
+    text = str(value)
+    for name in ("horizontal", "vertical"):
+        if name.startswith(text):
+            return name
+    raise TclError(f'bad orientation "{text}": must be vertical or horizontal')
+
+
+_UNDERLINE_NUMBER = re.compile(r"\s*([+-]?\d+)(?:([+-])(\d+))?\s*")
+_UNDERLINE_END = re.compile(r"end(?:[+-]\d+)?")
+
+
+def _underline(widget: Any, value: Any) -> Any:
+    """An ``underline`` index, as Tk 9 reads one, measured on 9.0.2:
+    ``3``, ``3+1`` (read back 4), ``end`` or ``end-1`` (kept as written), or
+    ``""``; a number below zero reads back ``""``."""
+    del widget
+    if isinstance(value, bool):
+        value = int(value)
+    if isinstance(value, int):
+        return value if value >= 0 else ""
+    text = str(value)
+    if text == "" or _UNDERLINE_END.fullmatch(text):
+        return text
+    found = _UNDERLINE_NUMBER.fullmatch(text)
+    if found:
+        number, sign, offset = found.groups()
+        index = int(number) + (int(offset) if sign == "+" else -int(offset or 0))
+        return index if index >= 0 else ""
+    raise TclError(
+        f'bad index "{text}": must be integer?[+-]integer?, end?[+-]integer?, or ""'
+    )
+
+
+def _underline_position(value: Any, text: str) -> int:
+    """Which character of ``text`` an ``underline`` index picks: -1 for
+    none. ``end`` is the last."""
+    if value is None or value == "":
+        return -1
+    if isinstance(value, int):
+        return value
+    word = str(value)
+    if word.startswith("end"):
+        offset = int(word[3:] or 0)
+        return len(text) - 1 + offset
+    try:
+        return int(word)
+    except ValueError:
+        return -1
+
+
+def _draws_border(options: dict[str, Any]) -> bool:
+    """Whether options with this ``relief`` and ``borderwidth`` draw a border.
+
+    Tk's rule: a border of width 0 is not drawn whatever its relief, and a
+    flat one is not seen whatever its width. A terminal border is a cell of
+    box-drawing, so a flat border takes no cell - Tk's default of 1 on a
+    Label is a pixel, and a blank cell round every label would be anything
+    but. ``""``, a themed widget's border width, is the theme's: the relief
+    decides.
+    """
+    relief = options.get("relief", FLAT)
+    if relief in (FLAT, "", None):
+        return False
+    width = options.get("borderwidth", 0)
+    if width == "":
+        return True
+    number = _tcl_number(width)
+    return number is not None and not math.isnan(number) and number >= 1
 
 
 def _justification(widget: Any, value: Any) -> str:
@@ -1334,9 +1446,10 @@ def _part_relief(relief: Any) -> int:
     return _curses.A_DIM if str(relief) == SUNKEN else _curses.A_NORMAL
 
 
-#: Options whose values are checked, and stored as Tk would store them. Most
-#: options here are not: a colour or a relief is taken as given and resolved
-#: when drawn. These are checked because they reach the terminal itself.
+#: Options whose values are checked, and stored as Tk would store them, with
+#: Tk's own messages - measured on Tk 9.0.2 against every option of every
+#: widget. A widget whose Tk reads one otherwise says so in
+#: its ``_value_checks``, which win over these.
 _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "activebackground": _colour_or_terminals,
     "activeborderwidth": _signed_distance,
@@ -1347,6 +1460,44 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "highlightcolor": _colour_or_terminals,
     "placeholderforeground": _colour_or_terminals,
     "activerelief": _relief,
+    "justify": _justification,
+    # The rest of what Tk refuses, measured on Tk 9.0.2 (TkCurses-m595).
+    # Where a widget's own message differs, its _value_checks say so.
+    "activestyle": _choices("activestyle", "dotbox", "none", "underline"),
+    "anchor": _choices("anchor", "n", "ne", "e", "se", "s", "sw", "w", "nw", "center"),
+    "aspect": _tcl_integer,
+    "bigincrement": _tcl_float,
+    "borderwidth": _screen_distance,
+    "closeenough": _tcl_float,
+    "compound": _choices(
+        "compound", "bottom", "center", "left", "none", "right", "top"
+    ),
+    "direction": _choices("direction", "above", "below", "flush", "left", "right"),
+    "highlightthickness": _screen_distance,
+    "indicatoron": _tcl_boolean,
+    "labelanchor": _choices(
+        "labelanchor",
+        "e",
+        "en",
+        "es",
+        "n",
+        "ne",
+        "nw",
+        "s",
+        "se",
+        "sw",
+        "w",
+        "wn",
+        "ws",
+    ),
+    "orient": _choices("orient", "horizontal", "vertical"),
+    "relief": _relief,
+    "showhandle": _tcl_boolean,
+    "showvalue": _tcl_boolean,
+    "state": _choices("state", "active", "disabled", "normal"),
+    "tabstyle": _choices("tabstyle", "tabular", "wordprocessor"),
+    "tearoff": _tcl_boolean,
+    "underline": _underline,
     "blockcursor": _tcl_boolean,
     "buttonbackground": _colour_or_terminals,
     "buttondownrelief": _relief,
@@ -2381,9 +2532,7 @@ class Misc:
         """
         if getattr(self, "_overrideredirect", False):
             return False
-        return bool(self._options.get("borderwidth")) or (
-            self._options.get("relief", FLAT) != FLAT
-        )
+        return _draws_border(self._options)
 
     @property
     def _border_drawn(self) -> bool:
@@ -3072,6 +3221,9 @@ class Misc:
         """Lay out what is waiting and show it, as the main loop does after
         its callbacks."""
         self.tk.layout.run()
+        announce = getattr(self._root(), "_announce_mapped", None)
+        if announce is not None:
+            announce()
         show = getattr(self._root(), "_update_display", None)
         if show is not None:
             show()
@@ -3227,8 +3379,16 @@ class Misc:
         self.tk.options.clear()
 
     def option_get(self, name: str, className: str) -> Any:
-        """The registered default for ``name`` on this widget, or None."""
-        return self.tk.options.get(self._w, className, name)
+        """The value the option database holds for this widget, or ``""``.
+
+        Args:
+            name: The option's database name, ``"highlightThickness"``.
+            className: Its database class, ``"HighlightThickness"``. A
+                pattern ending in either matches; the widget's own class
+                and path select the rest, as in Tk.
+        """
+        found = self.tk.options.get(self._w, self.winfo_class(), name, className)
+        return "" if found is None else found
 
     def option_readfile(
         self,
@@ -3602,10 +3762,16 @@ class BaseWidget(Misc):
         """
         spec = self._option_spec()
         options = dict(spec)
-        for name in spec:
-            from_database = self.tk.options.get(self._w, self.winfo_class(), name)
-            if from_database is not None:
-                options[name] = from_database
+        database = self.tk.options
+        if len(database):
+            widget_class = self._database_class()
+            for name in spec:
+                db_name, db_class = database_names(widget_class, name)
+                from_database = database.get(
+                    self._w, self.winfo_class(), db_name, db_class
+                )
+                if from_database is not None:
+                    options[name] = from_database
         options.update(self._checked(given))
         return options
 
@@ -4708,7 +4874,7 @@ class Place:
     and change nothing about how their parent is sized.
 
     Sample output:
-        frame = tk.Frame(root, width=30, height=8, relief="groove")
+        frame = tk.Frame(root, width=30, height=8, relief="groove", bd=1)
         frame.pack()
         tk.Label(frame, text="x=1, y=1").place(x=1, y=1)
         tk.Label(frame, text="centre", relief="solid").place(
@@ -5604,6 +5770,8 @@ class Tk(BaseWidget, Wm):
         self._background_painted = False
         self._started = False
         self._running = False
+        #: Whether the root has sent its first <Configure> and <Map>.
+        self._announced = False
 
         if useTk:
             self._start()
@@ -6009,6 +6177,10 @@ class Tk(BaseWidget, Wm):
         # held reference would outlive the one the rest of the process uses.
         CursesDispatcher.get().process_queue(limit=_DISPATCH_BATCH)
         self._guard(self.tk.timers.run_idle)
+        # Mapping is idle work in Tk, and done before any input is read: a
+        # key read first would be cut off from a chord it starts by the
+        # root's <Configure>, an event in another window.
+        self._guard(self._announce_mapped)
         self._guard(self.tk.timers.run_due)
         self._read_input()
         # Layout settles before anything is drawn, so a widget is never
@@ -6017,6 +6189,43 @@ class Tk(BaseWidget, Wm):
         self._update_display()
         # Last, between passes, where a callback cannot be cut in half.
         self._answer_interrupt()
+
+    def _announce_mapped(self) -> None:
+        """Tell the root's bindings it is on screen, once: ``<Configure>``
+        with its size, then ``<Map>``.
+
+        Tk delivers both when the root is first mapped, after the loop has
+        started, so a program that binds ``<Configure>`` on the root learns
+        its size at start-up. Measured on Tk 9.0.2: bindings made before
+        ``mainloop()`` saw ``<Configure>`` at the window's size and then
+        ``<Map>``, after an ``after(5)`` callback had already run. Here the
+        root takes its size from the terminal when it is made, before any
+        binding can exist, so nothing ever reported it until a resize.
+
+        Not while the root is withdrawn or iconified - a program that only
+        shows dialogs never maps it. Showing it maps it, which sends
+        ``<Map>``, and :meth:`_map` sends the first ``<Configure>`` ahead of
+        it.
+        """
+        if self._announced or not self._started or self._destroyed:
+            return
+        if self._wm_state != "normal" or not self._mapped:
+            return
+        self._announce_size()
+        self.event_generate("<Map>")
+
+    def _announce_size(self) -> None:
+        """The root's first ``<Configure>``; see :meth:`_announce_mapped`."""
+        self._announced = True
+        rect = self._rect
+        self.event_generate(
+            "<Configure>", width=rect.width, height=rect.height, x=rect.x, y=rect.y
+        )
+
+    def _map(self) -> None:
+        if not self._mapped and self._started and not self._announced:
+            self._announce_size()
+        super()._map()
 
     def _renew_colour_pairs(self) -> None:
         """Rebuild an exhausted colour-pair table, and put the screen back.
@@ -6466,6 +6675,20 @@ class Toplevel(BaseWidget, Wm):
     """
 
     _is_toplevel = True
+
+    @property
+    def _bordered(self) -> bool:
+        """A toplevel's frame is its window manager's, not a Tk border.
+
+        So Tk's rule for a border does not apply: any ``borderwidth`` draws
+        the frame, flat or not, and ``borderwidth=0`` with a flat relief - or
+        overrideredirect - leaves it off.
+        """
+        if getattr(self, "_overrideredirect", False):
+            return False
+        return bool(self._options.get("borderwidth")) or (
+            self._options.get("relief", FLAT) != FLAT
+        )
 
     #: ``width`` and ``height`` are cells, and zero means "not asked for",
     #: which is what sends the window to its default size. borderwidth is 1
@@ -7177,7 +7400,7 @@ class Frame(_Drawable):
     would not produce on their own.
 
     Sample output:
-        frame = tk.Frame(root, relief="groove", padx=1)
+        frame = tk.Frame(root, relief="groove", bd=1, padx=1)
         frame.pack()
         tk.Label(frame, text="Inside a frame").pack()
         tk.Button(frame, text="OK").pack()
@@ -7890,7 +8113,7 @@ class _TextWidget(_Drawable):
         The index counts through the text as written, so on wrapped text it
         has to be resolved to a line and a column rather than used directly.
         """
-        index = int(self._options["underline"])
+        index = _underline_position(self._options["underline"], "".join(lines))
         if index < 0:
             return
         remaining = index
@@ -7956,7 +8179,10 @@ class Label(_TextWidget):
         is ``cursor``: the mouse pointer belongs to the terminal.
     """
 
-    _widget_options: ClassVar[dict[str, Any]] = dict(_STATE_COLOUR_OPTIONS)
+    _widget_options: ClassVar[dict[str, Any]] = {
+        **_STATE_COLOUR_OPTIONS,
+        "borderwidth": 1,  # Tk's default
+    }
 
 
 class Button(_TextWidget):
@@ -8008,6 +8234,7 @@ class Button(_TextWidget):
     _MARKER_WIDTH = 2
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "borderwidth": 1,  # Tk's default
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         **_STATE_COLOUR_OPTIONS,
         "command": None,
@@ -8495,8 +8722,12 @@ class _ChoiceWidget(_TextWidget):
         variable = self._options["variable"]
         if variable is None:
             return
-        handle = variable.trace_add("write", lambda *_: self._redraw())
+        handle = variable.trace_add("write", lambda *_: self._value_written())
         self._value_trace = (variable, handle)
+
+    def _value_written(self) -> None:
+        """The variable was written: show what it holds now."""
+        self._redraw()
 
     def _drawn_image(self) -> Image | None:
         """``selectimage`` while on, ``tristateimage`` in the third state.
@@ -8635,6 +8866,20 @@ class _ChoiceWidget(_TextWidget):
         foreground = active[0] if active is not None else ""
         return self._coloured(attribute, foreground, self._options["selectcolor"])
 
+    @property
+    def _bordered(self) -> bool:
+        """An indicatorless button's border is drawn in its shown relief.
+
+        That is sunken while it is on, so a border one cell wide is always
+        there to draw, whatever ``relief`` and ``offrelief`` say; one with an
+        indicator follows Tk's rule for its own relief.
+        """
+        if self._indicator_on or _is_ttk(self):
+            return super()._bordered
+        return _draws_border(
+            {"relief": SUNKEN, "borderwidth": self._options.get("borderwidth", 0)}
+        )
+
     def _border_style(self) -> BorderStyle:
         """The relief an indicatorless button is drawn in, which is not its own.
 
@@ -8742,9 +8987,8 @@ class Checkbutton(_ChoiceWidget):
     ``textvariable``, ``underline``, ``width``, ``wraplength``.
 
     Differences from tkinter:
-        ``borderwidth`` is 0 by default rather than 1, so a button without a box
-        shows ``offrelief`` only once given a border. ``highlightbackground``,
-        ``highlightcolor`` and ``highlightthickness`` are accepted and draw
+        ``highlightbackground``, ``highlightcolor`` and
+        ``highlightthickness`` are accepted and draw
         nothing: the focus is shown by markers instead. So is ``cursor``: the
         mouse pointer belongs to the terminal.
 
@@ -8783,6 +9027,7 @@ class Checkbutton(_ChoiceWidget):
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "borderwidth": 1,  # Tk's default
         "offvalue": 0,
         "onvalue": 1,
         "tristatevalue": "",
@@ -8877,8 +9122,6 @@ class Radiobutton(_ChoiceWidget):
     ``textvariable``, ``underline``, ``width``, ``wraplength``.
 
     Differences from tkinter:
-        ``borderwidth`` is 0 by default rather than 1, so a button without an
-        indicator shows ``offrelief`` only once given a border.
         ``highlightbackground``, ``highlightcolor`` and ``highlightthickness``
         are accepted and draw nothing: the focus is shown by markers instead. So
         is ``cursor``: the mouse pointer belongs to the terminal.
@@ -8920,6 +9163,7 @@ class Radiobutton(_ChoiceWidget):
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "borderwidth": 1,  # Tk's default
         # The value that shows the third state. TkCurses-gm66.10.
         "tristatevalue": "",
         "value": "",
@@ -9070,10 +9314,12 @@ class Entry(_Drawable, XView):
     }
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
-        "width": _tcl_integer
+        "state": _choices("state", "disabled", "normal", "readonly"),
+        "width": _tcl_integer,
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "borderwidth": 1,  # Tk's default
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         **_INSERT_CURSOR_OPTIONS,
         **_SELECTION_OPTIONS,
@@ -10776,6 +11022,7 @@ class Menubutton(_TextWidget):
     _INDICATOR = "▾"
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "borderwidth": 1,  # Tk's default
         **_STATE_COLOUR_OPTIONS,
         "direction": "below",
         "indicatoron": False,
@@ -11079,6 +11326,7 @@ class Message(_TextWidget):
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "borderwidth": 1,  # Tk's default
         "aspect": 150,
         # Tk's Message justifies left rather than centre, which is what makes
         # it read as a paragraph instead of a banner.
@@ -11218,6 +11466,7 @@ class LabelFrame(Frame):
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "borderwidth": 2,  # Tk's default
         "font": "",
         "labelanchor": "nw",
         # A widget drawn on the border in place of the text. TkCurses-gm66.10.
@@ -11641,6 +11890,11 @@ class Spinbox(Entry):
         tk.Spinbox(root, from_=2.5, to=10, increment=0.5, format="%06.2f",
                    width=10).pack()
 
+    Sample output (increment, to):
+        for step, end in ((1, 10), (0.5, 10), (1, 2.25)):
+            tk.Spinbox(root, from_=1, to=end, increment=step,
+                       width=8).pack()
+
     Sample output (values):
         tk.Spinbox(root, values=("Small", "Medium", "Large"), width=10).pack()
 
@@ -11658,6 +11912,7 @@ class Spinbox(Entry):
     _ARROW_WIDTH = 2
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "wrap": _tcl_boolean,
         "from": _tcl_float,
         "increment": _tcl_float,
         "to": _tcl_float,
@@ -11668,6 +11923,7 @@ class Spinbox(Entry):
     _options_set_contents: ClassVar[bool] = True
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "borderwidth": 1,  # Tk's default
         # The arrows: activebackground is stored only, since an arrow is not
         # drawn held down; buttonbackground is theirs. TkCurses-gm66.4.
         "activebackground": "",
@@ -11709,6 +11965,7 @@ class Spinbox(Entry):
         self._held_arrow: str | None = None
         self._repeated = 0
         super().__init__(master, cnf, name=name, **kw)
+        self._order_range()
         # Construction is the first configure, from Tk's defaults of no
         # values and a range of 0 to 0.
         self._contents_from_options(
@@ -11721,6 +11978,7 @@ class Spinbox(Entry):
         result = super().configure(cnf, **kw)
         given = _given(cnf, kw)
         if given:
+            self._order_range()
             self._contents_from_options(
                 values_given="values" in given, old_range=old_range
             )
@@ -11730,6 +11988,23 @@ class Spinbox(Entry):
 
     def _range(self) -> tuple[float, float]:
         return float(self._options["from"]), float(self._options["to"])
+
+    #: Whether a ``from`` above ``to`` is swapped, as the classic Tk
+    #: spinbox does; ttk's keeps them as given.
+    _swaps_range: ClassVar[bool] = True
+
+    def _order_range(self) -> None:
+        """Swap ``from`` and ``to`` when ``from`` is the larger.
+
+        Measured on Tk 9.0.2: ``Spinbox(from_=10, to=0)`` reports ``from``
+        0.0 and ``to`` 10.0 and steps up from ``0`` to ``1``, and
+        ``configure(from_=20)`` over ``to=10`` gives 10 and 20.
+        """
+        if not self._swaps_range:
+            return
+        low, high = self._range()
+        if low > high:
+            self._options["from"], self._options["to"] = high, low
 
     def _contents_from_options(
         self, *, values_given: bool, old_range: tuple[float, float]
@@ -11764,9 +12039,7 @@ class Spinbox(Entry):
             number = _leading_number(self._field.text)
             if number is None:
                 number = low
-            # Between the two ends whichever way round they are. Tk swaps a
-            # from above to, which this does not yet - TkCurses-fdl9.1.
-            text = self._number_text(min(max(number, min(low, high)), max(low, high)))
+            text = self._number_text(min(max(number, low), high))
         # Straight into the field, not through _replace: that refuses a
         # disabled widget, and Tk's does not.
         self._field.text = text
@@ -11835,20 +12108,35 @@ class Spinbox(Entry):
         return [str(value) for value in values]
 
     def _number_text(self, value: float) -> str:
-        """One number as text, honouring ``format`` if it was given.
-
-        Without a format the increment decides: a spinbox counting by 1 has
-        no business showing ``3.0``, and one counting by 0.5 has no business
-        showing ``3``.
-        """
+        """One number as text, in ``format`` if it was given and otherwise
+        in the one :meth:`_computed_format` works out."""
         template = str(self._options["format"])
         if template:
             with contextlib.suppress(TypeError, ValueError):
                 return template % value
-        increment = abs(float(self._options["increment"]))
-        if increment and increment != int(increment):
-            return f"{value:.4f}".rstrip("0").rstrip(".") or "0"
-        return str(round(value))
+        return self._computed_format() % value
+
+    def _computed_format(self) -> str:
+        """The ``%f`` or ``%e`` format Tk gives every number in the range.
+
+        Follows ``ComputeFormat`` in Tk's tkEntry.c: enough digits after the
+        point to show multiples of the increment, counted from the most
+        significant digit any number in the range needs, and ``%e`` when
+        that is shorter. Measured on Tk 9.0.2 - an increment of 0.5 shows
+        ``1.0``, ``1.5``, ``2.0``; 0.001 up to 1000 shows ``0.000``; 1e-8
+        up to 1e-6 shows ``0.00e+00`` - and every decimal is kept, where
+        this used to strip them.
+        """
+        low, high = self._range()
+        biggest = max(abs(low), abs(high)) or 1.0
+        most = math.floor(math.log10(biggest))
+        increment = abs(float(self._options["increment"])) or 1.0
+        least = math.floor(math.log10(increment))
+        digits = most - least + 1 if most >= least else 1
+        e_width = digits + 4 + (1 if digits > 1 else 0)
+        after = max(0, digits - most - 1)
+        f_width = (most + after if most >= 0 else after) + (after > 0) + (most < 0)
+        return f"%.{after}f" if f_width <= e_width else f"%.{digits - 1}e"
 
     def _replace(self, text: str) -> None:
         """Put ``text`` in the field, as the arrows do.
@@ -11908,25 +12196,32 @@ class Spinbox(Entry):
         return values[index % len(values)]
 
     def _number_step(self, direction: int) -> str | None:
-        """The next number in the range, or None at an end that does not wrap."""
-        low, high = float(self._options["from"]), float(self._options["to"])
+        """The next number in the range; None when the range is empty.
+
+        ``SpinboxInvoke`` in Tk's tkEntry.c, measured on Tk 9.0.2: a step
+        past an end stops on it - 9.9 up by 0.3 to 10 is ``10.0`` - or,
+        with ``wrap``, goes to the other end; text that does not start
+        with a number goes to ``from``.
+        """
+        low, high = self._range()
         if low == high:
             return None
-        increment = abs(float(self._options["increment"])) or 1.0
-        try:
-            current = float(self._field.text)
-        except ValueError:
-            # Something that is not a number at all: the arrows put the
-            # spinbox back on the scale rather than refusing to move.
+        return self._stepped(low, high, direction)
+
+    def _stepped(self, low: float, high: float, direction: int) -> str:
+        """One step from the number the text starts with, kept between
+        ``low`` and ``high`` - a value below ``low`` going to ``low``, or
+        with ``wrap`` to ``high``, and the other way round."""
+        current = _leading_number(self._field.text)
+        if current is None:
             return self._number_text(low)
-        step = increment if high > low else -increment
-        value = round(current + step * direction, 10)
-        lo, hi = min(low, high), max(low, high)
-        if lo <= value <= hi:
-            return self._number_text(value)
-        if not self._wraps:
-            return None
-        return self._number_text(high if value < lo else low)
+        increment = abs(float(self._options["increment"])) or 1.0
+        value = current + increment * direction
+        if value < low:
+            value = high if self._wraps else low
+        elif value > high:
+            value = low if self._wraps else high
+        return self._number_text(value)
 
     @property
     def _wraps(self) -> bool:
@@ -12294,6 +12589,8 @@ class Text(_Drawable, XView, YView):
     """
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "state": _choices("state", "disabled", "normal"),
+        "wrap": _choices("wrap", "char", "none", "word"),
         "height": _signed_distance,
         "padx": _screen_distance,
         "pady": _screen_distance,
@@ -12301,6 +12598,7 @@ class Text(_Drawable, XView, YView):
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "borderwidth": 1,  # Tk's default
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         **_INSERT_CURSOR_OPTIONS,
         **_SELECTION_OPTIONS,
@@ -15044,6 +15342,7 @@ class Canvas(_Drawable, XView, YView):
     }
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "state": _canvas_state,
         "height": _signed_distance,
         "scrollregion": _scroll_region_value,
         "width": _signed_distance,
@@ -15062,7 +15361,7 @@ class Canvas(_Drawable, XView, YView):
         "confine": 1,
         "height": 10,
         "offset": "0,0",
-        "relief": "sunken",
+        "relief": "flat",
         "scrollregion": None,
         "state": "normal",
         "takefocus": False,
@@ -16066,6 +16365,7 @@ class Menu(_Drawable):
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "borderwidth": 1,  # Tk's default
         **_STATE_COLOUR_OPTIONS,
         # The active entry's border, which a row-high entry has no room for,
         # and its relief: sunken is drawn dim. TkCurses-gm66.5.
@@ -17040,7 +17340,7 @@ def _traverse_to_menu(event: Event) -> None:
 
 def _underlined(label: str, underline: Any) -> str:
     """The lower-cased character ``underline`` picks out of ``label``."""
-    index = int(underline if underline not in (None, "") else -1)
+    index = _underline_position(underline, label)
     return label[index].lower() if 0 <= index < len(label) else ""
 
 
@@ -17240,11 +17540,13 @@ class Listbox(_Drawable, XView, YView):
     }
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "state": _choices("state", "disabled", "normal"),
         "height": _tcl_integer,
         "width": _tcl_integer,
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "borderwidth": 1,  # Tk's default
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         **_SELECTION_OPTIONS,
         "disabledforeground": "",  # dimmed, as before; see _in_state
@@ -17389,13 +17691,6 @@ class Listbox(_Drawable, XView, YView):
         return result
 
     config = configure
-
-    def _checked(self, given: dict[str, Any]) -> dict[str, Any]:
-        """As every widget's, and ``justify`` is checked as Tk checks it."""
-        resolved = super()._checked(given)
-        if "justify" in resolved:
-            resolved["justify"] = _justification(self, resolved["justify"])
-        return resolved
 
     # ------------------------------------------------------- list variable
 
@@ -18378,6 +18673,7 @@ class PanedWindow(_Drawable):
     _HANDLE: ClassVar[dict[str, str]] = {"horizontal": "┃", "vertical": "━"}
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "borderwidth": 1,  # Tk's default
         # Tk's are 6 points, about a cell. TkCurses-gm66.9.
         "handlepad": 1,
         "handlesize": 1,
@@ -19020,10 +19316,12 @@ class Scrollbar(_Drawable):
     """
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
-        "width": _signed_distance
+        "orient": _scrollbar_orient,
+        "width": _signed_distance,
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "borderwidth": 1,  # Tk's default
         # Tk's are real colours; "" draws the scrollbar as it was. See
         # _part_attribute. TkCurses-gm66.4.
         "activebackground": "",
@@ -19528,6 +19826,7 @@ class Scale(_Drawable):
     }
 
     _widget_options: ClassVar[dict[str, Any]] = {
+        "borderwidth": 1,  # Tk's default
         "highlightthickness": 1,  # Tk's default; see Widget._widget_options
         # The handle while active or dragged, and the trough. Tk's are real
         # colours; "" draws the scale as it was. TkCurses-gm66.4.

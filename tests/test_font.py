@@ -137,9 +137,9 @@ def test_config_with_no_arguments_reports_everything(root):
 
 def test_an_unknown_option_is_refused(root):
     font = Font(root)
-    with pytest.raises(TclError, match="unknown option"):
+    with pytest.raises(TclError, match="bad option"):
         font.cget("colour")
-    with pytest.raises(TclError, match="unknown option"):
+    with pytest.raises(TclError, match="bad option"):
         font.configure(colour="red")
 
 
@@ -178,7 +178,7 @@ def test_actual_can_be_asked_for_one_attribute(root):
 
 
 def test_actual_refuses_an_attribute_a_font_has_not_got(root):
-    with pytest.raises(TclError, match="unknown option"):
+    with pytest.raises(TclError, match="bad option"):
         Font(root).actual("colour")
 
 
@@ -215,7 +215,7 @@ def test_several_metrics_come_back_as_a_mapping(root):
 
 
 def test_an_unknown_metric_is_refused(root):
-    with pytest.raises(TclError, match="unknown option"):
+    with pytest.raises(TclError, match="bad metric"):
         Font(root).metrics("leading")
 
 
@@ -258,3 +258,19 @@ def test_using_fonts_without_a_root_says_so():
         Font()
     with pytest.raises(TclError, match="No root window"):
         names()
+
+
+def test_a_font_refuses_an_option_it_lacks_when_it_is_made(root):
+    """Measured on Tk 9.0.2, with Tk's own words."""
+    with pytest.raises(
+        TclError,
+        match='bad option "-colour": must be -family, -size, -weight, -slant, '
+        "-underline, or -overstrike",
+    ):
+        Font(root, weight="bold", colour=1)
+
+
+def test_the_keywords_beside_a_font_to_copy_are_not_checked(root):
+    """tkinter passes them nowhere when it is given a font, so Tk never sees
+    them either."""
+    Font(root, font=("fixed", 3), colour=1)

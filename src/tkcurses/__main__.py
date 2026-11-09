@@ -49,7 +49,7 @@ PRESSED = "the widget half answered"
 
 def build_widgets(root: tkcurses.Tk) -> tkcurses.Label:
     """The tkinter half: a frame of ordinary widgets down the left."""
-    frame = tkcurses.Frame(root, name="widgets", relief="solid")
+    frame = tkcurses.Frame(root, name="widgets", relief="solid", borderwidth=1)
     frame.place(x=0, y=0, relheight=1.0, width=30)
 
     tkcurses.Label(frame, text="widget half", anchor="w").pack(fill="x", padx=1)

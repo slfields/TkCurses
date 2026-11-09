@@ -383,3 +383,46 @@ def test_wide_text_draws_the_same_thing_either_way(terminal, tmp_path):
     )
     ours.send(b"q")
     theirs.send(b"q")
+
+
+#: A header and a footer around a scrolling region: scroll() both ways and
+#: newlines at the bottom of the region.
+SCROLL_REGION_PROGRAM = """
+import {module} as curses
+
+
+def main(stdscr):
+    stdscr.scrollok(True)
+    stdscr.addstr(0, 0, "HEADER")
+    stdscr.addstr(6, 0, "FOOTER")
+    for row in range(1, 6):
+        stdscr.addstr(row, 0, "row %d" % row)
+    stdscr.setscrreg(1, 5)
+    stdscr.scroll(1)
+    stdscr.scroll(-2)
+    stdscr.move(5, 0)
+    for n in range(3):
+        stdscr.addstr("log %d\\n" % n)
+    stdscr.addstr(7, 0, "done")
+    stdscr.refresh()
+    stdscr.getch()
+
+
+curses.wrapper(main)
+"""
+
+
+def test_a_scrolling_region_draws_the_same_thing_either_way(terminal, tmp_path):
+    screens = []
+    for module in ("tkcurses.curses", "curses"):
+        term = terminal(cols=20, rows=9)
+        term.run_source(SCROLL_REGION_PROGRAM.format(module=module), workdir=tmp_path)
+        term.wait_for_text("done")
+        term.wait_for_idle()
+        screens.append(term)
+    ours, theirs = screens
+    assert ours.display == theirs.display, (
+        f"tkcurses.curses:\n{ours.describe()}\n\nstdlib curses:\n{theirs.describe()}"
+    )
+    ours.send(b"q")
+    theirs.send(b"q")

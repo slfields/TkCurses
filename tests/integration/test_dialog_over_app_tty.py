@@ -38,7 +38,7 @@ from tkcurses import simpledialog
 root = tkcurses.Tk()
 buffer = root.tk.screen.buffer
 
-frame = tkcurses.Frame(root, name='main', relief='solid')
+frame = tkcurses.Frame(root, name='main', relief='solid', bd=1)
 frame.place(x=0, y=2, width=34, height=8)
 tkcurses.Label(frame, text='APPLICATION', anchor='w').place(x=1, y=1, width=20)
 field = tkcurses.Entry(frame, name='field')

@@ -118,15 +118,22 @@ class OptionDatabase:
         """Discard every option."""
         self._options.clear()
 
-    def get(self, path: str, class_name: str, name: str) -> Any:
-        """Best value of option ``name`` for a widget, or None.
+    def get(self, path: str, class_name: str, name: str, option_class: str = "") -> Any:
+        """Best value of an option for a widget, or None.
 
         The widget is identified by both its path (``.frame.ok``) and its
-        class (``Button``), because a pattern may select either.
+        class (``Button``), because a pattern may select either. The option
+        is identified as Tk identifies it, by its database name
+        (``highlightThickness``) and class (``HighlightThickness``), and a
+        pattern may end in either - case and all: measured on Tk 9.0.2,
+        ``*Button.highlightthickness`` reaches no Button. The most recently
+        added of the best priority wins, however specific the others: a
+        later ``*highlightThickness`` beat ``*Button.HighlightThickness``.
         """
+        names = (name, option_class) if option_class else (name,)
         best: _Option | None = None
         for option in self._options:
-            if not self._applies(option.pattern, path, class_name, name):
+            if not self._applies(option.pattern, path, class_name, names):
                 continue
             if best is None or option > best:
                 best = option
@@ -149,8 +156,11 @@ class OptionDatabase:
         return priority
 
     @staticmethod
-    def _applies(pattern: str, path: str, class_name: str, name: str) -> bool:
-        """True if ``pattern`` selects option ``name`` on this widget.
+    def _applies(
+        pattern: str, path: str, class_name: str, names: tuple[str, ...]
+    ) -> bool:
+        """True if ``pattern`` selects an option called one of ``names`` on
+        this widget.
 
         A pattern's last component is the option name; everything before it
         selects the widget. Both of Tk's separators end a component, ``.`` for
@@ -165,7 +175,7 @@ class OptionDatabase:
         option = pattern[cut + 1 :]
         if not option:
             return False
-        if option not in (name, "*"):
+        if option not in names and option != "*":
             return False
         head = pattern[:cut] if cut >= 0 else ""
         if head in ("", "*"):

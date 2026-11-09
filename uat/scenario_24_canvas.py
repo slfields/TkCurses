@@ -50,7 +50,7 @@ def build(root, screen):
     area = _support.content_area(root, top=4)
     state = {"hidden": False, "raised": False, "last": "-", "selected": None}
 
-    canvas = tkcurses.Canvas(area, width=60, height=16, relief="solid")
+    canvas = tkcurses.Canvas(area, width=60, height=16, relief="solid", bd=1)
     canvas.pack(fill="both", expand=True, padx=1)
 
     # 22 pixels across and 22 down: 22 cells wide, 11 cells tall, and round.

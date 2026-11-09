@@ -68,7 +68,8 @@ or keep `TERM` and set `TKCURSES_DISPLAY_COLOR_MODE` to `8`, `16` or
 
 The root window is always the whole terminal. When the terminal is
 resized, the root is resized with it, `<Configure>` is delivered as it is
-in tkinter, and `pack`, `grid` and `place` lay the window out again. A
+in tkinter - once when the root first appears, so a binding learns the
+starting size too - and `pack`, `grid` and `place` lay the window out again. A
 `Toplevel` is kept wholly on the screen, moved in if the terminal shrinks
 past it.
 
@@ -87,7 +88,6 @@ def show():
 
 
 root.bind("<Configure>", lambda event: show() if event.widget is root else None)
-root.after_idle(show)
 root.mainloop()
 ```
 

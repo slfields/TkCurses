@@ -3903,3 +3903,59 @@ def test_a_hidden_page_is_not_counted(root):
     book.add(wide, text="Two")
     book.hide(wide)
     assert book.winfo_reqwidth() < 40
+
+
+# The themed buttons' selected and alternate flags, measured on Tk 9.0.2:
+# selected while the variable holds the on value, alternate while it does
+# not exist, and an empty value is plain "off".
+
+
+def test_a_themed_checkbutton_is_selected_while_on(root):
+    variable = tkcurses.IntVar(root, value=1)
+    button = Checkbutton(root, variable=variable)
+    assert button.state() == ("selected",)
+    assert button.instate(["selected"])
+    variable.set(0)
+    assert button.state() == ()
+
+
+def test_a_themed_checkbutton_over_an_empty_variable_is_off(root):
+    button = Checkbutton(root, variable=tkcurses.StringVar(root, value=""))
+    assert button.state() == ()
+    assert button._indicator_state == "off"
+
+
+def test_a_themed_checkbutton_without_a_variable_starts_alternate(root):
+    button = Checkbutton(root)
+    assert button.state() == ("alternate",)
+    assert button._indicator_state == "tristate"
+    button.invoke()
+    assert button.state() == ("selected",)
+
+
+def test_alternate_set_by_hand_stays_until_the_variable_is_written(root):
+    variable = tkcurses.StringVar(root, value="0")
+    button = Checkbutton(root, variable=variable)
+    button.state(["alternate"])
+    assert button._indicator_state == "tristate"
+    variable.set("0")
+    assert button.state() == ()
+
+
+def test_a_themed_radiobutton_follows_its_variable(root):
+    variable = tkcurses.StringVar(root, value="")
+    a = Radiobutton(root, variable=variable, value="a")
+    empty = Radiobutton(root, variable=variable, value="")
+    assert a.state() == ()
+    assert empty.state() == ("selected",)
+    variable.set("a")
+    assert a.state() == ("selected",)
+    assert empty.state() == ()
+
+
+def test_a_themed_radiobutton_without_a_variable_starts_alternate(root):
+    button = Radiobutton(root, value="a")
+    assert button.state() == ("alternate",)
+    assert button._indicator_state == "tristate"
+    button.invoke()
+    assert button.state() == ("selected",)

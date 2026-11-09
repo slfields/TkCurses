@@ -30,6 +30,7 @@ import pytest
 
 from tkcurses import Misc
 from tkcurses.filedialog import (
+    Open,
     _Browser,
     _first_pattern,
     _with_extension,
@@ -328,3 +329,22 @@ def test_choosing_from_the_lists_leaves_primary_alone(browser, tree):
     browser.files.selection_set(0)
     browser.dirs.selection_set(0)
     assert browser.selection.selection_present()
+
+
+def test_several_names_survive_the_selection_box(browser, tmp_path):
+    """Names with spaces and quotes go into the box quoted and come back
+    whole, so OK opens what was chosen."""
+    dialog = Open(multiple=1)
+    dialog.browser = browser
+    browser.directory = str(tmp_path)
+    names = ["plain.txt", "with space.txt", 'say "hi".txt', "back\\slash.txt"]
+    dialog._show_names(names)
+    assert dialog._chosen_paths() == [str(tmp_path / name) for name in names]
+
+
+def test_one_typed_path_with_a_space_is_one_path(browser, tmp_path):
+    dialog = Open(multiple=1)
+    dialog.browser = browser
+    browser.directory = str(tmp_path)
+    browser.selection.insert(0, "my file.txt")
+    assert dialog._chosen_paths() == [str(tmp_path / "my file.txt")]

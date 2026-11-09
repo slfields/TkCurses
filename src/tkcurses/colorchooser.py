@@ -203,7 +203,7 @@ class Chooser(Dialog):
         # Bordered, as Tk's sunken frame round its panel is: without an edge
         # a pale colour and the dialog behind it run into one another and the
         # panel stops looking like a thing.
-        panel = tkcurses.Frame(chosen, name="panel", relief="solid")
+        panel = tkcurses.Frame(chosen, name="panel", relief="solid", borderwidth=1)
         panel.pack()
         self._panel = [
             tkcurses.Label(panel, text=" " * PANEL_WIDTH) for _ in range(PANEL_HEIGHT)

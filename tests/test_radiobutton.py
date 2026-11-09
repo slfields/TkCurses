@@ -225,7 +225,7 @@ def test_a_radiobutton_takes_the_focus(root):
 
 
 def test_a_radiobutton_asks_for_room_for_its_indicator(root):
-    plain = Radiobutton(root, name="a", text="Small", indicatoron=False)
+    plain = Radiobutton(root, name="a", text="Small", indicatoron=False, borderwidth=0)
     marked = Radiobutton(root, name="b", text="Small")
     assert marked.winfo_reqwidth() == plain.winfo_reqwidth() + 4
 

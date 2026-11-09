@@ -629,6 +629,68 @@ def _state_option_flags(value: str) -> list[str]:
 
 _PUBLIC_CACHE: dict[type, frozenset[str]] = {}
 
+
+def _distance_or_unset(widget: Any, value: Any) -> Any:
+    """A themed widget's distance that may be ``""``: ``borderwidth`` and a
+    progress bar's ``wraplength``. Measured on Tk 9.0.2, negative and
+    fractional ones are kept as given."""
+    del widget
+    if value == "":
+        return ""
+    number = tkcurses._tcl_number(value)
+    if number is None or math.isnan(number):
+        raise TclError(f'expected screen distance or "" but got "{value}"')
+    return value
+
+
+def _padding(widget: Any, value: Any) -> Any:
+    """``padding``: up to four distances, as a list or a string of them, or
+    ``""``. Measured on Tk 9.0.2: five is ``Wrong #elements in padding
+    spec``, and a bad one is named as a screen distance."""
+    if value == "" or value is None:
+        return value
+    if isinstance(value, str):
+        parts = value.split()
+    elif isinstance(value, (list, tuple)):
+        parts = list(value)
+    else:
+        parts = [value]
+    if len(parts) > 4:
+        raise TclError("Wrong #elements in padding spec")
+    for part in parts:
+        tkcurses._signed_distance(widget, part)
+    return value
+
+
+def _label_anchor(widget: Any, value: Any) -> str:
+    """A themed Labelframe's ``labelanchor``: any run of ``n``, ``s``,
+    ``e`` and ``w``. Measured on Tk 9.0.2: ``nsew`` and ``nn`` are taken,
+    ``""`` and ``N`` refused."""
+    del widget
+    text = str(value)
+    if not text or set(text) - set("nsew"):
+        raise TclError(f"Bad label anchor specification {text}")
+    return text
+
+
+def _justification_or_unset(widget: Any, value: Any) -> str:
+    """The label family's ``justify``: Tk's three words, or ``""`` for unset.
+
+    Measured on Tk 9.0.2: ttk.Label, Button, Checkbutton, Radiobutton,
+    Menubutton and Progressbar take ``justify=""`` where every classic
+    widget and the ttk entries call it ambiguous, and name it among the
+    choices when refusing; ``c`` reads back ``center`` on all of them.
+    """
+    if value == "":
+        return ""
+    try:
+        return str(tkcurses._justification(widget, value))
+    except TclError:
+        raise TclError(
+            f'bad justification "{value}": must be left, right, center, or ""'
+        ) from None
+
+
 #: Each themed widget's options in Tk 9.0.2, which are all a program may
 #: name on it here. The classic widget each is built on has more, and keeps
 #: them as the defaults its drawing reads; Tk refuses them on a themed
@@ -981,7 +1043,37 @@ class Widget:
     #: each of them repeating it. Empty by default, which is what tkinter
     #: answers too - an unset style means "use my class name", resolved in
     #: :meth:`_style_name` rather than stored.
-    _widget_options: ClassVar[dict[str, Any]] = {"style": "", "class": ""}
+    #: ``borderwidth`` is ``""``, the theme's, as Tk answers it on the themed
+    #: widgets that have one; on the rest the relief alone decides the box.
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "style": "",
+        "class": "",
+        "borderwidth": "",
+    }
+
+    #: Where a themed widget reads an option otherwise than its classic one,
+    #: measured on Tk 9.0.2: ``""`` is a relief, a border
+    #: width and a compound here, ``state`` is kept as given, and a
+    #: Scrollbar's ``orient`` is the others'. ``padding`` is checked only by
+    #: the containers; the label family's takes anything, as Tk's does.
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "borderwidth": _distance_or_unset,
+        "compound": tkcurses._choices(
+            "compound",
+            "none",
+            "text",
+            "image",
+            "center",
+            "top",
+            "bottom",
+            "left",
+            "right",
+            empty=True,
+        ),
+        "orient": tkcurses._choices("orient", "horizontal", "vertical"),
+        "relief": tkcurses._relief_or_none,
+        "state": tkcurses._unchecked,
+    }
 
     #: **No themed widget has an option synonym.** Measured on Tcl/Tk 9.0.2:
     #: ``ttk.Label`` has ``background`` and refuses ``bg``; ``ttk.Entry`` has
@@ -1715,7 +1807,13 @@ class Progressbar(Widget, tkcurses.Frame):
     # cancelling the timer; it is not a pause.
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
-        "length": tkcurses._signed_distance
+        "anchor": tkcurses._choices(
+            "anchor", "n", "ne", "e", "se", "s", "sw", "w", "nw", "center", empty=True
+        ),
+        "maximum": tkcurses._tcl_float,
+        "wraplength": _distance_or_unset,
+        "justify": _justification_or_unset,
+        "length": tkcurses._signed_distance,
     }
 
     _ttk_class = "TProgressbar"
@@ -2621,6 +2719,10 @@ class Notebook(Widget, tkcurses.Frame):
 
     # A classic option, so a program cannot name it - Tk's themed widget
     # has none - but the drawing reads it.
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "padding": _padding,
+    }
+
     _widget_options: ClassVar[dict[str, Any]] = {
         "relief": "solid",
         "height": 0,
@@ -3278,7 +3380,8 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
     # detached item still exists() and move puts it back.
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
-        "height": tkcurses._signed_distance
+        "selectmode": tkcurses._choices("selectmode", "none", "browse", "extended"),
+        "height": tkcurses._signed_distance,
     }
 
     _ttk_class = "Treeview"
@@ -5182,6 +5285,7 @@ class Label(Widget, tkcurses.Label):
     #: ttk's label family keeps ``width`` unchecked - ``width="abc"`` reads
     #: back ``abc`` on Tk 9.0.2 - so drawing reads it with a fallback.
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "justify": _justification_or_unset,
         "width": tkcurses._unchecked,
         "wraplength": tkcurses._distance_or_empty,
     }
@@ -5309,6 +5413,10 @@ class Frame(Widget, tkcurses.Frame):
     #: A Frame's layout is that one element.
     _only_element = "border"
 
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "padding": _padding,
+    }
+
     _widget_options: ClassVar[dict[str, Any]] = {
         "padding": "",
     }
@@ -5357,6 +5465,11 @@ class Labelframe(Widget, tkcurses.LabelFrame):
             if y == row and column <= x < column + cells(text):
                 return ""
         return "border"
+
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "padding": _padding,
+        "labelanchor": _label_anchor,
+    }
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "padding": "",
@@ -5600,7 +5713,8 @@ class Button(Widget, tkcurses.Button):
     # the commit that stopped it hardcoding the name.
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
-        "width": tkcurses._unchecked
+        "justify": _justification_or_unset,
+        "width": tkcurses._unchecked,
     }
 
     _ttk_class = "TButton"
@@ -5610,7 +5724,57 @@ class Button(Widget, tkcurses.Button):
     }
 
 
-class Checkbutton(Widget, tkcurses.Checkbutton):
+class _ThemedChoice:
+    """The state flags a themed check or radio button takes from its variable.
+
+    Measured on Tk 9.0.2. ``selected`` is set while the variable holds the
+    button's on value, and ``alternate`` while the variable does not exist -
+    one made without a variable starts that way, and unsetting the variable
+    later adds it, keeping ``selected``. An empty value is only "off": the
+    classic widgets' third state for ``""`` (``tristatevalue``) is not
+    ttk's. A write clears ``alternate`` and sets ``selected`` afresh; a flag
+    set by hand with ``state()`` stays until then. The indicator is drawn
+    from the flags, as a theme draws it.
+    """
+
+    #: The option whose value turns this button on.
+    _on_option = "onvalue"
+
+    def _make_variable(self) -> Any:
+        """Tk's own variable for a button given none, left unset as Tk
+        leaves it, so the button starts ``alternate``."""
+        variable = super()._make_variable()  # type: ignore[misc]
+        self.tk.variables.pop(str(variable), None)  # type: ignore[attr-defined]
+        return variable
+
+    def _follow_value(self) -> None:
+        super()._follow_value()  # type: ignore[misc]
+        self._sync_choice_flags()
+
+    def _value_written(self) -> None:
+        self._sync_choice_flags()
+        super()._value_written()  # type: ignore[misc]
+
+    def _sync_choice_flags(self) -> None:
+        options = self._options  # type: ignore[attr-defined]
+        flags: set[str] = self._state_flags  # type: ignore[attr-defined]
+        variable = options["variable"]
+        if variable is None or str(variable) not in self.tk.variables:  # type: ignore[attr-defined]
+            flags.add("alternate")
+            return
+        flags.discard("alternate")
+        on = tkcurses._same_value(variable.get(), options[self._on_option])
+        flags.add("selected") if on else flags.discard("selected")
+
+    @property
+    def _indicator_state(self) -> str:
+        flags: set[str] = self._state_flags  # type: ignore[attr-defined]
+        if "alternate" in flags:
+            return "tristate"
+        return "on" if "selected" in flags else "off"
+
+
+class Checkbutton(_ThemedChoice, Widget, tkcurses.Checkbutton):
     """A box that is ticked or not, drawn from the theme, as
     ``ttk.Checkbutton``.
 
@@ -5647,7 +5811,8 @@ class Checkbutton(Widget, tkcurses.Checkbutton):
     # reaches a dialog's default button from wherever the focus is.
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
-        "width": tkcurses._unchecked
+        "justify": _justification_or_unset,
+        "width": tkcurses._unchecked,
     }
 
     _ttk_class = "TCheckbutton"
@@ -5663,7 +5828,7 @@ class Checkbutton(Widget, tkcurses.Checkbutton):
     }
 
 
-class Radiobutton(Widget, tkcurses.Radiobutton):
+class Radiobutton(_ThemedChoice, Widget, tkcurses.Radiobutton):
     """One of a set, where choosing it unchooses the others, drawn from
     the theme, as ``ttk.Radiobutton``.
 
@@ -5697,26 +5862,28 @@ class Radiobutton(Widget, tkcurses.Radiobutton):
     # selectedButton, which is the same global under Tcl's namespace rules.
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
-        "width": tkcurses._unchecked
+        "justify": _justification_or_unset,
+        "width": tkcurses._unchecked,
     }
 
     _ttk_class = "TRadiobutton"
+
+    _on_option = "value"
+
+    def _make_variable(self) -> Any:
+        """Tk's shared ``selectedButton`` group, unset when this is the first
+        button to use it - never once another has chosen in it."""
+        fresh = self._DEFAULT_GROUP not in self.tk.shared_variables
+        variable = tkcurses.Radiobutton._make_variable(self)
+        if fresh:
+            self.tk.variables.pop(str(variable), None)
+        return variable
 
     _outer_element = "padding"
 
     def _element_at(self, x: int, y: int) -> Any:
         """``Radiobutton.indicator`` over the button, else the ring model."""
         return _indicator_element(self, "Radiobutton", x, y)
-
-    @property
-    def _indicator_state(self) -> str:
-        """On or off, never the classic widget's third state.
-
-        Measured on Tk 9.0.2: a ttk radiobutton over an empty variable has
-        no ``alternate`` state, where the classic one draws its third.
-        """
-        state = super()._indicator_state
-        return "off" if state == "tristate" else state
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "padding": "",
@@ -5747,7 +5914,8 @@ class Menubutton(Widget, tkcurses.Menubutton):
     """
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
-        "width": tkcurses._unchecked
+        "justify": _justification_or_unset,
+        "width": tkcurses._unchecked,
     }
 
     _ttk_class = "TMenubutton"
@@ -5869,6 +6037,32 @@ class Spinbox(Widget, _EntryCommands, tkcurses.Spinbox):
     #: ttk's spinbox starts empty and keeps its text when values, from or
     #: to change - measured on Tk 9.0.2, TkCurses-fdl9.
     _options_set_contents = False
+
+    #: And keeps a ``from`` above ``to`` as given, where the classic one
+    #: swaps them - measured on Tk 9.0.2.
+    _swaps_range = False
+
+    def _number_step(self, direction: int) -> str | None:
+        """One step, as ``ttk::spinbox::Spin`` and ``Adjust`` in
+        ttk/spinbox.tcl take it: ``from`` is the bottom and ``to`` the top
+        whichever is larger, and an empty range is not refused.
+
+        Measured on Tk 9.0.2: with ``from`` 10 and ``to`` 0, both arrows
+        take ``5`` to ``10``, and with both 0 the up arrow takes ``5`` to
+        ``0``.
+        """
+        low, high = self._range()
+        return self._stepped(low, high, direction)
+
+    def _computed_format(self) -> str:
+        """``ttk::spinbox::FormatValue``: ``%.Nf`` with as many decimals as
+        the first significant digit of an increment below 1 needs, and
+        ``%.0f`` otherwise. So 0.5 steps ``1.5``, ``2.0``, and 0.25 shows
+        one decimal - the script says it guesses wrong there."""
+        delta = abs(float(self._options["increment"]))
+        if 0 < delta < 1:
+            return f"%.{math.ceil(-math.log10(delta))}f"
+        return "%.0f"
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
         "width": tkcurses._tcl_integer

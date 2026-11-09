@@ -18,16 +18,14 @@
 """Every option of every widget, made with a bad value, against real tkinter.
 
 Three values - ``"abc"``, ``"2.5"`` and ``-3`` - for each option either
-library offers. Three things are asserted, and one is deliberately not:
+library offers. Four things are asserted:
 
 - ours never raises anything but ``TclError``, which is what a program
   written against tkinter catches;
 - a value Tk takes, ours takes;
+- a value Tk refuses, ours refuses - on 2026-11-03 Tk refused 571 of these
+  that we stored (TkCurses-m595), and :data:`STILL_TAKEN` names what is left;
 - where both refuse, the words are the same.
-
-What is NOT asserted is that ours refuses everything Tk refuses: on
-2026-11-03 Tk refused 571 of these that we stored, which is a validation gap
-of its own (TkCurses-m595), not a crash.
 
 Like the other surface comparisons this needs a display, and so is skipped
 in CI. TkCurses-vgkb.
@@ -113,6 +111,10 @@ NOT_VALUES = frozenset(
 )
 VALUES = ("abc", "2.5", -3)
 
+#: (module, widget, option) that still take a value Tk refuses. A cursor
+#: needs Tk's table of cursor names, which nothing here has (TkCurses-reba).
+STILL_TAKEN = frozenset({("tk", "Spinbox", "buttoncursor")})
+
 
 @pytest.fixture(scope="module")
 def real_root():
@@ -163,6 +165,12 @@ def test_a_bad_value_is_answered_as_tkinter_answers_it(real_root, module, name):
                 wrong.append(f"{case}: raised {our_type.__name__}: {our_message}")
             elif their_type is None and our_type is not None:
                 wrong.append(f"{case}: Tk takes it, ours says {our_message!r}")
+            elif (
+                their_type is not None
+                and our_type is None
+                and (module, name, option) not in STILL_TAKEN
+            ):
+                wrong.append(f"{case}: Tk says {their_message!r}, ours takes it")
             elif (
                 their_type is not None
                 and our_type is not None

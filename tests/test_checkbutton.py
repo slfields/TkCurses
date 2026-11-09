@@ -269,7 +269,7 @@ def test_a_checkbutton_takes_the_focus(root):
 
 def test_a_checkbutton_asks_for_room_for_its_box(root):
     label_width = Checkbutton(
-        root, name="a", text="Wrap", indicatoron=False
+        root, name="a", text="Wrap", indicatoron=False, borderwidth=0
     ).winfo_reqwidth()
     boxed = Checkbutton(root, name="b", text="Wrap").winfo_reqwidth()
     assert boxed == label_width + Checkbutton._INDICATOR_WIDTH

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import pytest
 
+import tkcurses
 from tkcurses import Event, Misc, TclError
 from tkcurses._core.colors import ColorDepth
 from tkcurses._core.events import MOD_CTRL, KeyEvent, MouseEvent, ResizeEvent
@@ -957,19 +958,59 @@ def test_an_unknown_option_is_refused(root):
 def test_an_option_default_reaches_a_matching_widget(tree):
     root, _, ok, _ = tree
     root.option_add("*Button.background", "blue")
-    assert ok.option_get("background", "Button") == "blue"
+    assert ok.option_get("background", "Background") == "blue"
 
 
 def test_an_option_default_is_shared_across_the_tree(tree):
     _, frame, ok, _ = tree
     frame.option_add("*background", "blue")
-    assert ok.option_get("background", "Button") == "blue"
+    assert ok.option_get("background", "Background") == "blue"
 
 
 def test_clearing_removes_option_defaults(root):
     root.option_add("*background", "blue")
     root.option_clear()
-    assert root.option_get("background", "Misc") is None
+    assert root.option_get("background", "Background") == ""
+
+
+# Measured on Tk 9.0.2: a pattern ends in the option's database name or its
+# database class, case and all, and the latest of a priority wins.
+
+
+@pytest.mark.parametrize(
+    "pattern, reaches",
+    [
+        ("*Button.highlightthickness", False),
+        ("*Button.highlightThickness", True),
+        ("*Button.HighlightThickness", True),
+    ],
+)
+def test_the_database_matches_tks_names_for_an_option(root, pattern, reaches):
+    root.option_add(pattern, 5)
+    button = tkcurses.Button(root)
+    assert (str(button.cget("highlightthickness")) == "5") is reaches
+
+
+@pytest.mark.parametrize(
+    "first, second, expected",
+    [
+        (("*Button.highlightThickness", 5), ("*Button.HighlightThickness", 7), "7"),
+        (("*Button.HighlightThickness", 7), ("*Button.highlightThickness", 5), "5"),
+        (("*Button.HighlightThickness", 7), ("*highlightThickness", 5), "5"),
+    ],
+)
+def test_the_latest_of_a_priority_wins(root, first, second, expected):
+    root.option_add(*first)
+    root.option_add(*second)
+    assert str(tkcurses.Button(root).cget("highlightthickness")) == expected
+
+
+def test_option_get_takes_the_options_name_and_class(tree):
+    root, _, ok, _ = tree
+    root.option_add("*Button.Foreground", "blue")
+    assert ok.option_get("foreground", "Foreground") == "blue"
+    assert ok.option_get("zzz", "Foreground") == "blue"
+    assert ok.option_get("foreground", "zzz") == ""
 
 
 def test_reading_a_tcl_resource_file_is_refused(root):

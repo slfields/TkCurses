@@ -23,7 +23,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tkcurses import Frame, Label, LabelFrame, Misc, StringVar
+from tkcurses import Frame, Label, LabelFrame, Misc, StringVar, TclError
 from tkcurses._core.geometry import Rect
 from tkcurses._core.panels import PanelStack
 
@@ -63,7 +63,7 @@ def test_a_labelframe_is_bordered_by_default(root):
 
 def test_the_caption_costs_the_children_nothing(root):
     """It is written on the border line, which the children never had."""
-    plain = laid_out(Frame(root, name="g", relief="solid"))
+    plain = laid_out(Frame(root, name="g", relief="solid", bd=1))
     captioned = laid_out(LabelFrame(root, name="f", text="Options"), y=8)
     assert captioned._content_rect().width == plain._content_rect().width
     assert captioned._content_rect().height == plain._content_rect().height
@@ -150,8 +150,17 @@ def test_a_vertical_anchor_folds_onto_a_horizontal_edge(anchor):
     assert alignment in ("left", "right")
 
 
+def test_an_unknown_anchor_is_refused_as_tk_refuses_it(root):
+    with pytest.raises(TclError, match='bad labelanchor "zz": must be e, en'):
+        LabelFrame(root, name="f", text="Options", labelanchor="zz")
+
+
 def test_an_unknown_anchor_falls_back_rather_than_raising(root):
-    frame = laid_out(LabelFrame(root, name="f", text="Options", labelanchor="zz"))
+    """The option database is not checked, as Tk's is not until it is
+    read, so a stored anchor can still be one Tk would refuse."""
+    root.option_add("*Labelframe.labelAnchor", "zz")
+    frame = laid_out(LabelFrame(root, name="f", text="Options"))
+    assert frame.cget("labelanchor") == "zz"
     frame._redraw()  # must not raise
 
 

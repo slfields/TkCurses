@@ -46,20 +46,20 @@ def build(root, screen):
     area = _support.content_area(root)
     state = {"wrap": 24, "justify": "left", "anchor": "nw"}
 
-    box = tkcurses.Frame(area, relief="solid")
+    box = tkcurses.Frame(area, relief="solid", bd=1)
     box.pack(side="top", fill="both", expand=True, padx=1, pady=1)
     # Propagation left on: the frame should grow to whatever the wrapped text
     # needs, which is half of what this scenario is showing.
     prose = tkcurses.Label(box, text=PROSE)
     prose.pack(fill="both", expand=True)
 
-    word_box = tkcurses.Frame(area, relief="solid", height=6)
+    word_box = tkcurses.Frame(area, relief="solid", bd=1, height=6)
     word_box.pack(side="top", fill="x", padx=1, pady=1)
     word_box.pack_propagate(False)
     word = tkcurses.Label(word_box, text=LONG_WORD, anchor="nw", justify="left")
     word.pack(fill="both", expand=True)
 
-    narrow = tkcurses.Frame(area, relief="solid", width=12, height=3)
+    narrow = tkcurses.Frame(area, relief="solid", bd=1, width=12, height=3)
     narrow.pack(side="top", padx=1, pady=1)
     narrow.pack_propagate(False)
     tkcurses.Label(narrow, text="far too wide to fit here", anchor="w").pack(

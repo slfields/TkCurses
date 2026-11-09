@@ -414,9 +414,9 @@ def test_a_widget_cut_off_by_an_edge_is_clipped_not_wrapped(terminal, tmp_path):
     term = terminal(cols=12, rows=8)
     term.run_source(
         program(
-            "wide = tkcurses.Frame(root, width=30, height=3, relief='solid')\n"
+            "wide = tkcurses.Frame(root, width=30, height=3, relief='solid', bd=1)\n"
             "wide.place(x=0, y=1)\n"
-            "tall = tkcurses.Frame(root, width=8, height=30, relief='solid')\n"
+            "tall = tkcurses.Frame(root, width=8, height=30, relief='solid', bd=1)\n"
             "tall.place(x=0, y=5)\n"
             "root.update_layout()"
         ),
@@ -464,7 +464,7 @@ def test_a_widget_resized_inside_an_unchanged_window_is_redrawn(terminal, tmp_pa
     term = terminal(cols=12, rows=8)
     term.run_source(
         program(
-            "box = tkcurses.Frame(root, width=30, height=3, relief='solid')\n"
+            "box = tkcurses.Frame(root, width=30, height=3, relief='solid', bd=1)\n"
             "box.place(x=0, y=1)\n"
             "root.update_layout()\n"
             "def shrink(event):\n"
@@ -502,7 +502,7 @@ def test_a_container_going_off_screen_takes_its_children_with_it(terminal, tmp_p
     term = terminal(cols=40, rows=10)
     term.run_source(
         program(
-            "keep = tkcurses.Frame(root, width=12, height=4, relief='solid')\n"
+            "keep = tkcurses.Frame(root, width=12, height=4, relief='solid', bd=1)\n"
             "tkcurses.Label(keep, text='K').place(x=1, y=1)\n"
             "keep.place(x=0, y=2)\n"
             "gone = tkcurses.Frame(root, width=12, height=4)\n"
@@ -534,7 +534,7 @@ def test_a_container_coming_back_brings_its_children_with_it(terminal, tmp_path)
     term = terminal(cols=40, rows=10)
     term.run_source(
         program(
-            "box = tkcurses.Frame(root, width=12, height=4, relief='solid')\n"
+            "box = tkcurses.Frame(root, width=12, height=4, relief='solid', bd=1)\n"
             "tkcurses.Label(box, text='G').place(x=1, y=1)\n"
             "box.place(x=0, y=40)\n"
             "root.update_layout()\n"
@@ -1157,3 +1157,70 @@ def test_update_idletasks_shows_a_change_before_a_long_computation(terminal, tmp
     )
     term.wait_for_text("working", timeout=2.5)
     assert "finished" not in "\n".join(term.display)
+
+
+def test_the_root_reports_its_size_and_map_when_it_first_appears(terminal, tmp_path):
+    """Tk sends the root <Configure> and then <Map> once it is mapped, so a
+    binding made before mainloop learns the starting size. Measured on Tk
+    9.0.2; here it said nothing until the terminal was resized."""
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        """
+import tkcurses as tk
+
+root = tk.Tk()
+label = tk.Label(root, text="waiting")
+label.pack()
+seen = []
+
+def note(event):
+    if event.widget is root:
+        name = event.type.name
+        if name == "Configure":
+            name += " %sx%s" % (event.width, event.height)
+        seen.append(name)
+        label.config(text=" then ".join(seen))
+
+root.bind("<Configure>", note)
+root.bind("<Map>", note)
+root.after(4000, root.quit)
+root.mainloop()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("Configure 40x10 then Map")
+    term.resize(50, 12)
+    term.wait_for_text("Configure 40x10 then Map then Configure 50x12")
+
+
+def test_a_withdrawn_root_reports_nothing_until_it_is_shown(terminal, tmp_path):
+    term = terminal(cols=40, rows=10)
+    term.run_source(
+        """
+import tkcurses as tk
+
+root = tk.Tk()
+label = tk.Label(root, text="waiting")
+label.pack()
+seen = []
+
+def note(event):
+    if event.widget is root:
+        seen.append(event.type.name)
+
+root.bind("<Configure>", note)
+root.bind("<Map>", note)
+root.withdraw()
+
+def show():
+    label.config(text="before %d" % len(seen))
+    root.deiconify()
+    root.after(300, lambda: label.config(text="before 0, after " + " ".join(seen)))
+
+root.after(300, show)
+root.after(4000, root.quit)
+root.mainloop()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for_text("before 0, after Configure Map")

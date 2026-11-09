@@ -42,7 +42,7 @@ def test_a_frame_with_a_relief_draws_a_box(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(
         program(
-            "f = tkcurses.Frame(root, relief='solid', width=20, height=5)\n"
+            "f = tkcurses.Frame(root, relief='solid', bd=1, width=20, height=5)\n"
             "f.place(x=2, y=2)"
         ),
         workdir=tmp_path,
@@ -101,9 +101,9 @@ def test_a_raised_frame_draws_a_different_line_style(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(
         program(
-            "a = tkcurses.Frame(root, relief='ridge', width=16, height=4)\n"
+            "a = tkcurses.Frame(root, relief='ridge', bd=1, width=16, height=4)\n"
             "a.place(x=1, y=1)\n"
-            "b = tkcurses.Frame(root, relief='solid', width=16, height=4)\n"
+            "b = tkcurses.Frame(root, relief='solid', bd=1, width=16, height=4)\n"
             "b.place(x=20, y=1)"
         ),
         workdir=tmp_path,
@@ -121,7 +121,7 @@ def test_a_frame_is_redrawn_after_it_is_resized(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(
         program(
-            "f = tkcurses.Frame(root, relief='solid', width=10, height=3)\n"
+            "f = tkcurses.Frame(root, relief='solid', bd=1, width=10, height=3)\n"
             "f.place(x=0, y=0)\n"
             "def grow():\n"
             "    f.configure(width=30, height=8)\n"
@@ -142,12 +142,12 @@ def test_a_nested_frame_draws_inside_its_parent(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(
         program(
-            "outer = tkcurses.Frame(root, relief='solid', width=24, height=8)\n"
+            "outer = tkcurses.Frame(root, relief='solid', bd=1, width=24, height=8)\n"
             "outer.place(x=1, y=1)\n"
             # Without this the children decide the frame's size and it
             # shrinks to fit them, as in Tk.
             "outer.pack_propagate(False)\n"
-            "inner = tkcurses.Frame(outer, relief='solid')\n"
+            "inner = tkcurses.Frame(outer, relief='solid', bd=1)\n"
             "inner.pack(fill='both', expand=True, padx=1, pady=1)"
         ),
         workdir=tmp_path,
@@ -166,7 +166,7 @@ def test_packed_frames_tile_the_screen(terminal, tmp_path):
     term.run_source(
         program(
             "for name in 'abc':\n"
-            "    f = tkcurses.Frame(root, relief='solid', name=name)\n"
+            "    f = tkcurses.Frame(root, relief='solid', bd=1, name=name)\n"
             "    f._requested = tkcurses._core.geometry.Size(10, 4)\n"
             "    f.pack(side='left', fill='both', expand=True)"
         ),

@@ -208,10 +208,6 @@ def test_the_default_given_back_does_not_hide_it(root):
     assert text._tag_attribute("sel") == curses.A_REVERSE
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="TkCurses-50ki: the database is searched by the option's own name",
-)
 def test_the_option_database_can_hide_it(root):
     root.option_add("*Text.inactiveSelectBackground", "")
     text = tkcurses.Text(root)

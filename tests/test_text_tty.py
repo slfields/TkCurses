@@ -176,7 +176,7 @@ def test_no_wrapped_row_overflows_the_widget(terminal, tmp_path):
     term = terminal(cols=40, rows=14)
     term.run_source(
         program(
-            f"f = tkcurses.Frame(root, relief='solid')\n"
+            f"f = tkcurses.Frame(root, relief='solid', bd=1)\n"
             f"f.place(x=1, y=1, width=22, height=10)\n"
             f"t = tkcurses.Text(f, width=16, height=6, wrap='word', relief='flat')\n"
             f"t.place(x=1, y=1)\n"

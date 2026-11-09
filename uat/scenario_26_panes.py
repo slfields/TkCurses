@@ -73,7 +73,7 @@ def build(root, screen):
     panes.pack(side="top", fill="both", expand=True, padx=1)
 
     def add_pane(label, minsize=8):
-        frame = tkcurses.Frame(panes, relief="solid")
+        frame = tkcurses.Frame(panes, relief="solid", bd=1)
         tkcurses.Label(frame, text=label).pack(fill="both", expand=True)
         panes.add(frame, minsize=minsize)
         return frame
@@ -82,7 +82,7 @@ def build(root, screen):
     inner = tkcurses.PanedWindow(panes, orient="vertical")
     panes.add(inner, minsize=10)
     for label in ("nested top", "nested bottom"):
-        frame = tkcurses.Frame(inner, relief="solid")
+        frame = tkcurses.Frame(inner, relief="solid", bd=1)
         tkcurses.Label(frame, text=label).pack(fill="both", expand=True)
         inner.add(frame, minsize=3)
 

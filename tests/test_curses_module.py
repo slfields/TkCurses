@@ -212,6 +212,72 @@ def test_scrolling_moves_the_rows_up(window):
     assert text(window, 0).strip() == "two"
 
 
+# Scrolling regions and newlines, measured against the standard library's
+# curses: the rows below show what it left on the screen.
+
+
+def test_a_region_scrolls_and_leaves_the_rows_outside_it(window):
+    window.scrollok(True)
+    for row, word in enumerate(("head", "one", "two", "three", "foot")):
+        window.addstr(row, 0, word)
+    window.setscrreg(1, 3)
+    window.scroll()
+    rows = [text(window, row).strip() for row in range(5)]
+    assert rows == ["head", "two", "three", "", "foot"]
+
+
+def test_a_negative_count_scrolls_the_region_down(window):
+    window.scrollok(True)
+    window.addstr(1, 0, "one")
+    window.addstr(2, 0, "two")
+    window.setscrreg(1, 2)
+    window.scroll(-1)
+    assert [text(window, row).strip() for row in (1, 2)] == ["", "one"]
+
+
+def test_a_newline_at_the_bottom_of_the_region_scrolls_it(window):
+    window.scrollok(True)
+    window.addstr(0, 0, "head")
+    window.setscrreg(1, 2)
+    window.move(2, 0)
+    window.addstr("a\nb\nc")
+    rows = [text(window, row).strip() for row in range(3)]
+    assert rows == ["head", "b", "c"]
+    assert window.getyx() == (2, 1)
+
+
+def test_a_newline_on_the_last_row_without_scrollok_is_err(window):
+    bottom = window.getmaxyx()[0] - 1
+    window.move(bottom, 0)
+    with pytest.raises(stdlib_curses.error):
+        window.addstr("ab\n")
+    assert text(window, bottom).startswith("ab")
+    assert window.getyx() == (bottom, 2)
+
+
+def test_a_newline_clears_the_rest_of_the_row(window):
+    window.addstr(0, 0, "abcdef")
+    window.addstr(0, 2, "X\nY")
+    assert text(window, 0).rstrip() == "abX"
+    assert window.getyx() == (1, 1)
+
+
+def test_text_that_fills_the_bottom_of_a_region_wraps_by_scrolling(window):
+    width = window.getmaxyx()[1]
+    window.scrollok(True)
+    window.setscrreg(0, 1)
+    window.move(1, width - 2)
+    window.addstr("abcd")
+    assert text(window, 0).rstrip().endswith("ab")
+    assert text(window, 1).rstrip() == "cd"
+
+
+@pytest.mark.parametrize("top, bottom", [(2, 1), (-1, 2), (0, 99)])
+def test_setscrreg_refuses_rows_curses_refuses(window, top, bottom):
+    with pytest.raises(stdlib_curses.error):
+        window.setscrreg(top, bottom)
+
+
 # --------------------------------------------------------------- attributes
 
 

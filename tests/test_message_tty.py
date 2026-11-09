@@ -62,7 +62,7 @@ def test_the_text_starts_at_the_top_when_it_does_not_fit(terminal, tmp_path):
     term = terminal(cols=60, rows=20)
     term.run_source(
         program(
-            "f = tkcurses.Frame(root, relief='solid')\n"
+            "f = tkcurses.Frame(root, relief='solid', bd=1)\n"
             "f.place(x=1, y=1, width=30, height=5)\n"
             "tkcurses.Message(f, text=PARAGRAPH, aspect=100).pack(\n"
             "    fill='both', expand=True\n"

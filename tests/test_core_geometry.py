@@ -29,6 +29,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from tkcurses._core.cells import cells
 from tkcurses._core.geometry import (
     BORDER_WIDTH,
     Insets,
@@ -221,7 +222,7 @@ def test_a_rect_contains_itself(rect):
 
 @given(text=st.text(max_size=40), width=st.integers(-5, 40))
 def test_clipped_text_never_exceeds_the_width(text, width):
-    assert len(clip_text(text, width)) <= max(0, width)
+    assert cells(clip_text(text, width)) <= max(0, width)
 
 
 @given(rect=rects)

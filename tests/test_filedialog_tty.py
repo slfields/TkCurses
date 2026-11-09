@@ -306,3 +306,32 @@ def test_the_filetypes_option_sets_the_starting_pattern(terminal, tmp_path, tree
         f"the *.log pattern should have excluded it:\n{term.describe()}"
     )
     term.send_keys("<Escape>")
+
+
+MANY = (
+    '",".join(os.path.basename(path) for path in '
+    "filedialog.askopenfilenames(parent=root, initialdir=WORK))"
+)
+
+
+def test_askopenfilenames_chooses_several_files(terminal, tmp_path, tree):
+    """The list takes an extended selection, as tk_getOpenFile's does with
+    -multiple: a click, then Shift-Down, chooses two, and OK gives both."""
+    term = terminal(cols=70, rows=22)
+    browse(term, tmp_path, tree, MANY)
+    click_text(term, "alpha.txt")
+    term.send(b"\x1b[1;2B")
+    term.wait_for(
+        lambda t: t.contains('"alpha.txt" "beta.txt"'),
+        message="both names in the selection box",
+    )
+    click_text(term, "OK", 1)
+    term.wait_for_text("chosen=alpha.txt,beta.txt")
+
+
+def test_askopenfilenames_still_takes_one(terminal, tmp_path, tree):
+    term = terminal(cols=70, rows=22)
+    browse(term, tmp_path, tree, MANY)
+    click_text(term, "beta.txt")
+    click_text(term, "OK", 1)
+    term.wait_for_text("chosen=beta.txt")

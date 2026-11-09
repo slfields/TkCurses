@@ -23,7 +23,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tkcurses import Entry, Misc, Spinbox, StringVar, TclError
+from tkcurses import Entry, Misc, Spinbox, StringVar, TclError, ttk
 from tkcurses._core.events import KeyEvent, MouseEvent
 from tkcurses._core.geometry import Rect
 from tkcurses._core.panels import PanelStack
@@ -148,16 +148,142 @@ def test_a_number_wraps_when_asked_to(root):
     assert spin.get() == "0"
 
 
-def test_a_descending_range_counts_down(root):
+def test_a_from_above_to_is_swapped_as_tk_swaps_it(root):
+    """Measured on Tk 9.0.2: from 0.0, to 10.0, starting at 0, up to 1."""
     spin = Spinbox(root, name="s", from_=10, to=0)
+    assert (float(spin.cget("from")), float(spin.cget("to"))) == (0.0, 10.0)
+    assert spin.get() == "0"
     spin.invoke("buttonup")
-    assert spin.get() == "9"
+    assert spin.get() == "1"
 
 
-def test_a_fractional_increment_keeps_its_decimals(root):
-    spin = Spinbox(root, name="s", from_=0, to=1, increment=0.25)
-    spin.invoke("buttonup")
-    assert spin.get() == "0.25"
+def test_configuring_from_above_to_swaps_and_clamps(root):
+    spin = Spinbox(root, name="s", from_=0, to=10)
+    spin.configure(from_=20)
+    assert (float(spin.cget("from")), float(spin.cget("to"))) == (10.0, 20.0)
+    assert spin.get() == "10"
+
+
+#: (from, to, increment) and the text after none, one and two steps up,
+#: measured on Tk 9.0.2's classic spinbox. tkEntry.c's ComputeFormat: as
+#: many decimals as multiples of the increment need, %e when shorter, and
+#: each step reads the text it shows - 1.5 from 0 shows 2, then 4.
+CLASSIC_FORMATS = [
+    ((1, 10, 0.5), ["1.0", "1.5", "2.0"]),
+    ((0, 10, 0.25), ["0.0", "0.2", "0.5"]),
+    ((0, 1000, 0.001), ["0.000", "0.001", "0.002"]),
+    ((0, 10, 1), ["0", "1", "2"]),
+    ((0, 100, 2.0), ["0", "2", "4"]),
+    ((0, 1, 0.05), ["0.00", "0.05", "0.10"]),
+    ((-5, 5, 0.5), ["-5.0", "-4.5", "-4.0"]),
+    ((0, 1e6, 0.5), ["0.0", "0.5", "1.0"]),
+    ((0, 10, 1.5), ["0", "2", "4"]),
+    ((0, 0.001, 0.0001), ["0.0000", "0.0001", "0.0002"]),
+    ((0, 1e-6, 1e-8), ["0.00e+00", "1.00e-08", "2.00e-08"]),
+    ((0.5, 10, 1), ["0", "1", "2"]),
+    ((0, 10, 0.125), ["0.0", "0.1", "0.2"]),
+]
+
+
+@pytest.mark.parametrize("arguments, expected", CLASSIC_FORMATS)
+def test_numbers_are_shown_in_tks_computed_format(root, arguments, expected):
+    low, high, increment = arguments
+    spin = Spinbox(root, name="s", from_=low, to=high, increment=increment)
+    seen = [spin.get()]
+    for _ in range(2):
+        spin.invoke("buttonup")
+        seen.append(spin.get())
+    assert seen == expected
+
+
+#: (label, text, direction, options) and what one step gives, measured on Tk
+#: 9.0.2 for the classic spinbox and for ttk's.
+STEPS = [
+    (
+        "overshoot up",
+        "9.9",
+        1,
+        {"from_": 0, "to": 10, "increment": 0.3},
+        "10.0",
+        "10.0",
+    ),
+    (
+        "overshoot down",
+        "0.1",
+        -1,
+        {"from_": 0, "to": 10, "increment": 0.3},
+        "0.0",
+        "0.0",
+    ),
+    ("at the top", "10", 1, {"from_": 0, "to": 10}, "10", "10"),
+    ("wrap from the top", "10", 1, {"from_": 0, "to": 10, "wrap": True}, "0", "0"),
+    (
+        "overshoot wraps",
+        "9.9",
+        1,
+        {"from_": 0, "to": 10, "increment": 0.3, "wrap": True},
+        "0.0",
+        "0.0",
+    ),
+    ("wrap from the bottom", "0", -1, {"from_": 0, "to": 10, "wrap": True}, "10", "10"),
+    ("not a number", "abc", 1, {"from_": 2, "to": 10}, "2", "2"),
+    ("not a number down", "abc", -1, {"from_": 2, "to": 10}, "2", "2"),
+    ("empty", "", 1, {"from_": 2, "to": 10}, "2", "2"),
+    ("below the range", "-5", 1, {"from_": 2, "to": 10}, "2", "2"),
+    ("above the range", "50", -1, {"from_": 2, "to": 10}, "10", "10"),
+    ("reversed, up", "5", 1, {"from_": 10, "to": 0}, "6", "10"),
+    ("reversed, down", "5", -1, {"from_": 10, "to": 0}, "4", "10"),
+    ("a leading number", "3abc", 1, {"from_": 0, "to": 10}, "4", "4"),
+    ("an empty range", "5", 1, {"from_": 0, "to": 0}, "5", "0"),
+]
+
+
+def _holding(spin, text):
+    spin.delete(0, "end")
+    spin.insert(0, text)
+    return spin
+
+
+@pytest.mark.parametrize(
+    "text, direction, options, classic",
+    [pytest.param(*case[1:5], id=case[0]) for case in STEPS],
+)
+def test_a_classic_step_goes_where_tks_goes(root, text, direction, options, classic):
+    spin = _holding(Spinbox(root, name="s", **options), text)
+    spin.invoke("buttonup" if direction > 0 else "buttondown")
+    assert spin.get() == classic
+
+
+@pytest.mark.parametrize(
+    "text, direction, options, themed",
+    [pytest.param(*case[1:4], case[5], id=case[0]) for case in STEPS],
+)
+def test_a_themed_step_goes_where_ttks_goes(root, text, direction, options, themed):
+    spin = _holding(ttk.Spinbox(root, name="s", **options), text)
+    spin._step(direction)
+    assert spin.get() == themed
+
+
+#: ttk::spinbox::FormatValue: %.Nf from an increment below 1, %.0f above,
+#: measured on Tk 9.0.2.
+@pytest.mark.parametrize(
+    "increment, expected",
+    [
+        (0.5, ["1", "1.5", "2.0"]),
+        (0.25, ["1", "1.2", "1.4"]),
+        (0.001, ["1", "1.001", "1.002"]),
+        (2.0, ["1", "3", "5"]),
+    ],
+)
+def test_a_themed_spinbox_formats_as_ttk_does(root, increment, expected):
+    spin = _holding(
+        ttk.Spinbox(root, name="s", from_=0, to=10, increment=increment), "1"
+    )
+    seen = [spin.get()]
+    for _ in range(2):
+        spin._step(1)
+        seen.append(spin.get())
+    assert seen == expected
 
 
 def test_a_whole_increment_shows_no_decimal_point(root):

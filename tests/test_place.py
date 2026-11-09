@@ -180,6 +180,7 @@ def test_placed_children_make_no_claim_on_the_container(root):
 
 def test_place_measures_inside_the_border_by_default(root):
     root._options["borderwidth"] = 1
+    root._options["relief"] = "solid"
     box = Box(root, "a", width=4, height=1)
     box.place(x=0, y=0)
     root.update_layout()
@@ -188,6 +189,7 @@ def test_place_measures_inside_the_border_by_default(root):
 
 def test_bordermode_outside_measures_against_the_whole_widget(root):
     root._options["borderwidth"] = 1
+    root._options["relief"] = "solid"
     box = Box(root, "a", width=4, height=1)
     box.place(x=0, y=0, bordermode="outside")
     root.update_layout()

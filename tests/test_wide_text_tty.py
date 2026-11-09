@@ -196,7 +196,7 @@ def test_canvas_text_is_centred_on_its_cells(terminal, tmp_path):
     term = _run(
         terminal,
         tmp_path,
-        "canvas = tkcurses.Canvas(root, width=14, height=2)\n"
+        "canvas = tkcurses.Canvas(root, width=14, height=2, relief='sunken', bd=1)\n"
         "canvas.create_text(7, 1, text=WIDE)\n"
         "canvas.place(x=1, y=1)",
     )
@@ -210,7 +210,7 @@ def test_canvas_text_cut_by_the_edge_draws_no_half_ideograph(terminal, tmp_path)
     term = _run(
         terminal,
         tmp_path,
-        "canvas = tkcurses.Canvas(root, width=5, height=2)\n"
+        "canvas = tkcurses.Canvas(root, width=5, height=2, relief='sunken', bd=1)\n"
         "canvas.create_text(0, 0, text=WIDE + 'x', anchor='nw')\n"
         "canvas.place(x=1, y=1)",
     )
@@ -264,7 +264,7 @@ def test_a_menu_underlines_the_letter_after_wide_ones(terminal, tmp_path):
         "box = tkcurses.Listbox(root, height=2, width=10, justify='right')\n"
         "box.insert(0, WIDE, 'ab')\n"
         "box.place(x=1, y=1)",
-        "canvas = tkcurses.Canvas(root, width=10, height=4)\n"
+        "canvas = tkcurses.Canvas(root, width=10, height=4, relief='sunken', bd=1)\n"
         "canvas.create_text(0, 0, text=WIDE + '\\nab', anchor='nw', justify='right')\n"
         "canvas.place(x=1, y=1)",
     ],

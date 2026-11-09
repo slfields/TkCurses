@@ -148,18 +148,20 @@ for relief in ("flat", "raised", "sunken", "groove", "ridge", "solid"):
 
 ### borderwidth
 
-The width of the border. A border in a terminal is one cell of
-box-drawing characters, however wide it is asked to be, so what the
-number changes is whether a flat widget keeps room for one: at 0 it
-gives up the blank cell around its content, and at 1 or more it keeps
-it.
+The width of the border. As in Tk, a border 0 wide is not drawn,
+whatever the relief, and the defaults are Tk's: 1 on most widgets, 2 on a
+LabelFrame, 0 on a Frame and a Canvas. A border in a terminal is one cell of
+box-drawing characters however wide it is asked to be, so any width from 1
+up draws the same box.
 
-**Differences from Tk:** a widget whose relief draws a border draws it
-at a `borderwidth` of 0 too, where Tk draws none.
+**Differences from Tk:** a flat border takes no cell. Tk keeps its pixels
+as blank space; here that would be a blank cell round every label. And a
+Toplevel's frame stands in for the window manager's, so it is drawn at
+its default of 1, flat or not, and `borderwidth=0` takes it away.
 
 ```{tkcurses-sample}
 for width in (0, 1):
-    tk.Label(root, text=f"bd={width}", bg="blue", bd=width).pack(
+    tk.Label(root, text=f"bd={width}", relief="solid", bd=width).pack(
         side="left", padx=1
     )
 ```

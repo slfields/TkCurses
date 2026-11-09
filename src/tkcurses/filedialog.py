@@ -61,6 +61,7 @@ from __future__ import annotations
 import contextlib
 import fnmatch
 import os
+import shlex
 from typing import IO, TYPE_CHECKING, Any, ClassVar
 
 import tkcurses
@@ -492,7 +493,12 @@ class _NativeDialog(_CommonDialog):
             self.browser.refresh()
 
         def on_file(event: Event) -> None:  # noqa: ARG001
-            self.browser.set_selection(str(self.browser.files.get("active")))
+            if not self._multiple:
+                self.browser.set_selection(str(self.browser.files.get("active")))
+
+        def on_files_chosen(event: Event) -> None:  # noqa: ARG001
+            files = self.browser.files
+            self._show_names([str(files.get(index)) for index in files.curselection()])
 
         def on_dir(event: Event) -> None:  # noqa: ARG001
             self.dir_clicked(str(self.browser.dirs.get("active")))
@@ -500,6 +506,12 @@ class _NativeDialog(_CommonDialog):
         self.browser.selection.bind("<Return>", on_return)
         self.browser.filter.bind("<Return>", on_filter)
         self.browser.files.bind("<ButtonRelease-1>", on_file)
+        if self._multiple:
+            # As tk_getOpenFile's own chooser does with -multiple: the list
+            # takes an extended selection - Shift and Control with a click,
+            # Shift with the arrows - and the box shows every name in it.
+            self.browser.files.configure(selectmode="extended")
+            self.browser.files.bind("<<ListboxSelect>>", on_files_chosen)
         self.browser.files.bind("<Double-Button-1>", on_return)
         self.browser.dirs.bind("<ButtonRelease-1>", on_dir)
         self.browser.dirs.bind("<Double-Button-1>", on_filter)
@@ -514,6 +526,44 @@ class _NativeDialog(_CommonDialog):
             side="right"
         )
         return self.browser.selection
+
+    @property
+    def _multiple(self) -> bool:
+        """Whether ``multiple`` asked for several files to be chosen."""
+        value = self.options.get("multiple")
+        try:
+            return bool(value) and tkcurses.getboolean(value)
+        except (tkcurses.TclError, ValueError):
+            return False
+
+    def _show_names(self, names: list[str]) -> None:
+        """Put the chosen names in the selection box: one as a path, several
+        quoted, as tk_getOpenFile's chooser lists them."""
+        if len(names) == 1:
+            self.browser.set_selection(names[0])
+            return
+        self.browser.selection.delete(0, "end")
+        quoted = (
+            '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"' for name in names
+        )
+        self.browser.selection.insert("end", " ".join(quoted))
+
+    def _chosen_paths(self) -> list[str]:
+        """The paths in the selection box: several when they are quoted,
+        each under the current directory unless it is absolute."""
+        text = self.browser.selection.get().strip()
+        if text[:1] in ("'", '"'):
+            try:
+                names = shlex.split(text)
+            except ValueError:
+                names = [text]
+        else:
+            names = [text]
+        return [
+            os.path.join(self.browser.directory, os.path.expanduser(name))
+            for name in names
+            if name
+        ]
 
     def dir_clicked(self, name: str) -> None:
         """What one click on a directory does: move into it.
@@ -532,6 +582,11 @@ class _NativeDialog(_CommonDialog):
         TkCurses extension:
             How the chooser here answers; tkinter's is the platform's.
         """
+        if self.kind == "open" and self._multiple:
+            paths = self._chosen_paths()
+            if paths and all(os.path.isfile(path) for path in paths):
+                self.finish(tuple(paths))
+            return
         chosen = self.browser.get_selection()
         if self.kind == "directory":
             if self.options.get("mustexist") and not os.path.isdir(chosen):
@@ -690,9 +745,8 @@ def asksaveasfilename(**options: Any) -> str:
 def askopenfilenames(**options: Any) -> tuple[str, ...]:
     """Ask for several files to open. A tuple of paths; empty if cancelled.
 
-    Differences from tkinter:
-        Only one file can be chosen yet, so the tuple holds one path at
-        most.
+    The file list takes an extended selection: Shift or Control with a
+    click, or Shift with Up and Down, choose more than one.
     """
     options["multiple"] = 1
     chosen = Open(**options).show()
@@ -711,10 +765,7 @@ def askopenfile(mode: str = "r", **options: Any) -> IO[Any] | None:
 
 def askopenfiles(mode: str = "r", **options: Any) -> list[IO[Any]]:
     """Ask for several files to open, and open them all. A list of files;
-    empty if cancelled.
-
-    Differences from tkinter:
-        Only one file can be chosen yet, as for :func:`askopenfilenames`.
+    empty if cancelled. Chosen as in :func:`askopenfilenames`.
     """
     return [open(name, mode) for name in askopenfilenames(**options)]
 

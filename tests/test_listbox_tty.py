@@ -147,7 +147,7 @@ def test_a_listbox_packs_with_the_other_widgets(terminal, tmp_path):
     term = terminal(cols=40, rows=14)
     term.run_source(
         program(
-            "f = tkcurses.Frame(root, relief='solid')\n"
+            "f = tkcurses.Frame(root, relief='solid', bd=1)\n"
             "f.pack(fill='both', expand=True)\n"
             "tkcurses.Label(f, text='Pick one').pack(side='top')\n"
             "lb = tkcurses.Listbox(f, width=14, height=4)\n"

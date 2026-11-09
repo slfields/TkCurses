@@ -21,12 +21,9 @@
    "value": "red"
   },
   "borderwidth": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    3,
-    9
-   ]
+   "value": 0
   },
   "command": {
    "kind": "behaviour"
@@ -315,9 +312,13 @@
    "value": 3
   },
   "relief": {
-   "kind": "visible",
+   "kind": "invisible",
    "state": "plain",
-   "value": "groove"
+   "tried": [
+    "groove",
+    "sunken",
+    "raised"
+   ]
   },
   "scrollregion": {
    "kind": "invisible",
@@ -412,9 +413,13 @@
    "value": "red"
   },
   "borderwidth": {
-   "kind": "visible",
+   "kind": "invisible",
    "state": "plain",
-   "value": 3
+   "tried": [
+    0,
+    3,
+    9
+   ]
   },
   "command": {
    "kind": "behaviour"
@@ -590,12 +595,9 @@
    "value": "red"
   },
   "borderwidth": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    3,
-    9
-   ]
+   "value": 0
   },
   "cursor": {
    "kind": "invisible",
@@ -881,9 +883,13 @@
    ]
   },
   "relief": {
-   "kind": "visible",
+   "kind": "invisible",
    "state": "plain",
-   "value": "groove"
+   "tried": [
+    "groove",
+    "sunken",
+    "raised"
+   ]
   },
   "takefocus": {
    "kind": "invisible",
@@ -927,9 +933,13 @@
    "value": "red"
   },
   "borderwidth": {
-   "kind": "visible",
+   "kind": "invisible",
    "state": "plain",
-   "value": 3
+   "tried": [
+    0,
+    3,
+    9
+   ]
   },
   "compound": {
    "kind": "visible",
@@ -1054,12 +1064,9 @@
    "value": "red"
   },
   "borderwidth": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    3,
-    9
-   ]
+   "value": 0
   },
   "class": {
    "kind": "invisible",
@@ -1194,12 +1201,9 @@
    "value": "red"
   },
   "borderwidth": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    3,
-    9
-   ]
+   "value": 0
   },
   "cursor": {
    "kind": "invisible",
@@ -1370,12 +1374,9 @@
    "value": "red"
   },
   "borderwidth": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    3,
-    9
-   ]
+   "value": 0
   },
   "cursor": {
    "kind": "invisible",
@@ -1508,12 +1509,9 @@
    "value": "red"
   },
   "borderwidth": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    3,
-    9
-   ]
+   "value": 0
   },
   "compound": {
    "kind": "visible",
@@ -1666,9 +1664,13 @@
    "value": "red"
   },
   "borderwidth": {
-   "kind": "visible",
+   "kind": "invisible",
    "state": "plain",
-   "value": 3
+   "tried": [
+    0,
+    3,
+    9
+   ]
   },
   "compound": {
    "kind": "visible",
@@ -1807,12 +1809,9 @@
    "value": "red"
   },
   "borderwidth": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    3,
-    9
-   ]
+   "value": 0
   },
   "compound": {
    "kind": "visible",
@@ -1962,9 +1961,13 @@
    "value": "red"
   },
   "borderwidth": {
-   "kind": "visible",
+   "kind": "invisible",
    "state": "plain",
-   "value": 3
+   "tried": [
+    0,
+    3,
+    9
+   ]
   },
   "cursor": {
    "kind": "invisible",
@@ -2134,9 +2137,13 @@
    "value": "red"
   },
   "borderwidth": {
-   "kind": "visible",
+   "kind": "invisible",
    "state": "plain",
-   "value": 3
+   "tried": [
+    0,
+    3,
+    9
+   ]
   },
   "command": {
    "kind": "behaviour"
@@ -2323,9 +2330,13 @@
    ]
   },
   "borderwidth": {
-   "kind": "visible",
+   "kind": "invisible",
    "state": "plain",
-   "value": 3
+   "tried": [
+    0,
+    3,
+    9
+   ]
   },
   "command": {
    "kind": "behaviour"
@@ -2505,12 +2516,9 @@
    "value": "red"
   },
   "borderwidth": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    3,
-    9
-   ]
+   "value": 0
   },
   "command": {
    "kind": "behaviour"
@@ -2644,12 +2652,9 @@
    "value": "red"
   },
   "borderwidth": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    3,
-    9
-   ]
+   "value": 0
   },
   "buttonbackground": {
    "kind": "visible",
@@ -2744,13 +2749,9 @@
    ]
   },
   "increment": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    2,
-    0.5,
-    5
-   ]
+   "value": 0.5
   },
   "insertbackground": {
    "kind": "invisible",
@@ -2890,13 +2891,9 @@
    "kind": "behaviour"
   },
   "to": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    2,
-    0.5,
-    5
-   ]
+   "value": 0.5
   },
   "validate": {
    "kind": "invisible",
@@ -2957,12 +2954,9 @@
    ]
   },
   "borderwidth": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    3,
-    9
-   ]
+   "value": 0
   },
   "cursor": {
    "kind": "invisible",
@@ -3597,6 +3591,7 @@
    "kind": "invisible",
    "state": "plain",
    "tried": [
+    0,
     3,
     9
    ]
@@ -3665,9 +3660,13 @@
    "value": "red"
   },
   "borderwidth": {
-   "kind": "visible",
+   "kind": "invisible",
    "state": "plain",
-   "value": 3
+   "tried": [
+    0,
+    3,
+    9
+   ]
   },
   "class": {
    "kind": "invisible",
@@ -3762,9 +3761,13 @@
  },
  "ttk.LabeledScale": {
   "borderwidth": {
-   "kind": "visible",
+   "kind": "invisible",
    "state": "plain",
-   "value": 3
+   "tried": [
+    0,
+    3,
+    9
+   ]
   },
   "class": {
    "kind": "invisible",
@@ -3824,12 +3827,9 @@
  },
  "ttk.Labelframe": {
   "borderwidth": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    3,
-    9
-   ]
+   "value": 0
   },
   "class": {
    "kind": "invisible",
@@ -4711,10 +4711,9 @@
    ]
   },
   "selectmode": {
-   "kind": "invisible",
-   "state": "plain",
+   "kind": "refused",
    "tried": [
-    "single"
+    "'single': error: bad selectmode \"single\": must be none, browse, or extended"
    ]
   },
   "selecttype": {

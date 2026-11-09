@@ -542,6 +542,9 @@ class Window:
         self._background = BLANK
         self._background_attr = 0
         self._scroll_ok = False
+        #: The rows :meth:`scroll` and a newline at the bottom move, set by
+        #: :meth:`setscrreg`; the whole window until then. None is "all".
+        self._region: tuple[int, int] | None = None
         self._keypad = False
         self._leave_ok = False
         self._clear_ok = False
@@ -692,14 +695,75 @@ class Window:
         """The range covering a whole row."""
         return (0, max(0, self._width - 1))
 
-    def _advance(self, y: int, x: int, count: int) -> None:
-        """Move the cursor on by ``count`` cells, wrapping as curses does."""
-        x += count
-        while x >= self._width and self._width:
-            x -= self._width
-            y += 1
-        self._cursor_y = min(y, max(0, self._height - 1))
-        self._cursor_x = min(x, max(0, self._width - 1))
+    def _write(self, y: int, x: int, text: str, attr: int, name: str) -> None:
+        """Write text from ``(y, x)`` as curses' ``waddch`` does.
+
+        A newline clears the rest of the row and goes to the start of the
+        next; a character that fills the last column wraps at once, and a
+        wide one that does not fit wraps first. Going on from the bottom of
+        the scrolling region scrolls it when :meth:`scrollok` allows, and
+        from the bottom row otherwise is curses' ``ERR``, raised once the
+        text before it is written - measured against the standard library's
+        curses, which wrote "ab" and raised for ``"ab\n"`` on the last row.
+        """
+        run, run_x, col = "", x, x
+
+        def flush() -> None:
+            if run:
+                self._put(y, run_x, run, attr)
+
+        for char in text:
+            if char == "\n":
+                flush()
+                if col < self._width:
+                    blank = self._background * (self._width - col)
+                    self._put(y, col, blank, self._background_attr)
+                self._cursor_y, self._cursor_x = y, min(col, self._width - 1)
+                y = self._next_line(y, name)
+                run, run_x, col = "", 0, 0
+                continue
+            width = char_cells(char)
+            if width and col + width > self._width and col > 0:
+                flush()
+                self._cursor_y, self._cursor_x = y, self._width - 1
+                y = self._next_line(y, name)
+                run, run_x, col = "", 0, 0
+            run += char
+            col += width
+            if col >= self._width:
+                flush()
+                self._cursor_y, self._cursor_x = y, self._width - 1
+                y = self._next_line(y, name)
+                run, run_x, col = "", 0, 0
+        flush()
+        self._cursor_y = y
+        self._cursor_x = min(max(0, col), max(0, self._width - 1))
+
+    def _next_line(self, y: int, name: str) -> int:
+        """The row a newline or a wrap goes to from ``y``, scrolling the
+        region if ``y`` is its bottom; ``ERR`` where curses has nowhere to
+        go."""
+        top, bottom = self._region or (0, self._height - 1)
+        if y == bottom:
+            if not self._scroll_ok:
+                raise _curses.error(f"{name}() returned ERR")
+            self._scroll_rows(top, bottom, 1)
+            return y
+        if y < self._height - 1:
+            return y + 1
+        if not self._scroll_ok:
+            raise _curses.error(f"{name}() returned ERR")
+        return y
+
+    def _scroll_rows(self, top: int, bottom: int, lines: int) -> None:
+        """Move rows ``top`` to ``bottom`` up by ``lines``, down if negative,
+        filling with the background."""
+        rows = [self._read(row, 0, self._width) for row in range(top, bottom + 1)]
+        blank = self._background * self._width
+        for index, row in enumerate(range(top, bottom + 1)):
+            source = index + lines
+            text = rows[source] if 0 <= source < len(rows) else blank
+            self._put(row, 0, text, self._attr)
 
     def _place(self, args: tuple[Any, ...]) -> tuple[int, int, tuple[Any, ...]]:
         """Unpick curses' overloads: a leading ``y, x`` or the cursor."""
@@ -718,16 +782,14 @@ class Window:
         y, x, rest = self._place(args)
         char = rest[0] if rest else BLANK
         text = chr(char) if isinstance(char, int) else str(char)
-        self._put(y, x, text[:1], self._styled(rest, 1))
-        self._advance(y, x, char_cells(text[:1]))
+        self._write(y, x, text[:1], self._styled(rest, 1), "addch")
 
     def addstr(self, *args: Any) -> None:
         """Put a string at the cursor, or at a given ``y, x``."""
         y, x, rest = self._place(args)
         text = str(rest[0]) if rest else ""
-        self._put(y, x, text, self._styled(rest, 1))
         # In cells, as curses moves: two for an ideograph, none for a mark.
-        self._advance(y, x, cells(text))
+        self._write(y, x, text, self._styled(rest, 1), "addwstr")
 
     def addnstr(self, *args: Any) -> None:
         """Put at most ``n`` characters of a string."""
@@ -735,8 +797,7 @@ class Window:
         text = str(rest[0]) if rest else ""
         count = int(rest[1]) if len(rest) > 1 else len(text)
         clipped = text[: max(0, count)]
-        self._put(y, x, clipped, self._styled(rest, 2))
-        self._advance(y, x, cells(clipped))
+        self._write(y, x, clipped, self._styled(rest, 2), "addnwstr")
 
     def insch(self, *args: Any) -> None:
         """Insert a character, pushing the rest of the line right."""
@@ -848,15 +909,12 @@ class Window:
         )
 
     def scroll(self, lines: int = 1) -> None:
-        """Scroll the window, if it has been told it may."""
+        """Scroll the region :meth:`setscrreg` set - the whole window until
+        then - up, or down for a negative count, if :meth:`scrollok` allows."""
         if not self._scroll_ok:
             raise _curses.error("scroll() returned ERR")
-        rows = [self._read(row, 0, self._width) for row in range(self._height)]
-        blank = self._background * self._width
-        for row in range(self._height):
-            source = row + lines
-            text = rows[source] if 0 <= source < self._height else blank
-            self._put(row, 0, text, self._attr)
+        top, bottom = self._region or (0, self._height - 1)
+        self._scroll_rows(top, bottom, lines)
 
     # ---------------------------------------------------------- attributes
 
@@ -1112,13 +1170,17 @@ class Window:
         self._scroll_ok = bool(flag)
 
     def setscrreg(self, top: int, bottom: int) -> None:
-        """Set the rows scrolling affects.
+        """Set the rows :meth:`scroll`, and a newline or a wrap on the
+        bottom one, move: a header and a status line stay put above and
+        below a scrolling log.
 
-        Differences from curses:
-            Accepted and not honoured yet: :meth:`scroll` moves the whole
-            window.
+        Raises:
+            error: Unless ``0 <= top <= bottom`` and ``bottom`` is a row of
+                the window, as curses refuses it.
         """
-        del top, bottom
+        if not 0 <= top <= bottom < self._height:
+            raise _curses.error("wsetscrreg() returned ERR")
+        self._region = (top, bottom)
 
     def clearok(self, flag: bool) -> None:
         """Whether the next refresh repaints everything."""

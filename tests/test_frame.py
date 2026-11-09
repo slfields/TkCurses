@@ -68,12 +68,18 @@ def test_a_frame_has_no_border_by_default(root):
     assert not frame._bordered
 
 
-def test_a_borderwidth_gives_it_a_border(root):
-    assert Frame(root, name="f", borderwidth=1)._bordered
+def test_a_borderwidth_and_a_relief_give_it_a_border(root):
+    assert Frame(root, name="f", borderwidth=1, relief="raised")._bordered
 
 
-def test_a_relief_gives_it_a_border_without_a_borderwidth(root):
-    assert Frame(root, name="f", relief="raised")._bordered
+def test_a_relief_without_a_borderwidth_draws_no_border(root):
+    """Tk's rule: a border 0 wide is not drawn, whatever its relief."""
+    assert not Frame(root, name="f", relief="raised")._bordered
+
+
+def test_a_flat_border_takes_no_cell(root):
+    """A terminal border is box-drawing; a flat one would be a blank ring."""
+    assert not Frame(root, name="f", borderwidth=3)._bordered
 
 
 def test_an_unknown_option_is_refused(root):
@@ -151,7 +157,7 @@ def test_a_frame_packs_into_its_parent_like_any_widget(root):
 
 def test_redrawing_without_a_screen_is_silent(root):
     """Every frame is in this state until the terminal is running."""
-    frame = Frame(root, name="f", borderwidth=1)
+    frame = Frame(root, name="f", borderwidth=1, relief="solid")
     frame._allocate(Rect(0, 0, 10, 3))
     frame._map()
     frame._redraw()
@@ -159,14 +165,14 @@ def test_redrawing_without_a_screen_is_silent(root):
 
 def test_the_border_needs_room_for_two_edges(root):
     """A frame one cell wide has no interior and must not try to draw one."""
-    frame = Frame(root, name="f", borderwidth=1)
+    frame = Frame(root, name="f", borderwidth=1, relief="solid")
     frame._allocate(Rect(0, 0, 1, 1))
     frame._map()
     frame._redraw()
 
 
 def test_a_bordered_frame_offers_less_room_to_its_children(root):
-    frame = Frame(root, name="f", borderwidth=1)
+    frame = Frame(root, name="f", borderwidth=1, relief="solid")
     frame._allocate(Rect(0, 0, 30, 8))
     content = frame._content_rect()
     assert (content.width, content.height) == (28, 6)
@@ -212,7 +218,7 @@ def test_a_bordered_frame_asks_for_room_for_its_border(root):
     it needed three rows, drew a border on the first and last of them, and
     showed one row of the three.
     """
-    frame = Frame(root, name="f", borderwidth=1)
+    frame = Frame(root, name="f", borderwidth=1, relief="solid")
     for index in range(3):
         Frame(frame, name=f"band{index}", width=9, height=1).pack()
     root.update_layout()
@@ -230,7 +236,7 @@ def test_an_unbordered_frame_asks_for_exactly_its_children(root):
 def test_a_bordered_frame_gives_its_children_what_it_asked_for(root):
     """The two halves have to agree: whatever the frame asks its parent for,
     laying out inside it must leave the children the room they wanted."""
-    frame = Frame(root, name="f", borderwidth=1)
+    frame = Frame(root, name="f", borderwidth=1, relief="solid")
     bands = [Frame(frame, name=f"band{i}", width=9, height=1) for i in range(3)]
     for band in bands:
         band.pack()
@@ -248,3 +254,27 @@ def test_padding_is_asked_for_too(root):
     Frame(frame, name="child", width=9, height=1).pack()
     root.update_layout()
     assert (frame.winfo_reqwidth(), frame.winfo_reqheight()) == (13, 3)
+
+
+#: Tk 9.0.2's default border widths, measured through tkinter.
+TK_BORDER_WIDTHS = {
+    "Button": 1, "Canvas": 0, "Checkbutton": 1, "Entry": 1, "Frame": 0,
+    "Label": 1, "LabelFrame": 2, "Listbox": 1, "Menu": 1, "Menubutton": 1,
+    "Message": 1, "PanedWindow": 1, "Radiobutton": 1, "Scale": 1,
+    "Scrollbar": 1, "Spinbox": 1, "Text": 1,
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("name, width", sorted(TK_BORDER_WIDTHS.items()))
+def test_the_border_width_defaults_to_tks(root, name, width):
+    import tkcurses
+
+    assert getattr(tkcurses, name)(root).cget("borderwidth") == width
+
+
+@pytest.mark.parametrize("name", ["Button", "Entry", "Listbox", "Text", "LabelFrame"])
+def test_a_boxed_widget_keeps_its_box_by_default(root, name):
+    import tkcurses
+
+    assert getattr(tkcurses, name)(root)._bordered
+    assert not getattr(tkcurses, name)(root, borderwidth=0)._bordered

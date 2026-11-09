@@ -92,6 +92,21 @@ DEFAULTS: dict[str, Any] = {
 }
 
 
+def _bad_option(option: str) -> tkcurses.TclError:
+    """Tk's refusal of an option a font does not have, word for word."""
+    return tkcurses.TclError(
+        f'bad option "-{option}": must be -family, -size, -weight, -slant,'
+        " -underline, or -overstrike"
+    )
+
+
+def _check_options(options: dict[str, Any]) -> None:
+    """Refuse the first option a font does not have, as Tk does."""
+    for option in options:
+        if option not in DEFAULTS:
+            raise _bad_option(option)
+
+
 def _root_of(root: Misc | None, what: str) -> Misc:
     """The widget whose application owns the font table."""
     if root is None:
@@ -132,6 +147,11 @@ class Font:
                 a font of that name already exists and ``exists`` is false.
         """
         self._root = _root_of(root, "use font")
+        # Measured on Tk 9.0.2: Font(weight="bold", colour=1) is refused. Not
+        # when a font is given to copy - tkinter then asks Tk for that font's
+        # attributes and passes the keywords nowhere, so they are not checked.
+        if not font:
+            _check_options(options)
         self.name = name or f"font{next(self.counter)}"
         table = self._root.tk.fonts
 
@@ -203,7 +223,7 @@ class Font:
             TclError: If it is not one of the six a font has.
         """
         if option not in DEFAULTS:
-            raise tkcurses.TclError(f'unknown option "-{option}"')
+            raise _bad_option(option)
         return self._options[option]
 
     def config(self, **options: Any) -> dict[str, Any] | None:
@@ -214,9 +234,7 @@ class Font:
         """
         if not options:
             return dict(self._options)
-        unknown = set(options) - set(DEFAULTS)
-        if unknown:
-            raise tkcurses.TclError(f'unknown option "-{sorted(unknown)[0]}"')
+        _check_options(options)
         self._options.update(options)
         return None
 
@@ -239,7 +257,7 @@ class Font:
         }
         if option is not None:
             if option not in DEFAULTS:
-                raise tkcurses.TclError(f'unknown option "-{option}"')
+                raise _bad_option(option)
             return real[option]
         return real
 
@@ -266,9 +284,12 @@ class Font:
         kw.pop("displayof", None)
         real = {"ascent": 1, "descent": 0, "linespace": 1, "fixed": 1}
         if options:
-            unknown = set(options) - set(real)
-            if unknown:
-                raise tkcurses.TclError(f'unknown option "-{sorted(unknown)[0]}"')
+            for option in options:
+                if option not in real:
+                    raise tkcurses.TclError(
+                        f'bad metric "-{option}": must be -ascent, -descent,'
+                        " -fixed, or -linespace"
+                    )
             if len(options) == 1:
                 return real[options[0]]
             return {name: real[name] for name in options}

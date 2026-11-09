@@ -59,7 +59,7 @@ def stack_of(app, depth: int, text: str = "12345"):
     parent = app
     frames = []
     for level in range(depth):
-        frame = tkcurses.Frame(parent, name=f"f{level}", relief="solid")
+        frame = tkcurses.Frame(parent, name=f"f{level}", relief="solid", bd=1)
         frames.append(frame)
         parent = frame
     # Three rows rather than one. A single-row leaf makes the whole stack
@@ -95,7 +95,7 @@ def test_a_bordered_container_asks_for_room_for_its_own_border(app):
     why it drew a border over the first and last of the three rows and showed
     one.
     """
-    frame = tkcurses.Frame(app, name="f", relief="solid")
+    frame = tkcurses.Frame(app, name="f", relief="solid", bd=1)
     rows = [tkcurses.Label(frame, name=f"r{i}", text="123456789") for i in range(3)]
     for row in rows:
         row.pack()
@@ -107,7 +107,7 @@ def test_a_bordered_container_asks_for_room_for_its_own_border(app):
 
 def test_the_children_of_a_bordered_container_are_not_clipped_by_it(app):
     """The half a size assertion misses: the rows must actually be there."""
-    frame = tkcurses.Frame(app, name="f", relief="solid")
+    frame = tkcurses.Frame(app, name="f", relief="solid", bd=1)
     rows = [tkcurses.Label(frame, name=f"r{i}", text="123456789") for i in range(3)]
     for row in rows:
         row.pack()
@@ -131,7 +131,7 @@ def test_a_borderless_container_asks_for_exactly_what_its_children_need(app):
 
 
 def test_padding_is_asked_for_as_well_as_the_border(app):
-    frame = tkcurses.Frame(app, name="f", relief="solid", padx=2, pady=1)
+    frame = tkcurses.Frame(app, name="f", relief="solid", bd=1, padx=2, pady=1)
     tkcurses.Label(frame, name="l", text="123456789").pack()
     frame.place(x=0, y=0)
     app.update_layout()
@@ -214,7 +214,7 @@ def test_a_squeezed_container_gives_its_child_the_content_area(app):
     *inside* it, not its whole rect - otherwise the child draws over the
     border it is supposed to sit within.
     """
-    frame = tkcurses.Frame(app, name="f", relief="solid")
+    frame = tkcurses.Frame(app, name="f", relief="solid", bd=1)
     child = tkcurses.Label(frame, name="big", text="x" * 20)
     child.pack()
     frame.place(x=0, y=0, width=8, height=3)
@@ -228,7 +228,7 @@ def test_a_container_with_no_room_at_all_does_not_go_negative(app):
     """Two cells of frame is exactly its border and nothing else. The child
     gets zero, not minus two.
     """
-    frame = tkcurses.Frame(app, name="f", relief="solid")
+    frame = tkcurses.Frame(app, name="f", relief="solid", bd=1)
     child = tkcurses.Label(frame, name="c", text="xxxx")
     child.pack()
     frame.place(x=0, y=0, width=2, height=2)
@@ -245,8 +245,8 @@ def test_resizing_the_outermost_container_travels_all_the_way_down(app):
     """A resize is not a fresh layout: the levels in between have to pass it
     on. Measured by giving the child something to fill with.
     """
-    outer = tkcurses.Frame(app, name="outer", relief="solid")
-    inner = tkcurses.Frame(outer, name="inner", relief="solid")
+    outer = tkcurses.Frame(app, name="outer", relief="solid", bd=1)
+    inner = tkcurses.Frame(outer, name="inner", relief="solid", bd=1)
     child = tkcurses.Label(app.nametowidget(str(inner)), name="c", text="x")
     child.place(x=0, y=0, relwidth=1.0, relheight=1.0)
     inner.place(x=0, y=0, relwidth=1.0, relheight=1.0)

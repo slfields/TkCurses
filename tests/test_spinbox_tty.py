@@ -200,7 +200,7 @@ def test_spinboxes_pack_into_a_frame(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(
         program(
-            "f = tkcurses.Frame(root, relief='solid')\n"
+            "f = tkcurses.Frame(root, relief='solid', bd=1)\n"
             "f.pack(fill='both', expand=True)\n"
             "tkcurses.Spinbox(f, from_=1, to=12, width=4).pack(anchor='w')\n"
             "tkcurses.Spinbox(f, from_=1, to=31, width=4).pack(anchor='w')"

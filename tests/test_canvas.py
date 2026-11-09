@@ -691,3 +691,11 @@ def test_a_rectangle_given_backwards_stops_at_the_same_edges(canvas):
 def test_a_fill_with_no_width_and_no_outline_draws_nothing(canvas):
     ident = canvas.create_rectangle(10, 10, 10, 14, fill="red", outline="")
     assert item_pixels(canvas, ident) == {}
+
+
+def test_a_canvas_is_flat_with_no_border_by_default(root):
+    """Measured on Tk 9.0.2: relief flat, borderwidth 0, so a Canvas fills
+    the space it is given with no box around it."""
+    canvas = Canvas(root)
+    assert canvas.cget("relief") == "flat"
+    assert not canvas._bordered

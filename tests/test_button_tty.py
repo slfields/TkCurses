@@ -239,7 +239,7 @@ def test_buttons_pack_into_a_frame(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(
         program(
-            "f = tkcurses.Frame(root, relief='solid')\n"
+            "f = tkcurses.Frame(root, relief='solid', bd=1)\n"
             "f.pack(fill='both', expand=True)\n"
             "for word in ('Yes', 'No'):\n"
             "    tkcurses.Button(f, text=word).pack(side='left', padx=1)"

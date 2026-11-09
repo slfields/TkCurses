@@ -45,7 +45,7 @@ import tkcurses
 root = tkcurses.Tk()
 buffer = root.tk.screen.buffer
 
-frame = tkcurses.Frame(root, name='wide', relief='solid')
+frame = tkcurses.Frame(root, name='wide', relief='solid', bd=1)
 frame.place(x=0, y=2, relwidth=1.0, height=6)
 tkcurses.Label(frame, text='STRETCHED', anchor='w').place(x=1, y=1, width=12)
 

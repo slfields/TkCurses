@@ -30,7 +30,7 @@ import pyte
 import pytest
 
 from tests.support import TerminalTimeout
-from tests.support.terminal import _Screen
+from tests.support.terminal import _ByteStream, _Screen
 
 pytestmark = pytest.mark.tty
 
@@ -248,6 +248,38 @@ def test_a_tab_reaches_a_column_the_terminal_grew():
     screen.resize(4, 80)
     stream.feed("\x1b[1;57H\t\tx")
     assert (screen.cursor.y, screen.display[0][72]) == (0, "x")
+
+
+def test_rep_repeats_the_last_character():
+    """ECMA-48 REP, CSI n b, which ncurses sends for a run of one ASCII
+    character outside a UTF-8 locale. pyte dropped it."""
+    screen = _Screen(30, 2)
+    _ByteStream(screen).feed(b"+-\x1b[5b+ x\x1b[b")
+    assert screen.display[0].rstrip() == "+------+ xx"
+
+
+def test_an_ascii_ridge_outside_utf_8_reads_whole(terminal, tmp_path):
+    """The case that found it: an Entry's ASCII border under LANG=C was
+    sent as one '-' and a REP, and the harness read '+-+'."""
+    term = terminal(
+        cols=30,
+        rows=6,
+        env={"LANG": "C", "LC_ALL": "C", "TKCURSES_DISPLAY_UNICODE": "0"},
+    )
+    term.run_source(
+        """
+import tkcurses as tk
+root = tk.Tk()
+tk.Entry(root, width=20).pack()
+root.after(3000, root.quit)
+root.mainloop()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for(
+        lambda t: any("-" * 20 in line for line in t.display),
+        message="a whole rail of dashes",
+    )
 
 
 def test_attributes_are_readable(terminal, tmp_path):

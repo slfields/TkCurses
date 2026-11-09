@@ -286,7 +286,7 @@ def test_an_entry_and_a_button_work_together(terminal, tmp_path):
     term = terminal(cols=40, rows=12)
     term.run_source(
         program(
-            "f = tkcurses.Frame(root, relief='solid')\n"
+            "f = tkcurses.Frame(root, relief='solid', bd=1)\n"
             "f.pack(fill='both', expand=True)\n"
             "e = tkcurses.Entry(f, width=16)\n"
             "e.pack(side='top')\n"
