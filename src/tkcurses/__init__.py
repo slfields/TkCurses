@@ -15937,6 +15937,19 @@ class Canvas(_Drawable, XView, YView):
         self._top = 0
         self._item_bindings: dict[str, dict[str, list[Callable[[Event], Any]]]] = {}
         self._current: int | None = None
+        #: The text item with the insertion cursor, and each text item's
+        #: cursor position: Tk keeps one per item and shows the focus item's.
+        self._focus_item: int | None = None
+        self._insert_index: dict[int, int] = {}
+        #: The selection: which item, its first and last character, and the
+        #: anchor ``select_to`` measures from, with the item it is in.
+        self._selection_item: int | None = None
+        self._selection_first = 0
+        self._selection_last = -1
+        self._anchor_item: int | None = None
+        self._anchor = 0
+        self._scan_mark = (0, 0, 0, 0)
+        self._insert_at: tuple[int, int] | None = None
         super().__init__(master, cnf, name=name, **kw)
         self._apply_requested_size()
         self._install_class_bindings()
@@ -16124,40 +16137,184 @@ class Canvas(_Drawable, XView, YView):
         return tuple(item.ident for item in self._matching(spec))
 
     def find_overlapping(self, x0: int, y0: int, x1: int, y1: int) -> tuple[int, ...]:
-        """Every item whose extent meets a rectangle."""
-        left, right = sorted((int(x0), int(x1)))
-        top, bottom = sorted((int(y0), int(y1)))
+        """Every item whose extent meets a rectangle. Hidden items are
+        passed over, as Tk passes them."""
+        return tuple(item.ident for item in self._in_area((x0, y0, x1, y1)))
+
+    def find_enclosed(self, x1: int, y1: int, x2: int, y2: int) -> tuple[int, ...]:
+        """Every item whose extent lies wholly inside a rectangle, edges
+        included."""
+        return tuple(
+            item.ident for item in self._in_area((x1, y1, x2, y2), enclosed=True)
+        )
+
+    def _in_area(
+        self, corners: tuple[Any, Any, Any, Any], *, enclosed: bool = False
+    ) -> list[_CanvasItem]:
+        """The items a rectangle meets, or wholly holds, in display order."""
+        x0, y0, x1, y1 = (_canvas_number(value) for value in corners)
+        left, right = sorted((x0, x1))
+        top, bottom = sorted((y0, y1))
         found = []
         for item in self._items:
+            if str(item.options.get("state")) == "hidden":
+                continue
             box = self._item_bbox(item)
             if box is None:
                 continue
-            if (
-                box[0] <= right
-                and box[2] >= left
-                and box[1] <= bottom
-                and box[3] >= top
-            ):
-                found.append(item.ident)
-        return tuple(found)
+            if enclosed:
+                inside = (
+                    box[0] >= left
+                    and box[2] <= right
+                    and box[1] >= top
+                    and box[3] <= bottom
+                )
+            else:
+                inside = (
+                    box[0] <= right
+                    and box[2] >= left
+                    and box[1] <= bottom
+                    and box[3] >= top
+                )
+            if inside:
+                found.append(item)
+        return found
 
-    def find_closest(self, x: int, y: int) -> tuple[int, ...]:
+    def find_closest(
+        self, x: int, y: int, halo: Any = None, start: Any = None
+    ) -> tuple[int, ...]:
         """The item nearest a point, or nothing if the canvas is empty.
 
         Distance is measured to the item's extent rather than to its ink,
-        which is Tk's own approximation for everything but a line.
+        which is Tk's own approximation for everything but a line. Any item
+        within ``halo`` counts as touching the point. Of items equally near,
+        the topmost wins; with ``start``, the search begins there and goes
+        round the display list, so the one just below ``start`` wins.
+
+        Raises:
+            TclError: If ``halo`` is negative, in Tk's words.
         """
-        best: tuple[float, int] | None = None
-        for item in self._items:
+        found = self._closest(x, y, halo, start)
+        return () if found is None else (found,)
+
+    def _closest(self, x: Any, y: Any, halo: Any, start: Any) -> int | None:
+        """Tk's ``find closest``, step for step from ``tkCanvas.c``: walk the
+        display list circularly from ``start``, keeping any item at most as
+        far as the best so far."""
+        point_x, point_y = _canvas_number(x), _canvas_number(y)
+        reach = 0.0 if halo is None or halo == "" else float(_canvas_number(halo))
+        if reach < 0:
+            raise TclError(f'can\'t have negative halo value "{reach:f}"')
+        shown = [
+            item for item in self._items if str(item.options.get("state")) != "hidden"
+        ]
+        if not shown:
+            return None
+        first = 0
+        if start is not None and start != "":
+            named = self._matching(start)
+            if named:
+                order = [item.ident for item in self._items]
+                position = order.index(named[0].ident)
+                after = [
+                    i
+                    for i, item in enumerate(shown)
+                    if order.index(item.ident) >= position
+                ]
+                first = after[0] if after else 0
+        sequence = shown[first:] + shown[:first]
+
+        def distance(item: _CanvasItem) -> float:
             box = self._item_bbox(item)
             if box is None:
-                continue
-            near_x = min(max(int(x), box[0]), box[2])
-            near_y = min(max(int(y), box[1]), box[3])
-            distance = (near_x - int(x)) ** 2 + (near_y - int(y)) ** 2
-            if best is None or distance <= best[0]:
-                best = (distance, item.ident)
-        return () if best is None else (best[1],)
+                return float("inf")
+            near_x = min(max(point_x, box[0]), box[2])
+            near_y = min(max(point_y, box[1]), box[3])
+            gap = math.hypot(near_x - point_x, near_y - point_y) - reach
+            return max(0.0, gap)
+
+        best = sequence[0]
+        best_distance = distance(best)
+        for item in sequence[1:]:
+            gap = distance(item)
+            if gap <= best_distance:
+                best, best_distance = item, gap
+        return best.ident
+
+    def find_above(self, spec: Any) -> tuple[int, ...]:
+        """The item just above the topmost one ``spec`` names."""
+        found = self._search(("above", spec))
+        return tuple(found)
+
+    def find_below(self, spec: Any) -> tuple[int, ...]:
+        """The item just below the lowest one ``spec`` names."""
+        return tuple(self._search(("below", spec)))
+
+    def find(self, *args: Any) -> tuple[int, ...]:
+        """Tk's ``find``: ``above``, ``all``, ``below``, ``closest``,
+        ``enclosed``, ``overlapping`` or ``withtag``, then its arguments.
+
+        Raises:
+            TclError: If the search is not one of those, or has the wrong
+                number of arguments, in Tk's words.
+        """
+        return tuple(self._search(args, command="find"))
+
+    _SEARCHES: ClassVar[dict[str, tuple[int, int, str]]] = {
+        "above": (1, 1, "tagOrId"),
+        "all": (0, 0, ""),
+        "below": (1, 1, "tagOrId"),
+        "closest": (2, 4, "x y ?halo? ?start?"),
+        "enclosed": (4, 4, "x1 y1 x2 y2"),
+        "overlapping": (4, 4, "x1 y1 x2 y2"),
+        "withtag": (1, 1, "tagOrId"),
+    }
+
+    def _search(self, args: tuple[Any, ...], command: str = "find") -> list[int]:
+        """The items a Tk search specification names, in display order."""
+        if not args:
+            raise TclError(
+                f'wrong # args: should be "{self} {command} searchCommand ?arg ...?"'
+            )
+        kind, rest = str(args[0]), args[1:]
+        if kind not in self._SEARCHES:
+            raise TclError(
+                f'bad search command "{kind}": must be above, all, below, closest,'
+                " enclosed, overlapping, or withtag"
+            )
+        least, most, usage = self._SEARCHES[kind]
+        if not least <= len(rest) <= most:
+            words = f"{kind} {usage}".strip()
+            raise TclError(f'wrong # args: should be "{self} {command} {words}"')
+        if kind == "all":
+            return [item.ident for item in self._items]
+        if kind == "withtag":
+            return [item.ident for item in self._matching(rest[0])]
+        if kind in ("above", "below"):
+            named = {item.ident for item in self._matching(rest[0])}
+            order = [item.ident for item in self._items]
+            places = [i for i, ident in enumerate(order) if ident in named]
+            if not places:
+                return []
+            if kind == "above":
+                at = places[-1] + 1
+                return [order[at]] if at < len(order) else []
+            at = places[0] - 1
+            return [order[at]] if at >= 0 else []
+        if kind == "closest":
+            found = self._closest(
+                rest[0],
+                rest[1],
+                rest[2] if len(rest) > 2 else None,
+                rest[3] if len(rest) > 3 else None,
+            )
+            return [] if found is None else [found]
+        return [
+            item.ident
+            for item in self._in_area(
+                (rest[0], rest[1], rest[2], rest[3]), enclosed=kind == "enclosed"
+            )
+        ]
 
     # ------------------------------------------------------------ changing them
 
@@ -16187,6 +16344,14 @@ class Canvas(_Drawable, XView, YView):
         self._items = [item for item in self._items if item.ident not in doomed]
         if self._current in doomed:
             self._current = None
+        if self._focus_item in doomed:
+            self._focus_item = None
+        if self._selection_item in doomed:
+            self._selection_item = None
+        if self._anchor_item in doomed:
+            self._anchor_item = None
+        for ident in doomed:
+            self._insert_index.pop(ident, None)
         self._redraw()
 
     def itemconfigure(
@@ -16283,9 +16448,379 @@ class Canvas(_Drawable, XView, YView):
 
     def addtag_withtag(self, new: str, spec: Any) -> None:
         """Add a tag to everything another tag names."""
-        for item in self._matching(spec):
-            if new not in item.tags:
-                item.options["tags"] = (*item.tags, new)
+        self._add_tag(new, [item.ident for item in self._matching(spec)])
+
+    def _add_tag(self, new: Any, idents: list[int]) -> None:
+        """Put ``new`` on each item, once."""
+        tag = str(new)
+        for ident in idents:
+            item = self._item(ident)
+            if item is not None and tag not in item.tags:
+                item.options["tags"] = (*item.tags, tag)
+
+    def addtag(self, *args: Any) -> None:
+        """Tk's ``addtag``: a new tag, then a search as :meth:`find` takes."""
+        if not args:
+            raise TclError(
+                f'wrong # args: should be "{self} addtag tag searchCommand ?arg ...?"'
+            )
+        self._add_tag(args[0], self._search(args[1:], command=f"addtag {args[0]}"))
+
+    def addtag_above(self, newtag: str, tagOrId: Any) -> None:
+        """Tag the item just above the topmost one ``tagOrId`` names."""
+        self.addtag(newtag, "above", tagOrId)
+
+    def addtag_all(self, newtag: str) -> None:
+        """Tag every item."""
+        self.addtag(newtag, "all")
+
+    def addtag_below(self, newtag: str, tagOrId: Any) -> None:
+        """Tag the item just below the lowest one ``tagOrId`` names."""
+        self.addtag(newtag, "below", tagOrId)
+
+    def addtag_closest(
+        self, newtag: str, x: Any, y: Any, halo: Any = None, start: Any = None
+    ) -> None:
+        """Tag the item nearest a point, as :meth:`find_closest` finds it."""
+        found = self._closest(x, y, halo, start)
+        self._add_tag(newtag, [] if found is None else [found])
+
+    def addtag_enclosed(self, newtag: str, x1: Any, y1: Any, x2: Any, y2: Any) -> None:
+        """Tag every item wholly inside a rectangle."""
+        self.addtag(newtag, "enclosed", x1, y1, x2, y2)
+
+    def addtag_overlapping(
+        self, newtag: str, x1: Any, y1: Any, x2: Any, y2: Any
+    ) -> None:
+        """Tag every item a rectangle meets."""
+        self.addtag(newtag, "overlapping", x1, y1, x2, y2)
+
+    # ------------------------------------------------------------ transforms
+
+    def scale(
+        self,
+        tagOrId: Any,
+        xOrigin: Any,
+        yOrigin: Any,
+        xScale: Any,
+        yScale: Any,
+    ) -> None:
+        """Scale every item named about a point: each coordinate moves to
+        ``origin + (coordinate - origin) * scale``. A text item's point
+        moves; its text keeps its size.
+
+        Raises:
+            TclError: If a number is not one, in Tk's words.
+        """
+        x0, y0 = _tcl_float(self, xOrigin), _tcl_float(self, yOrigin)
+        across, down = _tcl_float(self, xScale), _tcl_float(self, yScale)
+        for item in self._matching(tagOrId):
+            item.coords = [
+                round(x0 + (value - x0) * across)
+                if index % 2 == 0
+                else round(y0 + (value - y0) * down)
+                for index, value in enumerate(item.coords)
+            ]
+        self._redraw()
+
+    def moveto(self, tagOrId: Any, x: Any = "", y: Any = "") -> None:
+        """Move every item named, together, so that the top-left corner of
+        the lowest one's extent is at ``(x, y)``. An empty ``x`` or ``y``
+        leaves that axis where it is."""
+        items = self._matching(tagOrId)
+        box = self._item_bbox(items[0]) if items else None
+        if box is None:
+            return
+        dx = 0 if x == "" else round(_tcl_float(self, x)) - box[0]
+        dy = 0 if y == "" else round(_tcl_float(self, y)) - box[1]
+        self.move(tagOrId, dx, dy)
+
+    def postscript(self, cnf: dict[str, Any] | None = None, **kw: Any) -> str:
+        """Not available: there is no PostScript to render a terminal into.
+
+        Raises:
+            TclError: Always.
+
+        Differences from tkinter:
+            tkinter returns the canvas as PostScript, or writes it to a
+            file. A canvas of terminal cells has no such rendering.
+        """
+        del cnf, kw
+        raise TclError(
+            "postscript is not available: a terminal canvas has no PostScript"
+        )
+
+    # ------------------------------------------------------------- scanning
+
+    def scan_mark(self, x: Any, y: Any) -> None:
+        """Remember where a scan starts, and where the view was.
+
+        Raises:
+            TclError: If ``x`` or ``y`` is not an integer, in Tk's words.
+        """
+        self._scan_mark = (
+            _tcl_integer(None, x),
+            _tcl_integer(None, y),
+            self._left,
+            self._top,
+        )
+
+    def scan_dragto(self, x: Any, y: Any, gain: Any = 10) -> None:
+        """Move the view by ``gain`` times how far ``(x, y)`` is from the
+        mark, as Tk's ``scan dragto`` does.
+
+        Differences from tkinter:
+            ``y`` is in rows, as ``event.y`` is here, and a row is two of
+            the canvas's units, so the view moves twice as far down per row
+            as across per column.
+        """
+        mark_x, mark_y, left, top = self._scan_mark
+        factor = _tcl_integer(None, gain)
+        new_left = left - factor * (_tcl_integer(None, x) - mark_x)
+        new_top = top - factor * 2 * (_tcl_integer(None, y) - mark_y)
+        for vertical, position in ((False, new_left), (True, new_top)):
+            increment = self._increment(vertical=vertical)
+            if increment:
+                position = increment * ((position + increment // 2) // increment)
+            position = self._confined(position, vertical=vertical)
+            if vertical:
+                self._top = position - position % 2
+            else:
+                self._left = position
+        self._redraw()
+        self._report_view()
+
+    # ---------------------------------------------------------- editing text
+
+    def focus(self, *args: Any) -> Any:
+        """The text item with the insertion cursor, or give it to one.
+
+        With no argument, the item's id, or ``""`` if none has it. With a
+        tag or id, the first text item it names takes it; ``""`` takes it
+        from every item. The cursor shows only while the canvas itself has
+        the keyboard focus, which :meth:`focus_set` gives it.
+
+        As in tkinter, this shadows ``Misc.focus``: ``canvas.focus()`` does
+        not give the canvas the keyboard focus.
+        """
+        if not args:
+            return "" if self._focus_item is None else self._focus_item
+        if args[0] == "":
+            self._focus_item = None
+        else:
+            texts = [item for item in self._matching(args[0]) if item.kind == "text"]
+            if texts:
+                self._focus_item = texts[0].ident
+        self._redraw()
+        return ""
+
+    def _indexable(self, spec: Any, *, selectable: bool = False) -> _CanvasItem | None:
+        """The first item ``spec`` names that takes an index: a text item,
+        or a line or polygon, whose index counts coordinates."""
+        kinds = ("text",) if selectable else ("text", "line", "polygon")
+        return next((item for item in self._matching(spec) if item.kind in kinds), None)
+
+    def _index_of(self, item: _CanvasItem, index: Any) -> int:
+        """An index in ``item``, as Tk reads one: a number, ``end``,
+        ``insert``, ``sel.first``, ``sel.last`` or ``@x,y``."""
+        text = str(item.options.get("text") or "")
+        size = len(text) if item.kind == "text" else len(item.coords)
+        word = str(index)
+        if isinstance(index, int) or _is_integer_text(word):
+            number = max(0, min(int(word), size))
+            return number - number % 2 if item.kind != "text" else number
+        if word == "end":
+            return size
+        if word.startswith("@"):
+            x, _, y = word[1:].partition(",")
+            try:
+                point = (round(float(x)), round(float(y)))
+            except ValueError:
+                raise TclError(f'bad index "{word}"') from None
+            return self._index_at_point(item, *point)
+        if item.kind == "text" and word == "insert":
+            return min(self._insert_index.get(item.ident, 0), size)
+        if item.kind == "text" and word in ("sel.first", "sel.last"):
+            if self._selection_item != item.ident:
+                raise TclError("selection isn't in item")
+            return (
+                self._selection_first if word == "sel.first" else self._selection_last
+            )
+        raise TclError(f'bad index "{word}"')
+
+    def _index_at_point(self, item: _CanvasItem, x: int, y: int) -> int:
+        """The character, or the point of a line, nearest ``(x, y)``."""
+        if item.kind != "text":
+            points = item.points()
+            if not points:
+                return 0
+            nearest = min(
+                range(len(points)),
+                key=lambda i: (points[i][0] - x) ** 2 + (points[i][1] - y) ** 2,
+            )
+            return nearest * 2
+        placed = self._text_origin(item)
+        if placed is None:
+            return 0
+        column, row, lines = placed
+        width = max((cells(line) for line in lines), default=0)
+        justify = str(item.options.get("justify") or "left")
+        line_number = max(0, min(y // 2 - row, len(lines) - 1))
+        line = lines[line_number]
+        offset = x - (column + align_offset(cells(line), width, justify))
+        position = 0
+        for character in line:
+            if offset < char_cells(character) or offset <= 0:
+                break
+            offset -= char_cells(character)
+            position += 1
+        return sum(len(each) + 1 for each in lines[:line_number]) + position
+
+    def index(self, tagOrId: Any, index: Any) -> int:
+        """Where ``index`` is in the first indexable item named: a character
+        of a text item, or a coordinate of a line or polygon.
+
+        Raises:
+            TclError: If no such item, or a bad index, in Tk's words.
+        """
+        item = self._indexable(tagOrId)
+        if item is None:
+            raise TclError(f'can\'t find an indexable item "{tagOrId}"')
+        return self._index_of(item, index)
+
+    def icursor(self, tagOrId: Any, index: Any) -> None:
+        """Put the insertion cursor of each text item named before ``index``."""
+        for item in self._matching(tagOrId):
+            if item.kind == "text":
+                self._insert_index[item.ident] = self._index_of(item, index)
+        self._redraw()
+
+    def insert(self, tagOrId: Any, beforethis: Any, string: Any) -> None:
+        """Insert text before ``beforethis`` in each text item named, or
+        coordinates into each line and polygon named.
+
+        The cursor and the selection move with the text after them, as in
+        Tk's ``tkCanvText.c``.
+        """
+        for item in self._matching(tagOrId):
+            if item.kind == "text":
+                self._insert_text(item, self._index_of(item, beforethis), str(string))
+            elif item.kind in ("line", "polygon"):
+                try:
+                    added = _canvas_coords(
+                        string.split() if isinstance(string, str) else [string]
+                    )
+                except (TypeError, ValueError):
+                    continue  # Tk inserts nothing, and says nothing
+                at = self._index_of(item, beforethis)
+                item.coords[at:at] = added[: len(added) - len(added) % 2]
+        self._redraw()
+
+    def _insert_text(self, item: _CanvasItem, at: int, string: str) -> None:
+        text = str(item.options.get("text") or "")
+        item.options["text"] = text[:at] + string + text[at:]
+        length = len(string)
+        if self._selection_item == item.ident:
+            if self._selection_first >= at:
+                self._selection_first += length
+            if self._selection_last >= at:
+                self._selection_last += length
+        if self._anchor_item == item.ident and self._anchor >= at:
+            self._anchor += length
+        if self._insert_index.get(item.ident, 0) >= at:
+            self._insert_index[item.ident] = (
+                self._insert_index.get(item.ident, 0) + length
+            )
+
+    def dchars(self, tagOrId: Any, first: Any, last: Any = None) -> None:
+        """Delete the characters ``first`` to ``last``, both included, from
+        each text item named - or the points they name from each line and
+        polygon. ``last`` defaults to ``first``."""
+        for item in self._matching(tagOrId):
+            if item.kind not in ("text", "line", "polygon"):
+                continue
+            start = self._index_of(item, first)
+            end = self._index_of(item, first if last is None else last)
+            if item.kind == "text":
+                self._delete_text(item, start, end)
+            else:
+                end -= end % 2
+                del item.coords[start : end + 2]
+        self._redraw()
+
+    def _delete_text(self, item: _CanvasItem, first: int, last: int) -> None:
+        text = str(item.options.get("text") or "")
+        first, last = max(first, 0), min(last, len(text) - 1)
+        if first > last:
+            return
+        count = last + 1 - first
+        item.options["text"] = text[:first] + text[last + 1 :]
+        if self._selection_item == item.ident:
+            if self._selection_first > first:
+                self._selection_first = max(first, self._selection_first - count)
+            if self._selection_last >= first:
+                self._selection_last = max(first - 1, self._selection_last - count)
+            if self._selection_first > self._selection_last:
+                self._selection_item = None
+        if self._anchor_item == item.ident and self._anchor > first:
+            self._anchor = max(first, self._anchor - count)
+        cursor = self._insert_index.get(item.ident, 0)
+        if cursor > first:
+            self._insert_index[item.ident] = max(first, cursor - count)
+
+    # ------------------------------------------------------------ selection
+
+    def _selectable(self, spec: Any) -> _CanvasItem:
+        item = self._indexable(spec, selectable=True)
+        if item is None:
+            raise TclError(f'can\'t find an indexable and selectable item "{spec}"')
+        return item
+
+    def select_from(self, tagOrId: Any, index: Any) -> None:
+        """Set the anchor the selection is measured from."""
+        item = self._selectable(tagOrId)
+        self._anchor_item, self._anchor = item.ident, self._index_of(item, index)
+
+    def select_to(self, tagOrId: Any, index: Any) -> None:
+        """Select from the anchor to ``index``, both included."""
+        item = self._selectable(tagOrId)
+        self._select_to(item, self._index_of(item, index))
+
+    def _select_to(self, item: _CanvasItem, index: int) -> None:
+        """Tk's ``CanvasSelectTo``."""
+        if self._anchor_item != item.ident:
+            self._anchor_item, self._anchor = item.ident, index
+        if self._anchor <= index:
+            first, last = self._anchor, index
+        else:
+            first, last = index, self._anchor - 1
+        self._selection_item = item.ident
+        self._selection_first, self._selection_last = first, last
+        self._redraw()
+
+    def select_adjust(self, tagOrId: Any, index: Any) -> None:
+        """Move whichever end of the selection is nearer ``index`` to it."""
+        item = self._selectable(tagOrId)
+        at = self._index_of(item, index)
+        if self._selection_item == item.ident:
+            if at < (self._selection_first + self._selection_last) // 2:
+                self._anchor = self._selection_last + 1
+            else:
+                self._anchor = self._selection_first
+            self._anchor_item = item.ident
+        self._select_to(item, at)
+
+    def select_clear(self) -> None:
+        """Select nothing."""
+        self._selection_item = None
+        self._redraw()
+
+    def select_item(self) -> int | None:
+        """The item holding the selection, or None."""
+        return self._selection_item
+
+    def _insert_cell(self) -> tuple[int, int] | None:
+        return self._insert_at
 
     def dtag(self, spec: Any, tag: str | None = None) -> None:
         """Remove a tag. Without one, remove the tag that was used to find them."""
@@ -16669,6 +17204,7 @@ class Canvas(_Drawable, XView, YView):
         """
         pixels: dict[tuple[int, int], str] = {}
         cells: dict[tuple[int, int], tuple[str, int]] = {}
+        self._insert_at = None
         for item in self._items:
             if str(item.options.get("state")) == "hidden":
                 continue
@@ -16722,10 +17258,26 @@ class Canvas(_Drawable, XView, YView):
         )
         justify = str(item.options.get("justify") or "left")
         width = max((cells(line) for line in lines), default=0)
+        selected = (
+            (self._selection_first, self._selection_last)
+            if self._selection_item == item.ident
+            else (0, -1)
+        )
+        chosen = self._selection_attribute(attribute)
+        cursor = (
+            self._insert_index.get(item.ident, 0)
+            if self._focus_item == item.ident
+            else None
+        )
+        index = 0
         for offset, line in enumerate(lines):
             at = column + align_offset(cells(line), width, justify)
             down = row + offset
             for character in line:
+                if index == cursor:
+                    self._note_cursor(at, down)
+                look = chosen if selected[0] <= index <= selected[1] else attribute
+                index += 1
                 size = char_cells(character)
                 if size == 0:
                     # A combining mark joins the glyph before it.
@@ -16740,9 +17292,25 @@ class Canvas(_Drawable, XView, YView):
                     # the terminal fills it from the first.
                     glyphs[(across, down)] = (
                         "" if across > at else character,
-                        attribute,
+                        look,
                     )
                 at += size
+            if index == cursor:
+                self._note_cursor(at, down)
+            index += 1  # the newline
+
+    def _note_cursor(self, x: int, row: int) -> None:
+        """Note the screen cell of the focus item's insertion cursor, while
+        the canvas has the keyboard focus and the cell is in view."""
+        if self.focus_get() is not self or self._window is None:
+            return
+        area = self._text_area()
+        column, line = x - self._left, row - self._top // 2
+        if 0 <= column < area.width and 0 <= line < area.height:
+            self._insert_at = (
+                self.winfo_rooty() + area.y + line,
+                self.winfo_rootx() + area.x + column,
+            )
 
     def _ink(self, foreground: str, background: str | None, base: int) -> int:
         """The attribute a cell needs, given the colours its two halves want."""
@@ -16756,6 +17324,16 @@ class Canvas(_Drawable, XView, YView):
                 background or str(self._options["background"] or "black"),
             ),
         )
+
+
+def _canvas_number(value: Any) -> int:
+    """A canvas coordinate, as a whole pixel."""
+    return round(_tcl_float(None, value))
+
+
+def _is_integer_text(word: str) -> bool:
+    """True for ``12`` and ``-3``, as an index may be written."""
+    return word.lstrip("-").isdigit()
 
 
 def _canvas_coords(args: Any) -> list[int]:

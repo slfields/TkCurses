@@ -448,3 +448,37 @@ root.mainloop()
     term.click(column, row)
     term.wait_for_text("at 4,4")
     term.wait_for_text("hit")
+
+
+def test_selected_text_wears_the_select_colours(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "c.configure(selectforeground='black', selectbackground='yellow')\n"
+            "t = c.create_text(2, 2, text='hello', anchor='nw', fill='white')\n"
+            "c.select_from(t, 1)\n"
+            "c.select_to(t, 3)"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_cell(1, 4, lambda cell: cell.data == "l" and cell.bg == "brown")
+    term.wait_for_cell(1, 2, lambda cell: cell.data == "h")
+    term.wait_for_cell(1, 6, lambda cell: cell.data == "o")
+    row = term._screen.buffer[1]
+    backgrounds = [row[column].bg for column in range(2, 7)]
+    assert backgrounds[1:4] == ["brown"] * 3
+    assert "brown" not in (backgrounds[0], backgrounds[4])
+
+
+def test_the_focus_items_cursor_is_the_terminals(terminal, tmp_path):
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "t = c.create_text(2, 2, text='hello', anchor='nw')\n"
+            "c.focus_set()\n"
+            "c.focus(t)\n"
+            "c.icursor(t, 3)"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for(lambda t: t.cursor_cell() == (1, 5), message="the cursor in hello")

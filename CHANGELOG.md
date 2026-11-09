@@ -7,6 +7,15 @@ All notable changes to TkCurses. The format follows
 ## [Unreleased]
 
 ### Added
+- The rest of the Canvas's item methods, measured against Tk 9.0.2:
+  `find` and `addtag` with Tk's search commands, `find_above`,
+  `find_below`, `find_enclosed` and the `addtag_*` family; `halo` and
+  `start` on `find_closest`; `moveto` and `scale`; editing a text item with
+  `insert`, `dchars`, `icursor`, `index` and `focus`, and the `select_*`
+  methods, its selection drawn in `selectforeground` and
+  `selectbackground` and its insertion cursor as the terminal's cursor;
+  `insert` and `dchars` on a line's or polygon's points; and `scan_mark`
+  and `scan_dragto`. `postscript` raises: a terminal has no PostScript.
 - `Listbox.itemconfigure` and `itemcget`: a row's own `background`,
   `foreground`, `selectbackground` and `selectforeground`, drawn over the
   list's and kept with the row as others are inserted or deleted.
@@ -43,6 +52,11 @@ All notable changes to TkCurses. The format follows
   back to be packed, gridded or placed, as in Tk. They raised `TclError`.
 
 ### Changed
+- `Canvas.focus()` is the canvas's own `focus`, as in tkinter: it names the
+  text item with the insertion cursor, and no longer gives the canvas the
+  keyboard focus. Use `focus_set()` for that.
+- `Canvas.find_overlapping` and `find_closest` pass over hidden items, as
+  Tk does.
 - `getvar` of a variable that was never set raises `TclError` (`can't read
   "name": no such variable`), as tkinter does; it returned `None`.
 

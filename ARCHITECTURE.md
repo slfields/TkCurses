@@ -5698,13 +5698,13 @@ coordinates are in pixels, `width` and `height` are in cells.
 | tkinter Method | TkCurses | Notes |
 |----------------|----------|-------|
 | `__init__(master=None, cnf={}, **kw)` | ○ | Pixel plane; `width`/`height` in cells |
-| `addtag(tag, method, *args)` | ☐ | Add tag - not implemented; TkCurses-7jv |
-| `addtag_above(newtag, tagOrId)` | ☐ | Tag above - not implemented; TkCurses-7jv |
-| `addtag_all(newtag)` | ☐ | Tag all - not implemented; TkCurses-7jv |
-| `addtag_below(newtag, tagOrId)` | ☐ | Tag below - not implemented; TkCurses-7jv |
-| `addtag_closest(newtag, x, y)` | ☐ | Tag closest, in pixels - not implemented; TkCurses-7jv |
-| `addtag_enclosed(newtag, x1, y1, x2, y2)` | ☐ | Tag enclosed - not implemented; TkCurses-7jv |
-| `addtag_overlapping(newtag, x1, y1, x2, y2)` | ☐ | Tag overlapping - not implemented; TkCurses-7jv |
+| `addtag(tag, method, *args)` | ✓ | Any search `find` takes (TkCurses-7jv) |
+| `addtag_above(newtag, tagOrId)` | ✓ | Tag above |
+| `addtag_all(newtag)` | ✓ | Tag all |
+| `addtag_below(newtag, tagOrId)` | ✓ | Tag below |
+| `addtag_closest(newtag, x, y, halo=None, start=None)` | ○ | As `find_closest` |
+| `addtag_enclosed(newtag, x1, y1, x2, y2)` | ✓ | Tag enclosed |
+| `addtag_overlapping(newtag, x1, y1, x2, y2)` | ✓ | Tag overlapping |
 | `addtag_withtag(newtag, tagOrId)` | ✓ | Tag with tag |
 | `bbox(tagOrId=None)` | ○ | Bounding box, in pixels |
 | `canvasx(screenx, gridspacing=None)` | ○ | Window column to canvas pixel, as `event.x` is; `gridspacing` ignored (TkCurses-0n21) |
@@ -5719,29 +5719,30 @@ coordinates are in pixels, `width` and `height` are in cells.
 | `create_rectangle(...)` | ○ | Rasterised to pixels |
 | `create_text(...)` | ○ | Snaps to a cell row; a glyph is a whole cell |
 | `create_window(...)` | ✗ | N/A (TkCurses-aj1.16.1) |
-| `dchars(tagOrId, first, last=None)` | ☐ | Delete chars - not implemented; TkCurses-7jv |
+| `dchars(tagOrId, first, last=None)` | ✓ | Characters of a text item, points of a line or polygon |
 | `delete(tagOrId)` | ✓ | Delete item |
 | `dtag(tagOrId, tagToDelete=None)` | ✓ | Remove tag |
-| `find(method, *args)` | ☐ | Find items - not implemented; TkCurses-7jv |
-| `find_above(tagOrId)` | ☐ | Find above - not implemented; TkCurses-7jv |
+| `find(method, *args)` | ✓ | Tk's search commands, refused in Tk's words |
+| `find_above(tagOrId)` | ✓ | Above the topmost item named |
 | `find_all()` | ✓ | Find all |
-| `find_below(tagOrId)` | ☐ | Find below - not implemented; TkCurses-7jv |
-| `find_closest(x, y)` | ○ | Find at cell |
-| `find_enclosed(x1, y1, x2, y2)` | ☐ | Find enclosed - not implemented; TkCurses-7jv |
-| `find_overlapping(x1, y1, x2, y2)` | ○ | Find overlapping |
+| `find_below(tagOrId)` | ✓ | Below the lowest item named |
+| `find_closest(x, y, halo=None, start=None)` | ○ | Distance to the extent, not the ink; `start` goes round as Tk's does |
+| `find_enclosed(x1, y1, x2, y2)` | ✓ | Whole extent inside, edges included |
+| `find_overlapping(x1, y1, x2, y2)` | ○ | Extent meets the area; hidden items passed over |
 | `find_withtag(tagOrId)` | ✓ | Find with tag |
-| `focus(tagOrId=None)` | ✓ | Set/get focus |
+| `focus(tagOrId=None)` | ✓ | The text item with the insertion cursor, shown as the terminal's cursor |
 | `gettags(tagOrId)` | ✓ | Get tags |
-| `icursor(tagOrId, index)` | ☐ | Cursor position - not implemented; TkCurses-7jv |
-| `index(tagOrId, index)` | ☐ | Parse index - not implemented; TkCurses-7jv |
-| `insert(tagOrId, index, string)` | ☐ | Insert text - not implemented; TkCurses-7jv |
+| `icursor(tagOrId, index)` | ✓ | One cursor per text item, as Tk keeps |
+| `index(tagOrId, index)` | ✓ | Number, `end`, `insert`, `sel.first`, `sel.last`, `@x,y` |
+| `insert(tagOrId, index, string)` | ✓ | Text, or a line's or polygon's points |
 | `itemcget(tagOrId, option)` | ✓ | Get option |
 | `itemconfigure(tagOrId, **kw)` | ○ | Configure (limited) |
 | `move(tagOrId, dx, dy)` | ○ | Move by cells |
-| `moveto(tagOrId, x, y)` | ☐ | Move to cell - not implemented; TkCurses-7jv |
-| `postscript(**kw)` | ✗ | N/A |
-| `scale(tagOrId, xo, yo, xs, ys)` | ✗ | N/A (fixed cells) |
-| `select_*()` | ✓ | Selection methods |
+| `moveto(tagOrId, x='', y='')` | ✓ | The lowest item's extent to the point, the rest with it |
+| `postscript(**kw)` | ✗ | Raises: a terminal canvas has no PostScript |
+| `scale(tagOrId, xo, yo, xs, ys)` | ○ | Coordinates scale and round to pixels; text keeps its size, as in Tk |
+| `scan_mark(x, y)`, `scan_dragto(x, y, gain=10)` | ○ | Tk's arithmetic; a row of `y` is two units |
+| `select_*()` | ✓ | Tk's anchor rules; drawn in `selectforeground`/`selectbackground` |
 | `tag_bind(tagOrId, sequence, func)` | ✓ | Bind event |
 | `tag_unbind(tagOrId, sequence, funcid)` | ✓ | Unbind event |
 | `tag_lower(tagOrId, belowThis)` | ✓ | Lower item |

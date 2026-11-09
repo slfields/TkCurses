@@ -159,7 +159,6 @@ NOT_INSTANTIATED = frozenset(
 #:   TkCurses-67u  the ttk.Treeview tag API
 #:   TkCurses-d5u  the themed-element identify
 #:   TkCurses-6lh  scan_mark / scan_dragto
-#:   TkCurses-7jv  the tk.Canvas tag, find and text-editing methods
 #:   TkCurses-mzj  tk.Text count / dump / edit / embedded windows
 #:   TkCurses-k1i  the tk.Wm icon, group and aspect family
 #:   TkCurses-0ap  tk.Misc busy, visual and screen introspection
@@ -189,35 +188,10 @@ NOT_INSTANTIATED = frozenset(
 #: shrink and must never silently grow.
 GAPS: dict[str, dict[str, str]] = {
     "tk.Canvas": {
-        "addtag": "TkCurses-7jv",
-        "addtag_above": "TkCurses-7jv",
-        "addtag_all": "TkCurses-7jv",
-        "addtag_below": "TkCurses-7jv",
-        "addtag_closest": "TkCurses-7jv",
-        "addtag_enclosed": "TkCurses-7jv",
-        "addtag_overlapping": "TkCurses-7jv",
         "create_arc": "TkCurses-aj1.16.1",
         "create_bitmap": "TkCurses-aj1.16.1",
         "create_image": "TkCurses-aj1.16.1",
         "create_window": "TkCurses-aj1.16.1",
-        "dchars": "TkCurses-7jv",
-        "find": "TkCurses-7jv",
-        "find_above": "TkCurses-7jv",
-        "find_below": "TkCurses-7jv",
-        "find_enclosed": "TkCurses-7jv",
-        "icursor": "TkCurses-7jv",
-        "index": "TkCurses-7jv",
-        "insert": "TkCurses-7jv",
-        "moveto": "TkCurses-7jv",
-        "postscript": "TkCurses-7jv",
-        "scale": "TkCurses-7jv",
-        "scan_dragto": "TkCurses-6lh",
-        "scan_mark": "TkCurses-6lh",
-        "select_adjust": "TkCurses-7jv",
-        "select_clear": "TkCurses-7jv",
-        "select_from": "TkCurses-7jv",
-        "select_item": "TkCurses-7jv",
-        "select_to": "TkCurses-7jv",
     },
     "tk.Grid": {
         "location": "TkCurses-zmf",
