@@ -2388,7 +2388,8 @@ def test_a_row_pads_each_cell_to_its_own_span(laid_out):
 def test_the_heading_row_uses_the_same_spans(laid_out):
     """The headings and the rows must agree, which is why one function answers
     for both - they were separate arithmetic before."""
-    assert laid_out._heading_text(60) == "Name     Size  Kind"
+    # Headings are centred, as Tk draws them unless told otherwise.
+    assert laid_out._heading_text(60) == "  Name   Size  Kind"
     row = laid_out._row_text(laid_out.row, 60)
     for _name, start, _end in laid_out._column_spans():
         assert len(row) > start and len(laid_out._heading_text(60)) > start
@@ -3248,7 +3249,7 @@ def test_columns_wider_than_the_tree_can_be_scrolled_to(wide):
 
 def test_the_heading_scrolls_with_the_rows(wide):
     wide.xview_scroll(4, "units")
-    assert wide._heading_text(20) == "Name     A     B     C    "[4:24]
+    assert wide._heading_text(20) == "  Name     A     B     C  "[4:24]
 
 
 def test_a_unit_is_a_cell_and_a_page_is_the_view(wide):
@@ -3425,7 +3426,7 @@ def test_title_columns_stay_put_while_the_rest_scroll(wide):
     assert wide._frozen_width() == 9
     wide.xview_moveto(1.0)
     assert wide._row_text(wide.row, 20) == whole[:9] + whole[15:26]
-    assert wide._heading_text(20).startswith("Name     ")
+    assert wide._heading_text(20).startswith("  Name   ")
 
 
 def test_the_fractions_are_of_the_columns_that_scroll(wide):
@@ -3528,7 +3529,7 @@ def test_displaycolumns_draws_the_listed_columns_in_their_order(wide):
     wide.configure(displaycolumns=("c", "a"))
     assert [name for name, _s, _e in wide._column_spans()] == ["#0", "c", "a"]
     assert wide._row_text(wide.row, 20) == " Alpha   cc    aa   "
-    assert wide._heading_text(20).startswith("Name     C     A")
+    assert wide._heading_text(20).startswith("  Name     C     A")
 
 
 def test_display_identifiers_count_in_display_order(wide):
@@ -3959,3 +3960,9 @@ def test_a_themed_radiobutton_without_a_variable_starts_alternate(root):
     assert button._indicator_state == "tristate"
     button.invoke()
     assert button.state() == ("selected",)
+
+
+def test_insert_takes_the_id_positionally_as_tkinter_does(tree):
+    """tkinter's signature is ``insert(parent, index, iid=None, **kw)``."""
+    assert tree.insert("", "end", "mine", text="One") == "mine"
+    assert tree.item("mine", "text") == "One"

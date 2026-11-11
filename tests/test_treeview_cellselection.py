@@ -506,7 +506,7 @@ def test_tk_call_names_a_missing_widget_as_tk_does(tree):
 
 def test_tk_call_says_plainly_what_it_does_not_interpret(tree):
     with pytest.raises(tk.TclError, match="no Tcl interpreter"):
-        tree.tk.call("info", "patchlevel")
+        tree.tk.call("source", "x.tcl")
     with pytest.raises(tk.TclError, match=r'does not interpret ".*selection"'):
         tree.tk.call(tree, "selection")
 

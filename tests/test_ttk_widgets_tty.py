@@ -709,7 +709,9 @@ buffer = root.tk.screen.buffer
 tv = ttk.Treeview(root, name='tv', columns=('size',))
 tv.place(x=1, y=2, width=36, height=9)
 tv.heading('#0', text='Name')
-tv.heading('size', text='Size')
+# At the left, as the values are, so the two can be compared column for
+# column: a heading is centred unless told otherwise.
+tv.heading('size', text='Size', anchor='w')
 tv.column('size', width=6)
 alpha = tv.insert('', 'end', text='Alpha', values=('10',))
 tv.insert(alpha, 'end', text='Child-A', values=('1',))
@@ -1346,7 +1348,8 @@ for name in ("a", "b", "c"):
 tree.heading("#0", text="Name")
 tree.heading("a", text="Alpha")
 tree.heading("b", text="Beta")
-tree.heading("c", text="Omega")
+# At the left, as the values are, so the two line up exactly.
+tree.heading("c", text="Omega", anchor="w")
 tree.insert("", "end", text="first", values=("a1", "b1", "zz9"))
 tree.place(x=0, y=0, width=22, height=6)
 root.bind("x", lambda event: tree.xview_moveto(1.0))

@@ -16,7 +16,11 @@ All notable changes to TkCurses. The format follows
   9.0.2's stops one short.
 - `tk.call(widget, "cellselection", ...)` and `tk.splitlist`, so a tkinter
   program reaching the cell selection the only way tkinter can runs
-  unchanged. `tk.call` serves no other command yet, and says so.
+  unchanged.
+- `tk.call` also serves the commands tkinter programs most often reach for:
+  `info patchlevel`, `tk windowingsystem`, `tk scaling`, and `cget` and
+  `configure` on any widget with Tk's dashed names, answering as Tk 9.0.2
+  does. There is no Tcl interpreter behind it; anything else says so.
 - A mark book example, `examples/marks.py`: cells selected in a Treeview
   added up as they change. It runs under tkinter with the imports and one
   line of sizes changed.
@@ -114,6 +118,11 @@ All notable changes to TkCurses. The format follows
   back to be packed, gridded or placed, as in Tk. They raised `TclError`.
 
 ### Changed
+- ttk.Treeview's Left and Right follow Tk on rows: Right opens the row and
+  selects it, and Left closes an open branch or goes to the parent, selecting
+  it. `<<TreeviewOpen>>` is sent before the row opens, as in Tk, so a handler
+  sees it still closed. A click on a branch's marker selects the branch as
+  well as opening it.
 - ttk.Treeview's clicks and arrow keys follow `selectmode`, as in Tk: under
   `none` they only move the keyboard's row, and under `extended`
   Control-click toggles a row and Shift-click selects from the keyboard's row
@@ -129,6 +138,12 @@ All notable changes to TkCurses. The format follows
   "name": no such variable`), as tkinter does; it returned `None`.
 
 ### Fixed
+- ttk.Treeview draws a column's `anchor` and a heading's: values sit where
+  their column's anchor puts them, and headings are centred unless told
+  otherwise, as Tk draws them. Both were stored and ignored, so every
+  heading sat at the left.
+- `ttk.Treeview.insert` takes `iid` as its third positional argument, as
+  tkinter's does; `insert("", "end", "mine")` raised `TypeError`.
 - A character past ASCII in the screen's bottom right cell ended the
   program with `OverflowError`; it is drawn now.
 - tk.Spinbox drew each arrow in its `buttonuprelief` or `buttondownrelief`.

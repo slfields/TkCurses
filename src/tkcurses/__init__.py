@@ -932,6 +932,25 @@ def _as_int(value: Any, otherwise: int) -> int:
         return otherwise
 
 
+def _dashed(option: Any) -> str:
+    """An option as Tk names it, ``-text``, without its dash; Tk's refusal
+    for one written without it."""
+    text = str(option)
+    if not text.startswith("-") or text == "-":
+        raise TclError(f'unknown option "{text}"')
+    return text[1:]
+
+
+def _tcl_entry(widget: Any, name: str) -> tuple[Any, ...]:
+    """``configure``'s five-tuple for one option as Tcl gives it: the name
+    dashed, and ``""`` where tkinter would hand back None."""
+    entry = widget.configure(name)
+    return (
+        "-" + str(entry[0]),
+        *("" if field is None else field for field in entry[1:]),
+    )
+
+
 def _screen_distance(widget: Any, value: Any) -> int:
     """A size that cannot go below zero: Tk stores -3 as 0, measured.
 
@@ -3534,12 +3553,40 @@ class Misc:
 
     def _tcl_command(self, name: str, args: tuple[Any, ...]) -> Any:
         """Serve ``tk.call(widget, name, *args)``: a Tcl subcommand of this
-        widget. A widget with subcommands to serve overrides this."""
-        del args
-        raise TclError(
-            f'TkCurses does not interpret "{self} {name}" through tk.call;'
-            " use the widget's method"
-        )
+        widget - ``cget`` and ``configure`` on every widget, with Tk's
+        dashed option names, answering in Tk's shapes. A widget with more
+        subcommands to serve overrides this and calls it for the rest.
+
+        Measured on Tk 9.0.2: a unique prefix names the subcommand
+        (``conf``), ``c`` is ambiguous, an option without its dash is
+        unknown, and ``configure`` answers ``""`` once it has set something.
+        """
+        table = ("cget", "configure")
+        matches = [entry for entry in table if name and entry.startswith(name)]
+        if len(matches) > 1:
+            raise TclError(f'ambiguous option "{name}": must be cget or configure')
+        if not matches:
+            raise TclError(
+                f'TkCurses does not interpret "{self} {name}" through tk.call;'
+                " use the widget's method"
+            )
+        if matches[0] == "cget":
+            if len(args) != 1:
+                raise TclError(f'wrong # args: should be "{self} cget option"')
+            value = self.cget(_dashed(args[0]))
+            return "" if value is None else value
+        if not args:
+            return tuple(_tcl_entry(self, key) for key in self.configure())
+        if len(args) == 1:
+            return _tcl_entry(self, _dashed(args[0]))
+        if len(args) % 2:
+            raise TclError(f'value for "{args[-1]}" missing')
+        given = {
+            _dashed(option): value
+            for option, value in zip(args[::2], args[1::2], strict=True)
+        }
+        self.configure(**given)
+        return ""
 
     def nametowidget(self, name: str | Misc) -> Misc:
         """The widget with the given path name.

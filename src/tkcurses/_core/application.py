@@ -288,6 +288,28 @@ DEFAULT_VIRTUAL_EVENTS: dict[str, tuple[str, ...]] = {
 }
 
 
+#: The Tcl and Tk TkCurses follows: what ``info patchlevel`` answers.
+TCL_PATCHLEVEL = "9.0.2"
+TCL_VERSION = "9.0"
+
+#: Tk 9.0.2's ``tk`` subcommands, in the order its refusal lists them.
+_TK_SUBCOMMANDS = (
+    "appname", "busy", "caret", "fontchooser", "inactive", "print", "scaling",
+    "sysnotify", "systray", "useinputmethods", "windowingsystem",
+)  # fmt: skip
+
+
+def _tcl_double(value: Any) -> float:
+    """``value`` as Tcl reads a floating-point number, or Tcl's refusal."""
+    text = str(value).strip()
+    try:
+        if "_" in text or text.lower().lstrip("+-") in ("nan", "inf", "infinity"):
+            raise ValueError
+        return float(text)
+    except ValueError:
+        raise TclError(f'expected floating-point number but got "{value}"') from None
+
+
 class Application:
     """One widget tree's shared state.
 
@@ -425,6 +447,10 @@ class Application:
         #: Tk's ``Priv(afterId)`` is: only one thing can be held at a time.
         self.repeat: str | None = None
 
+        #: The screen's width in millimetres once ``tk scaling`` has set it,
+        #: as Tk keeps it; None for ten cells to the inch.
+        self.screen_millimetres: float | None = None
+
         #: Counters behind automatic widget names (!button, !button2).
         self.name_counts: dict[str, int] = {}
 
@@ -434,34 +460,124 @@ class Application:
         self.quit_requested = False
 
     def call(self, *args: Any) -> Any:
-        """Run a widget's Tcl subcommand, as ``widget.tk.call`` does in tkinter.
+        """Run a Tcl command, as ``widget.tk.call`` does in tkinter - the few
+        a tkinter program reaches for.
 
-        ``tree.tk.call(tree, "cellselection", "set", cells)`` is how a
-        tkinter program reaches Tk commands tkinter has no method for, so the
-        same line works here for the subcommands TkCurses serves. The first
-        argument is the widget or its path name, the second the subcommand,
-        and the rest are its arguments; a single tuple of all of them is taken
-        too, as tkinter takes it. Answers come back as tkinter gives them:
-        ``""`` for nothing, and a tuple for a list.
+        There is no Tcl interpreter here: a command works only if TkCurses
+        serves it. Served, each answering as Tk 9.0.2 does through tkinter:
+
+        * ``info patchlevel`` and ``info tclversion``;
+        * ``tk windowingsystem``, which is ``x11``: the keys, the mouse and
+          the virtual events here follow Tk's X11 bindings;
+        * ``tk scaling``, read and set;
+        * on any widget, ``cget`` and ``configure`` with Tk's arguments -
+          ``tk.call(button, "configure", "-text", "Go")``;
+        * a Treeview's ``cellselection``.
+
+        The first argument is a command name or a widget (or its path name);
+        a single tuple of every argument is taken too, as tkinter takes it.
+        Answers come back as tkinter gives them: ``""`` for nothing, a tuple
+        for a list.
 
         Raises:
-            TclError: For a path that names no widget, in Tk's words, and for
-                any subcommand TkCurses does not interpret. There is no Tcl
-                interpreter here: only the subcommands a widget serves work.
+            TclError: In Tk's words for a mistake in a served command, and
+                saying so for a command TkCurses does not serve.
         """
         if len(args) == 1 and isinstance(args[0], (tuple, list)):
             args = tuple(args[0])
         if not args:
-            raise TclError("TkCurses has no Tcl interpreter: call needs a widget")
-        path = str(args[0])
-        widget = self.widgets.get(path)
-        if widget is None:
-            if path.startswith("."):
-                raise TclError(f'invalid command name "{path}"')
-            raise TclError(f'TkCurses has no Tcl interpreter: "{path}" is not a widget')
-        if len(args) < 2:
-            raise TclError(f'wrong # args: should be "{path} option ?arg ...?"')
-        return widget._tcl_command(str(args[1]), args[2:])
+            raise TclError("TkCurses has no Tcl interpreter: call needs a command")
+        command = str(args[0])
+        widget = self.widgets.get(command)
+        if widget is not None:
+            if len(args) < 2:
+                raise TclError(f'wrong # args: should be "{command} option ?arg ...?"')
+            return widget._tcl_command(str(args[1]), args[2:])
+        if command == "info":
+            return self._info_command(args[1:])
+        if command == "tk":
+            return self._tk_command(args[1:])
+        if command.startswith("."):
+            raise TclError(f'invalid command name "{command}"')
+        raise TclError(f'TkCurses has no Tcl interpreter: it does not run "{command}"')
+
+    def _info_command(self, args: tuple[Any, ...]) -> str:
+        """``info patchlevel`` and ``info tclversion``: the Tcl TkCurses
+        follows, 9.0.2, as Tk 9.0.2 ships with it."""
+        if not args:
+            raise TclError('wrong # args: should be "info subcommand ?arg ...?"')
+        answers = {"patchlevel": TCL_PATCHLEVEL, "tclversion": TCL_VERSION}
+        name = str(args[0])
+        if name not in answers:
+            raise TclError(f'TkCurses does not interpret "info {name}"')
+        if len(args) > 1:
+            raise TclError(f'wrong # args: should be "info {name}"')
+        return answers[name]
+
+    def _tk_command(self, args: tuple[Any, ...]) -> Any:
+        """``tk windowingsystem`` and ``tk scaling``; Tk's table for the
+        rest, so a misspelling is refused as Tk refuses it."""
+        if not args:
+            raise TclError('wrong # args: should be "tk subcommand ?arg ...?"')
+        given = str(args[0])
+        matches = [name for name in _TK_SUBCOMMANDS if name.startswith(given)]
+        if given in _TK_SUBCOMMANDS:
+            matches = [given]
+        if len(matches) != 1:
+            listed = ", ".join(_TK_SUBCOMMANDS[:-1]) + f", or {_TK_SUBCOMMANDS[-1]}"
+            raise TclError(
+                f'unknown or ambiguous subcommand "{given}": must be {listed}'
+            )
+        name = matches[0]
+        if name == "windowingsystem":
+            if len(args) > 1:
+                raise TclError('wrong # args: should be "tk windowingsystem"')
+            return "x11"
+        if name == "scaling":
+            return self._scaling(args[1:])
+        raise TclError(f'TkCurses does not interpret "tk {name}"')
+
+    def _scaling(self, args: tuple[Any, ...]) -> Any:
+        """``tk scaling ?-displayof window? ?factor?``: pixels per point.
+
+        A pixel here is a cell, at ten to the inch, so it starts at 10/72.
+        Setting it follows ScalingCmd in Tk's tkCmds.c: Tk keeps no factor,
+        it gives the screen a new width in millimetres, rounded and at least
+        one, and reads the factor back from that - so 2.0 reads back a
+        little off, and nothing above zero is refused, while zero or less
+        reads back as large as the screen allows. The terminal's columns are
+        the screen's pixels.
+
+        It is read back and changes nothing else: a cell does not grow, so
+        distances stay ten cells to the inch whatever it is set to.
+        """
+        if args and str(args[0]) == "-displayof":
+            if len(args) < 2:
+                raise TclError('value for "-displayof" missing')
+            if self.widgets.get(str(args[1])) is None:
+                raise TclError(f'bad window path name "{args[1]}"')
+            args = args[2:]
+        if len(args) > 1:
+            raise TclError(
+                'wrong # args: should be "tk scaling ?-displayof window? ?factor?"'
+            )
+        columns = max(1, self._screen_columns())
+        if not args:
+            millimetres = self.screen_millimetres or columns * 25.4 / 10.0
+            return 25.4 / 72 * columns / millimetres
+        factor = _tcl_double(args[0])
+        width = int((25.4 / 72) / factor * columns + 0.5) if factor > 0 else 0
+        self.screen_millimetres = max(1, width)
+        return ""
+
+    def _screen_columns(self) -> int:
+        """The terminal's width in cells: the screen's, or the environment's
+        before there is one."""
+        if self.screen is not None and getattr(self.screen, "started", False):
+            return int(self.screen.size.width)
+        import shutil
+
+        return shutil.get_terminal_size((80, 24)).columns
 
     def splitlist(self, value: Any) -> tuple[Any, ...]:
         """A Tcl list's elements as a tuple, as tkinter's ``splitlist``.

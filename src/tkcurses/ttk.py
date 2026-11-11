@@ -3444,6 +3444,9 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         Tk 9.0.2's stops one column short of it, which its manual does not
         describe.
 
+        Down or Up with no row focused selects the first row; Tk's do
+        nothing until a row has been clicked.
+
         A row's ``image`` and a tag's ``image``, ``imageanchor`` and
         ``font`` are accepted and not drawn.
 
@@ -3641,7 +3644,6 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         self,
         parent: str = "",
         index: Any = "end",
-        *,
         iid: str | None = None,
         **kw: Any,
     ) -> str:
@@ -3838,7 +3840,11 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         return None
 
     def heading(self, column: str, option: str | None = None, **kw: Any) -> Any:
-        """Read or set a column's heading."""
+        """Read or set a column's heading.
+
+        ``anchor`` places the heading's text within its column: ``center``
+        unless told otherwise, as in Tk.
+        """
         if kw and not tkcurses._given(None, kw):
             return None  # every option None, which tkinter drops
         kw = tkcurses._given(None, kw)
@@ -3858,7 +3864,11 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         """Read or set a column's geometry.
 
         ``width`` and ``minwidth`` are cells here rather than pixels, which
-        is the only sense they have on a character grid.
+        is the only sense they have on a character grid. ``anchor`` places
+        each row's value within the column, ``w`` by default; in ``#0`` the
+        indent and marker stay at the left and the text is placed after
+        them. A value too wide for its column shows its beginning, whatever
+        the anchor, as Tk draws it.
         """
         if kw and not tkcurses._given(None, kw):
             return None  # every option None, which tkinter drops
@@ -4733,33 +4743,58 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         """What one cell of one row holds, before it is padded."""
         item = self._items[iid]
         if name == TREE_COLUMN:
-            marker = " "
-            if item.children:
-                marker = OPEN_MARKER if item.options["open"] else CLOSED_MARKER
-            return (
-                " " * (INDENT * self._depth(iid)) + marker + str(item.options["text"])
-            )
+            return self._tree_prefix(iid) + str(item.options["text"])
         values = tuple(item.options["values"])
         index = self._column_names().index(name)
         return str(values[index]) if index < len(values) else ""
+
+    def _tree_prefix(self, iid: str) -> str:
+        """What comes before a row's text in ``#0``: its indent and marker."""
+        item = self._items[iid]
+        marker = " "
+        if item.children:
+            marker = OPEN_MARKER if item.options["open"] else CLOSED_MARKER
+        return " " * (INDENT * self._depth(iid)) + marker
 
     def _row_text(self, iid: str, width: int) -> str:
         """One row as it is drawn: the marker, the text, then the columns.
 
         Each cell is padded to its own span, which is what keeps the data
         columns under their own headings - otherwise a row would start its
-        values wherever its text happened to end.
+        values wherever its text happened to end. Within its span a cell
+        sits where its column's ``anchor`` puts it; in ``#0`` the indent and
+        marker stay at the left and the text is placed in what is left, so
+        rows of every depth end together under ``anchor="e"`` - seen on Tk
+        9.0.2.
         """
-        pieces = [
-            pad_cells(self._cell_text(iid, name), end - start)
-            for name, start, end in self._column_spans()
-        ]
+        pieces = []
+        for name, start, end in self._column_spans():
+            anchor = self._columns_entry(name)["anchor"]
+            if name == TREE_COLUMN:
+                prefix = self._tree_prefix(iid)
+                text = str(self._items[iid].options["text"])
+                room = end - start - cells(prefix)
+                piece = prefix + _anchored(text, room, anchor) if room > 0 else prefix
+            else:
+                piece = _anchored(self._cell_text(iid, name), end - start, anchor)
+            pieces.append(pad_cells(piece, end - start))
         return self._in_view(" ".join(pieces), width)
 
     def _heading_text(self, width: int) -> str:
-        """The heading row, drawn above the rows when ``show`` asks for it."""
+        """The heading row, drawn above the rows when ``show`` asks for it.
+
+        Each heading sits where its own ``anchor`` puts it, centred unless
+        told otherwise, as Tk draws them.
+        """
         pieces = [
-            pad_cells(str(self.heading(name, "text")), end - start)
+            pad_cells(
+                _anchored(
+                    str(self.heading(name, "text")),
+                    end - start,
+                    self.heading(name, "anchor"),
+                ),
+                end - start,
+            )
             for name, start, end in self._column_spans()
         ]
         return self._in_view(" ".join(pieces), width)
@@ -5279,6 +5314,21 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
 _POINTER_TAG_EVENTS = frozenset({"Button", "ButtonRelease", "Motion"})
 
 
+def _anchored(text: str, width: int, anchor: Any) -> str:
+    """``text`` placed across ``width`` cells as ``anchor`` places it.
+
+    Only the horizontal part counts: ``ne`` and ``e`` both put it at the
+    right. Text too wide for the width starts at the left and is cut by
+    whoever draws it, whatever the anchor - seen on Tk 9.0.2, where a long
+    value under ``anchor="e"`` shows its beginning, not its end.
+    """
+    try:
+        across, _down = parse_anchor(str(anchor) or "w")
+    except ValueError:
+        across = 0.0
+    return " " * max(0, int((width - cells(text)) * across)) + text
+
+
 def _change_element(selected: list[str], column: str, op: str) -> bool:
     """SelObjChangeElement: add, remove or toggle one column in a row's list.
 
@@ -5334,15 +5384,17 @@ def _treeview_click(event: Event) -> Any:
     iid = tree._row_at(event.y)
     if iid is None:
         return None
-    if tree._items[iid].children and event.x == tree._marker_column(iid):
-        _treeview_toggle(tree, iid)
-        return "break"
     # focus_set as well as focus(iid): Treeview.focus is the ROW the keyboard
     # is on, shadowing Misc.focus, so setting it does nothing about which
     # widget receives keys. Without this the arrows never arrive and the tree
     # looks like it simply ignores them - reported from UAT 34.
     tree.focus_set()
+    # ttk::treeview::Press selects first and then, on the marker, toggles:
+    # a click on a branch's marker selects the branch as well as opening it,
+    # measured on Tk 9.0.2.
     _treeview_select(tree, iid, _treeview_cell_at(tree, event), "choose")
+    if tree._items[iid].children and event.x == tree._marker_column(iid):
+        _treeview_toggle(tree, iid)
     return "break"
 
 
@@ -5457,16 +5509,47 @@ def _treeview_release(event: Event) -> None:
 
 
 def _treeview_toggle(tree: Treeview, iid: str) -> None:
-    """Open a closed branch or close an open one, and say which."""
+    """``ttk::treeview::Toggle``: open a closed branch or close an open one.
+
+    A row without children is left alone.
+    """
     item = tree._items[iid]
-    opening = not item.options["open"]
-    item.options["open"] = 1 if opening else 0
+    if not item.children:
+        return
+    if item.options["open"]:
+        _treeview_close(tree, iid)
+    else:
+        _treeview_open(tree, iid)
+
+
+def _treeview_open(tree: Treeview, iid: str) -> None:
+    """``ttk::treeview::OpenItem``: the keyboard to the row, then
+    ``<<TreeviewOpen>>``, then the row opened.
+
+    In that order, measured on Tk 9.0.2: a handler sees the row still
+    closed. Open or not, with children or not, the event is sent and the
+    row marked open.
+    """
+    tree.focus(iid)
+    tree.event_generate("<<TreeviewOpen>>")
+    tree._items[iid].options["open"] = 1
     tree._redraw()
-    tree.event_generate("<<TreeviewOpen>>" if opening else "<<TreeviewClose>>")
+
+
+def _treeview_close(tree: Treeview, iid: str) -> None:
+    """``ttk::treeview::CloseItem``: the row closed, the keyboard to it,
+    then ``<<TreeviewClose>>`` - which therefore sees it closed."""
+    tree._items[iid].options["open"] = 0
+    tree.focus(iid)
+    tree.event_generate("<<TreeviewClose>>")
 
 
 def _treeview_step(tree: Treeview, step: int) -> Any:
-    """Move the selection one visible row."""
+    """Move the selection one visible row.
+
+    With no row focused it starts at the first, where Tk's Keynav does
+    nothing: a terminal reaches a tree by Tab more often than by a click.
+    """
     rows = tree._visible()
     if not rows:
         return None
@@ -5550,30 +5633,45 @@ def _treeview_up(event: Event) -> Any:
 
 
 def _treeview_expand(event: Event) -> Any:
-    """Right opens the branch the keyboard is on, or with ``selecttype``
-    ``cell`` moves one column right."""
+    """Right opens the row the keyboard is on and selects it, or with
+    ``selecttype`` ``cell`` moves one column right."""
     tree = event.widget
     if not isinstance(tree, Treeview):
         return None
     if tree.cget("selecttype") == "cell":
         return _treeview_move_column(tree, 1)
+    # ttk::treeview::Keynav: OpenItem on the focus row whatever it is - a
+    # leaf, or a branch already open, gets <<TreeviewOpen>> too, measured on
+    # Tk 9.0.2 - and then the row is chosen as a click would choose it.
     iid = tree.focus()
-    if iid and tree._items[iid].children and not tree._items[iid].options["open"]:
-        _treeview_toggle(tree, iid)
+    if iid:
+        _treeview_open(tree, iid)
+        _treeview_select(tree, iid, None, "choose")
     return "break"
 
 
 def _treeview_collapse(event: Event) -> Any:
-    """Left closes the branch the keyboard is on, or with ``selecttype``
-    ``cell`` moves one column left."""
+    """Left closes the branch the keyboard is on, or goes to its parent,
+    and selects it; with ``selecttype`` ``cell`` it moves one column left."""
     tree = event.widget
     if not isinstance(tree, Treeview):
         return None
     if tree.cget("selecttype") == "cell":
         return _treeview_move_column(tree, -1)
+    # ttk::treeview::Keynav: close an open branch, or else go to the parent;
+    # then choose that row. At the top level there is no parent, and nothing
+    # happens at all - the focus stays where it was, measured on Tk 9.0.2.
     iid = tree.focus()
-    if iid and tree._items[iid].options["open"]:
-        _treeview_toggle(tree, iid)
+    if not iid:
+        return "break"
+    item = tree._items[iid]
+    if item.options["open"] and item.children:
+        _treeview_close(tree, iid)
+        target = iid
+    else:
+        target = item.parent
+    if target:
+        _treeview_select(tree, target, None, "choose")
     return "break"
 
 

@@ -54,7 +54,7 @@ table.heading("#0", text="Student")
 table.column("#0", width=NAME_WIDTH, stretch=False)
 for test in TESTS:
     table.heading(test, text=test)
-    table.column(test, width=MARK_WIDTH, stretch=False)
+    table.column(test, width=MARK_WIDTH, anchor="e", stretch=False)
 for name, marks in MARKS.items():
     table.insert("", "end", iid=name, text=name, values=marks)
 table.pack(anchor="w", padx=GAP, pady=(GAP, 0))

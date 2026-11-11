@@ -3777,6 +3777,32 @@ Where the table above and the implementation need reading together.
   attribute tkinter code already expects to find a handle on.
 - **`bind(sequence)` with no callback** returns the bound callables. tkinter
   returns the Tcl script it would evaluate, which has no meaning without Tcl.
+- **`tk.call` serves a few commands, not Tcl.** tkinter programs reach for
+  `tk.call` where tkinter has no method, and a handful of commands cover most
+  of that. They are served one by one, each measured on Tk 9.0.2 through
+  tkinter, answers and refusals alike (`tests/test_tk_call.py`):
+
+  | Command | Answer here |
+  |---------|-------------|
+  | `info patchlevel`, `info tclversion` | `9.0.2` and `9.0`, the Tcl Tk 9.0.2 ships with |
+  | `tk windowingsystem` | `x11`: the keys, the mouse and the virtual events here are Tk's X11 bindings |
+  | `tk scaling` | 10/72 - a pixel is a cell, ten to the inch |
+  | `tk scaling` *factor* | Read back as Tk reads it, and nothing else changes |
+  | *widget* `cget` / `configure` | Tk's dashed names and shapes: `configure -text` is the five-tuple with `-text` first, and a set answers `""` |
+  | a Treeview's `cellselection` | See the Treeview section |
+
+  `tk scaling` follows ScalingCmd in tkCmds.c. Tk keeps no factor: it gives
+  the screen a new width in millimetres, rounded and at least one, and reads
+  the factor back from that, so 2.0 reads back 1.998 on a real screen and 0,
+  -1 or 1e3 all read back the largest value the screen allows. The same
+  arithmetic runs here with the terminal's columns as the screen's pixels.
+  **It changes nothing else, deliberately:** a program sets it for a dense
+  monitor, and a terminal's cells do not shrink, so applying it would only
+  make every inch it converted twice as many cells. `winfo_fpixels("1i")` is
+  10 whatever it says.
+
+  Anything else raises `TclError` saying TkCurses does not run it, and a
+  widget subcommand other than these says to use the method.
 - **`configure()` with no arguments** returns the current option values.
   tkinter returns a five-tuple per option carrying its resource name, class and
   default; those come from Tcl's widget definitions.
@@ -6944,6 +6970,48 @@ every gap unclickable.
 └──────────────────────────────────────┘
 ```
 
+#### Where a cell's text sits: `-anchor`
+
+The manual says a column's `-anchor` places "the text and/or image" in each
+cell, and a heading's the heading's. It does not say what the tree column
+does with its indent, nor what happens to text too wide for its cell. Seen
+on Tk 9.0.2 in a screenshot of a real tree (the measurement needed eyes:
+`bbox` answers the cell, not where its text lands):
+
+- The indent and the disclosure marker stay at the left of `#0`; the text is
+  placed in what is left. Under `anchor e` a parent and its child therefore
+  end at the same edge, whatever their depth.
+- Text wider than its cell starts at the left and is cut at the right,
+  whatever the anchor - a long value under `e` shows its beginning, and so
+  does a long heading.
+- Only the horizontal part of an anchor counts in a one-line cell: `ne` and
+  `se` are `e`.
+
+Before this, both anchors were stored and ignored, so every heading sat at
+the left where Tk centres it. TkCurses-m3ii.
+
+#### The arrows on rows, and opening and closing
+
+`ttk_treeview(n)` documents no bindings at all. What a program sees, measured
+on Tk 9.0.2 and read against `Keynav`, `OpenItem`, `CloseItem` and `Press` in
+treeview.tcl:
+
+| Gesture | Tk 9.0.2 |
+|---------|----------|
+| Right | Opens the focus row and selects it, **whatever the row is**: a leaf is marked `-open true` and a branch already open is opened again, and both send `<<TreeviewOpen>>` |
+| Left on an open branch | Closes it and selects it |
+| Left anywhere else | Goes to the parent and selects it; at the top level nothing happens, the focus staying put. An open leaf counts as "anywhere else" - Keynav closes only a row that is open *and* has children |
+| Any arrow with no focus row | Nothing |
+| `selectmode none` | The arrows open, close and move, and select nothing |
+| `<<TreeviewOpen>>` | Sent **before** the row is opened: a handler reads `-open` false |
+| `<<TreeviewClose>>` | Sent after the row is closed |
+| A click on a branch's marker | Selects the branch, then opens or closes it |
+
+One difference: Down or Up with no focus row selects the first row here,
+where Tk does nothing. A terminal reaches a tree by Tab more often than by a
+click, and a tree the arrows cannot enter until something is clicked would
+look broken.
+
 #### The cell selection: `-selecttype` and `cellselection`
 
 Tk 9.0 added both (TIP 552), and the manual gives `cellselection` a
@@ -6989,9 +7057,9 @@ selection, so a tkinter program must write
 `tree.tk.call(tree, "cellselection", ...)`. That works here, answering as
 tkinter does (`""` for nothing, tuples for cells), and `tk.splitlist` reads
 the answer. There is no Tcl interpreter behind it: `Application.call` hands
-a widget's own subcommand to the widget, and `cellselection` is the only one
-served; anything else raises `TclError` saying so. TkCurses's
-`cellselection` methods remain, as extensions.
+a widget's own subcommand to the widget (see "`tk.call`" under the
+implementation notes for what else it serves). TkCurses's `cellselection`
+methods remain, as extensions.
 
 **Two differences, recorded in the docstring:** the Right arrow, above, and the anchor. Tk keeps the anchor in one
 namespace variable for every treeview in the interpreter; TkCurses keeps one
