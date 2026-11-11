@@ -6674,6 +6674,20 @@ Determinate:    [████████████░░░░░░░░] 6
 Indeterminate:  [░░░░███░░░░░░░░░░░░░] (animated)
 ```
 
+**`phase` counts only where a style asks it to** (`TkCurses-xe9.2`). It
+follows `AnimationEnabled`, `AnimateProgressProc` and `CheckAnimation` in Tk
+9.0.2's ttkProgress.c, and the manual says only that it is "read-only" for
+a theme's use, which it is not: a program may set it. Measured through
+tkinter, where the manual is silent:
+
+| What | Tk 9.0.2 | Here |
+|------|----------|------|
+| when it counts | while the bar is indeterminate and its style's `-period` is above 0, `start()` or not. No X11 theme sets `-period` (only aqua's does), so a plain bar's phase stays 0 | the same |
+| how | +1 every `-period` ms; past the style's `-maxphase` (0 when unset) it goes to 0. `phase=99` under `maxphase` 3 goes 99, 0, 1, 2 | the same |
+| which style | the oriented one, `Horizontal.TProgressbar` or `Vertical.TProgressbar`, inheriting `TProgressbar` | the same, for these two options |
+| a style changed under a showing bar | nothing until the bar is configured or stepped; a period of 0 stops it at the next tick | the same |
+| values | Tcl integers, -2³¹ to 2³² - 1, read back as written; `1.5` is `expected integer but got "1.5"`, 2³² is `integer value too large to represent` | the same |
+
 ### ttk.Treeview
 
 | tkinter Method | TkCurses | Notes |
@@ -6929,6 +6943,59 @@ every gap unclickable.
 │  Music         │        │            │
 └──────────────────────────────────────┘
 ```
+
+#### The cell selection: `-selecttype` and `cellselection`
+
+Tk 9.0 added both (TIP 552), and the manual gives `cellselection` a
+paragraph. It leaves out most of what a program can see. Measured on Tk
+9.0.2 through `tree.tk.call(tree, "cellselection", ...)` and clicks sent
+by `event_generate`, and read against ttkTreeview.c (`CellSelectionRange`,
+`TreeviewCellSelectionCommand`, `SelObjChangeElement`) and treeview.tcl:
+
+| Question | Tk 9.0.2 |
+|----------|----------|
+| What a cell reports as its column | The column's name, or `#0`, however it was given: `#1`, `0` and `a` all read back `a` |
+| Order of the answer | Rows in tree order, closed branches included; a row's cells in the order they were selected |
+| `<<TreeviewSelect>>` | Only on a change, unlike `selection set`. But `set` clears first, so setting the same cell again is a change |
+| A row whose last cell was removed | Keeps an empty list, so the next `set` of anything counts as a change |
+| One two-element argument | Tried as one cell first, then as a list of two: `("I9", "a")` fails as *Cell id must be a list of two elements*, not *Item I9 not found* |
+| A rectangle | Every row from one corner to the other in tree order, closed branches included, across display order; its corners must be showing, *Cell id must be in a visible column*. A list may name a hidden column |
+| `detach` | Hides the row's cells from the answer and keeps them; `move` brings them back |
+| `delete` | Sends `<<TreeviewSelect>>` when a row named was selected, or had a cell selected - for rows as much as cells |
+| `-columns` changed | The cell selection is cleared, with no event. `-displaycolumns` leaves it |
+| `-selecttype` changed | Clears neither selection; the two are separate throughout |
+| `-selecttype` values | `item` or `cell`, or a prefix; `""` is *ambiguous* |
+
+The bindings, under `selecttype cell`: a click selects one cell and leaves
+the row selection alone; Control-click toggles a cell; Shift-click adds the
+rectangle from the last cell chosen when that was a Control-click, and sets
+it when it was a plain click. `browse` takes one cell whatever the
+modifier, and `none` only moves the focus row.
+
+The arrows follow `ttk::treeview::Keynav` but for one limit, which TkCurses
+does not copy. **Tk's Right stops one column short of the last**: Keynav
+compares the column number with the count of columns less one, so with
+columns `a b c` Right reaches `#2` and never `#3`. Measured on Tk 9.0.2 with
+four and with five columns, each tree wide enough for every column, so it is
+not a matter of the view: it is always one short. The manual says nothing of
+the arrows, and Keynav itself is marked `@@@ TODO: verify/rewrite`, so this
+reads as Tk's bug rather than its design. Here Right goes on to the last
+column; a program that arrows there breaks nothing that worked under Tk.
+Left stops at `#0`, or at `#1` without the tree column. Up and Down keep the
+column of the anchor, `#1` when there is none.
+
+**`tk.call` reaches it as in tkinter.** tkinter has no methods for the cell
+selection, so a tkinter program must write
+`tree.tk.call(tree, "cellselection", ...)`. That works here, answering as
+tkinter does (`""` for nothing, tuples for cells), and `tk.splitlist` reads
+the answer. There is no Tcl interpreter behind it: `Application.call` hands
+a widget's own subcommand to the widget, and `cellselection` is the only one
+served; anything else raises `TclError` saying so. TkCurses's
+`cellselection` methods remain, as extensions.
+
+**Two differences, recorded in the docstring:** the Right arrow, above, and the anchor. Tk keeps the anchor in one
+namespace variable for every treeview in the interpreter; TkCurses keeps one
+per tree, so a Shift-click in one tree never extends from a cell of another.
 
 ### ttk.Separator
 

@@ -112,17 +112,12 @@ THEMED = (
 #: A gap not listed here is a test failure, which is the point: this list may
 #: shrink and must never silently grow.
 KNOWN_GAPS: dict[str, dict[str, str]] = {
-    "Progressbar": {
-        "phase": "TkCurses-xe9.2: the indeterminate animation counter",
-    },
     # Entry, Spinbox and Combobox are gone from this list entirely, which is
     # worth more than it looks: ttk's Spinbox IS an Entry - measured, its MRO
     # begins Spinbox, Entry, Widget, Entry - so those three shared every gap
     # they had, and the three fixes that closed them (TkCurses-ale, 163 and
-    # xe9.3) each closed all three at once.
-    "Treeview": {
-        "selecttype": "TkCurses-xe9.5: selecting cells rather than rows",
-    },
+    # xe9.3) each closed all three at once. Treeview's last, selecttype,
+    # went with TkCurses-xe9.5.
 }
 
 

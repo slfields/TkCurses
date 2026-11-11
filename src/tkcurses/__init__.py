@@ -3532,6 +3532,15 @@ class Misc:
     # Utility
     # ==================================================================
 
+    def _tcl_command(self, name: str, args: tuple[Any, ...]) -> Any:
+        """Serve ``tk.call(widget, name, *args)``: a Tcl subcommand of this
+        widget. A widget with subcommands to serve overrides this."""
+        del args
+        raise TclError(
+            f'TkCurses does not interpret "{self} {name}" through tk.call;'
+            " use the widget's method"
+        )
+
     def nametowidget(self, name: str | Misc) -> Misc:
         """The widget with the given path name.
 

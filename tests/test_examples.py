@@ -55,7 +55,7 @@ def test_every_example_is_on_the_page_and_nothing_else_is():
     shown = DIRECTIVE.findall(PAGE.read_text())
     files = sorted(f"examples/{path.name}" for path in EXAMPLES.glob("*.py"))
     assert sorted(shown) == files
-    assert len(files) == 14
+    assert len(files) == 15
 
 
 def test_every_example_carries_the_notice():
@@ -561,3 +561,28 @@ def test_the_wallpaper_tiles_centres_and_recolours(terminal, tmp_path):
     row, column = term.find_text("Checks")
     term.click(column, row)
     term.wait_for_text("Checks, 8x4")
+
+
+def test_the_mark_book_adds_up_the_cells_selected(terminal, tmp_path):
+    """The arrows reach the last column, a click takes one mark, Shift-click
+    the rectangle to another, and Row the whole row; the student's name is
+    never counted."""
+    term = start(terminal, tmp_path, "marks", cols=60, rows=16)
+    term.wait_for_text("1 marks, total 72")
+    # Right goes as far as Exam, the last column: Ada's 78. Tk 9.0.2 stops at
+    # Lab, one short, which TkCurses does not copy.
+    for mark in ("85", "90", "78", "78"):
+        term.send_keys("<Right>")
+        term.wait_for_text(f"1 marks, total {mark},")
+    row, column = term.find_text("91")
+    term.click(column, row)
+    term.wait_for_text("1 marks, total 91,")
+    corner = term.find_text("87")
+    term.click(corner[1], corner[0], shift=True)
+    # Grace's Exam to Edsger's Exam: 91, 84 and 87.
+    term.wait_for_text("3 marks, total 262, mean 87.3")
+    term.wait_for_cell(row, column, lambda cell: cell.reverse, message="91 reversed")
+    row, column = term.find_text("Row")
+    term.click(column, row)
+    # The keyboard stayed on Grace: 88, 79, 95 and 91.
+    term.wait_for_text("4 marks, total 353, mean 88.2")

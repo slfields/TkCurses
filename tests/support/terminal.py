@@ -1050,9 +1050,22 @@ class TerminalHarness:
         self.send(f"\x1b[<{code};{x + 1};{y + 1}{final}".encode())
 
     def click(
-        self, x: int, y: int, *, button: int = 1, settle: float | None = None
+        self,
+        x: int,
+        y: int,
+        *,
+        button: int = 1,
+        settle: float | None = None,
+        shift: bool = False,
+        alt: bool = False,
+        ctrl: bool = False,
     ) -> None:
         """Press and release at ``(x, y)``, pausing either side, as a hand does.
+
+        ``shift``, ``alt`` and ``ctrl`` hold those keys through both. A
+        modified click sent by hand with two ``send_mouse`` calls has neither
+        pause, and loses events exactly as described below - a Shift-click
+        followed by a button click lost the button on CI's Python 3.10 job.
 
         Neither pause is decoration, and they are for different faults.
 
@@ -1088,10 +1101,11 @@ class TerminalHarness:
         too, so "slower than the default" keeps meaning that everywhere.
         """
         settle = self._budget(0.05 if settle is None else settle)
-        self.send_mouse(x, y, button=button, action="press")
+        held = {"shift": shift, "alt": alt, "ctrl": ctrl}
+        self.send_mouse(x, y, button=button, action="press", **held)
         if settle:
             self._drain(settle)
-        self.send_mouse(x, y, button=button, action="release")
+        self.send_mouse(x, y, button=button, action="release", **held)
         if settle:
             self._drain(settle)
 

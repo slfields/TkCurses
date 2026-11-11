@@ -216,13 +216,14 @@ def test_the_themed_option_rules(tmp_path, monkeypatch):
 
     measured = json.loads(docsurface.VISIBLE.read_text())
     bar = dict(measured["ttk.Progressbar"])
+    # Missing as it was before TkCurses-xe9.2: no measured option is now.
+    bar["phase"] = {"kind": "missing"}
     fake = tmp_path / "visible.json"
     fake.write_text(json.dumps({"ttk.Progressbar": bar}))
     monkeypatch.setattr(docsurface, "VISIBLE", fake)
     monkeypatch.setattr(ttk.Progressbar, "__doc__", "A bar, with a length.")
 
     found = docsurface.violations()
-    assert bar["phase"] == {"kind": "missing"}
     assert "tkcurses.ttk.Progressbar:phase" in found["undescribed_options"]
     assert "tkcurses.ttk.Progressbar:length" not in found["undescribed_options"]
     assert "tkcurses.ttk.Progressbar:length" in found["unsampled_options"]

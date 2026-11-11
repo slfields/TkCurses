@@ -193,6 +193,8 @@ WIDGET_VALUES: dict[tuple[str, str], list[object]] = {
     ("ttk.Treeview", "displaycolumns"): [(), "#all"],
     ("ttk.Treeview", "titlecolumns"): [1],
     ("ttk.Treeview", "titleitems"): [1],
+    # Which a click selects, rows or cells: nothing to see until one is made.
+    ("ttk.Treeview", "selecttype"): ["cell"],
     ("ttk.Progressbar", "mode"): ["indeterminate"],
     ("ttk.Progressbar", "maximum"): [50, 200],
     ("ttk.Progressbar", "value"): [70, 0],

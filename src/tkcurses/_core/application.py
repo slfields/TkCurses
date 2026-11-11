@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 
 from tkcurses._core.bindings import BindingTable, VirtualEvents, parse_sequence
 from tkcurses._core.clipboard import Selections
+from tkcurses._core.errors import TclError
 from tkcurses._core.events import MOD_CTRL
 from tkcurses._core.input import SIGNAL_KEYS
 from tkcurses._core.layout import LayoutEngine
@@ -431,6 +432,50 @@ class Application:
         #: on the root widget so that quit() works from any widget, as it
         #: does in tkinter.
         self.quit_requested = False
+
+    def call(self, *args: Any) -> Any:
+        """Run a widget's Tcl subcommand, as ``widget.tk.call`` does in tkinter.
+
+        ``tree.tk.call(tree, "cellselection", "set", cells)`` is how a
+        tkinter program reaches Tk commands tkinter has no method for, so the
+        same line works here for the subcommands TkCurses serves. The first
+        argument is the widget or its path name, the second the subcommand,
+        and the rest are its arguments; a single tuple of all of them is taken
+        too, as tkinter takes it. Answers come back as tkinter gives them:
+        ``""`` for nothing, and a tuple for a list.
+
+        Raises:
+            TclError: For a path that names no widget, in Tk's words, and for
+                any subcommand TkCurses does not interpret. There is no Tcl
+                interpreter here: only the subcommands a widget serves work.
+        """
+        if len(args) == 1 and isinstance(args[0], (tuple, list)):
+            args = tuple(args[0])
+        if not args:
+            raise TclError("TkCurses has no Tcl interpreter: call needs a widget")
+        path = str(args[0])
+        widget = self.widgets.get(path)
+        if widget is None:
+            if path.startswith("."):
+                raise TclError(f'invalid command name "{path}"')
+            raise TclError(f'TkCurses has no Tcl interpreter: "{path}" is not a widget')
+        if len(args) < 2:
+            raise TclError(f'wrong # args: should be "{path} option ?arg ...?"')
+        return widget._tcl_command(str(args[1]), args[2:])
+
+    def splitlist(self, value: Any) -> tuple[Any, ...]:
+        """A Tcl list's elements as a tuple, as tkinter's ``splitlist``.
+
+        A tuple is handed back as it is and a list as a tuple; a string is
+        split as Tcl splits a list, braces and quotes included.
+        """
+        if isinstance(value, tuple):
+            return value
+        if isinstance(value, list):
+            return tuple(value)
+        from tkcurses import _tcl_list
+
+        return tuple(_tcl_list(value))
 
     @property
     def focus(self) -> Misc | None:

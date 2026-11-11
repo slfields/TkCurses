@@ -1757,6 +1757,19 @@ def _sizegrip_release(event: Event) -> None:
     event.widget._drag = None
 
 
+def _tcl_int_option(widget: Any, value: Any) -> int:
+    """A Tk ``TK_OPTION_INT``: Tcl's integer forms, -2**31 to 2**32 - 1.
+
+    Measured on Tk 9.0.2 with ``ttk.Progressbar -phase``: ``0x10`` reads back
+    16 and ``" 7 "`` 7, ``1.5`` and ``1e3`` are ``expected integer``, and
+    2**32 or -2**31 - 1 is ``integer value too large to represent``.
+    """
+    number = tkcurses._tcl_integer(widget, value)
+    if not -(2**31) <= number <= 2**32 - 1:
+        raise TclError("integer value too large to represent")
+    return number
+
+
 class Progressbar(Widget, tkcurses.Frame):
     """A bar showing how far along something is, as ``ttk.Progressbar``.
 
@@ -1777,7 +1790,12 @@ class Progressbar(Widget, tkcurses.Frame):
         length: How long the bar is, in cells.
         maximum: The value at which the bar is full; 100 by default.
         mode: ``determinate``, the default, or ``indeterminate``.
-        phase: Not available yet.
+        phase: A counter for a theme to animate an indeterminate bar with.
+            Tk counts it up from 0 to the style's ``maxphase`` and round
+            again, every ``period`` milliseconds, while the bar is
+            indeterminate - and only when its style sets ``period``, which
+            none of the built-in themes do. Setting it is allowed, and the
+            count goes on from there.
         value: How far along: the bar is filled ``value / maximum`` of its
             length.
         variable: A variable holding the value.
@@ -1785,10 +1803,6 @@ class Progressbar(Widget, tkcurses.Frame):
     Standard options, described in :doc:`/reference/options`: ``anchor``,
     ``class``, ``cursor``, ``font``, ``foreground``, ``justify``,
     ``orient``, ``style``, ``takefocus``, ``text`` and ``wraplength``.
-
-    Differences from tkinter:
-        ``phase``, which Tk counts up while the bar is running for a
-        theme to animate with, is not available yet.
 
     Sample output (length, maximum, value):
         ttk.Progressbar(root, length=10, maximum=10, value=5).pack(pady=1)
@@ -1814,6 +1828,7 @@ class Progressbar(Widget, tkcurses.Frame):
             "anchor", "n", "ne", "e", "se", "s", "sw", "w", "nw", "center", empty=True
         ),
         "maximum": tkcurses._tcl_float,
+        "phase": _tcl_int_option,
         "wraplength": _distance_or_unset,
         "justify": _justification_or_unset,
         "length": tkcurses._signed_distance,
@@ -1841,6 +1856,7 @@ class Progressbar(Widget, tkcurses.Frame):
         "maximum": 100.0,
         "value": 0.0,
         "length": 20,
+        "phase": 0,
         "variable": None,
         "foreground": "",
         "background": "",
@@ -1871,8 +1887,11 @@ class Progressbar(Widget, tkcurses.Frame):
                 ``style``, and the standard options.
         """
         self._timer: str | None = None
+        #: The ``phase`` animation's own timer, apart from :meth:`start`'s.
+        self._phase_timer: str | None = None
         super().__init__(master, cnf, name=name, **kw)
         self._apply_requested_size()
+        self._check_animation()
 
     @property
     def _vertical(self) -> bool:
@@ -1900,6 +1919,7 @@ class Progressbar(Widget, tkcurses.Frame):
             if {"length", "orient"} & set(given):
                 self._apply_requested_size()
                 self._invalidate_layout()
+            self._check_animation()
             self._redraw()
         return result
 
@@ -1961,7 +1981,67 @@ class Progressbar(Widget, tkcurses.Frame):
         # framework's fault rather than this widget's. destroy() now drops a
         # widget's pending callbacks, as Tk does.
         self._timer = None
+        self._phase_timer = None
         super().destroy()
+
+    # ------------------------------------------------------------- phase
+    #
+    # Follows AnimationEnabled, AnimateProgressProc and CheckAnimation in Tk
+    # 9.0.2's ttkProgress.c. The style's -period and -maxphase are what turn
+    # it on; Tk reads them when it lays the widget out, which a style change
+    # does at once, so they are looked up at each check and each tick here.
+    # Measured: a style given a period does not start a bar already showing
+    # until something configures it, and a period of 0 stops it at the next
+    # tick.
+
+    def _animation_style(self) -> str:
+        """The style ``period`` and ``maxphase`` are looked up in: Tk's
+        progressbar draws from ``Horizontal.TProgressbar`` or
+        ``Vertical.TProgressbar``, which inherit ``TProgressbar``."""
+        given = str(self._options.get("style") or "")
+        if given:
+            return given
+        orient = "Vertical" if self._vertical else "Horizontal"
+        return f"{orient}.{self.winfo_class()}"
+
+    def _animation(self) -> tuple[int, int]:
+        """The style's ``period`` and ``maxphase``, 0 where unset or not an
+        integer, as Tk reads them."""
+        style = Style(self)
+        name = self._animation_style()
+        found = []
+        for option in ("period", "maxphase"):
+            value = style.lookup(name, option, None, "")
+            try:
+                found.append(tkcurses._tcl_integer(None, value))
+            except TclError:
+                found.append(0)
+        return found[0], found[1]
+
+    def _animating(self) -> bool:
+        """Whether ``phase`` should count: Tk's AnimationEnabled."""
+        return self._indeterminate and self._animation()[0] > 0
+
+    def _check_animation(self) -> None:
+        """Start the count if it should run and is not, stop it if it should
+        not and is: Tk's CheckAnimation."""
+        if self._animating():
+            if self._phase_timer is None:
+                self._phase_timer = self.after(self._animation()[0], self._animate)
+        elif self._phase_timer is not None:
+            self.after_cancel(self._phase_timer)
+            self._phase_timer = None
+
+    def _animate(self) -> None:
+        """One tick: the next phase, round to 0 past ``maxphase``."""
+        self._phase_timer = None
+        if not self._animating():
+            return
+        period, top = self._animation()
+        phase = int(self._options["phase"]) + 1
+        self._options["phase"] = 0 if phase > top else phase
+        self._phase_timer = self.after(period, self._animate)
+        self._redraw()
 
     # ------------------------------------------------------------ painting
 
@@ -3312,6 +3392,12 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
     ``<<TreeviewOpen>>`` and ``<<TreeviewClose>>`` only when a person opens
     or closes one.
 
+    Cells can be selected as well as rows. :meth:`cellselection` and its
+    four companions choose them, and with ``selecttype="cell"`` a click, an
+    arrow key, Shift-click and Control-click choose cells instead of rows.
+    The two selections are separate: each keeps its own cells or rows, and
+    changing ``selecttype`` clears neither.
+
     Sample output:
         tree = ttk.Treeview(root, columns=("size",), height=5)
         tree.heading("#0", text="Name")
@@ -3329,7 +3415,8 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
             names or indexes, or ``#all``.
         selectmode: ``extended``, the default, to select several rows,
             ``browse`` for one, or ``none``.
-        selecttype: Not available yet.
+        selecttype: ``item``, the default, for clicks and arrow keys to
+            select rows, or ``cell`` for them to select single cells.
         show: Which parts are shown: ``tree`` for column ``#0``,
             ``headings`` for the heading row, or both - the default - as
             ``"tree headings"``.
@@ -3345,8 +3432,17 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
     ``xscrollcommand`` and ``yscrollcommand``.
 
     Differences from tkinter:
-        ``selecttype``, which selects cells rather than rows, is not
-        available yet.
+        tkinter has no methods for the cell selection, so a program there
+        calls ``tree.tk.call(tree, "cellselection", ...)``, and that works
+        here too. TkCurses also has :meth:`cellselection` and four methods
+        named as the row selection's are, which tkinter lacks.
+
+        Tk keeps the cell a Shift-click extends from in one place for every
+        treeview in the program; TkCurses keeps one for each tree.
+
+        With ``selecttype="cell"`` the Right arrow reaches the last column.
+        Tk 9.0.2's stops one column short of it, which its manual does not
+        describe.
 
         A row's ``image`` and a tag's ``image``, ``imageanchor`` and
         ``font`` are accepted and not drawn.
@@ -3384,6 +3480,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
         "selectmode": tkcurses._choices("selectmode", "none", "browse", "extended"),
+        "selecttype": tkcurses._choices("selecttype", "item", "cell"),
         "height": tkcurses._signed_distance,
     }
 
@@ -3413,6 +3510,9 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         "show": ("tree", "headings"),
         "height": TREE_HEIGHT,
         "selectmode": "extended",
+        # Tk 9.0's cell selection - TkCurses-xe9.5. What the class bindings
+        # select; the cellselection methods work under either.
+        "selecttype": "item",
         # A tree is something you walk with the arrows, so it takes the
         # keyboard. Frame's default is False, and inheriting it left the
         # widget unreachable by Tab.
@@ -3484,6 +3584,16 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         # bind it: the dispatcher reads _tag_bindings when the event arrives.
         self._tag_dispatch: dict[str, Any] = {}
         self._selection: list[str] = []
+        #: The cell selection: each row's selected columns, by name, in the
+        #: order they were selected - Tk's per-item ``selObj``. A row keeps
+        #: its entry, empty, once its last cell goes, as Tk keeps the list;
+        #: that is what makes a later ``set`` report a change.
+        self._cells: dict[str, list[str]] = {}
+        #: Where a Shift-click extends from, and how - ``State(cellAnchor)``
+        #: and ``State(cellAnchorOp)`` in treeview.tcl. A cell is a row and
+        #: a ``#n`` display column, as ``identify("cell", ...)`` gives it.
+        self._cell_anchor: tuple[str, str] | None = None
+        self._cell_anchor_op = "set"
         self._focus = ""
         self._headings: dict[str, dict[str, Any]] = {}
         self._columns: dict[str, dict[str, Any]] = {}
@@ -3507,6 +3617,10 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         bind = self.bind_class
         bind(self._ttk_class, "<Button-1>", _treeview_click)
         bind(self._ttk_class, "<ButtonRelease-1>", _treeview_release)
+        # Tk binds <<ToggleSelection>>, which tk.tcl adds as Control-Button-1
+        # on X11 and Windows; a terminal has no Command key.
+        bind(self._ttk_class, "<Shift-Button-1>", _treeview_extend_click)
+        bind(self._ttk_class, "<Control-Button-1>", _treeview_toggle_click)
         bind(self._ttk_class, "<Key-Down>", _treeview_down)
         bind(self._ttk_class, "<Key-Up>", _treeview_up)
         bind(self._ttk_class, "<Key-Right>", _treeview_expand)
@@ -3572,10 +3686,20 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         return self._items[parent].children
 
     def delete(self, *items: str) -> None:
-        """Remove rows and everything under them, for good."""
+        """Remove rows and everything under them, for good.
+
+        ``<<TreeviewSelect>>`` is sent when a row deleted was selected, or
+        had a cell selected, as Tk sends it.
+        """
+        # ttkTreeview.c's TreeviewDeleteCommand: selChange from the items
+        # named, checked before they go. Only the named ones - a selected
+        # descendant of an unselected row goes without an event, there too.
+        changed = any(iid in self._selection or self._cells.get(iid) for iid in items)
         for iid in items:
             self._delete_one(iid)
         self._redraw()
+        if changed:
+            self.event_generate("<<TreeviewSelect>>")
 
     def _delete_one(self, iid: str) -> None:
         """Remove one row and its descendants from the tree and the index."""
@@ -3589,6 +3713,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         self._items.pop(iid, None)
         if iid in self._selection:
             self._selection.remove(iid)
+        self._cells.pop(iid, None)
         if self._focus == iid:
             self._focus = ""
 
@@ -4007,6 +4132,238 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         kept = [iid for iid in self._selection if iid not in items]
         added = [iid for iid in items if iid not in self._selection]
         self.selection_set(*kept, *added)
+
+    # ------------------------------------------------------ the cell selection
+
+    def cellselection(self) -> tuple[tuple[str, str], ...]:
+        """The selected cells, as ``(item, column)`` pairs.
+
+        Rows in tree order, a row's cells in the order they were selected.
+        The column is the column's name, or ``#0`` for the tree column,
+        however it was given. A selected cell in a hidden column is still
+        selected, and so is a detached row's, which comes back with it.
+
+        TkCurses extension:
+            tkinter has no method for it; there it is
+            ``tree.tk.call(tree, "cellselection")``.
+        """
+        # TreeviewCellSelectionCommand with no operation: NextPreorder from
+        # the root's first child, which visits closed branches too.
+        return tuple(
+            (iid, column)
+            for iid in self._preorder()
+            for column in self._cells.get(iid, ())
+        )
+
+    def cellselection_set(self, cells: Any, last: Any = None) -> None:
+        """Select exactly these cells.
+
+        ``cells`` is one cell, an ``(item, column)`` pair, or a list of them.
+        With ``last`` as well, ``cells`` is one corner of a rectangle and
+        ``last`` the other: every cell between them, in display order across
+        and tree order down, closed branches included. A rectangle's corners
+        must be in columns that are showing.
+
+        ``<<TreeviewSelect>>`` is sent if the selection changed, which -
+        unlike :meth:`selection_set` - is not every time.
+
+        Raises:
+            TclError: For a cell that is not a pair, a row or column that
+                does not exist, or a corner in a hidden column, in Tk's
+                words.
+
+        TkCurses extension:
+            tkinter has no method for it; there it is
+            ``tree.tk.call(tree, "cellselection", "set", cells)``.
+        """
+        self._change_cells("set", cells, last)
+
+    def cellselection_add(self, cells: Any, last: Any = None) -> None:
+        """Add cells to the selection, as :meth:`cellselection_set` takes them.
+
+        TkCurses extension:
+            tkinter has no method for it; there it is
+            ``tree.tk.call(tree, "cellselection", "add", cells)``.
+        """
+        self._change_cells("add", cells, last)
+
+    def cellselection_remove(self, cells: Any, last: Any = None) -> None:
+        """Take cells out of the selection, as :meth:`cellselection_set`
+        takes them.
+
+        TkCurses extension:
+            tkinter has no method for it; there it is
+            ``tree.tk.call(tree, "cellselection", "remove", cells)``.
+        """
+        self._change_cells("remove", cells, last)
+
+    def cellselection_toggle(self, cells: Any, last: Any = None) -> None:
+        """Select the unselected cells and unselect the selected, as
+        :meth:`cellselection_set` takes them.
+
+        TkCurses extension:
+            tkinter has no method for it; there it is
+            ``tree.tk.call(tree, "cellselection", "toggle", cells)``.
+        """
+        self._change_cells("toggle", cells, last)
+
+    def _tcl_command(self, name: str, args: tuple[Any, ...]) -> Any:
+        """``cellselection``, which tkinter reaches only through ``tk.call``."""
+        if name != "cellselection":
+            return super()._tcl_command(name, args)
+        if not args:
+            return self.cellselection() or ""
+        # Measured on Tk 9.0.2: an operation alone, or more than two cells
+        # after it, is this message; a bad operation is Tcl's index error.
+        if len(args) not in (2, 3):
+            raise TclError(
+                f'wrong # args: should be "{self} cellselection'
+                ' ?add|remove|set|toggle arg...?"'
+            )
+        op = tkcurses._tcl_index(
+            args[0], ("set", "add", "remove", "toggle"), "cellselection operation"
+        )
+        self._change_cells(op, args[1], args[2] if len(args) == 3 else None)
+        return ""
+
+    def _preorder(self) -> list[str]:
+        """Every attached row in tree order, closed branches included."""
+        order: list[str] = []
+
+        def walk(iids: list[str]) -> None:
+            for iid in iids:
+                order.append(iid)
+                walk(self._items[iid].children)
+
+        walk(self._roots)
+        return order
+
+    def _cell_column(self, word: str) -> str:
+        """The column a cell names, as ttkTreeview.c's FindColumn finds it.
+
+        ``#n`` counts displayed columns with ``#0`` first, whether or not the
+        tree column shows; anything else is a column's name or its index in
+        ``columns``. Measured on Tk 9.0.2: ``Column #9 out of range``,
+        ``Column index "7" out of bounds`` - ``end`` among them - and
+        ``Invalid column index "zz"``.
+        """
+        if word.startswith("#"):
+            digits = word[1:].lstrip("+-")
+            if digits.isascii() and digits.isdigit():
+                index = int(word[1:])
+                if index == 0:
+                    return TREE_COLUMN
+                names = self._displayed_names()
+                if 0 < index <= len(names):
+                    return names[index - 1]
+                raise TclError(f"Column {word} out of range")
+        if word == TREE_COLUMN:
+            return TREE_COLUMN
+        if word == "end":
+            raise TclError(f'Column index "{word}" out of bounds')
+        return _displayed(self._options["columns"], (word,))[0]
+
+    def _parse_cell(self, value: Any) -> tuple[str, str]:
+        """One ``(item, column)`` pair, checked as GetCellFromObj checks it."""
+        words = tkcurses._tcl_list(value)
+        if len(words) != 2:
+            raise TclError("Cell id must be a list of two elements")
+        item, column = words
+        # The root, "", is an item to Tk: a cell of it is taken and stored,
+        # and never reported, since the listing starts at its first child.
+        if item and item not in self._items:
+            raise TclError(f"Item {item} not found")
+        return item, self._cell_column(column)
+
+    def _parse_cells(self, value: Any) -> list[tuple[str, str]]:
+        """A cell or a list of them, as GetCellListFromObj reads one.
+
+        A two-element value is tried as a single cell first, and only when
+        that fails as a list of two - so ``("I1", "a")`` is one cell, and a
+        list of two cells is two.
+        """
+        words = tkcurses._tcl_list(value)
+        if len(words) == 2:
+            with contextlib.suppress(TclError):
+                return [self._parse_cell(value)]
+        if isinstance(value, (tuple, list)):
+            return [self._parse_cell(cell) for cell in value]
+        return [self._parse_cell(cell) for cell in words]
+
+    def _display_position(self, column: str) -> int:
+        """Where a rectangle's corner column is drawn, ``#0`` counted first.
+
+        Raises:
+            TclError: If it is not showing - ``Cell id must be in a visible
+                column``, measured.
+        """
+        names = self._displayed_names()
+        if column == TREE_COLUMN and self._shows_tree:
+            return 0
+        if column in names:
+            return names.index(column) + 1
+        raise TclError("Cell id must be in a visible column")
+
+    def _change_cells(self, op: str, cells: Any, last: Any) -> None:
+        """``cellselection set|add|remove|toggle``, one list or a rectangle.
+
+        Follows TreeviewCellSelectionCommand, CellSelectionRange and
+        SelObjChangeElement in ttkTreeview.c: ``set`` clears first, and the
+        event goes only when something changed.
+        """
+        if last is None:
+            chosen = self._parse_cells(cells)
+            changed = False
+            if op == "set":
+                changed = self._clear_cells()
+            for item, column in chosen:
+                if op == "remove" and item not in self._cells:
+                    continue
+                selected = self._cells.setdefault(item, [])
+                # A list's set is a clear and then an add: the C falls
+                # through from SELECTION_SET to SELECTION_ADD.
+                changed |= _change_element(
+                    selected, column, "add" if op == "set" else op
+                )
+        else:
+            changed = self._change_rectangle(op, cells, last)
+        self._redraw()
+        if changed:
+            self.event_generate("<<TreeviewSelect>>")
+
+    def _change_rectangle(self, op: str, first: Any, last: Any) -> bool:
+        """CellSelectionRange: every cell between two corners."""
+        top, left = self._parse_cell(first)
+        bottom, right = self._parse_cell(last)
+        start = self._display_position(left)
+        end = self._display_position(right)
+        start, end = min(start, end), max(start, end)
+        shown = [TREE_COLUMN, *self._displayed_names()]
+        columns = shown[start : end + 1]
+        changed = self._clear_cells() if op == "set" else False
+        order = self._preorder()
+        rank = {iid: index for index, iid in enumerate(order)}
+        if rank.get(top, -1) > rank.get(bottom, -1):
+            top, bottom = bottom, top
+        rows = order[order.index(top) :] if top in rank else []
+        for item in rows:
+            selected = self._cells.get(item)
+            if selected is not None:
+                for column in columns:
+                    changed |= _change_element(selected, column, op)
+            elif op != "remove":
+                # Set, add and toggle do the same to a row with none.
+                self._cells[item] = list(columns)
+                changed = True
+            if item == bottom:
+                break
+        return changed
+
+    def _clear_cells(self) -> bool:
+        """CellSelectionClear: forget every cell; whether any row had a list."""
+        had = bool(self._cells)
+        self._cells.clear()
+        return had
 
     def focus(self, item: str | None = None) -> Any:
         """Get or set the row the keyboard is on.
@@ -4670,15 +5027,46 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
                 + self._split_rows()[1][self._top : self._top + self._rows_window()]
             )
             for offset, iid in enumerate(rows):
-                self._write_line(
-                    dispatcher,
-                    window,
-                    row,
-                    left,
-                    pad_cells(self._row_text(iid, area.width), area.width),
-                    self._row_attribute(iid, offset, attribute),
-                )
+                line = pad_cells(self._row_text(iid, area.width), area.width)
+                drawn = self._row_attribute(iid, offset, attribute)
+                self._write_line(dispatcher, window, row, left, line, drawn)
+                # A selected cell is drawn reversed over its row, the
+                # column's own span and not the space joining it to the next.
+                for start, end in self._selected_spans(iid, area.width):
+                    rest, blank = skip_cells(line, start)
+                    self._write_line(
+                        dispatcher,
+                        window,
+                        row,
+                        left + start,
+                        clip_cells(" " * blank + rest, end - start),
+                        drawn | curses.A_REVERSE,
+                    )
                 row += 1
+
+    def _selected_spans(self, iid: str, width: int) -> list[tuple[int, int]]:
+        """Where a row's selected cells are in view: ``(start, end)`` cells
+        into the rows area, ``end`` exclusive.
+
+        A scrolled column is cut where the frozen ones cover it, and at the
+        edges of the area.
+        """
+        chosen = self._cells.get(iid)
+        if not chosen:
+            return []
+        frozen = self._frozen_width()
+        spans = []
+        for name, start, end in self._column_spans():
+            if name not in chosen:
+                continue
+            fixed = start < frozen
+            left = self._view_x(start, fixed)
+            right = left + end - start
+            left = max(left, 0 if fixed else frozen)
+            right = min(right, width)
+            if left < right:
+                spans.append((left, right))
+        return spans
 
     def _check_titles(self, given: dict[str, Any]) -> None:
         """Refuse a ``titleitems`` or ``titlecolumns`` Tk would refuse.
@@ -4837,6 +5225,11 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         self._check_titles(given)
         self._check_display(given)
         result = super().configure(cnf, **kw)
+        if any(key.lstrip("-") == "columns" for key in given):
+            # Measured on Tk 9.0.2, and CellSelectionClear in
+            # ConfigureTreeview: new columns end the cell selection, with
+            # no <<TreeviewSelect>>. New displaycolumns leave it alone.
+            self._cells.clear()
         if given:
             # Columns, show, height, the border and padding all move what
             # the tree asks for; asking again for anything else is a no-op.
@@ -4886,6 +5279,24 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
 _POINTER_TAG_EVENTS = frozenset({"Button", "ButtonRelease", "Motion"})
 
 
+def _change_element(selected: list[str], column: str, op: str) -> bool:
+    """SelObjChangeElement: add, remove or toggle one column in a row's list.
+
+    ``set`` takes a column out and puts none in, as Tk's does with every
+    flag off. Only a rectangle passes it, and only for a row whose list
+    survived the clear before it, which none does; a list's ``set`` adds.
+    """
+    if column in selected:
+        if op == "add":
+            return False
+        selected.remove(column)
+        return True
+    if op in ("add", "toggle"):
+        selected.append(column)
+        return True
+    return False
+
+
 def _treeview_tag_event(sequence: str, event: Event) -> None:
     """Deliver one event to the tag bindings of the row it belongs to.
 
@@ -4931,9 +5342,94 @@ def _treeview_click(event: Event) -> Any:
     # widget receives keys. Without this the arrows never arrive and the tree
     # looks like it simply ignores them - reported from UAT 34.
     tree.focus_set()
-    tree.focus(iid)
-    tree.selection_set(iid)
+    _treeview_select(tree, iid, _treeview_cell_at(tree, event), "choose")
     return "break"
+
+
+def _treeview_cell_at(tree: Treeview, event: Event) -> tuple[str, str] | None:
+    """``ttk::treeview::IdentifyCell``: the cell under the pointer, only
+    when ``selecttype`` is ``cell``, its column a ``#n``."""
+    if tree.cget("selecttype") != "cell":
+        return None
+    cell = tree.identify("cell", event.x, event.y)
+    return cell if cell else None
+
+
+def _treeview_extend_click(event: Event) -> Any:
+    """Shift-click: ``ttk::treeview::Select`` with ``extend``."""
+    return _treeview_modified_click(event, "extend")
+
+
+def _treeview_toggle_click(event: Event) -> Any:
+    """Control-click: ``ttk::treeview::Select`` with ``toggle``."""
+    return _treeview_modified_click(event, "toggle")
+
+
+def _treeview_modified_click(event: Event, op: str) -> Any:
+    """``ttk::treeview::Select``: a row under the pointer, or nothing.
+
+    Unlike a plain click it neither takes the focus nor opens a branch.
+    """
+    tree = event.widget
+    if not isinstance(tree, Treeview):
+        return None
+    iid = tree.identify_row(event.y)
+    if iid:
+        _treeview_select(tree, iid, _treeview_cell_at(tree, event), op)
+    return "break"
+
+
+def _treeview_select(
+    tree: Treeview, item: str, cell: tuple[str, str] | None, op: str
+) -> None:
+    """``ttk::treeview::SelectOp``: ``choose``, ``extend`` or ``toggle``,
+    as ``selectmode`` has it - a row, or with ``cell`` a cell."""
+    mode = tree.cget("selectmode")
+    if mode == "none":
+        tree.focus(item)
+        tree.see(item)
+    elif mode == "browse" or op == "choose":
+        _treeview_browse_to(tree, item, cell)
+    elif op == "toggle":
+        if cell is not None:
+            tree.cellselection_toggle([cell])
+            tree._cell_anchor, tree._cell_anchor_op = cell, "add"
+        else:
+            tree.selection_toggle(item)
+    elif cell is not None:
+        anchor = tree._cell_anchor
+        if anchor is not None and tree.exists(anchor[0]):
+            tree._change_cells(tree._cell_anchor_op, anchor, cell)
+        else:
+            _treeview_browse_to(tree, item, cell)
+    elif tree.focus():
+        tree.selection_set(*_treeview_between(tree, tree.focus(), item))
+    else:
+        _treeview_browse_to(tree, item, cell)
+
+
+def _treeview_browse_to(
+    tree: Treeview, item: str, cell: tuple[str, str] | None
+) -> None:
+    """``ttk::treeview::BrowseTo``: show it, put the keyboard on it, and
+    select it alone - the row, or the cell, which becomes the anchor."""
+    tree.see(item)
+    tree.focus(item)
+    tree._cell_anchor, tree._cell_anchor_op = cell, "set"
+    if cell is not None:
+        tree.cellselection_set([cell])
+    else:
+        tree.selection_set(item)
+
+
+def _treeview_between(tree: Treeview, first: str, second: str) -> list[str]:
+    """``ttk::treeview::between``: the rows from one to the other in tree
+    order, either way round, closed branches included."""
+    order = tree._preorder()
+    if first not in order or second not in order:
+        return [second]
+    start, end = sorted((order.index(first), order.index(second)))
+    return order[start : end + 1]
 
 
 def _treeview_release(event: Event) -> None:
@@ -4978,9 +5474,44 @@ def _treeview_step(tree: Treeview, step: int) -> Any:
     place = rows.index(current) + step if current in rows else 0
     if not 0 <= place < len(rows):
         return "break"
-    tree.focus(rows[place])
-    tree.selection_set(rows[place])
-    tree.see(rows[place])
+    _treeview_select(tree, rows[place], _treeview_key_cell(tree, rows[place]), "choose")
+    return "break"
+
+
+def _treeview_key_cell(tree: Treeview, item: str) -> tuple[str, str] | None:
+    """The cell an arrow key selects on ``item``: the anchor's column, or
+    ``#1`` without one - ``ttk::treeview::Keynav``."""
+    if tree.cget("selecttype") != "cell":
+        return None
+    anchor = tree._cell_anchor
+    return (item, anchor[1] if anchor else "#1")
+
+
+def _treeview_move_column(tree: Treeview, step: int) -> Any:
+    """Left and Right under ``selecttype="cell"``: the column, not the branch.
+
+    ``ttk::treeview::Keynav``, but for one limit. Left stops at ``#0``, or
+    at ``#1`` without the tree column. Right stops at the last column, where
+    Tk's stops one short of it: Keynav compares with the column count less
+    one, so with three columns Tk reaches ``#2`` and never ``#3``. Measured
+    on Tk 9.0.2 with every column in view; the manual promises neither.
+    """
+    item = tree.focus()
+    if not item:
+        return "break"
+    column = _treeview_key_cell(tree, item)
+    assert column is not None
+    number = int(column[1][1:])
+    if step < 0:
+        first = 0 if tree._shows_tree else 1
+        if number > first:
+            number -= 1
+    else:
+        displayed = _as_words(tree.cget("displaycolumns"))
+        last = len(tree._column_names()) if displayed == ["#all"] else len(displayed)
+        if number < last:
+            number += 1
+    _treeview_select(tree, item, (item, f"#{number}"), "choose")
     return "break"
 
 
@@ -5019,10 +5550,13 @@ def _treeview_up(event: Event) -> Any:
 
 
 def _treeview_expand(event: Event) -> Any:
-    """Right opens the branch the keyboard is on."""
+    """Right opens the branch the keyboard is on, or with ``selecttype``
+    ``cell`` moves one column right."""
     tree = event.widget
     if not isinstance(tree, Treeview):
         return None
+    if tree.cget("selecttype") == "cell":
+        return _treeview_move_column(tree, 1)
     iid = tree.focus()
     if iid and tree._items[iid].children and not tree._items[iid].options["open"]:
         _treeview_toggle(tree, iid)
@@ -5030,10 +5564,13 @@ def _treeview_expand(event: Event) -> Any:
 
 
 def _treeview_collapse(event: Event) -> Any:
-    """Left closes the branch the keyboard is on."""
+    """Left closes the branch the keyboard is on, or with ``selecttype``
+    ``cell`` moves one column left."""
     tree = event.widget
     if not isinstance(tree, Treeview):
         return None
+    if tree.cget("selecttype") == "cell":
+        return _treeview_move_column(tree, -1)
     iid = tree.focus()
     if iid and tree._items[iid].options["open"]:
         _treeview_toggle(tree, iid)

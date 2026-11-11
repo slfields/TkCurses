@@ -7,6 +7,23 @@ All notable changes to TkCurses. The format follows
 ## [Unreleased]
 
 ### Added
+- ttk.Treeview's cell selection, from Tk 9.0: `selecttype="cell"` makes a
+  click, the arrow keys, Control-click and Shift-click select single cells
+  instead of rows, and `cellselection()`, `cellselection_set`, `_add`,
+  `_remove` and `_toggle` read and change it, a list of cells or a
+  rectangle between two. Selected cells are drawn reversed. Under
+  `selecttype="cell"` the Right arrow reaches the last column, where Tk
+  9.0.2's stops one short.
+- `tk.call(widget, "cellselection", ...)` and `tk.splitlist`, so a tkinter
+  program reaching the cell selection the only way tkinter can runs
+  unchanged. `tk.call` serves no other command yet, and says so.
+- A mark book example, `examples/marks.py`: cells selected in a Treeview
+  added up as they change. It runs under tkinter with the imports and one
+  line of sizes changed.
+- ttk.Progressbar's `phase`: counted up to the style's `maxphase` every
+  `period` milliseconds while the bar is indeterminate and its style sets a
+  period, as Tk 9.0.2 counts it for a theme to animate with. No built-in
+  theme sets one, so it stays 0 unless a program's style does.
 - `backgroundimage` (and its short spelling `bgimg`) and `tile` on Frame,
   Toplevel and the root: an image drawn behind a window's children, inside
   its border, repeated from the top left with `tile` on and centred once
@@ -97,6 +114,12 @@ All notable changes to TkCurses. The format follows
   back to be packed, gridded or placed, as in Tk. They raised `TclError`.
 
 ### Changed
+- ttk.Treeview's clicks and arrow keys follow `selectmode`, as in Tk: under
+  `none` they only move the keyboard's row, and under `extended`
+  Control-click toggles a row and Shift-click selects from the keyboard's row
+  to the one clicked. Every mode used to select the row clicked.
+- ttk.Treeview's `delete` sends `<<TreeviewSelect>>` when a row it deletes
+  was selected, as Tk does.
 - `Canvas.focus()` is the canvas's own `focus`, as in tkinter: it names the
   text item with the insertion cursor, and no longer gives the canvas the
   keyboard focus. Use `focus_set()` for that.

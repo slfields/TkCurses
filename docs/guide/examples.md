@@ -222,3 +222,21 @@ into the same image, and the frame repaints itself to follow.
 :size: 64x18
 ```
 
+## A mark book
+
+A Treeview with `selecttype="cell"`, which selects cells instead of rows:
+a click takes one, the arrow keys move from cell to cell, Control-click
+adds or removes one, and Shift-click takes the rectangle from the last
+one chosen. The line underneath adds up the marks each time
+`<<TreeviewSelect>>` arrives. Row and Column select a whole row or column
+as a rectangle between two corners.
+
+tkinter has no methods for the cell selection, so the program reaches Tk's
+`cellselection` command through `tree.tk.call`, as a tkinter program must.
+Change the imports to tkinter's and the sizes from characters to pixels,
+and it runs under tkinter too.
+
+```{tkcurses-example} examples/marks.py
+:size: 60x14
+```
+

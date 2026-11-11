@@ -4278,7 +4278,12 @@
    "value": "vertical"
   },
   "phase": {
-   "kind": "missing"
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
   },
   "style": {
    "kind": "visible",
@@ -4764,7 +4769,11 @@
    ]
   },
   "selecttype": {
-   "kind": "missing"
+   "kind": "invisible",
+   "state": "selected",
+   "tried": [
+    "cell"
+   ]
   },
   "show": {
    "kind": "visible",

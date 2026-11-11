@@ -43,8 +43,6 @@ RECORD = json.loads(
 #: against real tkinter keeps the same list.
 MISSING = {
     "OptionMenu": {"padding"},
-    "Progressbar": {"phase"},
-    "Treeview": {"selecttype"},
 }
 
 
