@@ -70,8 +70,9 @@ rows.
 
 Missing pieces are tracked as issues. The larger ones:
 
-- Some of Tk 9.0's options are refused by some widgets, both classic and
-  themed. Unknown options raise `TclError`, as Tk's do.
+- Two of Tk 9.0's themed options are refused: ttk.Progressbar's `phase`
+  and ttk.Treeview's `selecttype`. Every classic widget takes every option
+  Tk's does. Unknown options raise `TclError`, as Tk's do.
 - Some methods are missing: tear-off menus, the `Wm` icon family, the `busy`
   family, and the geometry managers' method aliases.
 - `tkinter.Tcl()` and `CallWrapper` are not provided: there is no Tcl

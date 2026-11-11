@@ -29,9 +29,10 @@ and this library refuses with ``unknown option``. The value passed is the real
 widget's own default, so a refusal of the VALUE is not a gap and is ignored.
 
 Measured on 2026-11-02 against Tcl/Tk 9.0.2: 224 gaps across nineteen widgets,
-none on the root window. Each is listed in :data:`KNOWN_GAPS` against the issue
-that owns it - ten children of TkCurses-gm66, plus three older issues - so the
-list can only shrink and a new gap fails the suite.
+none on the root window. Each was listed in :data:`KNOWN_GAPS` against the
+issue that owned it - the children of TkCurses-gm66, plus three older issues -
+and by 2026-11-11 every one was closed. The list stays, empty, so that a new
+gap fails the suite with somewhere to be recorded.
 
 Like the ttk comparison, this needs a display for real tkinter and is skipped
 without one, which includes CI.
@@ -62,9 +63,7 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
     "Canvas": {},
     "Checkbutton": {},
     "Entry": {},
-    "Frame": {
-        "TkCurses-yi4": "backgroundimage bgimg",
-    },
+    "Frame": {},
     "Label": {},
     "LabelFrame": {},
     "Listbox": {},
@@ -78,12 +77,8 @@ KNOWN_GAPS: dict[str, dict[str, str]] = {
     "Scrollbar": {},
     "Spinbox": {},
     "Text": {},
-    "Tk": {
-        "TkCurses-yi4": "backgroundimage bgimg",
-    },
-    "Toplevel": {
-        "TkCurses-yi4": "backgroundimage bgimg",
-    },
+    "Tk": {},
+    "Toplevel": {},
 }
 
 

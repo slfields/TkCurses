@@ -452,17 +452,22 @@ def test_activate_redraws(root):
 
 
 @pytest.mark.parametrize(
-    ("up", "down", "dims"),
+    ("up", "down", "element", "dims"),
     [
-        ("raised", "raised", (False, False)),
-        ("sunken", "raised", (True, False)),
-        ("ridge", "sunken", (False, True)),
+        ("raised", "raised", "none", (False, False)),
+        ("sunken", "ridge", "none", (False, False)),
+        ("sunken", "sunken", "buttondown", (False, True)),
+        ("raised", "raised", "buttonup", (True, False)),
     ],
 )
-def test_a_sunken_arrow_is_dim(root, up, down, dims):
+def test_only_the_pressed_arrow_is_dim(root, up, down, element, dims):
+    """``DisplayEntry`` in Tk 9.0.2's tkEntry.c draws an arrow sunken while
+    it is the selection element and raised otherwise; the code that would
+    draw ``buttonuprelief`` and ``buttondownrelief`` is under ``#if 0``."""
     spinbox = tkcurses.Spinbox(
         root, buttonuprelief=up, buttondownrelief=down, relief="flat"
     )
+    spinbox.selection_element(element)
     window = shown(spinbox, 8)
     assert text(window, 0, 8)[-2:] == "▲▼"
     assert (dim(window, 0, 6), dim(window, 0, 7)) == dims

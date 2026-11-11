@@ -5868,7 +5868,188 @@ _DISPATCH_BATCH = 64
 _active_root: Tk | None = None
 
 
-class Tk(BaseWidget, Wm):
+def _backdrop_cells(
+    image: Image, width: int, height: int, edge: int, tile: bool
+) -> dict[tuple[int, int], tuple[str, str, str | None]]:
+    """The cells a ``backgroundimage`` paints in a window of ``width`` by
+    ``height`` cells with ``edge`` cells of border, keyed by ``(column, row)``.
+
+    Follows ``DrawFrameBackground`` in Tk's tkFrame.c, in pixels - a cell is
+    one pixel wide and two tall, as everywhere an image is drawn. Tiled, the
+    first copy starts at the top left of the inside of the border and the
+    copies are cut off there. Centred, an image that fits is centred on the
+    whole window, border included; one that does not is cut to the inside of
+    the border, keeping its middle. Composed in the window's own pixels rather
+    than the image's, so an image centred on an odd pixel row pairs its rows
+    where they land.
+    """
+    image_width, image_height = image.width(), image.height()
+    across, down = width, height * ROWS_PER_CELL
+    left, top = edge, edge * ROWS_PER_CELL
+    inner_width, inner_height = across - 2 * left, down - 2 * top
+    if min(image_width, image_height, inner_width, inner_height) <= 0:
+        return {}
+    pixels: dict[tuple[int, int], str] = {}
+    if tile:
+        lit = image.lit(
+            (0, 0, min(image_width, inner_width), min(image_height, inner_height))
+        )
+        right, bottom = left + inner_width, top + inner_height
+        for x0 in range(left, right, image_width):
+            for y0 in range(top, bottom, image_height):
+                for (x, y), colour in lit.items():
+                    if x0 + x < right and y0 + y < bottom:
+                        pixels[(x0 + x, y0 + y)] = colour
+        return compose(pixels)
+
+    def fitted(inner: int, size: int, whole: int, start: int) -> tuple[int, int, int]:
+        # (first source pixel, how many, where they go): Tk's two branches.
+        if inner > size:
+            return 0, size, (whole - size) // 2
+        return (size - inner) // 2, inner, start
+
+    source_x, shown_x, at_x = fitted(inner_width, image_width, across, left)
+    source_y, shown_y, at_y = fitted(inner_height, image_height, down, top)
+    region = (source_x, source_y, source_x + shown_x, source_y + shown_y)
+    for (x, y), colour in image.lit(region).items():
+        pixels[(at_x + x - source_x, at_y + y - source_y)] = colour
+    return compose(pixels)
+
+
+def _repaint_backdrop_when_collected(reference: weakref.ref[Any]) -> None:
+    """Repaint the window behind ``reference``, its background image gone.
+
+    Module level and weak for the reason
+    :func:`_repaint_when_image_is_collected` gives.
+    """
+    widget = reference()
+    if widget is not None and widget.winfo_exists():
+        widget._repaint_backdrop()
+
+
+# The mixin is typed as the widget it is mixed into; at run time it is a
+# plain class, so the MRO of Frame, Toplevel and Tk is unchanged.
+if TYPE_CHECKING:
+    _BackdropBase = BaseWidget
+else:
+    _BackdropBase = object
+
+
+class _Backdrop(_BackdropBase):
+    """``backgroundimage`` and ``tile``, shared by the frame, the toplevel
+    and the root - the three windows Tk gives the option to.
+
+    Tk's labelframe has neither ``backgroundimage`` nor ``bgimg``, so
+    LabelFrame, built on Frame here, hides them from a program.
+    """
+
+    #: ``bgimg`` is Tk's own short spelling of the option.
+    _option_synonyms: ClassVar[dict[str, str]] = {
+        **_OPTION_ALIASES,
+        "bgimg": "backgroundimage",
+    }
+
+    #: The image the option names and is listening to, kept by NAME, as a
+    #: Label's is: holding the object would make the window its image's owner.
+    _backdrop_watched: str = ""
+    _backdrop_finalizer: weakref.finalize[Any, None] | None = None
+    #: The last cells composed, and what they were composed for: a whole
+    #: window of pixels is too much to fold again on every repaint.
+    _backdrop_cache: tuple[tuple[Any, ...], dict[Any, Any]] | None = None
+
+    def _checked(self, given: dict[str, Any]) -> dict[str, Any]:
+        """The shared checks, and Tk's for the background image.
+
+        Tk looks the image up again on every configure that sets anything,
+        not only when the option changes. Measured on Tk 9.0.2: once a
+        frame's image has been deleted, ``configure(width=10)`` is refused
+        with ``image "pyimage1" does not exist`` and nothing changes, and
+        ``configure(backgroundimage="")`` is what lets the frame be
+        configured again.
+        """
+        resolved = super()._checked(given)
+        if not given or "backgroundimage" not in self._public_options():
+            return resolved
+        if "backgroundimage" in resolved:
+            # The name, which is what Tk stores: cget answers 'pyimage1' for
+            # an image passed as an object.
+            resolved["backgroundimage"] = str(resolved["backgroundimage"] or "")
+            name = resolved["backgroundimage"]
+        else:
+            name = str(getattr(self, "_options", {}).get("backgroundimage") or "")
+        if name and self.tk.images.get(name) is None:
+            raise TclError(f'image "{name}" does not exist')
+        return resolved
+
+    def _follow_backdrop(self) -> None:
+        """Listen to the background image, dropping any previous one."""
+        previous = self.tk.images.get(self._backdrop_watched)
+        if previous is not None:
+            previous._unwatch(self)
+        if self._backdrop_finalizer is not None:
+            self._backdrop_finalizer.detach()
+            self._backdrop_finalizer = None
+        self._backdrop_watched = ""
+        self._backdrop_cache = None
+        name = str(self._options.get("backgroundimage") or "")
+        image = self.tk.images.get(name) if name else None
+        if image is None:
+            return
+        image._watch(self, self._backdrop_image_changed)
+        self._backdrop_watched = name
+        self._backdrop_finalizer = weakref.finalize(
+            image, _repaint_backdrop_when_collected, weakref.ref(self)
+        )
+
+    def _backdrop_image_changed(self) -> None:
+        """Repaint after the image moved. The window keeps its size: Tk's
+        frame asks for none on its image's account."""
+        self._backdrop_cache = None
+        self._repaint_backdrop()
+
+    def _repaint_backdrop(self) -> None:
+        """Paint the window again; the root paints the screen instead."""
+        self._redraw()
+
+    def _backdrop(
+        self, width: int, height: int, edge: int
+    ) -> dict[tuple[int, int], tuple[str, str, str | None]]:
+        """The cells the background image paints, or none."""
+        name = str(self._options.get("backgroundimage") or "")
+        image = self.tk.images.get(name) if name else None
+        if image is None:
+            return {}
+        tile = bool(self._options.get("tile"))
+        key = (id(image), width, height, edge, tile)
+        cached = self._backdrop_cache
+        if cached is None or cached[0] != key:
+            cached = (key, _backdrop_cells(image, width, height, edge, tile))
+            self._backdrop_cache = cached
+        return cached[1]
+
+    def _paint_backdrop(
+        self, dispatcher: CursesDispatcher, window: Any, edge: int, background: str
+    ) -> None:
+        """Paint the background image into ``window``, inside ``edge``.
+
+        Through curses only, never the direct painter a Label's image also
+        uses: that writes over everything after curses has finished, and a
+        background is the one image that has windows in front of it.
+        """
+        rect = self._rect
+        colors = self.tk.colors
+        for (column, row), (glyph, fore, back) in self._backdrop(
+            rect.width, rect.height, edge
+        ).items():
+            attribute = (
+                _curses.A_NORMAL
+                if colors is None
+                else colors.attribute_for(fore, back or background)
+            )
+            self._write_line(dispatcher, window, row, column, glyph, attribute)
+
+
+class Tk(_Backdrop, BaseWidget, Wm):
     """The application: its main window, and the event loop that drives
     everything.
 
@@ -5887,7 +6068,10 @@ class Tk(BaseWidget, Wm):
         The main window is the whole terminal: its size is the terminal's,
         and it has no title bar, so a title is kept and not shown.
         ``background`` is empty until set, which leaves the terminal's own
-        colour showing, where Tk's root starts with a light grey.
+        colour showing, where Tk's root starts with a light grey. A
+        ``backgroundimage`` fills the screen behind every window, as
+        :class:`Frame` describes; the root draws no border, so it starts at
+        the top left corner.
     """
 
     _is_toplevel = True
@@ -5902,6 +6086,7 @@ class Tk(BaseWidget, Wm):
     #: root is the terminal, whose size is the person's to set. TkCurses-gm66.7.
     _widget_options: ClassVar[dict[str, Any]] = {
         **_WINDOW_SYSTEM_OPTIONS,
+        "backgroundimage": "",
         "height": 0,
         "menu": None,
         "screen": "",
@@ -6647,7 +6832,9 @@ class Tk(BaseWidget, Wm):
         """Set options, painting the screen if the background changed."""
         given = {self._option_synonyms.get(key, key) for key in _given(cnf, kw)}
         result = super().configure(cnf, **kw)
-        if "background" in given:
+        if "backgroundimage" in given:
+            self._follow_backdrop()
+        if given & {"background", "backgroundimage", "tile"}:
             self._paint_background()
         if given & _INSET_OPTIONS:
             self._invalidate_layout()
@@ -6669,11 +6856,23 @@ class Tk(BaseWidget, Wm):
         if screen is None or not self._started:
             return
         background = str(self._options["background"] or "")
-        if not background and not self._background_painted:
-            return
         buffer = screen.buffer
+        # The root draws no border, so its image starts at the corner. The
+        # screen buffer takes colours, not attributes, and has no direct
+        # painter in front of it to bypass.
+        cells = self._backdrop(buffer.width, buffer.height, 0)
+        if not background and not cells and not self._background_painted:
+            return
         buffer.fill(buffer.bounds, bg=background or "black")
-        self._background_painted = bool(background)
+        for (column, row), (glyph, fore, back) in cells.items():
+            buffer.write(row, column, glyph, fg=fore, bg=back or background or "black")
+        self._background_painted = bool(background or cells)
+
+    def _repaint_backdrop(self) -> None:
+        """Paint the screen again: the root's background is the screen's."""
+        self._paint_background()
+        if self.tk.panels is not None:
+            self.tk.panels.touch_all()
 
     def _handle_resize(self) -> None:
         """Take the terminal's new size and tell the tree about it.
@@ -6921,7 +7120,7 @@ def _write_to_stderr(text: str) -> None:
         sys.stderr.flush()
 
 
-class Toplevel(BaseWidget, Wm):
+class Toplevel(_Backdrop, BaseWidget, Wm):
     """A window of its own, drawn over the main window.
 
     A terminal has no window manager to give a window its frame, title bar
@@ -6937,6 +7136,9 @@ class Toplevel(BaseWidget, Wm):
         top.geometry("24x6+10+3")
         tk.Label(top, text="A second window").pack()
         tk.Button(top, text="Close", command=top.destroy).pack()
+
+    It takes ``backgroundimage`` and ``tile`` as :class:`Frame` describes
+    them, and draws the image inside its border.
 
     Differences from tkinter:
         A toplevel is always inside the terminal, and its title is drawn on
@@ -6970,6 +7172,7 @@ class Toplevel(BaseWidget, Wm):
 
     _widget_options: ClassVar[dict[str, Any]] = {
         **_WINDOW_SYSTEM_OPTIONS,
+        "backgroundimage": "",
         "borderwidth": 1,
         "height": 0,
         "menu": None,
@@ -7005,6 +7208,7 @@ class Toplevel(BaseWidget, Wm):
         self._drag_origin: tuple[int, int, int, int] | None = None
         super().__init__(master, cnf, name=name, **kw)
         self._options["class"] = self.winfo_class()
+        self._follow_backdrop()
         self._setup_wm()
         self._allocate(self._default_rect())
         self._map()
@@ -7065,6 +7269,8 @@ class Toplevel(BaseWidget, Wm):
         """Set options, resizing the window if its size options changed."""
         given = _given(cnf, kw)
         result = super().configure(cnf, **kw)
+        if "backgroundimage" in {self._option_synonyms.get(key, key) for key in given}:
+            self._follow_backdrop()
         if given and {"width", "height"} & set(given):
             self._allocate(self._default_rect())
         elif given:
@@ -7109,6 +7315,8 @@ class Toplevel(BaseWidget, Wm):
             if self._bordered:
                 dispatcher.call(window.border)
                 self._draw_title(dispatcher, window)
+            edge = BORDER_WIDTH if self._bordered else 0
+            self._paint_backdrop(dispatcher, window, edge, background or "black")
 
     def _draw_title(self, dispatcher: CursesDispatcher, window: Any) -> None:
         """Write the title into the top border, centred and truncated.
@@ -7750,7 +7958,7 @@ def _one_cell_each(text: str) -> str:
     )
 
 
-class Frame(_Drawable):
+class Frame(_Backdrop, _Drawable):
     """A container: a rectangle of background, an optional border, and
     somewhere to put other widgets.
 
@@ -7765,13 +7973,32 @@ class Frame(_Drawable):
         tk.Label(frame, text="Inside a frame").pack()
         tk.Button(frame, text="OK").pack()
 
+    Sample output (backgroundimage, tile):
+        # size: 40x8
+        squares = tk.PhotoImage(width=4, height=2)
+        squares.put("navy", to=(0, 0, 4, 2))
+        squares.put("teal", to=(0, 0, 2, 1))
+        squares.put("teal", to=(2, 1, 4, 2))
+        frame = tk.Frame(root, width=30, height=6, relief="solid", bd=1,
+                         backgroundimage=squares, tile=True)
+        frame.pack()
+        tk.Label(frame, text="Over the tiles").place(x=8, y=2)
+
     Options:
+        backgroundimage: An image drawn behind the frame's children, inside
+            its border, or ``""`` for none. Also spelled ``bgimg``. It must
+            exist when it is set, and while the image it names has been
+            deleted every configure that sets something is refused, until
+            this is set again. It does not change the frame's size.
         class: The class name bindings and the option database know the frame
             by. It cannot be changed once the frame is made.
         colormap: An X colormap, in Tk. Checked as Tk checks it, and kept.
         container: Whether another application's window is embedded in it.
             Kept; nothing can be embedded in a terminal.
-        tile: Accepted and kept.
+        tile: How ``backgroundimage`` is drawn: true repeats it across the
+            inside of the border from its top left corner, false (the
+            default) centres one copy, cutting it at the border if it is too
+            big.
         visual: An X visual, in Tk. Checked as Tk checks it, and kept.
 
     Standard options, described in :doc:`/reference/options`:
@@ -7780,9 +8007,13 @@ class Frame(_Drawable):
     ``padx``, ``pady``, ``relief``, ``takefocus``, ``width``.
 
     Differences from tkinter:
-        ``class``, ``colormap``, ``container``, ``tile`` and ``visual`` are
-        about an X window and change nothing in a terminal; each is checked and
-        read back as Tk does. ``highlightbackground``, ``highlightcolor`` and
+        ``class``, ``colormap``, ``container`` and ``visual`` are about an X
+        window and change nothing in a terminal; each is checked and read back
+        as Tk does. A ``backgroundimage`` is drawn a pixel to a cell across and
+        two to a cell down, as every image is, and in the nearest colours the
+        terminal's colour pairs give: a Label's image can be painted in exact
+        colour over the screen, but a background has the frame's children in
+        front of it. ``highlightbackground``, ``highlightcolor`` and
         ``highlightthickness`` are accepted and draw nothing: the focus is shown
         by markers instead. So is ``cursor``: the mouse pointer belongs to the
         terminal.
@@ -7796,6 +8027,7 @@ class Frame(_Drawable):
 
     _widget_options: ClassVar[dict[str, Any]] = {
         **_WINDOW_SYSTEM_OPTIONS,
+        "backgroundimage": "",
         "height": 0,
         "tile": 0,
         "width": 0,
@@ -7826,6 +8058,7 @@ class Frame(_Drawable):
         super().__init__(master, cnf, name=name, **kw)
         if not _is_ttk(self):
             self._options["class"] = self.winfo_class()
+        self._follow_backdrop()
         self._apply_requested_size()
 
     def winfo_class(self) -> str:
@@ -7838,6 +8071,8 @@ class Frame(_Drawable):
         result = super().configure(cnf, **kw)
         if not given:
             return result
+        if "backgroundimage" in {self._option_synonyms.get(key, key) for key in given}:
+            self._follow_backdrop()
         if {"width", "height"} & set(given):
             self._apply_requested_size()
         self._invalidate_layout()
@@ -7882,6 +8117,9 @@ class Frame(_Drawable):
             dispatcher.call(window.erase)
             if self._border_drawn:
                 self._draw_border(dispatcher, window, width, height, attribute)
+            edge = BORDER_WIDTH if self._border_drawn else 0
+            background = str(self._options["background"] or "black")
+            self._paint_backdrop(dispatcher, window, edge, background)
 
 
 def _repaint_when_image_is_collected(reference: weakref.ref[Any]) -> None:
@@ -11908,7 +12146,6 @@ class LabelFrame(Frame):
             ``ne`` along the top, ``sw``, ``s``, ``se`` along the bottom, or
             ``wn``, ``w``, ``ws``, ``en``, ``e``, ``es`` on the sides.
         labelwidget: A widget to use as the caption instead of ``text``.
-        tile: Accepted and kept.
         visual: An X visual, in Tk. Checked as Tk checks it, and kept.
 
     Standard options, described in :doc:`/reference/options`:
@@ -11951,6 +12188,17 @@ class LabelFrame(Frame):
         "s": ("bottom", "centre"),
         "se": ("bottom", "right"),
     }
+
+    #: Tk's labelframe has no background image, so no ``bgimg`` and no
+    #: ``tile`` either: measured on Tk 9.0.2, all three are
+    #: ``unknown option``.
+    _option_synonyms: ClassVar[dict[str, str]] = _OPTION_ALIASES
+
+    @classmethod
+    def _public_options(cls) -> Collection[str]:
+        """Frame's, less the background image Tk's labelframe lacks."""
+        hidden = ("backgroundimage", "tile")
+        return [name for name in super()._public_options() if name not in hidden]
 
     _widget_options: ClassVar[dict[str, Any]] = {
         "borderwidth": 2,  # Tk's default
@@ -12319,8 +12567,9 @@ class Spinbox(Entry):
     Options:
         buttonbackground: The colour of the arrows.
         buttoncursor: The mouse pointer over the arrows.
-        buttondownrelief: The relief of the down arrow.
-        buttonuprelief: The relief of the up arrow.
+        buttondownrelief: Accepted and kept. Tk draws the down arrow raised,
+            and sunken while it is pressed, whatever this says.
+        buttonuprelief: Accepted and kept, as ``buttondownrelief`` is.
         command: Called with no arguments when an arrow is used.
         disabledbackground: The background while ``state`` is ``disabled``.
         format: How a number is written, as ``%5.2f``.
@@ -12364,9 +12613,8 @@ class Spinbox(Entry):
         by markers instead. So is ``cursor``: the mouse pointer belongs to the
         terminal.
 
-    Sample output (buttonbackground, buttonuprelief, buttondownrelief):
-        tk.Spinbox(root, from_=0, to=5, width=6, buttonbackground="blue",
-                   buttonuprelief="raised", buttondownrelief="sunken").pack()
+    Sample output (buttonbackground):
+        tk.Spinbox(root, from_=0, to=5, width=6, buttonbackground="blue").pack()
 
     Sample output (disabledbackground, readonlybackground):
         for state, colour in (("disabled", "red"), ("readonly", "blue")):
@@ -12664,11 +12912,12 @@ class Spinbox(Entry):
 
     def _arrow_relief(self, element: str) -> str:
         """How an arrow is drawn: sunken while it is the selection element,
-        as ``DisplayEntry`` in Tk's ``tkEntry.c`` draws it, and otherwise in
-        its ``buttonuprelief`` or ``buttondownrelief``."""
+        and raised otherwise, as ``DisplayEntry`` in Tk's ``tkEntry.c``
+        draws it. ``buttonuprelief`` and ``buttondownrelief`` play no part:
+        the code there that would draw them is under ``#if 0`` in Tk 9.0.2."""
         if getattr(self, "_selected_element", "none") == element:
             return SUNKEN
-        return str(self._options[f"{element}relief"])
+        return RAISED
 
     def selection_element(self, element: Any = None) -> Any:
         """The arrow drawn pressed, or name one: buttonup, buttondown or none.

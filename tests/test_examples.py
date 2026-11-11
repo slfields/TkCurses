@@ -55,7 +55,7 @@ def test_every_example_is_on_the_page_and_nothing_else_is():
     shown = DIRECTIVE.findall(PAGE.read_text())
     files = sorted(f"examples/{path.name}" for path in EXAMPLES.glob("*.py"))
     assert sorted(shown) == files
-    assert len(files) == 13
+    assert len(files) == 14
 
 
 def test_every_example_carries_the_notice():
@@ -531,3 +531,33 @@ def test_the_recipe_scales_ticks_and_clears(terminal, tmp_path):
     row, column = term.find_text("Clear the ticks")
     term.click(column + 1, row)
     term.wait_for_text("[ ] 375 g plain flour")
+
+
+def test_the_wallpaper_tiles_centres_and_recolours(terminal, tmp_path):
+    """Tiled, the pattern covers the desktop; untiled, one copy sits in the
+    middle; Colours repaints it through the image, and a pattern changes."""
+    term = start(terminal, tmp_path, "wallpaper", cols=64, rows=18)
+    term.wait_for_text("tiled")
+    # Inside the desktop's border, at its top left: the first brick.
+    row, column = 1, term.display[0].index("┌") + 1
+    term.wait_for_cell(row, column, lambda cell: cell.data == "█", message="a brick")
+    before = term.char_at(row, column).fg
+    tile_row, tile_column = term.find_text("Tile")
+    term.click(tile_column, tile_row)
+    term.wait_for_text("centred")
+    term.wait_for(
+        lambda t: t.char_at(row, column).data == " " and "████████" in t.display[9],
+        message="no tiles, and one copy in the middle",
+    )
+    row, column = term.find_text("Colours")
+    term.click(column, row)
+    term.wait_for(
+        lambda t: any(
+            t.char_at(9, c).data == "█" and t.char_at(9, c).fg != before
+            for c in range(64)
+        ),
+        message="the copy in the next colours",
+    )
+    row, column = term.find_text("Checks")
+    term.click(column, row)
+    term.wait_for_text("Checks, 8x4")

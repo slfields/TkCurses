@@ -55,7 +55,9 @@ Checkbutton with no indicator.
 - [ ] **toggle**, off: a groove box, its `offrelief`. Click it: a **dim**
       box, sunken, as Tk draws an indicatorless button that is on. Click
       again: groove again
-- [ ] The Spinbox's **▲** is dim and its ▼ is not: `buttonuprelief=sunken`
+- [ ] The Spinbox's **▲** and **▼** both look raised, although it is made
+      with `buttonuprelief=sunken`: Tk draws neither option. Hold ▲ down: it
+      goes **dim** while held, as Tk sinks a pressed arrow
 
 ## Holding a button down
 

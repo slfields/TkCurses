@@ -3723,9 +3723,10 @@ into `tests/support/tk_ttk_options.json`. A themed widget that needs a
 classic default other than the classic widget's declares it in its own
 `_widget_options` - the constructor would refuse it through `kw`.
 
-`bgimg` is the one synonym not offered, because `-backgroundimage` does not
-exist here yet (`TkCurses-yi4`); a synonym for a missing option would only
-raise with a more confusing message.
+`bgimg` was the last synonym offered, with `-backgroundimage` itself
+(`TkCurses-yi4`): a synonym for a missing option would only have raised with
+a more confusing message. Frame, Toplevel and the root have it; LabelFrame,
+built on Frame here, hides it, as Tk's labelframe has neither.
 
 So the underscore is stripped on the keyword path only, in `_keyword_option`,
 and `cget` resolves synonyms alone. Widgets with a range — `Scale`, `Spinbox`,
@@ -4182,8 +4183,7 @@ Container widget.
 **The window-system options are kept, and the ones Tk fixes stay fixed**
 (`TkCurses-gm66.7`). Frame, LabelFrame, Toplevel and the root take `class`,
 `colormap`, `container` and `visual`; Toplevel and the root also take `screen`
-and `use`; Frame, Toplevel and the root take `tile`; Listbox and Text take
-`setgrid`. Each is about an X window and changes nothing in a terminal. Each
+and `use`; Listbox and Text take `setgrid`. Each is about an X window and changes nothing in a terminal. Each
 is checked as Tk 9.0.2 checks it, kept and read back:
 
 | Option | Tk 9.0.2, measured | Here |
@@ -4193,7 +4193,7 @@ is checked as Tk 9.0.2 checks it, kept and read back:
 | `colormap` | `""`, `new`, or an existing window; `NEW` is `bad window path name` | the same |
 | `use` | a window id to embed in; one that does not exist is `couldn't create child of window` | only `""`: a terminal has no window to embed in |
 | `screen` | a display; one that cannot be reached is `couldn't connect to display` | kept as given: there is one terminal |
-| `container`, `tile`, `setgrid` | booleans | kept. A terminal is already gridded in characters, so `setgrid` has nothing to change |
+| `container`, `setgrid` | booleans | kept. A terminal is already gridded in characters, so `setgrid` has nothing to change |
 | the root's `width`, `height` | a screen distance, -5 reading back 0 | kept: the root is the terminal, whose size is the person's |
 
 **Six cannot change after creation**: `class`, `colormap`, `container`,
@@ -4203,6 +4203,39 @@ is checked as Tk 9.0.2 checks it, kept and read back:
 class's `_creation_only`. ttk widgets are outside it: ttk's `-class` is `""`
 by default and refuses only a *different* value, with `attempt to change
 read-only option`.
+
+**`backgroundimage` and `tile` draw** (`TkCurses-yi4`), on Frame, Toplevel and
+the root, through the `_Backdrop` mixin; LabelFrame hides both, and `bgimg`,
+because Tk's labelframe has none of them. Where the image goes follows
+`DrawFrameBackground` in Tk 9.0.2's tkFrame.c, worked in pixels - one column
+by half a row, as every image here - and composed in the window's own pixels,
+so a centred image landing on an odd pixel row pairs its rows where it lands:
+
+| | Tk 9.0.2 | Here |
+|-|----------|------|
+| `tile` on | copies from the top left of the inside of the border (highlight ring and `borderwidth`), cut off at its far edges | the same, inside the border drawn (one cell, or none); the highlight ring draws nothing here |
+| `tile` off, image fits | centred on the **whole window**, border included: `(width - imagewidth) / 2` | the same |
+| `tile` off, image too big | its middle, cut to the inside of the border | the same |
+| children | drawn over it | the same: they are panels in front |
+| size | the frame asks for none on the image's account | the same |
+
+Measured through tkinter, and not in the manual:
+
+| What | Tk 9.0.2 | Here |
+|------|----------|------|
+| an image passed as an object | read back as its name, `pyimage1` | the same |
+| an unknown name | `image "nosuch" does not exist`, the old value kept | the same, refused in `_checked` before anything is stored |
+| the image deleted while shown | every `configure` that sets something is refused with `image "pyimage1" does not exist` and changes nothing, because `ConfigureFrame` calls `Tk_GetImage` each time; `configure(backgroundimage="")` clears it | the same. Asking, `configure("width")`, is not refused |
+
+The root has no curses window: it paints the image into the screen buffer
+behind every panel, from the top left corner, as it paints its `background`.
+A background image goes through curses' colour pairs only, never the direct
+painter a Label's image uses for exact colour: that writes after curses has
+finished, over everything, and a background is the one image with windows in
+front of it. Filling the screen also found that its last cell, written with
+`insch` to keep curses from scrolling, raised `OverflowError` for anything
+past ASCII - `insch` takes a chtype - so the corner now takes `insstr` for
+those.
 
 ---
 
@@ -4704,7 +4737,7 @@ the part as it was.
 | `sliderlength` (Scale) | the handle's length in cells |
 | `sliderrelief` (Scale) | the handle, dim while sunken; a press on the handle sinks it, `raised` to `sunken` and `ridge` to `groove` (`tk::ScaleButtonDown`), and the release restores it |
 | `activerelief` (Scrollbar) | the active element, dim while sunken; a press sinks it and the release restores it (`tk::ScrollButtonDown` / `ScrollButtonUp`) |
-| `buttonuprelief`, `buttondownrelief` (Spinbox) | each arrow, dim while sunken |
+| `buttonuprelief`, `buttondownrelief` (Spinbox) | stored only. `DisplayEntry` in Tk 9.0.2's tkEntry.c draws each arrow raised, and sunken while it is the selection element; the code that would draw these two is under `#if 0`. So does this, dim while sunken (`TkCurses-gbzu`) |
 | `activerelief` (Menu) | the active entry, dim while sunken |
 | `activeborderwidth` (Menu), `elementborderwidth` (Scrollbar) | stored only: an entry or an element is one row |
 | `buttoncursor` (Spinbox) | stored only, as `cursor` is: a terminal has no pointer shapes |

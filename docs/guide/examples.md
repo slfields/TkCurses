@@ -1,6 +1,6 @@
 # Examples
 
-Thirteen complete programs, each a single file in the
+Fourteen complete programs, each a single file in the
 [`examples`](https://github.com/slfields/TkCurses/tree/master/examples)
 directory. Run one from a checkout with:
 
@@ -209,3 +209,16 @@ Give it a PNG, GIF or PPM file and it shows that instead:
 largest size that keeps the picture's proportions, `resize` resamples it
 to that, and `fit_pairs` reduces its colours, only if it has to, to the
 colour pairs the terminal has left.
+
+## Wallpaper
+
+A Frame's `backgroundimage`: a small pattern drawn into a PhotoImage with
+`put`, repeated across the inside of the frame's border while `tile` is on
+and centred once while it is off. The label in the corner is the frame's
+child, so it is drawn in front of the pattern. Colours puts new colours
+into the same image, and the frame repaints itself to follow.
+
+```{tkcurses-example} examples/wallpaper.py
+:size: 64x18
+```
+

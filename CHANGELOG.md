@@ -7,6 +7,15 @@ All notable changes to TkCurses. The format follows
 ## [Unreleased]
 
 ### Added
+- `backgroundimage` (and its short spelling `bgimg`) and `tile` on Frame,
+  Toplevel and the root: an image drawn behind a window's children, inside
+  its border, repeated from the top left with `tile` on and centred once
+  with it off, as Tk 9.0.2 draws it. An unknown image is refused and the
+  old one kept, and while the image is deleted every configure is refused
+  until the option is cleared, as in Tk. LabelFrame has neither, as Tk's
+  labelframe has neither.
+- A wallpaper example, `examples/wallpaper.py`: patterns drawn into a
+  PhotoImage as a frame's background, tiled or centred, recoloured in place.
 - Text's embedded windows and images: `window_create` and `image_create`,
   with `window_cget`, `window_configure`, `window_names`, `image_cget`,
   `image_configure` and `image_names`, measured against Tk 9.0.2. Each
@@ -97,6 +106,12 @@ All notable changes to TkCurses. The format follows
   "name": no such variable`), as tkinter does; it returned `None`.
 
 ### Fixed
+- A character past ASCII in the screen's bottom right cell ended the
+  program with `OverflowError`; it is drawn now.
+- tk.Spinbox drew each arrow in its `buttonuprelief` or `buttondownrelief`.
+  Tk draws neither option: an arrow is raised, and sunken while pressed. So
+  is it here now; both options are still taken and read back.
+- tk.LabelFrame took `tile`, which Tk's labelframe does not have.
 - `Text.yview` takes Tk's older form, `yview(index)` and
   `yview("-pickplace", index)`, as Tk 9.0.2 does: an index puts its display
   line at the top, a whole number is a line counted from 0, and

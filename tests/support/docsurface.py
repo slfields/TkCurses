@@ -408,11 +408,17 @@ def borrowed_methods() -> dict[type, list[str]]:
 
 
 def widget_options(cls: type) -> set[str]:
-    """Every option the widget takes."""
+    """Every option the widget takes: those it declares, less any a classic
+    widget keeps from its base class and refuses, as LabelFrame does Frame's
+    ``backgroundimage``. A themed widget's are all of them: its rules compare
+    them with Tk's names separately."""
     options: dict[str, Any] = {}
     for klass in reversed(cls.__mro__):
         options.update(vars(klass).get("_widget_options", {}) or {})
-    return set(options)
+    public = getattr(cls, "_public_options", None)
+    if public is None or cls.__module__ == "tkcurses.ttk":
+        return set(options)
+    return set(options) & set(public())
 
 
 def options_page_samples() -> set[str]:

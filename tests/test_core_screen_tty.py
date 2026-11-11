@@ -154,6 +154,33 @@ def test_the_bottom_right_cell_can_be_written(terminal, tmp_path):
         message="the corner cell and the filled first row",
     )
     assert term.display[4][19] == "X"
+
+
+def test_the_bottom_right_cell_takes_a_character_past_ascii(terminal, tmp_path):
+    """insch takes a chtype, and a half block is past a byte: it raised
+    OverflowError, which ended the program, until the corner went through
+    insstr for anything but ASCII."""
+    term = terminal(cols=20, rows=5)
+    term.run_source(
+        """
+        from tkcurses._core.screen import CursesScreen
+
+        screen = CursesScreen()
+        buffer = screen.start()
+        try:
+            buffer.fill(buffer.bounds, ".")
+            buffer.write(buffer.height - 1, buffer.width - 1, "\u2588")
+            screen.refresh()
+            screen.stdscr.getch()
+        finally:
+            screen.stop()
+        """,
+        workdir=tmp_path,
+    )
+    term.wait_for(
+        lambda t: t.display[4][19] == "\u2588" and t.display[0] == "." * 20,
+        message="the corner cell and the filled first row",
+    )
     assert term.display[0] == "." * 20
     term.send_keys("q")
 

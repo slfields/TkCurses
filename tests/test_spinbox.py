@@ -658,7 +658,7 @@ def test_the_selection_element_is_none_until_one_is_named(root):
     spin.selection_element("buttonup")
     assert spin.selection_element() == "buttonup"
     assert spin._arrow_relief("buttonup") == "sunken"
-    assert spin._arrow_relief("buttondown") == spin.cget("buttondownrelief")
+    assert spin._arrow_relief("buttondown") == "raised"
 
 
 @pytest.mark.parametrize(

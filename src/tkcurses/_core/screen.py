@@ -692,8 +692,12 @@ class CursesScreen:
                     if row == last_row and col == last_col:
                         # Writing the last cell scrolls the screen and raises;
                         # insch puts the character there without advancing.
+                        # ASCII only: insch takes a chtype, and anything past
+                        # a byte - a half block from a background image
+                        # filling the screen - raises OverflowError rather
+                        # than curses.error, which nothing here catches.
                         with contextlib.suppress(curses.error):
-                            if single:
+                            if single and char.isascii():
                                 stdscr.insch(row, col, char, attr)
                             else:
                                 stdscr.insstr(row, col, char, attr)

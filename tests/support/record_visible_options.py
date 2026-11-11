@@ -261,7 +261,7 @@ def setup_for(option: str) -> str:
 BOOLEANS = {
     "indicatoron", "showvalue", "showhandle", "opaqueresize", "exportselection",
     "setgrid", "takefocus", "undo", "autoseparators", "blockcursor", "jump",
-    "container", "tearoff", "striped",
+    "container", "tearoff", "striped", "tile",
 }  # fmt: skip
 
 #: Content an option needs before it can show: alignment needs room to move
@@ -282,6 +282,10 @@ NEEDS = {
     # Checkbutton and Radiobutton have no border by default here.
     "offrelief": {"indicatoron": 0, "borderwidth": 1},
     "tabstyle": {"tabs": "3"},
+    # A background image needs a window bigger than itself to be centred
+    # or tiled in, and tiling needs the image.
+    "backgroundimage": {"width": 10, "height": 4},
+    "tile": {"backgroundimage": "IMAGE", "width": 10, "height": 4},
 }
 
 COLOURS = ("red",)
@@ -311,7 +315,7 @@ def candidates(option: str, default: object) -> list[object]:
         values = [0, 2]
     elif name == "font":
         values = ["TkDefaultFont 10 bold", "TkFixedFont 10 underline"]
-    elif name == "image":
+    elif name in ("image", "backgroundimage"):
         values = ["IMAGE"]
     elif name in ("selectimage", "tristateimage"):
         values = ["IMAGE2"]
@@ -453,6 +457,11 @@ def measure(widget: str) -> dict[str, object]:
         for option in sorted(tk_has - set(options)):
             result[option] = {"kind": "missing"}
         options = {k: v for k, v in options.items() if k in tk_has}
+    else:
+        # Less any a classic widget keeps from its base and refuses, as
+        # LabelFrame does Frame's backgroundimage and tile.
+        public = set(cls._public_options())
+        options = {k: v for k, v in options.items() if k in public}
     variants: list[tuple[dict[str, object], str]] = []
     plan: dict[str, list[tuple[int, int, object, str]]] = {}
     for option in sorted(options):

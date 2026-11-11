@@ -71,6 +71,7 @@ def build(root, screen):
         from_=0,
         to=999,
         width=8,
+        # Tk draws no arrow in its relief option: this changes nothing.
         buttonuprelief="sunken",
         repeatdelay=400,
         repeatinterval=100,

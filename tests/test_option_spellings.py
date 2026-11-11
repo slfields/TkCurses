@@ -185,15 +185,15 @@ def test_the_widgets_without_a_range_have_no_from_option(name, our_root, real_ro
 #: Synonyms whose target option this library does not have yet, so the synonym
 #: cannot be offered either: naming it would resolve to an option not in the
 #: spec and still raise, just more confusingly. A gap recorded with the id that
-#: will close it, never a skipped widget.
-UNSUPPORTED_SYNONYM_TARGETS = {
-    "backgroundimage": "TkCurses-yi4: Frame and Toplevel lack -backgroundimage",
-}
+#: will close it, never a skipped widget. Empty since TkCurses-yi4 added
+#: ``backgroundimage``, the last.
+UNSUPPORTED_SYNONYM_TARGETS: dict[str, str] = {}
 
 PAIRED = {
     "Entry": (tkinter.Entry, lambda root: tkcurses.Entry(root, name="w")),
     "Spinbox": (tkinter.Spinbox, lambda root: tkcurses.Spinbox(root, name="w")),
     "Frame": (tkinter.Frame, lambda root: tkcurses.Frame(root, name="w")),
+    "Toplevel": (tkinter.Toplevel, lambda root: tkcurses.Toplevel(root, name="w")),
     "Label": (tkinter.Label, lambda root: tkcurses.Label(root, name="w")),
     "Button": (tkinter.Button, lambda root: tkcurses.Button(root, name="w")),
 }
