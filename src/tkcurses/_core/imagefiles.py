@@ -15,7 +15,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Reading the image formats tkinter reads, with nothing but the standard library.
+"""Reading and writing the image formats tkinter does, with nothing but the
+standard library.
 
 tkinter 8.6 and later give PhotoImage PNG, GIF, PGM and PPM, and BitmapImage
 XBM. Those are decoded here, into the rows of ``#rrggbb`` a
@@ -53,7 +54,11 @@ from tkcurses._core.errors import TclError
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-__all__ = ["decode", "sniff"]
+__all__ = ["decode", "encode_gif", "encode_png", "encode_ppm", "sniff"]
+
+#: Rows of ``(r, g, b)``, ``None`` where the image is transparent: what the
+#: encoders take.
+RgbRows = list[list["tuple[int, int, int] | None"]]
 
 #: Rows of colour, ``None`` where the image is transparent - the shape a
 #: PhotoImage stores.
@@ -712,3 +717,159 @@ def _decode_gif(data: bytes, path: str) -> Rows:
                 source += 1
         return ordered
     raise _unreadable(path, "there is no image in this file")
+
+
+# ------------------------------------------------------------------ writing
+#
+# Each follows its format's own published description: the PNG specification
+# (W3C, second edition, 2003), GIF89a (CompuServe, 1990) with Welch's LZW
+# (IEEE Computer, 1984), and netpbm's ppm(5). Tk's own choices on top of the
+# formats - the 255-colour limit, black for a hole - were measured on Tk
+# 9.0.2, as the docstrings say.
+
+
+def encode_ppm(rows: RgbRows) -> bytes:
+    """A binary PPM (P6), as Tk's ppm format writes it. PPM has no
+    transparency: a hole is written as black, as Tk writes one."""
+    height = len(rows)
+    width = len(rows[0]) if rows else 0
+    body = bytearray()
+    for row in rows:
+        for pixel in row:
+            body += bytes(pixel or (0, 0, 0))
+    return f"P6\n{width} {height}\n255\n".encode("ascii") + bytes(body)
+
+
+def _png_chunk(kind: bytes, data: bytes) -> bytes:
+    crc = zlib.crc32(kind + data) & 0xFFFFFFFF
+    return len(data).to_bytes(4, "big") + kind + data + crc.to_bytes(4, "big")
+
+
+def encode_png(rows: RgbRows) -> bytes:
+    """An 8-bit PNG: RGBA when any pixel is a hole, RGB otherwise. Every row
+    is filtered with ``None``, which is valid and short to write; the zlib
+    stream does the compressing."""
+    height = len(rows)
+    width = len(rows[0]) if rows else 0
+    alpha = any(pixel is None for row in rows for pixel in row)
+    raw = bytearray()
+    for row in rows:
+        raw.append(0)
+        for pixel in row:
+            raw += bytes(pixel or (0, 0, 0))
+            if alpha:
+                raw.append(0 if pixel is None else 255)
+    header = (
+        width.to_bytes(4, "big")
+        + height.to_bytes(4, "big")
+        + bytes((8, 6 if alpha else 2, 0, 0, 0))
+    )
+    return (
+        _PNG_MAGIC
+        + _png_chunk(b"IHDR", header)
+        + _png_chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+        + _png_chunk(b"IEND", b"")
+    )
+
+
+#: The most colours a GIF written here may hold. GIF's table has 256 slots
+#: and Tk keeps one for transparency whether a hole is there or not:
+#: measured on Tk 9.0.2, 255 colours write and 256 are "too many colors",
+#: with or without a hole.
+GIF_COLOURS = 255
+
+
+def encode_gif(rows: RgbRows) -> bytes:
+    """A GIF89a of one frame, a hole written as the transparent index.
+
+    Raises:
+        TclError: ``too many colors`` past :data:`GIF_COLOURS`, as Tk.
+    """
+    height = len(rows)
+    width = len(rows[0]) if rows else 0
+    index: dict[tuple[int, int, int], int] = {}
+    for row in rows:
+        for pixel in row:
+            if pixel is not None and pixel not in index:
+                if len(index) == GIF_COLOURS:
+                    raise TclError("too many colors")
+                index[pixel] = len(index)
+    transparent = len(index)
+    table_bits = max(1, (transparent).bit_length())
+    slots = 1 << table_bits
+    palette = bytearray()
+    for colour in index:
+        palette += bytes(colour)
+    palette += bytes(3 * (slots - len(index)))
+    pixels = [
+        transparent if pixel is None else index[pixel] for row in rows for pixel in row
+    ]
+    minimum = max(2, table_bits)
+    out = bytearray(b"GIF89a")
+    out += width.to_bytes(2, "little") + height.to_bytes(2, "little")
+    out += bytes((0x80 | (table_bits - 1), 0, 0))
+    out += palette
+    # Graphic control extension: the transparent index.
+    out += bytes((0x21, 0xF9, 4, 1, 0, 0, transparent, 0))
+    out += b"," + bytes(4) + width.to_bytes(2, "little") + height.to_bytes(2, "little")
+    out += bytes((0, minimum))
+    data = _gif_lzw_encode(pixels, minimum)
+    for start in range(0, len(data), 255):
+        block = data[start : start + 255]
+        out += bytes((len(block),)) + block
+    out += b"\x00;"
+    return bytes(out)
+
+
+def _gif_lzw_encode(pixels: list[int], minimum: int) -> bytes:
+    """GIF's variable-width LZW, the inverse of :func:`_gif_lzw`.
+
+    The code width grows the moment the table holds a code that needs
+    another bit, which is the step a decoder takes when it adds the same
+    entry one code later; a full table of 4096 is cleared and begun again.
+    """
+    clear = 1 << minimum
+    end = clear + 1
+    out = bytearray()
+    held = 0
+    bits = 0
+
+    def emit(code: int, width: int) -> None:
+        nonlocal held, bits
+        held |= code << bits
+        bits += width
+        while bits >= 8:
+            out.append(held & 0xFF)
+            held >>= 8
+            bits -= 8
+
+    width = minimum + 1
+    table: dict[tuple[int, int], int] = {}
+    following = end + 1
+    emit(clear, width)
+    current: int | None = None
+    for pixel in pixels:
+        if current is None:
+            current = pixel
+            continue
+        known = table.get((current, pixel))
+        if known is not None:
+            current = known
+            continue
+        emit(current, width)
+        table[(current, pixel)] = following
+        if following == 1 << width and width < 12:
+            width += 1
+        following += 1
+        if following == 4096:
+            emit(clear, width)
+            table.clear()
+            width = minimum + 1
+            following = end + 1
+        current = pixel
+    if current is not None:
+        emit(current, width)
+    emit(end, width)
+    if bits:
+        out.append(held & 0xFF)
+    return bytes(out)

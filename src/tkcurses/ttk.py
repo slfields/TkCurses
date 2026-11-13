@@ -5978,6 +5978,27 @@ class Scale(Widget, tkcurses.Scale):
 
     _ttk_class = "TScale"
 
+    def get(self, x: int | None = None, y: int | None = None) -> float:
+        """The value, or the value the slider would have centred at a point.
+
+        Args:
+            x: Column within this widget, as an Event reports it.
+            y: Row within this widget. Given together with ``x``; only the
+                one along the scale counts, and a point past either end
+                answers that end's value, as Tk 9.0.2 answers it. The value
+                itself is left alone.
+
+        Raises:
+            TclError: If only one of ``x`` and ``y`` is given, in Tk's words.
+        """
+        if x is None and y is None:
+            return float(super().get())
+        if x is None or y is None:
+            raise TclError(f'wrong # args: should be "{self} get ?x y?"')
+        origin_x, origin_y = self._trough_origin()
+        offset = int(y) - origin_y if self._vertical else int(x) - origin_x
+        return float(self._value_at(offset))
+
     def _element_at(self, x: int, y: int) -> Any:
         """``slider`` and ``trough``, where the classic scale says trough1/2.
 

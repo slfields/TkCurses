@@ -42,6 +42,8 @@ it. The scripts, as installed with Tcl 9.0.2 and Tk 9.0.2:
 | Tk `generic/tkTextDisp.c` (C) | `TkTextScanCmd` | a Text's `scan_dragto` (`__init__.py`) |
 | Tk `generic/tkCanvas.c` (C) | the `find closest` search; the `scan` subcommand | a Canvas's `find_closest` with `halo` and `start`, and its `scan_dragto` (`__init__.py`) |
 | Tk `generic/tkCanvWind.c` (C) | `DisplayWinItem` | when a Canvas's embedded window is unmapped (`__init__.py`) |
+| Tk `generic/tkCmds.c` (C) | `ScalingCmd` | what `tk scaling` reads back once it has been set (`_core/application.py`) |
+| Tk `generic/tkImgPhoto.c` (C) | the `-grayscale` and `-background` conversion in `ImgGetPhoto` | a PhotoImage's `data` and `write` in grey or over a background (`_core/images.py`) |
 | Tk `generic/tkGrid.c` (C) | `ResolveConstraints`, `AdjustOffsets`, and `ArrangeGrid`'s use of them with `TkComputeAnchor` | how big each grid row and column is, and where the grid sits (`_core/grid.py`) |
 | Tk `generic/tkPanedWindow.c` (C) | `ArrangePanes`, `MoveSash`, `ComputeGeometry` and `IsStretchable` | a classic PanedWindow's pane sizes, `stretch`, and how a sash moves (`_core/paned.py`) |
 | Tk `generic/tkUndo.c` (C) | `TkUndoRevert`, `TkUndoApply` | the separators an undo or a redo leaves behind (`_core/textbuffer.py`) |

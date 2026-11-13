@@ -533,10 +533,22 @@ def test_the_recipe_scales_ticks_and_clears(terminal, tmp_path):
     term.wait_for_text("[ ] 375 g plain flour")
 
 
+def tk_photo_rows(path):
+    """A PNG's rows of colours, read by this library as tkinter would."""
+    import tkcurses
+
+    root = tkcurses.Tk(useTk=False)
+    try:
+        return tkcurses.PhotoImage(master=root, file=str(path)).data()
+    finally:
+        root.destroy()
+
+
 def test_the_wallpaper_tiles_centres_and_recolours(terminal, tmp_path):
     """Tiled, the pattern covers the desktop; untiled, one copy sits in the
-    middle; Colours repaints it through the image, and a pattern changes."""
-    term = start(terminal, tmp_path, "wallpaper", cols=64, rows=18)
+    middle; Colours repaints it through the image, a pattern changes, and
+    Save writes it as a PNG."""
+    term = start(terminal, tmp_path, "wallpaper", str(tmp_path), cols=64, rows=18)
     term.wait_for_text("tiled")
     # Inside the desktop's border, at its top left: the first brick.
     row, column = 1, term.display[0].index("┌") + 1
@@ -561,6 +573,12 @@ def test_the_wallpaper_tiles_centres_and_recolours(terminal, tmp_path):
     row, column = term.find_text("Checks")
     term.click(column, row)
     term.wait_for_text("Checks, 8x4")
+    row, column = term.find_text("Save")
+    term.click(column, row)
+    term.wait_for_text("Saved checks.png")
+    saved = tk_photo_rows(tmp_path / "checks.png")
+    assert len(saved) == 4
+    assert len(set(saved[0].split())) == 2
 
 
 def test_the_mark_book_adds_up_the_cells_selected(terminal, tmp_path):

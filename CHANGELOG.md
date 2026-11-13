@@ -118,6 +118,18 @@ All notable changes to TkCurses. The format follows
   back to be packed, gridded or placed, as in Tk. They raised `TclError`.
 
 ### Changed
+- PhotoImage reads and writes Tk's formats. `write(filename, format,
+  from_coords)` writes PNG, GIF or PPM - a PPM unless told, as Tk does -
+  and `data(format)` gives Tk's rows of `#rrggbb` or a file's bytes, both
+  with `background` and `grayscale`. `read(filename, format)` takes
+  `from_coords`, `to` and `shrink`, and keeps what it does not cover. `put`
+  and `data=` take Tk's rows of colours (`"{red blue} {green white}"`) and
+  image data as bytes or base64, and `put` grows an image with no size of
+  its own. **Incompatible:** `data()` and `write()` used to give character
+  art, and took the palette second, so `write("x.png", "png")` passed
+  `"png"` as the palette; character art is now `palette=`, by keyword.
+  A colour with a space in its name, `put("light yellow")`, is now refused
+  as Tk refuses it - Tk reads it as two rows - so write `"LightYellow"`.
 - ttk.Treeview's Left and Right follow Tk on rows: Right opens the row and
   selects it, and Left closes an open branch or goes to the parent, selecting
   it. `<<TreeviewOpen>>` is sent before the row opens, as in Tk, so a handler
@@ -138,6 +150,12 @@ All notable changes to TkCurses. The format follows
   "name": no such variable`), as tkinter does; it returned `None`.
 
 ### Fixed
+- Four methods take tkinter's positional arguments: `winfo_containing`'s
+  `displayof`, `Canvas.tag_unbind`'s `funcid` (with `Canvas.tag_bind` now
+  returning the handle it takes, and answering the sequences or callbacks
+  bound when asked), `PanedWindow.paneconfigure`'s option dictionary and its
+  query forms, and `ttk.Scale.get(x, y)`, the value at a point. Each
+  answers as Tk 9.0.2 does.
 - ttk.Treeview draws a column's `anchor` and a heading's: values sit where
   their column's anchor puts them, and headings are centred unless told
   otherwise, as Tk draws them. Both were stored and ignored, so every

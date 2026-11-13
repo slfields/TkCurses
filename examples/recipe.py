@@ -53,10 +53,10 @@ text.tag_configure("done", foreground="gray")
 # down is eight cells by three rows. Its line grows to hold it, with the
 # title beside it in the middle.
 bowl = tk.PhotoImage(width=8, height=6)
-bowl.put("light yellow", to=(2, 0, 6, 1))
-bowl.put("steel blue", to=(0, 2, 8, 4))
-bowl.put("steel blue", to=(1, 4, 7, 5))
-bowl.put("steel blue", to=(2, 5, 6, 6))
+bowl.put("LightYellow", to=(2, 0, 6, 1))
+bowl.put("SteelBlue", to=(0, 2, 8, 4))
+bowl.put("SteelBlue", to=(1, 4, 7, 5))
+bowl.put("SteelBlue", to=(2, 5, 6, 6))
 text.image_create("end", image=bowl, padx=1)
 text.insert("end", "Pancakes\n", "title")
 

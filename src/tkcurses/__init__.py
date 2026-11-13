@@ -932,6 +932,17 @@ def _as_int(value: Any, otherwise: int) -> int:
         return otherwise
 
 
+#: A pane's options and their defaults, as Tk 9.0.2's paneconfigure lists
+#: those TkCurses takes.
+_PANE_DEFAULTS: dict[str, Any] = {
+    "height": "",
+    "minsize": 0,
+    "sticky": "nsew",
+    "stretch": "last",
+    "width": "",
+}
+
+
 def _dashed(option: Any) -> str:
     """An option as Tk names it, ``-text``, without its dash; Tk's refusal
     for one written without it."""
@@ -3177,11 +3188,18 @@ class Misc:
             f"{self.winfo_width()}x{self.winfo_height()}+{self._rect.x}+{self._rect.y}"
         )
 
-    def winfo_containing(self, rootX: int, rootY: int) -> Misc | None:
+    def winfo_containing(
+        self,
+        rootX: int,
+        rootY: int,
+        displayof: Any = 0,  # noqa: ARG002 - one terminal is one display
+    ) -> Misc | None:
         """The topmost widget at a screen position, or None.
 
         Later siblings are on top, so the search runs back to front and takes
         the first hit, which is the widget a click at that cell would reach.
+        ``displayof`` is accepted and has nothing to choose between: a
+        terminal is one display.
         """
         return self._root()._containing(rootX, rootY)
 
@@ -17045,6 +17063,8 @@ def _text_redo(event: Event) -> None:
 
 #: Numbers the stores whose text tags have bindings; see Text._tag_binding_tag.
 _TEXT_BINDING_IDS = itertools.count(1)
+#: Numbers behind the handles Canvas.tag_bind returns.
+_CANVAS_BINDING_IDS = itertools.count(1)
 
 
 def _crossing(event: Event, kind: str) -> Event:
@@ -17504,7 +17524,10 @@ class Canvas(_Drawable, XView, YView):
         self._ids = itertools.count(1)
         self._left = 0
         self._top = 0
-        self._item_bindings: dict[str, dict[str, list[Callable[[Event], Any]]]] = {}
+        #: Tag or id -> sequence -> (funcid, callback), in binding order.
+        self._item_bindings: dict[
+            str, dict[str, list[tuple[str, Callable[[Event], Any]]]]
+        ] = {}
         self._current: int | None = None
         #: The text item with the insertion cursor, and each text item's
         #: cursor position: Tk keeps one per item and shows the focus item's.
@@ -18597,11 +18620,11 @@ class Canvas(_Drawable, XView, YView):
 
     def tag_bind(
         self,
-        spec: Any,
+        tagOrId: Any,
         sequence: str | None = None,
         func: Callable[[Event], Any] | None = None,
         add: bool | str | None = None,
-    ) -> None:
+    ) -> Any:
         """Bind an event on the items a tag names.
 
         Unlike :meth:`Misc.bind`, this is not a binding on the widget: the
@@ -18610,22 +18633,46 @@ class Canvas(_Drawable, XView, YView):
         the one ``find_withtag("current")`` names, as in Tk.
 
         Args:
-            spec: A tag, or an item id.
+            tagOrId: A tag, or an item id.
             sequence: The event, such as ``"<Button-1>"``.
             func: What to call.
             add: True to keep any binding already there.
-        """
-        if sequence is None or func is None:
-            return
-        bindings = self._item_bindings.setdefault(str(spec), {})
-        if add in (True, "+"):
-            bindings.setdefault(sequence, []).append(func)
-        else:
-            bindings[sequence] = [func]
 
-    def tag_unbind(self, spec: Any, sequence: str) -> None:
-        """Remove the bindings a tag has for one event."""
-        self._item_bindings.get(str(spec), {}).pop(sequence, None)
+        Returns:
+            With a callback, a handle :meth:`tag_unbind` takes, as
+            :meth:`Misc.bind` returns. With a sequence and no callback, the
+            callbacks bound to it; with neither, the sequences bound.
+
+        Differences from tkinter:
+            Asked for a sequence's bindings, tkinter answers the Tcl script
+            that runs them, which has no meaning without Tcl; the callbacks
+            themselves are answered here.
+        """
+        bindings = self._item_bindings.get(str(tagOrId), {})
+        if sequence is None:
+            return tuple(name for name, bound in bindings.items() if bound)
+        if func is None:
+            return tuple(callback for _funcid, callback in bindings.get(sequence, ()))
+        funcid = f"canvas{next(_CANVAS_BINDING_IDS)}{getattr(func, '__name__', '')}"
+        bindings = self._item_bindings.setdefault(str(tagOrId), {})
+        entry = (funcid, func)
+        if add in (True, "+"):
+            bindings.setdefault(sequence, []).append(entry)
+        else:
+            bindings[sequence] = [entry]
+        return funcid
+
+    def tag_unbind(
+        self, tagOrId: Any, sequence: str, funcid: str | None = None
+    ) -> None:
+        """Remove the bindings a tag has for one event, or only the one
+        ``funcid`` names - the handle :meth:`tag_bind` returned."""
+        bindings = self._item_bindings.get(str(tagOrId), {})
+        if funcid is None:
+            bindings.pop(sequence, None)
+            return
+        bound = bindings.get(sequence, [])
+        bindings[sequence] = [entry for entry in bound if entry[0] != funcid]
 
     def _item_at(self, x: int, y: int) -> int | None:
         """The topmost item whose ink covers a pixel.
@@ -18683,7 +18730,9 @@ class Canvas(_Drawable, XView, YView):
         if ident == self._current:
             keys.insert(-1, "current")
         for key in keys:
-            for callback in self._item_bindings.get(key, {}).get(sequence, ()):
+            for _funcid, callback in list(
+                self._item_bindings.get(key, {}).get(sequence, ())
+            ):
                 callback(event)
 
     # ---------------------------------------------------------------- the view
@@ -22237,14 +22286,35 @@ class PanedWindow(_Drawable):
             return options.size
         raise TclError(f'unknown option "-{option}"')
 
-    def paneconfigure(self, child: Widget, **kw: Any) -> None:
-        """Change one pane's options.
+    def paneconfigure(
+        self, tagOrId: Widget, cnf: dict[str, Any] | str | None = None, **kw: Any
+    ) -> Any:
+        """Change one pane's options, or read them.
+
+        With no options, every option the pane takes, each as Tk's
+        five-tuple ``(name, dbName, dbClass, default, value)``; with one
+        option's name, that option's tuple. Options may be given as a
+        dictionary, as in tkinter.
 
         Raises:
-            TclError: If the widget is not a pane here.
+            TclError: If the widget is not a pane here, or an option is not
+                one a pane takes.
+
+        Differences from tkinter:
+            A pane takes ``minsize``, ``sticky``, ``stretch``, ``width`` and
+            ``height`` here; Tk's ``after``, ``before``, ``hide``, ``padx``
+            and ``pady`` are refused, and not listed when the options are
+            read.
         """
+        child = tagOrId
         if self._paned.options_for(child) is None:
             raise TclError(f'not managed by this window: "{child}"')
+        if isinstance(cnf, str) and not kw:
+            return self._pane_entry(child, cnf)
+        if cnf is None and not kw:
+            return {name: self._pane_entry(child, name) for name in _PANE_DEFAULTS}
+        if isinstance(cnf, dict):
+            kw = {**cnf, **kw}
         if kw and not _given(None, kw):
             return  # every option None, which tkinter drops
         self._paned.add(child, self._pane_options(kw, child))
@@ -22252,6 +22322,16 @@ class PanedWindow(_Drawable):
         self._redraw()
 
     paneconfig = paneconfigure
+
+    def _pane_entry(self, child: Widget, name: str) -> tuple[Any, ...]:
+        """One pane option as Tk's five-tuple, measured on Tk 9.0.2: only
+        ``stretch`` has a database name and class, and ``""`` stands for
+        a size never given."""
+        if name not in _PANE_DEFAULTS:
+            raise TclError(f'unknown option "-{name}"')
+        value = self.panecget(child, name)
+        database = ("stretch", "Stretch") if name == "stretch" else ("", "")
+        return (name, *database, _PANE_DEFAULTS[name], "" if value is None else value)
 
     # ------------------------------------------------------------------ sashes
 

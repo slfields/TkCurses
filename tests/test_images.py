@@ -69,7 +69,7 @@ def test_an_image_is_referred_to_by_name(root):
 
 
 def test_a_name_can_be_given(root):
-    assert str(PhotoImage(master=root, name="banner", data=["##"])) == "banner"
+    assert str(PhotoImage(master=root, name="banner", data=[["red"]])) == "banner"
 
 
 def test_names_do_not_repeat(root):
@@ -107,8 +107,8 @@ def test_image_types_are_the_two_there_are(root):
 
 
 def test_two_images_of_a_name_are_equal(root):
-    first = PhotoImage(master=root, name="same", data=["#"])
-    second = PhotoImage(master=root, name="same", data=["."])
+    first = PhotoImage(master=root, name="same", data=[["red"]])
+    second = PhotoImage(master=root, name="same", data=[["blue"]])
     assert first == second
     assert hash(first) == hash(second)
 
@@ -308,10 +308,13 @@ def test_put_clips_at_the_edge(root):
     assert photo.rows() == [[None, "red"]]
 
 
-def test_put_with_the_wrong_number_of_coordinates_raises(root):
-    photo = PhotoImage(master=root, width=2, height=1)
-    with pytest.raises(TclError, match="wrong # coordinates"):
-        photo.put("red", to=(1, 2, 3))
+def test_put_with_too_many_coordinates_raises(root):
+    """Three are taken as Tk takes them, the third standing for the fourth."""
+    photo = PhotoImage(master=root, width=3, height=3)
+    photo.put("red", to=(1, 1, 2))
+    assert photo.rows()[1] == [None, "red", None]
+    with pytest.raises(TclError):
+        photo.put("red", to=(1, 1, 2, 2, 3))
 
 
 def test_put_nothing_changes_nothing(root):
@@ -636,19 +639,19 @@ def test_a_missing_file_raises_tk_s_error(root):
 
 def test_the_shape_round_trips_through_a_file(root, tmp_path):
     path = tmp_path / "art.txt"
-    art(root, ["##", "# "]).write(str(path))
+    art(root, ["##", "# "]).write(str(path), palette={})
     photo = PhotoImage(master=root, palette={"#": "red"})
     photo.read(str(path))
     assert photo.rows() == [["red", "red"], ["red", None]]
 
 
-def test_data_gives_the_shape_when_no_palette_is_named(root):
-    assert art(root, ["##", "# "]).data() == ["##", "# "]
+def test_data_gives_the_shape_when_the_palette_is_empty(root):
+    assert art(root, ["##", "# "]).data(palette={}) == ["##", "# "]
 
 
 def test_data_can_name_a_character_for_each_colour(root):
     photo = PhotoImage(master=root, data=[["red", "blue"]])
-    assert photo.data({"red": "R", "blue": "B"}) == ["RB"]
+    assert photo.data(palette={"red": "R", "blue": "B"}) == ["RB"]
 
 
 # ------------------------------------------------------------------ options

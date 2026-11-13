@@ -6253,12 +6253,12 @@ that is correct. Fitting is the *caller's* job, through `subsample()`, as it
 is in Tk. Auto-fitting inside PhotoImage would surprise anyone porting
 tkinter code.
 
-| Format | Read | Notes |
-|--------|------|-------|
-| PNG | ○ | 8-bit, interlaced or not: grey, RGB, palette, either with alpha |
-| GIF | ○ | 87a and 89a, first frame, interlacing undone |
-| PGM / PPM | ○ | P1-P6, any maxval, comments anywhere in the header |
-| XBM | ○ | Via BitmapImage, as in tkinter |
+| Format | Read | Write | Notes |
+|--------|------|-------|-------|
+| PNG | ○ | ○ | Read: 8-bit, interlaced or not: grey, RGB, palette, either with alpha. Written 8-bit RGB, RGBA when there is a hole |
+| GIF | ○ | ○ | Read: 87a and 89a, first frame, interlacing undone. Written GIF89a, at most 255 colours |
+| PGM / PPM | ○ | ○ | Read: P1-P6, any maxval, comments anywhere in the header. Written P6, holes black |
+| XBM | ○ | | Via BitmapImage, as in tkinter |
 
 **Adam7 interlacing is read.** The image is stored as seven passes over a
 lattice, and each pass is its own little image — its own width, its own
@@ -6277,6 +6277,44 @@ Alpha becomes presence or absence, not a blend. A half-cell paints or it does
 not, and by draw time the pixel has been folded into a glyph with a single
 colour, so there is nothing left to blend with; below half alpha the pixel is
 a hole. GIF's transparent index and PNG's `tRNS` are honoured the same way.
+
+**Writing follows Tk 9.0.2, measured through tkinter** (`TkCurses-c5sj`;
+`tests/test_photo_formats.py` holds each measurement, and checks against
+the real toolkit, when there is a display, that Tk reads what is written
+here and the other way round):
+
+- `write(filename)` with no format writes a **PPM**, as Tk does; `data()`
+  with none gives a tuple of rows, each a string of `#rrggbb`. A named
+  colour is written as the colour it names (`red` is `#ff0000`), not as
+  what the terminal shows for it, which is what `get` answers.
+- A format's name is matched without case, and anything after it (`gif
+  -index 1`) is the format's own options, ignored. `default` is Tk's list of
+  rows: `data("default")` gives it as bytes, and it cannot be written to or
+  read from a file. `svg` reads in Tk and does not write.
+- **A GIF holds at most 255 colours**, and 256 are `too many colors`, with a
+  hole in the picture or without: Tk keeps the last slot for transparency
+  either way. Tk refuses rather than reducing the colours, so this does too.
+- `-grayscale` is tkImgPhoto.c's `(11r + 16g + 5b + 16) >> 5`, and
+  `-background` fills the holes before it. PPM has no holes: they are black.
+- `read` is `copy_replace` from a file, sharing its code: the region
+  `from_coords` goes to `to`, holes and all; an image with no size of its own
+  grows to take it and with `shrink` fits it exactly, and one given a size
+  keeps it and clips. Measured, not read: `photo(n)` says none of it.
+- `put` and `data=` take Tk's rows - `"red"` is one pixel, `"red blue"` two
+  rows of one, `"{red blue}"` one row of two - and image data as bytes or
+  base64; rows of different lengths, and a colour Tk does not know, are
+  refused in Tk's words. `put` grows an image with no size of its own to its
+  far corner, as Tk's does.
+
+**One difference stays.** Tk keeps a transparent pixel's colour - made
+transparent with `transparency_set`, it still reports its red - where a
+pixel here is a colour or a hole, so `data()` reports a hole as `#000000`,
+which is what Tk reports for a pixel never painted.
+
+Character art, which is this library's own, moved to a keyword-only
+`palette=` on `data` and `write` when they became Tk's: positionally, the
+second argument is Tk's `format`, and `write("x.png", "png")` had passed
+`"png"` as the palette.
 
 A file in none of these formats is read as **rows of characters** only when a
 `palette` has been declared — that being how a caller says "this is character
@@ -6301,9 +6339,10 @@ through.
 | `reduce(...)` | ○ | Averages each block; what fitting wants |
 | `dither(...)` | ○ | Error diffusion. A tool, not a default — see below |
 | `get(x, y)` | ○ | The pixel's colour |
-| `put(data, to)` | ○ | A colour, or rows of them; `to` places or tiles |
-| `read(filename, ...)` | ○ | A text file of art |
-| `write(filename, ...)` | ○ | Likewise |
+| `put(data, to)` | ○ | A colour, Tk's rows of them, or image data; `to` places or tiles |
+| `data(format, ...)` | ○ | Tk's rows, or PNG, GIF or PPM bytes; `from_coords`, `background`, `grayscale` |
+| `read(filename, format, ...)` | ○ | `from_coords`, `to`, `shrink`, as Tk's |
+| `write(filename, format, from_coords, ...)` | ○ | PPM unless told; PNG, GIF; `background`, `grayscale` |
 | `transparency_get(x, y)` | ○ | Whether the pixel paints |
 | `transparency_set(x, y, bool)` | ○ | Make it transparent, or opaque |
 

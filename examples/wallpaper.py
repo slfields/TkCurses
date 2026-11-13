@@ -22,8 +22,15 @@ a PhotoImage with put. With tile on, copies of it cover the inside of the
 frame's border from the top left; with it off, one copy sits in the
 middle. The label in its corner is the frame's child, so it is drawn in
 front of the pattern. Colours repaints the same image in place, and the
-desktop follows it.
+desktop follows it. Save writes the pattern out as a PNG, as tkinter's
+PhotoImage.write does, which any image viewer opens: into the directory
+named on the command line, or the current one.
+
+    python3 examples/wallpaper.py [directory]
 """
+
+import sys
+from pathlib import Path
 
 import tkcurses as tk
 
@@ -41,6 +48,9 @@ SCHEMES = (
     ("#2f5d8a", "#9cc3e6"),
     ("#3c7a4a", "#cfe3b8"),
 )
+
+#: Where Save writes.
+SAVE_TO = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
 
 root = tk.Tk()
 root.title("Wallpaper")
@@ -86,6 +96,13 @@ def set_tile():
     paint()
 
 
+def save():
+    """Write the pattern to a PNG named after it."""
+    name = f"{pattern.get().lower()}.png"
+    picture.write(str(SAVE_TO / name), "png")
+    status.configure(text=f"Saved {name}")
+
+
 tk.Label(panel, text="Wallpaper", font="TkHeadingFont").pack(anchor="w")
 for name in PATTERNS:
     tk.Radiobutton(panel, text=name, value=name, variable=pattern, command=paint).pack(
@@ -95,7 +112,8 @@ tk.Checkbutton(panel, text="Tile", variable=tiled, command=set_tile).pack(anchor
 buttons = tk.Frame(panel)
 buttons.pack(anchor="w", pady=(1, 0))
 tk.Button(buttons, text="Colours", command=next_colours).pack(side="left")
-tk.Button(buttons, text="Quit", command=root.destroy).pack(side="left", padx=(1, 0))
+tk.Button(buttons, text="Save", command=save).pack(side="left", padx=(1, 0))
+tk.Button(panel, text="Quit", command=root.destroy).pack(anchor="w")
 status = tk.Label(panel, anchor="w", width=20, wraplength=20, justify="left")
 status.pack(anchor="w")
 

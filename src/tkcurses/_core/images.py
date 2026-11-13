@@ -14,6 +14,12 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Portions follow logic in the Tcl and Tk library scripts, each named beside
+# the code that follows it. Tcl and Tk are copyright the Regents of the
+# University of California, Sun Microsystems, Inc., Scriptics Corporation,
+# ActiveState Corporation, Apple Inc. and other parties, and are used under
+# the Tcl/Tk licence; see THIRD_PARTY_NOTICES.md.
 
 """Images, on the same pixel plane everything else draws on.
 
@@ -82,9 +88,16 @@ import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from tkcurses._core.colors import from_linear, linear_of, rgb_of
+from tkcurses._core import x11colors
+from tkcurses._core.colors import from_linear, linear_of, rgb_for, rgb_of
 from tkcurses._core.errors import TclError
-from tkcurses._core.imagefiles import decode, sniff
+from tkcurses._core.imagefiles import (
+    decode,
+    encode_gif,
+    encode_png,
+    encode_ppm,
+    sniff,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -491,6 +504,47 @@ _COPY_USAGE = (
 )
 
 
+#: The formats Tk 9.0.2 has for a photo, and which way each goes. ``svg``
+#: is read only, and ``default`` - Tk's list of rows - only as a string.
+_FORMATS = ("default", "gif", "png", "ppm", "svg")
+#: What :func:`~tkcurses._core.imagefiles.sniff` calls each format Tk names.
+_SNIFFED = {"gif": "gif", "png": "png", "ppm": "netpbm"}
+
+
+def _format_word(format: Any) -> str | None:
+    """A ``-format`` value's format name, lower case; the options after it
+    (``"gif -index 1"``) are Tk's own for that format and ignored here."""
+    words = str(format or "").split()
+    return words[0].lower() if words else None
+
+
+def true_rgb(spec: Any) -> tuple[int, int, int] | None:
+    """The RGB a colour names, as Tk would store it: ``#rgb`` forms and the
+    X11 names, before any terminal has had a say. None when it names none.
+
+    :func:`~tkcurses._core.colors.rgb_of` answers what a terminal shows
+    instead; a written image wants the colour that was asked for.
+    """
+    text = str(spec)
+    if text.startswith("#"):
+        return rgb_for(text)
+    name = x11colors.lookup(text)
+    return None if name is None else x11colors.NAMES[name]
+
+
+def _grey(rgb: tuple[int, int, int]) -> tuple[int, int, int]:
+    """Tk's grey for a colour: ``(11r + 16g + 5b + 16) >> 5``, from
+    ``ImgGetPhoto`` in tkImgPhoto.c, under ``-grayscale``."""
+    level = (rgb[0] * 11 + rgb[1] * 16 + rgb[2] * 5 + 16) >> 5
+    return level, level, level
+
+
+def _open_failure(path: str, exc: OSError) -> TclError:
+    """Tk's words for a file it could not open."""
+    reason = (exc.strerror or "no such file or directory").lower()
+    return TclError(f'couldn\'t open "{path}": {reason}')
+
+
 def _corner_values(image: str, option: str, values: Sequence[int]) -> list[int]:
     """``-from`` or ``-to``'s numbers, as two or four.
 
@@ -527,17 +581,35 @@ def _factor_pair(
 class PhotoImage(Image):
     """A plane of coloured pixels.
 
+    A pixel is one column wide and half a row tall. The image reads and
+    writes Tk's formats - PNG, GIF and PPM files, and rows of colours - so
+    what tkinter saves this opens, and the other way round.
+
     Args:
         name: The image's name, generated when omitted.
         cnf: Options as a dictionary, tkinter's older spelling.
         master: Any widget of the application the image belongs to.
-        **kw: ``width`` and ``height`` in pixels, ``data`` as rows,
-            ``palette`` mapping characters to colours, ``file`` to read rows
-            from, and ``foreground`` for what an unmapped character paints.
+        **kw: ``width`` and ``height`` in pixels; ``data`` as rows of
+            colours (``"{red blue} {green white}"``) or image data, bytes
+            or base64; ``file`` to read; ``format`` naming the format
+            ``data`` or ``file`` must be in; ``palette`` mapping characters
+            to colours, which makes ``data`` and ``file`` character art; and
+            ``foreground`` for what an unmapped character paints.
 
     Raises:
-        TclError: If ``file`` cannot be read, which is what Tk raises for an
-            image file it cannot open.
+        TclError: If ``file`` cannot be read, or ``data`` is neither rows
+            of colours nor an image, in Tk's words.
+
+    Differences from tkinter:
+        A pixel made transparent forgets its colour, so :meth:`data`
+        reports it as ``#000000``; Tk keeps the colour and reports that.
+        Tk's ``palette`` sets how many colours a display may use; here it is
+        the character art's key. Tk's ``gamma`` is not taken.
+
+    TkCurses extension:
+        Character art: with a ``palette``, rows of characters each stand
+        for a colour, and :meth:`data` and :meth:`write` give art back for
+        a ``palette`` of their own.
 
     Example:
         >>> photo = PhotoImage(data=["#.#", ".#."],     # doctest: +SKIP
@@ -561,6 +633,7 @@ class PhotoImage(Image):
             "height": 0,
             "data": "",
             "file": "",
+            "format": "",
             "palette": None,
             "foreground": "white",
             "background": "",
@@ -584,7 +657,7 @@ class PhotoImage(Image):
         if options.get("file"):
             self._read_file(str(options["file"]))
         elif options.get("data"):
-            self._set_rows(_rows_of(options["data"]))
+            self._load(self._parse_data(options["data"], self._options["format"]))
         elif "width" in options or "height" in options:
             self._resize(int(self._options["width"]), int(self._options["height"]))
 
@@ -619,6 +692,92 @@ class PhotoImage(Image):
         self._options["width"] = width
         self._options["height"] = len(split)
 
+    def _load(self, rows: list[Row]) -> None:
+        """Replace the image with ``rows``, as Tk's ``-data`` and ``-file``
+        do: an axis given a size keeps it, and the rest takes the rows'."""
+        width = len(rows[0]) if rows else 0
+        height = len(rows)
+        if self._options["palette"] is not None:
+            width = max((len(row) for row in rows), default=0)
+        size = {"width": width, "height": height}
+        for axis in size:
+            if self._user_size[axis]:
+                size[axis] = self._user_size[axis]
+        self._pixels = [
+            [
+                rows[y][x] if y < len(rows) and x < len(rows[y]) else TRANSPARENT
+                for x in range(size["width"])
+            ]
+            for y in range(size["height"])
+        ]
+        self._options["width"] = size["width"]
+        self._options["height"] = size["height"]
+
+    def _parse_data(self, data: Any, format: Any = None) -> list[Row]:
+        """Pixels from what Tk's ``put`` and ``-data`` take.
+
+        That is image data - PNG, GIF or PPM bytes, or the same as base64 -
+        or rows of colours: a list of rows, each a list of colours or a
+        string of them (``"red blue"``), or one string of rows in braces
+        (``"{red blue} {green white}"``), as measured on Tk 9.0.2. With a
+        ``palette`` it is character art instead: each row a string of
+        characters, or one string of rows split at newlines.
+
+        Raises:
+            TclError: For rows of different lengths, a colour Tk would not
+                know, or image data that is not in ``format``, in Tk's words.
+        """
+        if self._options["palette"] is not None and not isinstance(
+            data, (bytes, bytearray)
+        ):
+            return [[self._colour_of(item) for item in row] for row in _rows_of(data)]
+        word = _format_word(format)
+        image = self._image_bytes(data)
+        if image is not None:
+            kind = sniff(image)
+            if word in _SNIFFED and kind != _SNIFFED[word]:
+                raise TclError(f"couldn't recognize image data in {word} format")
+            if kind is not None:
+                return decode(image)
+        if isinstance(data, (bytes, bytearray)):
+            raise TclError("couldn't recognize image data")
+        from tkcurses import _tcl_list
+
+        rows = _tcl_list(data) if isinstance(data, str) else list(data)
+        parsed = [
+            [
+                self._colour_of(item)
+                for item in (_tcl_list(row) if isinstance(row, str) else row)
+            ]
+            for row in rows
+        ]
+        for number, row in enumerate(parsed):
+            if len(row) != len(parsed[0]):
+                raise TclError(
+                    f"invalid row # {number}: all rows must have the same number"
+                    " of elements"
+                )
+            for pixel in row:
+                if pixel is not TRANSPARENT and true_rgb(pixel) is None:
+                    raise TclError(f'invalid color name "{pixel}"')
+        return parsed
+
+    @staticmethod
+    def _image_bytes(data: Any) -> bytes | None:
+        """``data`` as image file bytes, if it is some or base64 of some."""
+        if isinstance(data, (bytes, bytearray)):
+            return bytes(data)
+        if not isinstance(data, str) or len(data) < 8 or " " in data.strip():
+            return None
+        import base64
+        import binascii
+
+        try:
+            raw = base64.b64decode(data, validate=False)
+        except (binascii.Error, ValueError):
+            return None
+        return raw if sniff(raw) is not None else None
+
     def _read_file(self, path: str) -> None:
         """Load an image file, or rows of art from a text one.
 
@@ -636,23 +795,42 @@ class PhotoImage(Image):
         every text file on the disk a valid image - an image viewer that
         opened a README as a 37-pixel-wide picture is what that cost.
         """
+        self._load(self._file_rows(path, self._options["format"]))
+
+    def _file_rows(self, path: str, format: Any = None) -> list[Row]:
+        """A file's pixels: an image file, or character art when a
+        ``palette`` says how to read one.
+
+        Raises:
+            TclError: In Tk's words, for a file that cannot be opened, a
+                format Tk has no reader for, or content that is not in the
+                format named - or in any, when none is.
+        """
+        word = _format_word(format)
+        if word == "default":
+            raise TclError("-file option isn't supported for default images")
+        if word is not None and word not in _SNIFFED:
+            raise TclError(f'image file format "{word}" is not supported')
         try:
             raw = Path(path).read_bytes()
         except OSError as exc:
-            raise TclError(
-                f'couldn\'t open "{path}": {exc.strerror or "no such file or directory"}'
-            ) from None
-        if sniff(raw) is not None:
-            self._pixels = decode(raw, path)
-            self._remeasure()
-            return
+            raise _open_failure(path, exc) from None
+        unrecognised = TclError(f'couldn\'t recognize data in image file "{path}"')
+        kind = sniff(raw)
+        if word is not None and kind != _SNIFFED[word]:
+            raise unrecognised
+        if kind is not None:
+            return decode(raw, path)
         if self._options.get("palette") is None:
-            raise TclError(f'couldn\'t recognize data in image file "{path}"')
+            raise unrecognised
         try:
             text = raw.decode("utf-8")
         except UnicodeDecodeError:
-            raise TclError(f'couldn\'t recognize data in image file "{path}"') from None
-        self._set_rows(text.rstrip("\n").split("\n"))
+            raise unrecognised from None
+        return [
+            [self._colour_of(item) for item in row]
+            for row in text.rstrip("\n").split("\n")
+        ]
 
     def _resize(self, width: int, height: int) -> None:
         """Grow or crop to ``width`` x ``height`` pixels, keeping the overlap."""
@@ -694,43 +872,64 @@ class PhotoImage(Image):
             return UNLIT
         return rgb_of(colour) or UNLIT
 
-    def put(self, data: Any, to: tuple[int, ...] | None = None) -> None:
+    def put(self, data: Any, to: Sequence[int] | None = None) -> None:
         """Write colours into the image.
 
         Args:
-            data: One colour, which fills the region ``to`` names - Tk's
-                ``put("red", to=...)`` - or rows, as the constructor takes
-                them. Rows smaller than the region tile across it.
-            to: ``(x, y)`` to place at, or ``(x1, y1, x2, y2)`` to fill.
-                Without it the data goes at the origin.
+            data: Rows of colours as Tk takes them - ``"red"`` for one
+                pixel, ``"{red blue} {green white}"`` or
+                ``[["red", "blue"], ["green", "white"]]`` for rows - or
+                image data, PNG, GIF or PPM, as bytes or base64. With a
+                ``palette``, rows of characters instead.
+            to: ``(x, y)`` to place at, or ``(x1, y1, x2, y2)`` to fill:
+                rows smaller than the region tile across it. Without it the
+                data goes at the origin.
+
+        An image with no ``width`` or ``height`` of its own grows to take
+        what is put, as in Tk; one given a size keeps it and clips.
 
         Raises:
-            TclError: If ``to`` is neither two numbers nor four.
+            TclError: In Tk's words, for rows of different lengths, a colour
+                Tk would not know, or a ``to`` of more than four numbers.
+
+        TkCurses extension:
+            ``None`` or ``" "`` in a row is a hole, painting nothing.
         """
-        # A plain string is one colour, filling the region - Tk's
-        # put("red", to=...) - and a list is rows. That is the only rule
-        # separating them, and without it "blue" came apart into the
-        # characters b, l, u, e and painted four holes.
-        solid = isinstance(data, str) and "\n" not in data
-        rows = [[data]] if solid else [list(row) for row in _rows_of(data)]
+        if (
+            self._options["palette"] is not None
+            and isinstance(data, str)
+            and "\n" not in data
+        ):
+            # One colour, put("red", to=...), even where rows are art: a
+            # row of art is given as a list.
+            rows = [[self._colour_of(data) if data in ("", " ") else data]]
+        else:
+            rows = self._parse_data(data)
         rows = [row for row in rows if row]
         if not rows:
             return
         wide = max(len(row) for row in rows)
         if to is None:
             x1, y1, x2, y2 = 0, 0, wide, len(rows)
-        elif len(to) == 2:
-            x1, y1 = to
-            x2, y2 = x1 + wide, y1 + len(rows)
-        elif len(to) == 4:
-            x1, y1, x2, y2 = to
         else:
-            raise TclError("wrong # coordinates: expected 2 or 4")
+            corners = _corner_values(self._name, "-to", to)
+            x1, y1 = corners[0], corners[1]
+            if len(to) <= 2:
+                x2, y2 = x1 + wide, y1 + len(rows)
+            else:
+                x2, y2 = corners[2], corners[3]
+                x1, x2 = min(x1, x2), max(x1, x2)
+                y1, y2 = min(y1, y2), max(y1, y2)
+        size = {"width": self.width(), "height": self.height()}
+        for axis, far in (("width", x2), ("height", y2)):
+            if not self._user_size[axis]:
+                size[axis] = max(size[axis], far)
+        if (size["width"], size["height"]) != (self.width(), self.height()):
+            self._resize(size["width"], size["height"])
         for y in range(max(y1, 0), min(y2, self.height())):
             source = rows[(y - y1) % len(rows)]
             for x in range(max(x1, 0), min(x2, self.width())):
-                item = source[(x - x1) % len(source)]
-                self._pixels[y][x] = item if solid else self._colour_of(item)
+                self._pixels[y][x] = source[(x - x1) % len(source)]
         self._changed()
 
     def transparency_get(self, x: int, y: int) -> bool:
@@ -846,13 +1045,39 @@ class PhotoImage(Image):
         rule = compositingrule or "overlay"
         if rule not in ("overlay", "set"):
             raise TclError(f'bad compositing rule "{rule}": must be overlay or set')
+        self._copy_block(
+            source._pixels,
+            from_coords=from_coords,
+            to=to,
+            shrink=shrink,
+            zoom=zoom,
+            subsample=subsample,
+            rule=rule,
+        )
+
+    def _copy_block(
+        self,
+        pixels: list[Row],
+        *,
+        from_coords: Sequence[int] | None = None,
+        to: Sequence[int] | None = None,
+        shrink: bool = False,
+        zoom: int | Sequence[int] | None = None,
+        subsample: int | Sequence[int] | None = None,
+        rule: str = "overlay",
+    ) -> None:
+        """:meth:`copy_replace`'s work on rows of pixels, which is also
+        :meth:`read`'s once the file is decoded: Tk's ``read`` takes the
+        same ``-from``, ``-to`` and ``-shrink``, measured to behave alike."""
+        source_width = len(pixels[0]) if pixels else 0
+        source_height = len(pixels)
         across, down = _factor_pair(self._name, "-subsample", subsample)
         wide, tall = _factor_pair(self._name, "-zoom", zoom)
         if wide <= 0 or tall <= 0:
             raise TclError("value(s) for the -zoom option must be positive")
         place = None if to is None else _corner_values(self._name, "-to", to)
 
-        x1, y1, x2, y2 = 0, 0, source.width(), source.height()
+        x1, y1, x2, y2 = 0, 0, source_width, source_height
         if from_coords is not None:
             given = _corner_values(self._name, "-from", from_coords)
             x1, y1 = given[0], given[1]
@@ -860,7 +1085,7 @@ class PhotoImage(Image):
                 x2, y2 = given[2], given[3]
             x1, x2 = min(x1, x2), max(x1, x2)
             y1, y2 = min(y1, y2), max(y1, y2)
-            if x2 > source.width() or y2 > source.height():
+            if x2 > source_width or y2 > source_height:
                 raise TclError(
                     "coordinates for -from option extend outside source image"
                 )
@@ -870,7 +1095,7 @@ class PhotoImage(Image):
         columns = range(x1, x2, across) if across > 0 else range(x2 - 1, x1 - 1, across)
         lines = range(y1, y2, down) if down > 0 else range(y2 - 1, y1 - 1, down)
         block = [
-            [pixel for x in columns for pixel in [source._pixels[y][x]] * wide]
+            [pixel for x in columns for pixel in [pixels[y][x]] * wide]
             for y in lines
             for _ in range(tall)
         ]
@@ -1531,30 +1756,189 @@ class PhotoImage(Image):
 
     # --------------------------------------------------------- whole file
 
-    def data(self, palette: Mapping[str, str] | None = None) -> list[str]:
-        """The image as rows of characters, for writing out or comparing.
+    def _region(self, from_coords: Sequence[int] | None) -> list[Row]:
+        """The pixels ``-from`` names: all of them, from a corner to the far
+        one, or between two corners in either order."""
+        x1, y1, x2, y2 = 0, 0, self.width(), self.height()
+        if from_coords is not None:
+            given = _corner_values(self._name, "-from", from_coords)
+            x1, y1 = given[0], given[1]
+            if len(from_coords) > 2:
+                x2, y2 = given[2], given[3]
+            x1, x2 = min(x1, x2), max(x1, x2)
+            y1, y2 = min(y1, y2), max(y1, y2)
+            if x2 > self.width() or y2 > self.height():
+                raise TclError("coordinates for -from option extend outside image")
+        return [row[x1:x2] for row in self._pixels[y1:y2]]
+
+    def _rgb_rows(
+        self,
+        from_coords: Sequence[int] | None,
+        background: Any,
+        grayscale: bool,
+    ) -> list[list[tuple[int, int, int] | None]]:
+        """The region as RGB, holes filled with ``background`` when one is
+        given and turned grey with the rest under ``grayscale``."""
+        fill = None
+        if background:
+            fill = true_rgb(background)
+            if fill is None:
+                raise TclError(f'unknown color name "{background}"')
+        rows: list[list[tuple[int, int, int] | None]] = []
+        for row in self._region(from_coords):
+            converted: list[tuple[int, int, int] | None] = []
+            for pixel in row:
+                rgb = fill if pixel is TRANSPARENT else true_rgb(pixel) or (0, 0, 0)
+                converted.append(_grey(rgb) if grayscale and rgb is not None else rgb)
+            rows.append(converted)
+        return rows
+
+    def data(
+        self,
+        format: Any = None,
+        *,
+        from_coords: Sequence[int] | None = None,
+        background: Any = None,
+        grayscale: bool = False,
+        palette: Mapping[str, str] | None = None,
+    ) -> Any:
+        """The image's pixels, as Tk's ``data`` gives them.
+
+        Without a format, a tuple of rows, each a string of ``#rrggbb``
+        colours; a hole is ``#000000``. With ``"png"``, ``"gif"`` or
+        ``"ppm"``, the bytes of that file, and with ``"default"`` the rows
+        as one Tcl list in bytes. A name is reported as the colour it names:
+        ``red`` is ``#ff0000``, whatever this terminal shows for it.
 
         Args:
-            palette: Colour to character. Without one every pixel that paints
-                becomes ``#`` and every hole a space, which gives the shape
-                of the image rather than its colours.
+            format: The format, as Tk names it; a format's own options
+                after the name, ``"gif -index 1"``, are ignored.
+            from_coords: The region: ``(x, y)`` to the far corner, or
+                ``(x1, y1, x2, y2)``.
+            background: A colour for the holes.
+            grayscale: Every colour as Tk's grey for it.
+            palette: Character art instead - see below.
+
+        Raises:
+            TclError: In Tk's words, for a format Tk does not have or
+                cannot write as a string, a region outside the image, an
+                unknown background colour, or a GIF of more than 255
+                colours.
+
+        TkCurses extension:
+            ``palette``, a mapping from colour to character, answers rows
+            of characters, the character art a PhotoImage can be made from:
+            a colour not in it is ``#`` and a hole a space.
         """
-        marks = dict(palette or {})
-        return [
-            "".join(" " if pixel is None else marks.get(pixel, "#") for pixel in row)
-            for row in self._pixels
-        ]
-
-    def read(self, filename: str) -> None:
-        """Replace the image with the rows in a text file."""
-        self._read_file(filename)
-        self._changed()
-
-    def write(self, filename: str, palette: Mapping[str, str] | None = None) -> None:
-        """Write the image out as rows of characters."""
-        Path(filename).write_text(
-            "\n".join(self.data(palette)) + "\n", encoding="utf-8"
+        if palette is not None:
+            marks = dict(palette)
+            return [
+                "".join(
+                    " " if pixel is None else marks.get(pixel, "#") for pixel in row
+                )
+                for row in self._region(from_coords)
+            ]
+        word = _format_word(format)
+        if word is not None and word not in _FORMATS:
+            raise TclError(f'image string format "{word}" is unknown')
+        if word == "svg":
+            raise TclError('image string format "svg" is not supported')
+        rows = self._rgb_rows(from_coords, background, grayscale)
+        if word in ("gif", "png", "ppm"):
+            return _ENCODERS[word](rows)
+        text = tuple(
+            " ".join("#%02x%02x%02x" % (pixel or (0, 0, 0)) for pixel in row)
+            for row in rows
         )
+        if word == "default":
+            return " ".join("{" + row + "}" for row in text).encode("ascii")
+        return text
+
+    def read(
+        self,
+        filename: str,
+        format: Any = None,
+        *,
+        from_coords: Sequence[int] | None = None,
+        to: Sequence[int] | None = None,
+        shrink: bool = False,
+    ) -> None:
+        """Read an image file into this image, as Tk's ``read``.
+
+        The file's region ``from_coords`` goes at ``to``, the origin by
+        default, replacing what was there, holes and all. An image with no
+        size of its own grows to take it, and with ``shrink`` becomes
+        exactly as large as it reaches; one given a size keeps it and
+        clips.
+
+        Args:
+            filename: The file. Its content decides how it is read.
+            format: ``"png"``, ``"gif"`` or ``"ppm"``: the file must be in
+                it, and is refused otherwise, as Tk refuses it.
+
+        Raises:
+            TclError: In Tk's words, for a file that cannot be opened or
+                is not an image in the format, or a region outside it.
+
+        TkCurses extension:
+            With a ``palette``, a text file of character art is read too.
+        """
+        self._copy_block(
+            self._file_rows(filename, format),
+            from_coords=from_coords,
+            to=to,
+            shrink=shrink,
+            rule="set",
+        )
+
+    def write(
+        self,
+        filename: str,
+        format: Any = None,
+        from_coords: Sequence[int] | None = None,
+        *,
+        background: Any = None,
+        grayscale: bool = False,
+        palette: Mapping[str, str] | None = None,
+    ) -> None:
+        """Write the image to a file, as Tk's ``write``: a PPM unless
+        ``format`` says ``"png"`` or ``"gif"``.
+
+        ``from_coords``, ``background`` and ``grayscale`` are as for
+        :meth:`data`. A PPM has no holes, so they are written black, as Tk
+        writes them.
+
+        Raises:
+            TclError: In Tk's words, for a format Tk does not have or cannot
+                write to a file, a file that cannot be opened, or a GIF of
+                more than 255 colours.
+
+        TkCurses extension:
+            ``palette`` writes the character art :meth:`data` answers for
+            it, one row a line.
+        """
+        if palette is not None:
+            rows = self.data(from_coords=from_coords, palette=palette)
+            content = ("\n".join(rows) + "\n").encode("utf-8")
+        else:
+            word = _format_word(format) or "ppm"
+            if word not in _FORMATS:
+                raise TclError(f'image file format "{word}" is unknown')
+            if word not in _ENCODERS:
+                raise TclError(
+                    f'image file format "{word}" has no file writing capability'
+                )
+            content = _ENCODERS[word](
+                self._rgb_rows(from_coords, background, grayscale)
+            )
+        try:
+            Path(filename).write_bytes(content)
+        except OSError as exc:
+            raise _open_failure(filename, exc) from None
+
+
+#: The formats Tk writes, each to its encoder.
+_ENCODERS = {"gif": encode_gif, "png": encode_png, "ppm": encode_ppm}
 
 
 class BitmapImage(Image):
