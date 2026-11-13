@@ -31,6 +31,7 @@ starting at ``(1, 1)``. Widgets that ignore this overwrite their own frame.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -39,6 +40,8 @@ from tkcurses._core.cells import clip_cells
 
 __all__ = [
     "BORDER_WIDTH",
+    "CELLS_PER_INCH",
+    "DISTANCE_UNITS",
     "Container",
     "Insets",
     "Managed",
@@ -50,6 +53,7 @@ __all__ = [
     "clip_text",
     "content_rect",
     "content_size",
+    "distance_in_cells",
     "parse_distance",
     "parse_pad",
     "parse_single_pad",
@@ -251,12 +255,75 @@ class Pad:
         return self.before if self.before == self.after else (self.before, self.after)
 
 
+#: Cells to the inch, for Tk's unit suffixes: ``2c``, ``1i``, ``3m``,
+#: ``10p``. A cell is the nearest thing a terminal has to a pixel, and a
+#: terminal says nothing of how large its cells are, so this is an
+#: assumption - ten columns to the inch, the classic teletype pitch that
+#: terminal fonts still approximate. ``winfo_fpixels`` and ``tk scaling``
+#: answer by the same figure.
+CELLS_PER_INCH = 10.0
+
+#: Tk's unit suffixes, in inches.
+DISTANCE_UNITS: dict[str, float] = {
+    "i": 1.0,
+    "c": 1 / 2.54,
+    "m": 1 / 25.4,
+    "p": 1 / 72.0,
+}
+
+_SUFFIXED = re.compile(r"\s*(\S.*?)\s*([cimp])\s*")
+
+
+def distance_in_cells(value: object, number: Any = None) -> float:
+    """One of Tk's screen distances, in cells, keeping the fraction.
+
+    A number, or a number with one of Tk's unit suffixes - ``2c``
+    centimetres, ``1i`` an inch, ``3m`` millimetres, ``10p`` points -
+    converted at :data:`CELLS_PER_INCH`. As Tk's ``Tk_GetPixels``, measured on
+    Tk 9.0.2: space may come before or after the unit, the unit is lower
+    case, and a hexadecimal number is read whole first, so ``0x10c`` is 268.
+
+    Args:
+        value: The distance.
+        number: How to read the number before any unit, returning None for
+            text that is not one; ``float`` when not given.
+
+    Raises:
+        ValueError: If it is not a distance.
+    """
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if not isinstance(value, str):
+        raise ValueError(f"not a screen distance: {value!r}")
+
+    def read(text: str) -> float | None:
+        if number is not None:
+            found = number(text.strip())
+            return None if found is None else float(found)
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    plain = read(value)
+    if plain is not None and not math.isnan(plain):
+        return plain
+    match = _SUFFIXED.fullmatch(value)
+    if match is not None:
+        amount = read(match.group(1))
+        if amount is not None and not math.isnan(amount):
+            return amount * DISTANCE_UNITS[match.group(2)] * CELLS_PER_INCH
+    raise ValueError(f"not a screen distance: {value!r}")
+
+
 def parse_distance(value: object) -> int:
-    """One of Tk's screen distances, in cells.
+    """One of Tk's screen distances, in whole cells.
 
     Rounds rather than truncates, as Tk does: ``2.6`` is three cells and
-    ``0.5`` is one. Tk's unit suffixes (``2c``, ``1i``) have no meaning on a
-    character grid and are not accepted - TkCurses-2qo.
+    ``0.5`` is one. Tk's unit suffixes are taken, as
+    :func:`distance_in_cells` reads them.
 
     Raises:
         ValueError: If the value is not a number or a string holding one.
@@ -265,13 +332,7 @@ def parse_distance(value: object) -> int:
         return int(value)
     if isinstance(value, int):
         return value
-    if not isinstance(value, (float, str)):
-        raise ValueError(f"not a screen distance: {value!r}")
-    try:
-        number = float(value)
-    except ValueError:
-        raise ValueError(f"not a screen distance: {value!r}") from None
-    return math.floor(number + 0.5)
+    return math.floor(distance_in_cells(value) + 0.5)
 
 
 def _pad_parts(value: object) -> list[object]:

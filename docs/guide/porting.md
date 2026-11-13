@@ -45,8 +45,10 @@ is much too big in a terminal:
   cut off at the edge of the screen.
 - `Button(padx=10)` puts ten *columns* each side of the text: a button
   reading "OK" is 28 cells wide.
-- A distance with a unit is converted as if a cell were a tenth of an inch
-  across: `winfo_pixels("1i")` is 10, `"2c"` is 8 and `"72p"` is 10.
+- A distance with a unit - in an option, a pad, a `place` position - is
+  converted as if a cell were a tenth of an inch across: `"1i"` is 10,
+  `"2c"` is 8 and `"72p"` is 10, so `Button(padx="3m")` is one cell. Tk's
+  `cget` gives such a value back as written; here it answers the cells.
 
 Dividing a pixel size by about eight across and sixteen down - the size of
 one cell of a typical terminal font - gives a size of the same proportion.

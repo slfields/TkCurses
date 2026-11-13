@@ -167,7 +167,9 @@ def test_configure_alone_is_every_five_tuple(button):
     entries = button.tk.call(button, "configure")
     assert isinstance(entries, tuple)
     assert ("-text", "text", "Text", "", "hi") in entries
-    assert all(entry[0].startswith("-") and len(entry) == 5 for entry in entries)
+    # A synonym is the pair Tcl lists, {-bg -background}.
+    assert ("-bg", "-background") in entries
+    assert all(entry[0].startswith("-") and len(entry) in (2, 5) for entry in entries)
 
 
 @pytest.mark.parametrize(
@@ -212,6 +214,8 @@ def test_configure_alone_works_on_every_widget(root):
         entries = root.tk.call(widget, "configure")
         assert entries, type(widget).__name__
         for entry in entries:
+            if len(entry) == 2:
+                continue  # a synonym: its option is listed too
             assert root.tk.call(widget, "cget", entry[0]) == entry[4], (
                 type(widget).__name__, entry[0],
             )  # fmt: skip

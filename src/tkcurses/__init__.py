@@ -66,6 +66,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
+from tkcurses._core import geometry as _geometry
 from tkcurses._core.application import Application
 from tkcurses._core.attributes import (
     ASCII_GLYPHS,
@@ -460,19 +461,9 @@ __all__ = [
     "mainloop",
 ]
 
-#: Cells per inch, used by ``winfo_pixels`` to convert screen distances such
-#: as ``"2i"``. A character cell is the closest thing a terminal has to a
-#: pixel, and 10 columns by 6 rows to the inch is the classic teletype metric
-#: that terminal emulators still approximate.
-_CELLS_PER_INCH = 10.0
-
-#: Suffixes tkinter accepts on a screen distance, in inches.
-_DISTANCE_UNITS: dict[str, float] = {
-    "i": 1.0,
-    "c": 1 / 2.54,
-    "m": 1 / 25.4,
-    "p": 1 / 72.0,
-}
+#: Cells per inch, for screen distances such as ``"2i"``: see
+#: :data:`tkcurses._core.geometry.CELLS_PER_INCH`.
+_CELLS_PER_INCH = _geometry.CELLS_PER_INCH
 
 #: Size a Toplevel takes when neither the application nor Wm has asked for
 #: one. Tk's default is 200x200 pixels, which is about this many cells at
@@ -965,8 +956,8 @@ def _tcl_entry(widget: Any, name: str) -> tuple[Any, ...]:
 def _screen_distance(widget: Any, value: Any) -> int:
     """A size that cannot go below zero: Tk stores -3 as 0, measured.
 
-    Suffixed distances - ``2p``, ``1c`` - are refused, as everywhere here
-    (TkCurses-2qo).
+    Suffixed distances - ``2p``, ``1c`` - are converted to cells, as
+    everywhere here: see :func:`_distance_number`.
     """
     return max(0, _signed_distance(widget, value))
 
@@ -990,6 +981,150 @@ _ITEM_IMAGE_OPTIONS = frozenset({"image", "activeimage", "disabledimage"})
 _ITEM_BITMAP_OPTIONS = frozenset({"bitmap", "activebitmap", "disabledbitmap"})
 #: Tk's anchors, in the order its refusal lists them.
 _ANCHOR_NAMES = ("n", "ne", "e", "se", "s", "sw", "w", "nw", "center")
+
+
+#: The cursors Tk takes by name on every platform: the X cursor font's,
+#: and ``none``. Measured on Tk 9.0.2 on X11, where any other name - the
+#: Windows and macOS ones the ``cursors`` manual lists as theirs, or a
+#: name in another case - is ``bad cursor spec``.
+_CURSOR_NAMES = frozenset(
+    [
+        "X_cursor",
+        "arrow",
+        "based_arrow_down",
+        "based_arrow_up",
+        "boat",
+        "bogosity",
+        "bottom_left_corner",
+        "bottom_right_corner",
+        "bottom_side",
+        "bottom_tee",
+        "box_spiral",
+        "center_ptr",
+        "circle",
+        "clock",
+        "coffee_mug",
+        "cross",
+        "cross_reverse",
+        "crosshair",
+        "diamond_cross",
+        "dot",
+        "dotbox",
+        "double_arrow",
+        "draft_large",
+        "draft_small",
+        "draped_box",
+        "exchange",
+        "fleur",
+        "gobbler",
+        "gumby",
+        "hand1",
+        "hand2",
+        "heart",
+        "icon",
+        "iron_cross",
+        "left_ptr",
+        "left_side",
+        "left_tee",
+        "leftbutton",
+        "ll_angle",
+        "lr_angle",
+        "man",
+        "middlebutton",
+        "mouse",
+        "pencil",
+        "pirate",
+        "plus",
+        "question_arrow",
+        "right_ptr",
+        "right_side",
+        "right_tee",
+        "rightbutton",
+        "rtl_logo",
+        "sailboat",
+        "sb_down_arrow",
+        "sb_h_double_arrow",
+        "sb_left_arrow",
+        "sb_right_arrow",
+        "sb_up_arrow",
+        "sb_v_double_arrow",
+        "shuttle",
+        "sizing",
+        "spider",
+        "spraycan",
+        "star",
+        "target",
+        "tcross",
+        "top_left_arrow",
+        "top_left_corner",
+        "top_right_corner",
+        "top_side",
+        "top_tee",
+        "trek",
+        "ul_angle",
+        "umbrella",
+        "ur_angle",
+        "watch",
+        "xterm",
+        "none",
+    ]
+)
+
+
+def _cursor_bitmap(path: str, *, hot_spot: bool) -> None:
+    """Refuse a cursor's bitmap file as Tk does: one that cannot be read as
+    an XBM is ``cleanup reading bitmap file``, and a cursor's own bitmap
+    without a hot spot is ``bad hot spot in bitmap file`` - its mask needs
+    none. Measured on Tk 9.0.2."""
+    from tkcurses._core.images import _parse_xbm
+
+    try:
+        source = Path(path).read_text()
+        _parse_xbm(source)
+    except (OSError, UnicodeDecodeError, TclError):
+        raise TclError(f'cleanup reading bitmap file "{path}"') from None
+    if hot_spot and not all(
+        re.search(rf"#define\s+\S*_{axis}_hot\s", source) for axis in "xy"
+    ):
+        raise TclError(f'bad hot spot in bitmap file "{path}"')
+
+
+def _cursor_spec(widget: Any, value: Any) -> Any:
+    """``cursor``, ``buttoncursor``, ``sashcursor``: a cursor Tk on X11 would
+    make, though there is no pointer here to give it to.
+
+    A name, with up to two colours (``watch red blue``), or a bitmap file
+    with its colour (``@arrow.xbm black``), or file, mask and two colours.
+    Measured on Tk 9.0.2: anything else is ``bad cursor spec "..."``, a
+    colour Tk cannot read is ``invalid color name``, and the files are
+    read: the bitmap must be an XBM with a hot spot.
+    """
+    if value is None or value == "":
+        return value
+    try:
+        parts = _tcl_list(value)
+    except TclError:
+        parts = []
+    text = " ".join(parts) if isinstance(value, (list, tuple)) else str(value)
+    if not parts:
+        raise TclError(f'bad cursor spec "{text}"')
+    if parts[0].startswith("@"):
+        if len(parts) not in (2, 4):
+            raise TclError(f'bad cursor spec "{text}"')
+        _cursor_bitmap(parts[0][1:], hot_spot=True)
+        if len(parts) == 4:
+            _cursor_bitmap(parts[1], hot_spot=False)
+        colours = parts[-2:] if len(parts) == 4 else parts[1:]
+    else:
+        if parts[0] not in _CURSOR_NAMES or len(parts) > 3:
+            raise TclError(f'bad cursor spec "{text}"')
+        colours = parts[1:]
+    for colour in colours:
+        try:
+            widget.winfo_rgb(colour)
+        except (TclError, ValueError):
+            raise TclError(f'invalid color name "{colour}"') from None
+    return text
 
 
 def _colour_or_terminals(widget: Any, value: Any) -> Any:
@@ -1499,12 +1634,29 @@ def _relief_or_none(widget: Any, value: Any) -> str:
     return _choose_relief(value, 'flat, groove, raised, ridge, solid, sunken, or ""')
 
 
+def _distance_number(value: Any) -> int | float | None:
+    """A screen distance in cells, or None if it is not one: a Tcl number,
+    or one with Tk's unit suffix - ``2c``, ``1i``, ``3m``, ``10p`` - at ten
+    cells to the inch."""
+    number = _tcl_number(value)
+    if number is not None:
+        return number
+    try:
+        return _geometry.distance_in_cells(value, _tcl_number)
+    except ValueError:
+        return None
+
+
 def _signed_distance(widget: Any, value: Any) -> int:
     """A size Tk keeps below zero as given: ``sliderlength`` and
     ``activeborderwidth`` read back -5 after -5, measured. What is drawn
-    treats one as its smallest instead."""
+    treats one as its smallest instead.
+
+    Tk's unit suffixes are converted to cells, and the cells are what is
+    kept: Tk keeps ``2c`` as written, but everything here that draws reads
+    a number of cells."""
     del widget
-    number = _tcl_number(value)
+    number = _distance_number(value)
     if number is None or math.isnan(number):
         raise TclError(f'expected screen distance but got "{value}"')
     # Measured: Tk reads an infinite distance back as 0.
@@ -1595,6 +1747,10 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
         "compound", "bottom", "center", "left", "none", "right", "top"
     ),
     "direction": _choices("direction", "above", "below", "flush", "left", "right"),
+    "buttoncursor": _cursor_spec,
+    "cursor": _cursor_spec,
+    "sashcursor": _cursor_spec,
+    "exportselection": _tcl_boolean,
     "highlightthickness": _screen_distance,
     "indicatoron": _tcl_boolean,
     "labelanchor": _choices(
@@ -3290,15 +3446,10 @@ class Misc:
         """
         if isinstance(number, (int, float)):
             return float(number)
-        text = str(number).strip()
-        factor = _DISTANCE_UNITS.get(text[-1:])
-        try:
-            value = float(text[:-1] if factor is not None else text)
-        except ValueError:
-            raise TclError(
-                f'expected screen distance or "" but got "{number}"'
-            ) from None
-        return value if factor is None else value * factor * _CELLS_PER_INCH
+        value = _distance_number(number)
+        if value is None or math.isnan(value):
+            raise TclError(f'expected screen distance or "" but got "{number}"')
+        return float(value)
 
     def winfo_pointerx(self) -> int:
         """Column the mouse was last reported at."""
@@ -3477,17 +3628,14 @@ class Misc:
 
         With keyword arguments or a dictionary, sets them. Called with one option
         name, answers that option's five-tuple, as tkinter does: name, database
-        name, database class, default, current value.
-
-        Differences from tkinter:
-            Called with nothing, it answers every option's current value, where
-            tkinter answers every option's five-tuple.
+        name, database class, default, current value. Called with nothing,
+        answers a dictionary of every option's five-tuple, by name.
         """
         # Those five-tuples come from Tcl's widget definitions; the one-option
         # form is answered by _configure_query.
         options = _given(cnf, kw)
         if not options:
-            return dict(self._options)
+            return {key: self._configure_query(key) for key in sorted(self._options)}
         for key, value in options.items():
             self._options[key] = value
         return None
@@ -3594,7 +3742,12 @@ class Misc:
             value = self.cget(_dashed(args[0]))
             return "" if value is None else value
         if not args:
-            return tuple(_tcl_entry(self, key) for key in self.configure())
+            return tuple(
+                ("-" + str(entry[0]), *entry[1:])
+                if len(entry) == 2
+                else _tcl_entry(self, key)
+                for key, entry in self.configure().items()
+            )
         if len(args) == 1:
             return _tcl_entry(self, _dashed(args[0]))
         if len(args) % 2:
@@ -3955,12 +4108,21 @@ class BaseWidget(Misc):
     def _public_options(cls) -> Collection[str]:
         """The options a program may name, a subset of :meth:`_option_spec`.
 
-        Every one, unless a class narrows it. The themed widgets do: each is
-        built on a classic one and keeps that widget's options as the
-        defaults its drawing reads, but answers only Tk's ttk option names to
-        a program, as Tk's does.
+        Every one, less :attr:`_not_tk_options`, unless a class narrows it
+        further. The themed widgets do: each is built on a classic one and
+        keeps that widget's options as the defaults its drawing reads, but
+        answers only Tk's ttk option names to a program, as Tk's does.
         """
-        return cls._option_spec().keys()
+        hidden = cls._not_tk_options
+        if not hidden:
+            return cls._option_spec().keys()
+        return [name for name in cls._option_spec() if name not in hidden]
+
+    #: Options this widget keeps for its drawing - often because the class it
+    #: is built on has them - that Tk's widget of the same kind does not
+    #: have, and refuses: measured on Tk 9.0.2 by comparing ``keys()``. A
+    #: program naming one gets ``unknown option``, as it would under tkinter.
+    _not_tk_options: ClassVar[frozenset[str]] = frozenset()
 
     def _initial_options(self, given: dict[str, Any]) -> dict[str, Any]:
         """Resolve this widget's starting options.
@@ -4137,15 +4299,27 @@ class BaseWidget(Misc):
         return attribute
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
-        """Set options, or return them all when called with none.
+        """Set options, or report them all when called with none.
+
+        Called with nothing, answers a dictionary of every option's five-tuple,
+        as tkinter does - name, database name, database class, default, current
+        value - with each short spelling Tk defines, such as ``bg``, as the
+        pair ``("bg", "-background")``.
 
         Raises:
             TclError: If an option is not one this widget accepts.
         """
         given = _given(cnf, kw)
         if not given:
-            public = self._public_options()
-            return {k: v for k, v in self._options.items() if k in public}
+            synonyms = self._synonyms()
+            return {
+                name: (
+                    (name, self._synonym_target(synonyms[name]))
+                    if name in synonyms
+                    else self._configure_query(name)
+                )
+                for name in self.keys()
+            }
         checked = self._checked(given)
         for option in checked:
             if option in self._creation_only:
@@ -4174,8 +4348,35 @@ class BaseWidget(Misc):
             raise TclError(f'unknown option "-{key}"') from None
 
     def keys(self) -> list[str]:
-        """The option names this widget accepts, sorted."""
-        return sorted(self._public_options())
+        """The option names this widget accepts, sorted, with the short
+        spellings Tk defines for them - ``bd``, ``bg``, ``fg`` and the like -
+        as tkinter lists them."""
+        return sorted({*self._public_options(), *self._synonyms()})
+
+    #: Tk's canvas and scrollbar name a synonym's option by its database
+    #: name, ``("bd", "borderWidth")``, where every other widget gives the
+    #: option, ``("bd", "-borderwidth")``. Measured on Tk 9.0.2: the two are
+    #: still configured through Tk's older option table.
+    _synonyms_by_database_name: ClassVar[bool] = False
+
+    def _synonyms(self) -> dict[str, str]:
+        """The short spellings this widget answers to, each to its option.
+
+        Only those whose option this widget has: measured on Tk 9.0.2, a
+        Canvas has ``bd`` and ``bg`` but no ``fg``, having no foreground.
+        """
+        public = set(self._public_options())
+        return {
+            short: option
+            for short, option in self._option_synonyms.items()
+            if option in public
+        }
+
+    def _synonym_target(self, option: str) -> str:
+        """What ``configure()`` lists as a synonym's option, as Tk spells it."""
+        if self._synonyms_by_database_name:
+            return database_names(self._database_class(), option)[0]
+        return "-" + option
 
     def _configure_query(self, key: str) -> tuple[Any, ...]:
         """``configure(key)``: Tk's five-tuple for one option.
@@ -5255,15 +5456,21 @@ def _place_options(
 
 
 def _place_int(name: str, value: Any) -> int:
-    """Parse one of place's cell-valued options.
+    """Parse one of place's cell-valued options: a screen distance, rounded.
+
+    Measured on Tk 9.0.2: ``2.5`` is 3, ``1i`` is converted, ``-2c`` is kept
+    negative, and anything else is ``expected screen distance but got``.
 
     Raises:
-        TclError: If it is not a whole number.
+        TclError: If it is not a screen distance.
     """
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        raise TclError(f'bad {name} value "{value}"') from None
+    del name
+    if isinstance(value, int):
+        return value
+    number = _distance_number(value)
+    if number is None or math.isnan(number) or math.isinf(number):
+        raise TclError(f'expected screen distance but got "{value}"')
+    return math.floor(number + 0.5)
 
 
 class Widget(BaseWidget, Pack, Grid, Place):
@@ -6147,6 +6354,9 @@ class Tk(_Backdrop, BaseWidget, Wm):
         :class:`Frame` describes; the root draws no border, so it starts at
         the top left corner.
     """
+
+    #: Measured on Tk 9.0.2: not options of Tk's widget.
+    _not_tk_options: ClassVar[frozenset[str]] = frozenset({"foreground"})
 
     _is_toplevel = True
 
@@ -7229,6 +7439,9 @@ class Toplevel(_Backdrop, BaseWidget, Wm):
         its top border.
     """
 
+    #: Measured on Tk 9.0.2: not options of Tk's widget.
+    _not_tk_options: ClassVar[frozenset[str]] = frozenset({"foreground"})
+
     _is_toplevel = True
 
     @property
@@ -8086,7 +8299,7 @@ class Frame(_Backdrop, _Drawable):
         visual: An X visual, in Tk. Checked as Tk checks it, and kept.
 
     Standard options, described in :doc:`/reference/options`:
-    ``background``, ``borderwidth``, ``cursor``, ``foreground``, ``height``,
+    ``background``, ``borderwidth``, ``cursor``, ``height``,
     ``highlightbackground``, ``highlightcolor``, ``highlightthickness``,
     ``padx``, ``pady``, ``relief``, ``takefocus``, ``width``.
 
@@ -8102,6 +8315,9 @@ class Frame(_Backdrop, _Drawable):
         by markers instead. So is ``cursor``: the mouse pointer belongs to the
         terminal.
     """
+
+    #: Measured on Tk 9.0.2: not options of Tk's widget.
+    _not_tk_options: ClassVar[frozenset[str]] = frozenset({"foreground"})
 
     #: ``width`` and ``height`` are cells; zero means "ask the children".
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
@@ -8302,6 +8518,35 @@ class _TextWidget(_Drawable):
         self._apply_requested_size()
 
     # -------------------------------------------------------------- content
+
+    #: Tk's classic menubutton stores an image name before it looks it up, so
+    #: one it refuses is kept: measured on Tk 9.0.2, ``cget("image")`` then
+    #: answers ``nosuch``. Every other widget of the family keeps the old one.
+    _stores_refused_image: ClassVar[bool] = False
+
+    def _checked(self, given: dict[str, Any]) -> dict[str, Any]:
+        """The shared checks, and Tk's for the ``image``.
+
+        Tk looks the image up again on every configure that sets anything,
+        not only when the option changes. Measured on
+        Tk 9.0.2: a name that is not an image is refused, ``image "nosuch"
+        does not exist``, and the widget keeps the image it had; and once a
+        label's image has been deleted, ``configure(text="x")`` is refused
+        with ``image "pyimage1" does not exist`` until ``image`` names one
+        that exists, or ``""``.
+        """
+        resolved = super()._checked(given)
+        if not given or "image" not in self._public_options():
+            return resolved
+        if "image" in resolved:
+            name = str(resolved["image"] or "")
+        else:
+            name = str(getattr(self, "_options", {}).get("image") or "")
+        if name and self.tk.images.get(name) is None:
+            if "image" in resolved and self._stores_refused_image:
+                self._options["image"] = name
+            raise TclError(f'image "{name}" does not exist')
+        return resolved
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
         """Set options, re-measuring and repainting as the change requires."""
@@ -10056,7 +10301,7 @@ class Entry(_Drawable, XView):
     ``exportselection``, ``font``, ``foreground``, ``highlightbackground``,
     ``highlightcolor``, ``highlightthickness``, ``insertbackground``,
     ``insertborderwidth``, ``insertofftime``, ``insertontime``,
-    ``insertwidth``, ``justify``, ``padx``, ``pady``, ``placeholder``,
+    ``insertwidth``, ``justify``, ``placeholder``,
     ``placeholderforeground``, ``relief``, ``selectbackground``,
     ``selectborderwidth``, ``selectforeground``, ``state``, ``takefocus``,
     ``textvariable``, ``width``, ``xscrollcommand``.
@@ -10085,6 +10330,9 @@ class Entry(_Drawable, XView):
         password.insert(0, "secret")
         password.pack()
     """
+
+    #: Measured on Tk 9.0.2: not options of Tk's widget.
+    _not_tk_options: ClassVar[frozenset[str]] = frozenset({"padx", "pady"})
 
     #: Tk's validation pair carries short spellings on the classic Entry, and
     #: they are the ones tkinter's own documentation uses - so a program copied
@@ -11835,6 +12083,9 @@ class Menubutton(_TextWidget):
                           relief="raised").pack(side="left", padx=1)
     """
 
+    #: Measured on Tk 9.0.2: an image name it refuses is kept.
+    _stores_refused_image: ClassVar[bool] = True
+
     #: Drawn at the right when ``indicatoron`` is true, so a menubutton can
     #: be told from an ordinary button without opening it.
     _INDICATOR = "▾"
@@ -12115,7 +12366,7 @@ class Message(_TextWidget):
     height. The default of 150 gives a block half again as wide as it is
     tall, which is roughly the shape of a paragraph.
 
-    ``width`` overrides the aspect, and ``wraplength`` overrides both.
+    ``width`` overrides the aspect.
     Everything else - justification, anchoring, padding, the border - is a
     Label's.
 
@@ -12127,11 +12378,10 @@ class Message(_TextWidget):
         aspect: The width the text aims for, as a percentage of its height.
 
     Standard options, described in :doc:`/reference/options`: ``anchor``,
-    ``background``, ``borderwidth``, ``compound``, ``cursor``, ``font``,
-    ``foreground``, ``height``, ``highlightbackground``, ``highlightcolor``,
-    ``highlightthickness``, ``image``, ``justify``, ``padx``, ``pady``,
-    ``relief``, ``state``, ``takefocus``, ``text``, ``textvariable``,
-    ``underline``, ``width``, ``wraplength``.
+    ``background``, ``borderwidth``, ``cursor``, ``font``, ``foreground``,
+    ``highlightbackground``, ``highlightcolor``, ``highlightthickness``,
+    ``justify``, ``padx``, ``pady``, ``relief``, ``takefocus``, ``text``,
+    ``textvariable``, ``width``.
 
     Differences from tkinter:
         ``highlightbackground``, ``highlightcolor`` and ``highlightthickness``
@@ -12146,6 +12396,11 @@ class Message(_TextWidget):
                 side="left", padx=1, anchor="n"
             )
     """
+
+    #: Measured on Tk 9.0.2: not options of Tk's widget.
+    _not_tk_options: ClassVar[frozenset[str]] = frozenset(
+        {"compound", "height", "image", "state", "underline", "wraplength"}
+    )
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
         "padx": _padding_or_empty,
@@ -12255,7 +12510,7 @@ class LabelFrame(Frame):
     ``background``, ``borderwidth``, ``cursor``, ``font``, ``foreground``,
     ``height``, ``highlightbackground``, ``highlightcolor``,
     ``highlightthickness``, ``padx``, ``pady``, ``relief``, ``takefocus``,
-    ``text``, ``textvariable``, ``width``.
+    ``text``, ``width``.
 
     Differences from tkinter:
         Tk puts a caption anchored on the left or right edge on that edge,
@@ -12297,6 +12552,9 @@ class LabelFrame(Frame):
     #: ``unknown option``.
     _option_synonyms: ClassVar[dict[str, str]] = _OPTION_ALIASES
 
+    #: Tk's labelframe has a foreground, which its frame does not.
+    _not_tk_options: ClassVar[frozenset[str]] = frozenset()
+
     @classmethod
     def _public_options(cls) -> Collection[str]:
         """Frame's, less the background image Tk's labelframe lacks."""
@@ -12311,7 +12569,6 @@ class LabelFrame(Frame):
         "labelwidget": "",
         "relief": GROOVE,
         "text": "",
-        "textvariable": None,
     }
 
     def __init__(
@@ -12329,13 +12586,11 @@ class LabelFrame(Frame):
             cnf: Options as a dictionary, merged with the keywords.
             name: Path component, generated when omitted.
             class_: The class this frame binds and reads options under.
-            **kw: ``text``, ``textvariable``, ``labelanchor``, plus
+            **kw: ``text``, ``labelanchor``, ``labelwidget``, plus
                 everything a Frame takes.
         """
-        self._caption_trace: tuple[Variable, str] | None = None
         self._label: BaseWidget | None = None
         super().__init__(master, cnf, name=name, class_=class_, **kw)
-        self._follow_caption()
         self._adopt_label()
         self._apply_requested_size()
 
@@ -12350,11 +12605,9 @@ class LabelFrame(Frame):
         return "Labelframe" if type(self) is LabelFrame else type(self).__name__
 
     def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
-        """Set options, following a new variable if one was named."""
+        """Set options, adopting a new ``labelwidget`` if one was named."""
         given = _given(cnf, kw)
         result = super().configure(cnf, **kw)
-        if "textvariable" in given:
-            self._follow_caption()
         if "labelwidget" in given:
             self._adopt_label()
         if given:
@@ -12520,34 +12773,6 @@ class LabelFrame(Frame):
             return replace(padding, top=padding.top + extra)
         return replace(padding, bottom=padding.bottom + extra)
 
-    def _follow_caption(self) -> None:
-        """Track the ``textvariable``, dropping any previous one."""
-        if self._caption_trace is not None:
-            previous, handle = self._caption_trace
-            previous._unwatch(handle)
-            self._caption_trace = None
-        variable = self._options["textvariable"]
-        if variable is None:
-            return
-        _seed_variable(self, variable, self._options["text"])
-        handle = variable._watch(self._caption_changed)
-        self._caption_trace = (variable, handle)
-        self._caption_changed()
-
-    def _caption_changed(self) -> None:
-        """Re-measure and repaint after the caption's variable moved.
-
-        The ``text`` option follows the variable here too - see the note on
-        ``_TextWidget._variable_changed``. A LabelFrame is a Frame rather
-        than a _TextWidget, so it keeps its own copy of this.
-        """
-        variable = self._options["textvariable"]
-        if variable is not None:
-            self._options["text"] = str(variable.get())
-        self._apply_requested_size()
-        self._invalidate_layout()
-        self._redraw()
-
     def _caption(self) -> str:
         """The caption as it is drawn, spaced away from the border corners.
 
@@ -12556,10 +12781,7 @@ class LabelFrame(Frame):
         """
         if self._label_widget() is not None:
             return ""
-        variable = self._options["textvariable"]
-        text = (
-            str(variable.get()) if variable is not None else str(self._options["text"])
-        )
+        text = str(self._options["text"])
         return f" {text} " if text else ""
 
     def _apply_requested_size(self) -> None:
@@ -12681,7 +12903,6 @@ class Spinbox(Entry):
         increment: The step between values.
         invalidcommand: Called when ``validatecommand`` refuses a change.
         readonlybackground: The background while ``state`` is ``readonly``.
-        show: A character to show in place of each one typed.
         to: The highest value.
         validate: When ``validatecommand`` is asked, as for an Entry.
         validatecommand: Asked whether a change may be made.
@@ -12694,8 +12915,8 @@ class Spinbox(Entry):
     ``disabledforeground``, ``exportselection``, ``font``, ``foreground``,
     ``highlightbackground``, ``highlightcolor``, ``highlightthickness``,
     ``insertbackground``, ``insertborderwidth``, ``insertofftime``,
-    ``insertontime``, ``insertwidth``, ``justify``, ``padx``, ``pady``,
-    ``placeholder``, ``placeholderforeground``, ``relief``, ``repeatdelay``,
+    ``insertontime``, ``insertwidth``, ``justify``, ``placeholder``,
+    ``placeholderforeground``, ``relief``, ``repeatdelay``,
     ``repeatinterval``, ``selectbackground``, ``selectborderwidth``,
     ``selectforeground``, ``state``, ``takefocus``, ``textvariable``,
     ``width``, ``xscrollcommand``.
@@ -12736,10 +12957,10 @@ class Spinbox(Entry):
 
     Sample output (values):
         tk.Spinbox(root, values=("Small", "Medium", "Large"), width=10).pack()
-
-    Sample output (show):
-        tk.Spinbox(root, values=("1234",), show="*", width=8).pack()
     """
+
+    #: Measured on Tk 9.0.2: not options of Tk's widget.
+    _not_tk_options: ClassVar[frozenset[str]] = frozenset({"padx", "pady", "show"})
 
     #: The two arrows, drawn at the right-hand end of the field. Tk stacks
     #: them; a terminal row is one cell tall, so they sit side by side.
@@ -17427,13 +17648,12 @@ class Canvas(_Drawable, XView, YView):
         yscrollincrement: The step a vertical scroll moves by.
 
     Standard options, described in :doc:`/reference/options`:
-    ``background``, ``borderwidth``, ``cursor``, ``foreground``, ``height``,
+    ``background``, ``borderwidth``, ``cursor``, ``height``,
     ``highlightbackground``, ``highlightcolor``, ``highlightthickness``,
     ``insertbackground``, ``insertborderwidth``, ``insertofftime``,
-    ``insertontime``, ``insertwidth``, ``padx``, ``pady``, ``relief``,
-    ``selectbackground``, ``selectborderwidth``, ``selectforeground``,
-    ``state``, ``takefocus``, ``width``, ``xscrollcommand``,
-    ``yscrollcommand``.
+    ``insertontime``, ``insertwidth``, ``relief``, ``selectbackground``,
+    ``selectborderwidth``, ``selectforeground``, ``state``, ``takefocus``,
+    ``width``, ``xscrollcommand``, ``yscrollcommand``.
 
     Differences from tkinter:
         Two coordinate systems meet on this widget, and only one of them is
@@ -17452,6 +17672,14 @@ class Canvas(_Drawable, XView, YView):
         are accepted and draw nothing: the focus is shown by markers instead. So
         is ``cursor``: the mouse pointer belongs to the terminal.
     """
+
+    #: Measured on Tk 9.0.2: not options of Tk's widget.
+    _not_tk_options: ClassVar[frozenset[str]] = frozenset(
+        {"foreground", "padx", "pady"}
+    )
+
+    #: Tk lists its synonyms by database name: ``("bd", "borderWidth")``.
+    _synonyms_by_database_name: ClassVar[bool] = True
 
     #: What each kind of item accepts, on top of the options every item has.
     #: Deliberately smaller than Tk's: dashes, stipples, arrowheads and line
@@ -19499,17 +19727,15 @@ class Menu(_Drawable):
     Standard options, described in :doc:`/reference/options`:
     ``activebackground``, ``activeborderwidth``, ``activeforeground``,
     ``background``, ``borderwidth``, ``cursor``, ``disabledforeground``,
-    ``font``, ``foreground``, ``highlightbackground``, ``highlightcolor``,
-    ``highlightthickness``, ``padx``, ``pady``, ``relief``, ``takefocus``.
+    ``font``, ``foreground``, ``relief``, ``takefocus``.
 
     Differences from tkinter:
         A menu cannot be torn off: ``tearoff`` is kept and counted in the
         indices as in Tk, and no tear-off line is drawn, so ``title`` has
         nothing to name. ``activeborderwidth`` draws nothing; the active entry
-        is shown by its colours and ``activerelief``. ``highlightbackground``,
-        ``highlightcolor`` and ``highlightthickness`` are accepted and draw
-        nothing: the focus is shown by markers instead. So is ``cursor``: the
-        mouse pointer belongs to the terminal. Of an entry's own options,
+        is shown by its colours and ``activerelief``. ``cursor`` is accepted
+        and draws nothing: the mouse pointer belongs to the terminal. Of an
+        entry's own options,
         ``font``, ``image``, ``bitmap``, ``compound`` and ``selectimage`` are
         accepted and draw nothing: an entry is a row of text. Its colours,
         ``selectcolor``, ``indicatoron`` and ``hidemargin`` are drawn, an
@@ -19523,6 +19749,11 @@ class Menu(_Drawable):
         menu.post(2, 1)
         menu.activate(0)
     """
+
+    #: Measured on Tk 9.0.2: not options of Tk's widget.
+    _not_tk_options: ClassVar[frozenset[str]] = frozenset(
+        {"highlightbackground", "highlightcolor", "highlightthickness", "padx", "pady"}
+    )
 
     _clipped_by_master = False
 
@@ -20775,9 +21006,9 @@ class Listbox(_Drawable, XView, YView):
     ``background``, ``borderwidth``, ``cursor``, ``disabledforeground``,
     ``exportselection``, ``font``, ``foreground``, ``height``,
     ``highlightbackground``, ``highlightcolor``, ``highlightthickness``,
-    ``justify``, ``padx``, ``pady``, ``relief``, ``selectbackground``,
-    ``selectborderwidth``, ``selectforeground``, ``setgrid``, ``state``,
-    ``takefocus``, ``width``, ``xscrollcommand``, ``yscrollcommand``.
+    ``justify``, ``relief``, ``selectbackground``, ``selectborderwidth``,
+    ``selectforeground``, ``setgrid``, ``state``, ``takefocus``, ``width``,
+    ``xscrollcommand``, ``yscrollcommand``.
 
     Differences from tkinter:
         ``selectborderwidth`` draws nothing: a selection is shown by its
@@ -20786,6 +21017,9 @@ class Listbox(_Drawable, XView, YView):
         are accepted and draw nothing: the focus is shown by markers instead. So
         is ``cursor``: the mouse pointer belongs to the terminal.
     """
+
+    #: Measured on Tk 9.0.2: not options of Tk's widget.
+    _not_tk_options: ClassVar[frozenset[str]] = frozenset({"padx", "pady"})
 
     _STATE_COLOURS: ClassVar[dict[str, tuple[str | None, str | None]]] = {
         "disabled": ("disabledforeground", None),
@@ -22000,16 +22234,13 @@ class PanedWindow(_Drawable):
         showhandle: Whether each sash has a handle to grab.
 
     Standard options, described in :doc:`/reference/options`:
-    ``background``, ``borderwidth``, ``cursor``, ``foreground``, ``height``,
-    ``highlightbackground``, ``highlightcolor``, ``highlightthickness``,
-    ``orient``, ``padx``, ``pady``, ``relief``, ``takefocus``, ``width``.
+    ``background``, ``borderwidth``, ``cursor``, ``height``, ``orient``,
+    ``relief``, ``width``.
 
     Differences from tkinter:
         ``proxyborderwidth`` and ``sashcursor`` are kept and read back and
         change nothing: an outline is one cell, and the pointer is the
-        terminal's. ``highlightbackground``, ``highlightcolor`` and
-        ``highlightthickness`` are accepted and draw nothing: the focus is shown
-        by markers instead. So is ``cursor``: the mouse pointer belongs to the
+        terminal's. So is ``cursor``: the mouse pointer belongs to the
         terminal.
 
     Sample output (sashrelief, sashwidth, sashpad):
@@ -22026,6 +22257,19 @@ class PanedWindow(_Drawable):
         panes.add(tk.Label(panes, text="Left"))
         panes.add(tk.Label(panes, text="Right"))
     """
+
+    #: Measured on Tk 9.0.2: not options of Tk's widget.
+    _not_tk_options: ClassVar[frozenset[str]] = frozenset(
+        {
+            "foreground",
+            "highlightbackground",
+            "highlightcolor",
+            "highlightthickness",
+            "padx",
+            "pady",
+            "takefocus",
+        }
+    )
 
     #: The sash, drawn along the whole division.
     _SASH: ClassVar[dict[str, str]] = {"horizontal": "│", "vertical": "─"}
@@ -22689,10 +22933,9 @@ class Scrollbar(_Drawable):
 
     Standard options, described in :doc:`/reference/options`:
     ``activebackground``, ``background``, ``borderwidth``, ``cursor``,
-    ``foreground``, ``highlightbackground``, ``highlightcolor``,
-    ``highlightthickness``, ``jump``, ``orient``, ``padx``, ``pady``,
-    ``relief``, ``repeatdelay``, ``repeatinterval``, ``takefocus``,
-    ``troughcolor``, ``width``.
+    ``highlightbackground``, ``highlightcolor``, ``highlightthickness``,
+    ``jump``, ``orient``, ``relief``, ``repeatdelay``, ``repeatinterval``,
+    ``takefocus``, ``troughcolor``, ``width``.
 
     Differences from tkinter:
         ``elementborderwidth`` and ``troughcolor`` are kept and read back and
@@ -22707,6 +22950,14 @@ class Scrollbar(_Drawable):
         bar.set(0.2, 0.5)
         bar.activate("slider")
     """
+
+    #: Measured on Tk 9.0.2: not options of Tk's widget.
+    _not_tk_options: ClassVar[frozenset[str]] = frozenset(
+        {"foreground", "padx", "pady"}
+    )
+
+    #: Tk lists its synonyms by database name: ``("bd", "borderWidth")``.
+    _synonyms_by_database_name: ClassVar[bool] = True
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
         "orient": _scrollbar_orient,
@@ -23163,9 +23414,9 @@ class Scale(_Drawable):
     Standard options, described in :doc:`/reference/options`:
     ``activebackground``, ``background``, ``borderwidth``, ``cursor``,
     ``font``, ``foreground``, ``highlightbackground``, ``highlightcolor``,
-    ``highlightthickness``, ``orient``, ``padx``, ``pady``, ``relief``,
-    ``repeatdelay``, ``repeatinterval``, ``state``, ``takefocus``,
-    ``troughcolor``, ``width``.
+    ``highlightthickness``, ``orient``, ``relief``, ``repeatdelay``,
+    ``repeatinterval``, ``state``, ``takefocus``, ``troughcolor``,
+    ``width``.
 
     Differences from tkinter:
         ``highlightbackground``, ``highlightcolor`` and ``highlightthickness``
@@ -23199,6 +23450,9 @@ class Scale(_Drawable):
         tk.Scale(root, from_=0, to=10, tickinterval=5, length=30,
                  orient="horizontal").pack()
     """
+
+    #: Measured on Tk 9.0.2: not options of Tk's widget.
+    _not_tk_options: ClassVar[frozenset[str]] = frozenset({"padx", "pady"})
 
     #: Trough and handle, the same two glyphs a Scrollbar uses, because they
     #: are the same two things.

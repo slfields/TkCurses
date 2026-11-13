@@ -131,9 +131,15 @@ def test_configure_changes_an_option(root):
     assert button.cget("text") == "Cancel"
 
 
-def test_configure_with_no_arguments_returns_the_current_values(root):
+def test_configure_with_no_arguments_returns_every_five_tuple(root):
+    """As tkinter's does: each option's (name, database name, database
+    class, default, value), and each short spelling as (short, -option)."""
     button = Button(root, text="OK")
-    assert button.configure()["text"] == "OK"
+    entries = button.configure()
+    assert entries["text"] == ("text", "text", "Text", "", "OK")
+    assert entries["bg"] == ("bg", "-background")
+    assert entries["bd"] == ("bd", "-borderwidth")
+    assert set(entries) == set(button.keys())
 
 
 def test_configure_refuses_an_unknown_option(root):

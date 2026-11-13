@@ -929,7 +929,7 @@ def test_the_pointer_position_starts_at_the_origin(root):
 def test_configure_sets_and_reports_options(root):
     root.configure(text="hello")
     assert root.cget("text") == "hello"
-    assert root.configure() == {"text": "hello"}
+    assert root.configure() == {"text": ("text", "text", "Text", "", "hello")}
 
 
 def test_config_is_an_alias(root):

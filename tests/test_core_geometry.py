@@ -41,6 +41,7 @@ from tkcurses._core.geometry import (
     clip_text,
     content_rect,
     content_size,
+    distance_in_cells,
     parse_distance,
     parse_pad,
     parse_single_pad,
@@ -324,7 +325,19 @@ def test_a_screen_distance_rounds_rather_than_truncating(value, expected):
     assert parse_distance(value) == expected
 
 
-@pytest.mark.parametrize("value", ["x", "2c", "", None, object()])
+@pytest.mark.parametrize(
+    ("value", "cells"),
+    [("1i", 10.0), ("2.54c", 10.0), ("25.4m", 10.0), ("72p", 10.0),
+     (" 2 c ", 20 / 2.54), ("1e1c", 100 / 2.54), ("-1i", -10.0)],
+)  # fmt: skip
+def test_tks_units_are_taken_at_ten_cells_to_the_inch(value, cells):
+    """Tk's suffixes - centimetres, inches, millimetres, points - with the
+    space around the unit that Tk_GetPixels allows. The cell size is an
+    assumption: a terminal does not say how large its cells are."""
+    assert distance_in_cells(value) == pytest.approx(cells)
+
+
+@pytest.mark.parametrize("value", ["x", "2C", "c", "2x", "1.5.c", "", None, object()])
 def test_a_value_that_is_not_a_screen_distance_is_refused(value):
     with pytest.raises(ValueError, match="not a screen distance"):
         parse_distance(value)

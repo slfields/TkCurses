@@ -86,7 +86,8 @@ def test_every_widget_answers_a_query_for_every_option(root, key, made):
     for option in options:
         answer = widget.configure(option)
         assert len(answer) == 5, (key, option, answer)
-        assert answer[0] == option
+        # A short spelling answers its option's whole entry, as in Tk.
+        assert answer[0] == widget._synonyms().get(option, option)
         assert answer[4] == widget.cget(option), (key, option)
         assert widget.config(option) == answer
 
@@ -156,7 +157,7 @@ def test_setting_and_listing_are_unchanged(root):
     button = tkcurses.Button(root)
     assert button.configure(text="x") is None
     assert button.configure({"text": "y"}) is None
-    assert button.configure()["text"] == "y"
+    assert button.configure()["text"] == ("text", "text", "Text", "", "y")
 
 
 # ----------------------------------------------- against the real toolkit

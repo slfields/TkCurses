@@ -6,6 +6,51 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+### Added
+- Screen distances take Tk's units - `2c`, `1i`, `3m`, `10p` - in every
+  option, pad and `place` position, converted at ten cells to the inch as
+  `winfo_pixels` already was. `Button(padx="3m")`, from a tkinter program,
+  is a one-cell pad rather than an error. `place` takes a fractional
+  position, rounded, as Tk does, and refuses a bad one with Tk's message.
+- `ttk.OptionMenu` takes `padding`, as Tk's does: it is a ttk.Menubutton,
+  and was the one themed widget refusing an option Tk gives it.
+
+### Changed
+- `configure()` with no arguments answers what tkinter's does: a dictionary
+  of each option's five-tuple - name, database name, database class,
+  default, current value - where it gave the current values alone. A
+  program reading `w.configure()["text"]` as a value reads
+  `w.configure()["text"][4]`, or `w.cget("text")`, now.
+- `keys()` and `configure()` list Tk's short spellings - `bd`, `bg`, `fg`,
+  and `bgimg`, `vcmd` and `invcmd` where a widget has them - as tkinter's
+  do, a synonym's entry being `("bg", "-background")`.
+- The classic widgets refuse the options Tk's refuse, 31 across 12 widgets
+  that were taken here only because the widget was built on another: among
+  them `foreground` on Frame, Toplevel and the root; `padx` and `pady` on
+  Entry, Spinbox, Listbox, Scale, Canvas, Scrollbar, Menu and PanedWindow;
+  `image`, `compound`, `height`, `state`, `underline` and `wraplength` on
+  Message; and `show` on the classic Spinbox. A program using one ran here
+  and failed under tkinter.
+- `exportselection` is read as Tcl reads a boolean and anything else is
+  refused, `expected boolean value but got "flase"`, as Tk does: a typo
+  was stored and, being a non-empty string, turned the option on. It was
+  the last boolean option not checked.
+- `tk.LabelFrame` refuses `textvariable`, as Tk's labelframe does: it was
+  accepted here, so a program using it ran here and failed under tkinter.
+  Set the caption with `configure(text=...)`.
+
+### Fixed
+- `cursor`, and the Spinbox's `buttoncursor` and the PanedWindow's
+  `sashcursor`, refuse what Tk on X11 refuses - a name not in the X cursor
+  font (`pointer`, `WATCH`), a colour it cannot read, an unreadable
+  bitmap file - with Tk's messages. Any string was taken. They still draw
+  nothing: the pointer is the terminal's.
+- Label, Button, Checkbutton, Radiobutton and Menubutton, classic and
+  themed, check their `image` as Tk does: a name refused with `image
+  "nosuch" does not exist` leaves the image they had, where it was stored,
+  and once their image is deleted any `configure` that sets something is
+  refused until `image` names another, or none.
+
 ## [0.3.0] - 2026-11-13
 
 The first 0.3 release. Since the third candidate the Canvas has its arcs,

@@ -50,7 +50,14 @@ from tkcurses._core.cells import cells, char_cells, clip_cells, pad_cells, skip_
 from tkcurses._core.colors import parse_color
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.errors import TclError
-from tkcurses._core.geometry import BORDER_WIDTH, Insets, Point, Rect, Size
+from tkcurses._core.geometry import (
+    BORDER_WIDTH,
+    Insets,
+    Point,
+    Rect,
+    Size,
+    distance_in_cells,
+)
 from tkcurses._core.pack import parse_anchor
 from tkcurses._core.text import align_offset, measure, wrap
 
@@ -260,7 +267,7 @@ def parse_padding(value: Any) -> Insets:
     # behaviour the code did not have, which is the same fault TkCurses-avy is
     # about.
     try:
-        parts = [int(float(piece)) for piece in pieces]
+        parts = [int(distance_in_cells(piece)) for piece in pieces]
     except (TypeError, ValueError):
         return Insets()
     if not parts or any(part < 0 for part in parts):
@@ -637,9 +644,13 @@ def _distance_or_unset(widget: Any, value: Any) -> Any:
     del widget
     if value == "":
         return ""
-    number = tkcurses._tcl_number(value)
+    number = tkcurses._distance_number(value)
     if number is None or math.isnan(number):
         raise TclError(f'expected screen distance or "" but got "{value}"')
+    if tkcurses._tcl_number(value) is None:
+        # A unit suffix: kept as the cells it comes to, which is what the
+        # drawing reads.
+        return round(number)
     return value
 
 
@@ -5144,10 +5155,7 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         The value is parsed the way Tcl reads a boolean, and
         :meth:`configure` rejects anything else when it is set - Tk raises
         ``expected boolean value but got "nonsense"`` at configure time, and so
-        does this. Most boolean options in this library are not validated at
-        all (``exportselection="nonsense"`` is accepted and stored); that wider
-        gap is TkCurses-861 rather than something to fix one option at a time,
-        but there is no reason for a new option to join it.
+        does this, as for every boolean option.
         """
         return self.getboolean(self._options["striped"])
 
@@ -5811,11 +5819,9 @@ class OptionMenu(Widget, tkcurses.OptionMenu):
         menu: The Menu holding the values, made by the widget.
 
     Standard options, described in :doc:`/reference/options`: ``class``,
-    ``compound``, ``cursor``, ``image``, ``justify``, ``state``, ``style``,
-    ``takefocus``, ``text``, ``textvariable``, ``underline`` and ``width``.
-
-    Differences from tkinter:
-        ``padding`` is not available yet.
+    ``compound``, ``cursor``, ``image``, ``justify``, ``padding``,
+    ``state``, ``style``, ``takefocus``, ``text``, ``textvariable``,
+    ``underline`` and ``width``.
     """
 
     # It reports TMenubutton: like LabeledScale being a TFrame, it is a
@@ -5831,7 +5837,10 @@ class OptionMenu(Widget, tkcurses.OptionMenu):
 
     # A classic option, so a program cannot name it - Tk's themed widget
     # has none - but the drawing reads it.
-    _widget_options: ClassVar[dict[str, Any]] = {"indicatoron": True}
+    _widget_options: ClassVar[dict[str, Any]] = {
+        "indicatoron": True,
+        "padding": "",
+    }
 
     def _element_at(self, x: int, y: int) -> Any:
         """As a Menubutton: the arrow is ``Menubutton.indicator``."""
@@ -6584,6 +6593,10 @@ class Menubutton(Widget, tkcurses.Menubutton):
     }
 
     _ttk_class = "TMenubutton"
+
+    #: Unlike the classic one, a refused image name is not kept: measured on
+    #: Tk 9.0.2.
+    _stores_refused_image: ClassVar[bool] = False
 
     def _element_at(self, x: int, y: int) -> Any:
         """The arrow is ``Menubutton.indicator``, the rest the ring model."""

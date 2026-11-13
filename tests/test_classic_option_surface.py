@@ -144,10 +144,9 @@ def _refused(name, real_root, made) -> tuple[set[str], set[str]]:
             if "unknown option" in str(error):
                 refused.add(option)
         except Exception:
-            # The VALUE was refused, not the option.
-            # Tk's defaults include values this library cannot read yet: padx
-            # is "3m", a screen distance, and int() raises on it
-            # (TkCurses-2qo). The option itself was recognised.
+            # The VALUE was refused, not the option: Tk's defaults include
+            # X colour and font specifications this library reads its own
+            # way. The option itself was recognised.
             continue
     return offered, refused
 
@@ -182,3 +181,42 @@ def test_every_gap_is_owned_by_an_issue_id():
         assert name in CLASSIC, name
         for owner in owners:
             assert owner.startswith("TkCurses-"), (name, owner)
+
+
+def _pair(name, real_root, made):
+    """tkinter's widget and ours, of the same kind."""
+    if name == "Tk":
+        made.append(tkcurses.Tk(useTk=False))
+        return real_root, made[-1]
+    ours_root = tkcurses.Misc()
+    if name == "OptionMenu":
+        return (
+            tkinter.OptionMenu(real_root, tkinter.StringVar(real_root), "a"),
+            tkcurses.OptionMenu(ours_root, tkcurses.StringVar(ours_root), "a"),
+        )
+    return getattr(tkinter, name)(real_root), getattr(tkcurses, name)(ours_root)
+
+
+@pytest.mark.parametrize("name", CLASSIC)
+def test_we_take_no_option_tk_refuses(name, real_root, made):
+    """The other direction: an option taken here and refused by Tk lets a
+    program run here and fail under tkinter. A Frame took ``foreground``, an
+    Entry ``padx``, a Message ``image``."""
+    theirs, ours = _pair(name, real_root, made)
+    extra = sorted(set(ours.keys()) - set(theirs.keys()))
+    assert not extra, f"tkcurses.{name} takes {extra}, which tkinter.{name} refuses"
+
+
+@pytest.mark.parametrize("name", CLASSIC)
+def test_configure_lists_tks_synonyms_as_tk_does(name, real_root, made):
+    """``bd``, ``bg``, ``fg`` and the rest, listed by ``configure()`` as Tk
+    lists them: ``("bg", "-background")``, or by database name on a Canvas
+    and a Scrollbar."""
+    theirs, ours = _pair(name, real_root, made)
+    expected = {
+        key: tuple(str(part) for part in entry)
+        for key, entry in theirs.configure().items()
+        if len(entry) == 2
+    }
+    got = {key: entry for key, entry in ours.configure().items() if len(entry) == 2}
+    assert got == expected

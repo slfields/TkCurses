@@ -76,9 +76,9 @@ def test_a_known_answer(modules, module, table, name, status):
 
 
 def test_a_difference_is_partial_and_says_why(modules):
-    found = row(modules, "tkinter", "Misc", "configure")
+    found = row(modules, "tkinter", "Text", "dump")
     assert found.status == compat.PARTIAL
-    assert found.why.startswith("Called with nothing")
+    assert found.why.startswith("Of several marks")
     assert "``" not in found.why and ":" not in found.why.split(" ")[0]
 
 

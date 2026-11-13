@@ -128,6 +128,46 @@ def test_setting_an_unknown_name_later_also_raises(root, art):
         label.configure(image="gone")
 
 
+def _family():
+    from tkcurses import Menubutton, ttk
+
+    return [
+        Label, Button, Checkbutton, Radiobutton, Menubutton,
+        ttk.Label, ttk.Button, ttk.Checkbutton, ttk.Radiobutton, ttk.Menubutton,
+    ]  # fmt: skip
+
+
+@pytest.mark.parametrize("cls", _family(), ids=lambda c: f"{c.__module__}.{c.__name__}")
+def test_a_refused_name_leaves_the_image_it_had(root, art, cls):
+    """Measured on Tk 9.0.2: the configure is refused and nothing changes -
+    except on the classic Menubutton, which stores the name first."""
+    from tkcurses import Menubutton
+
+    widget = cls(root, image=art)
+    with pytest.raises(TclError, match='image "nosuch" does not exist'):
+        widget.configure(image="nosuch")
+    expected = "nosuch" if cls is Menubutton else str(art)
+    assert widget.cget("image") == expected
+
+
+@pytest.mark.parametrize("cls", _family(), ids=lambda c: f"{c.__module__}.{c.__name__}")
+def test_a_widget_whose_image_is_gone_refuses_configure(root, cls):
+    """Tk looks the image up on every configure that sets anything: once it
+    has been deleted, ``configure(text=...)`` is ``image "pyimage1" does not
+    exist``, and naming another image, or none, is the way out."""
+    image = PhotoImage(master=root, width=2, height=2)
+    name = str(image)
+    widget = cls(root, image=image, text="t")
+    del image
+    gc.collect()
+    with pytest.raises(TclError, match=f'image "{name}" does not exist'):
+        widget.configure(text="x")
+    assert widget.cget("text") == "t"
+    widget.configure(image="")
+    widget.configure(text="x")
+    assert widget.cget("text") == "x"
+
+
 def test_the_default_compound_is_none(root):
     assert Label(root, text="x").cget("compound") == "none"
 

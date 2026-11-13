@@ -2277,6 +2277,32 @@ over painting a better imitation:
   wrapped in a cursor save and restore (DECSC / DECRC); otherwise the cursor
   would be left wherever the last image cell went.
 
+**Screen distances take Tk's units** (`TkCurses-2qo`): `2c`, `1i`, `3m`,
+`10p`, at ten cells to the inch - the figure `winfo_fpixels` and `tk scaling`
+already used, and an assumption, since a terminal does not say how large its
+cells are. One reader, `_core/geometry.distance_in_cells`, serves the widget
+options, `pack`, `grid` and `place`, and ttk's `padding`. Measured on Tk
+9.0.2 (`Tk_GetPixels`): space may sit before or after the unit, the unit is
+lower case only, a hexadecimal number is read whole before any unit
+(`0x10c` is 268), and `place` rounds a fraction and keeps a negative
+distance. **One difference is kept:** Tk's `cget` answers `2c` as written,
+and here the option holds the cells it comes to, because everything that
+draws reads a number. ttk's `padding` is kept as written and converted when
+drawn.
+
+**The mouse cursor options are checked and kept, and draw nothing**
+(`TkCurses-reba`). The pointer belongs to the terminal, but `cursor`,
+`buttoncursor` and `sashcursor` are refused as Tk on X11 refuses them, so a
+program written here runs under tkinter. Measured on Tk 9.0.2: a name from
+the X cursor font, or `none`, case and all - `WATCH`, `pointer` and the
+Windows and macOS names the `cursors` manual lists as those platforms' own
+are `bad cursor spec` - with up to two colours, each checked (`invalid color
+name`); or `@file fg` or `@file mask fg bg`, where both files are read as
+XBM (`cleanup reading bitmap file`) and the cursor's own must define a hot
+spot (`bad hot spot in bitmap file`). X11 rather than the union of
+platforms, because every other measurement in this library is X11's and a
+program using a Windows cursor fails under tkinter on Linux too.
+
 **Tk's insertion-cursor options steer it** (`TkCurses-gm66.2`), and only when a
 program changes them. Canvas, Entry, Spinbox and Text take `-insertbackground`,
 `-insertborderwidth`, `-insertofftime`, `-insertontime` and `-insertwidth`, and
@@ -3758,9 +3784,26 @@ and `cget` resolves synonyms alone. Widgets with a range — `Scale`, `Spinbox`,
 `ttk.LabeledScale` have no such option in either library, which corrects the
 issue's own list of what needed renaming.
 
-The remaining half of this is `TkCurses-bv0`: tkinter's key set contains both
-`bg` and `background`, and ours only the long one. The values are right and
-`cget` takes either; it is `configure()`'s reported keys that are short.
+**The key set has the synonyms too** (`TkCurses-bv0`). `keys()` and
+`configure()` list them, and a widget lists only those whose option it has:
+measured on Tk 9.0.2, a Canvas, a Scrollbar and a PanedWindow have `bd` and
+`bg` but no `fg`, having no foreground. Two widgets list a synonym's option by
+its database name, `("bd", "borderWidth")`, where every other gives
+`("bd", "-borderwidth")`: the Canvas and the Scrollbar, still configured
+through Tk's older option table. `_synonyms_by_database_name` marks them.
+`tests/test_classic_option_surface.py` compares every classic widget's
+synonym entries with tkinter's.
+
+**And a classic widget takes no option Tk's refuses** (`TkCurses-x4vz.1`).
+Several are built on another here - Message on Label, Spinbox on Entry,
+Toplevel and the root on the Frame machinery - and inherited options Tk's
+widget of the same kind does not have: measured by comparing `keys()`, 31
+across 12 widgets, among them a Frame's `foreground`, an Entry's `padx`, a
+Message's `image` and `wraplength`, a Spinbox's `show` and a PanedWindow's
+`takefocus`. Each class names them in `_not_tk_options`; the drawing still
+reads them as defaults, and `_public_options()` refuses them to a program,
+the mechanism the themed widgets already used. The surface test checks both
+directions now, so neither can grow back.
 | `getboolean(s)` | ✓ | Parse boolean |
 | **Option Database** | | |
 | `option_add(pattern, value, priority)` | ◐ | Simplified options |
@@ -3827,9 +3870,9 @@ Where the table above and the implementation need reading together.
 
   Anything else raises `TclError` saying TkCurses does not run it, and a
   widget subcommand other than these says to use the method.
-- **`configure()` with no arguments** returns the current option values.
-  tkinter returns a five-tuple per option carrying its resource name, class and
-  default; those come from Tcl's widget definitions.
+- **`configure()` with no arguments** returns every option's five-tuple, as
+  tkinter does, and each synonym as `(short, -option)`. It returned the
+  current values alone until `TkCurses-bv0`, documented as a difference.
 
   **`configure("name")` does answer Tk's five-tuple** (`TkCurses-kifn`; it
   crashed on every widget before). The database name and class are Tk's own,
@@ -4276,6 +4319,16 @@ Measured through tkinter, and not in the manual:
 | an image passed as an object | read back as its name, `pyimage1` | the same |
 | an unknown name | `image "nosuch" does not exist`, the old value kept | the same, refused in `_checked` before anything is stored |
 | the image deleted while shown | every `configure` that sets something is refused with `image "pyimage1" does not exist` and changes nothing, because `ConfigureFrame` calls `Tk_GetImage` each time; `configure(backgroundimage="")` clears it | the same. Asking, `configure("width")`, is not refused |
+
+**The label family's `image` follows the same two rules** (`TkCurses-z748`),
+measured on Tk 9.0.2 across Label, Button, Checkbutton, Radiobutton and
+Menubutton, classic and themed: a refused name leaves the image the widget
+had, and once that image is deleted every `configure` that sets something is
+refused until `image` names one that exists, or `""`. `_TextWidget._checked`
+does it. One exception, kept: the **classic Menubutton stores the refused
+name** - `cget("image")` answers `nosuch` after the error - where every other
+widget of the family, `ttk.Menubutton` included, does not
+(`_stores_refused_image`).
 
 The root has no curses window: it paints the image into the screen buffer
 behind every panel, from the top left corner, as it paints its `background`.

@@ -394,7 +394,7 @@ def test_an_end_edge_left_part_way_along_a_line_leaves_the_whole_line(text):
 def test_configure_with_no_options_reports_where_the_lines_moved(text):
     made = peer(text, startline=3, endline=6)
     text.insert("1.0", "zero\n")
-    assert made.configure()["startline"] == 4
+    assert made.configure()["startline"][4] == 4
 
 
 def test_a_peer_cannot_delete_its_last_newline(text):

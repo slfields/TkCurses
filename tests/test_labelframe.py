@@ -99,32 +99,17 @@ def test_no_text_means_no_caption(root):
     assert LabelFrame(root, name="f")._caption() == ""
 
 
-def test_a_textvariable_supplies_the_caption(root):
+def test_textvariable_is_refused_as_tk_refuses_it(root):
+    """Tk's labelframe has no -textvariable: measured on Tk 9.0.2,
+    ``configure(textvariable=...)`` is ``unknown option`` and ``keys()``
+    does not list it."""
     variable = StringVar(root, "Network")
-    assert LabelFrame(root, name="f", textvariable=variable)._caption() == " Network "
-
-
-def test_changing_the_variable_changes_the_caption(root):
-    variable = StringVar(root, "Network")
-    frame = LabelFrame(root, name="f", textvariable=variable)
-    variable.set("Display")
-    assert frame._caption() == " Display "
-
-
-def test_changing_the_variable_re_measures(root):
-    variable = StringVar(root, "a")
-    frame = LabelFrame(root, name="f", textvariable=variable)
-    narrow = frame.winfo_reqwidth()
-    variable.set("a much longer caption")
-    assert frame.winfo_reqwidth() > narrow
-
-
-def test_a_new_variable_drops_the_old_trace(root):
-    first, second = StringVar(root, "one"), StringVar(root, "two")
-    frame = LabelFrame(root, name="f", textvariable=first)
-    frame.configure(textvariable=second)
-    assert frame._caption() == " two "
-    assert first.trace_info() == []
+    with pytest.raises(TclError, match='unknown option "-textvariable"'):
+        LabelFrame(root, name="f", textvariable=variable)
+    frame = LabelFrame(root, name="g")
+    with pytest.raises(TclError, match='unknown option "-textvariable"'):
+        frame.configure(textvariable=variable)
+    assert "textvariable" not in frame.keys()  # noqa: SIM118 - a widget, not a dict
 
 
 @pytest.mark.parametrize(

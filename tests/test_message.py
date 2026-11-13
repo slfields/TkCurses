@@ -23,7 +23,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tkcurses import Label, Message, Misc, StringVar
+from tkcurses import Label, Message, Misc, StringVar, TclError
 from tkcurses._core.geometry import Rect
 from tkcurses._core.panels import PanelStack
 from tkcurses._core.text import measure, wrap
@@ -96,9 +96,17 @@ def test_width_overrides_the_aspect(root):
     assert all(len(line) <= 20 for line in message._lines())
 
 
-def test_wraplength_overrides_width(root):
-    message = Message(root, name="m", text=PARAGRAPH, width=40, wraplength=15)
-    assert message._wrap_width() == 15
+@pytest.mark.parametrize(
+    "option",
+    ["compound", "height", "image", "state", "underline", "wraplength"],
+)
+def test_options_tks_message_lacks_are_refused(root, option):
+    """Measured on Tk 9.0.2: a message is not a label, and these are
+    ``unknown option``. They were taken here because Message is built on
+    Label, so a program using one ran here and failed under tkinter."""
+    with pytest.raises(TclError, match=f'unknown option "-{option}"'):
+        Message(root, name="m", **{option: 1})
+    assert option not in Message(root, name="n").keys()  # noqa: SIM118
 
 
 def test_empty_text_is_harmless(root):

@@ -266,8 +266,20 @@ def test_a_bad_bordermode_is_refused(root):
 
 
 def test_a_bad_coordinate_is_refused(root):
-    with pytest.raises(TclError, match="bad x value"):
+    with pytest.raises(TclError, match='expected screen distance but got "over there"'):
         Box(root, "a").place(x="over there")
+
+
+@pytest.mark.parametrize(
+    ("value", "cells"), [("2.5", 3), ("1i", 10), ("-2c", -8), ("2 c", 8)]
+)
+def test_a_coordinate_is_a_screen_distance(root, value, cells):
+    """Measured on Tk 9.0.2: a fraction is rounded, a unit converted, and a
+    negative one kept."""
+    box = Box(root, "a")
+    box.place(x=value, width=value)
+    assert box.place_info()["x"] == cells
+    assert box.place_info()["width"] == cells
 
 
 def test_a_bad_relative_value_is_refused(root):

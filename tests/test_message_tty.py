@@ -148,10 +148,9 @@ def test_a_caption_that_changes_repaints(terminal, tmp_path):
     term = terminal(cols=60, rows=20)
     term.run_source(
         program(
-            "v = tkcurses.StringVar(root, 'Before')\n"
-            "f = tkcurses.LabelFrame(root, textvariable=v)\n"
+            "f = tkcurses.LabelFrame(root, text='Before')\n"
             "f.place(x=1, y=1, width=24, height=6)\n"
-            "root.after(100, lambda: v.set('After'))"
+            "root.after(100, lambda: f.configure(text='After'))"
         ),
         workdir=tmp_path,
     )

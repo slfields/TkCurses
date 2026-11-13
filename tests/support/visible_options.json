@@ -224,11 +224,6 @@
     "hand2"
    ]
   },
-  "foreground": {
-   "kind": "visible",
-   "state": "plain",
-   "value": "red"
-  },
   "height": {
    "kind": "visible",
    "state": "plain",
@@ -305,16 +300,6 @@
    "tried": [
     "2,2"
    ]
-  },
-  "padx": {
-   "kind": "visible",
-   "state": "plain",
-   "value": 3
-  },
-  "pady": {
-   "kind": "visible",
-   "state": "plain",
-   "value": 3
   },
   "relief": {
    "kind": "invisible",
@@ -716,16 +701,6 @@
    "state": "plain",
    "value": "right"
   },
-  "padx": {
-   "kind": "visible",
-   "state": "plain",
-   "value": 3
-  },
-  "pady": {
-   "kind": "visible",
-   "state": "plain",
-   "value": 3
-  },
   "placeholder": {
    "kind": "visible",
    "state": "empty",
@@ -848,11 +823,6 @@
    "tried": [
     "hand2"
    ]
-  },
-  "foreground": {
-   "kind": "visible",
-   "state": "plain",
-   "value": "red"
   },
   "height": {
    "kind": "visible",
@@ -1190,9 +1160,6 @@
    "state": "plain",
    "value": "Changed"
   },
-  "textvariable": {
-   "kind": "behaviour"
-  },
   "visual": {
    "kind": "behaviour"
   },
@@ -1288,16 +1255,6 @@
   },
   "listvariable": {
    "kind": "behaviour"
-  },
-  "padx": {
-   "kind": "visible",
-   "state": "plain",
-   "value": 3
-  },
-  "pady": {
-   "kind": "visible",
-   "state": "plain",
-   "value": 3
   },
   "relief": {
    "kind": "visible",
@@ -1418,44 +1375,6 @@
    "kind": "visible",
    "state": "plain",
    "value": "red"
-  },
-  "highlightbackground": {
-   "kind": "invisible",
-   "state": "focus",
-   "tried": [
-    "red"
-   ]
-  },
-  "highlightcolor": {
-   "kind": "invisible",
-   "state": "focus",
-   "tried": [
-    "red"
-   ]
-  },
-  "highlightthickness": {
-   "kind": "invisible",
-   "state": "focus",
-   "tried": [
-    3,
-    9
-   ]
-  },
-  "padx": {
-   "kind": "invisible",
-   "state": "plain",
-   "tried": [
-    3,
-    9
-   ]
-  },
-  "pady": {
-   "kind": "invisible",
-   "state": "plain",
-   "tried": [
-    3,
-    9
-   ]
   },
   "postcommand": {
    "kind": "behaviour"
@@ -1700,11 +1619,6 @@
     9
    ]
   },
-  "compound": {
-   "kind": "visible",
-   "state": "plain",
-   "value": "top"
-  },
   "cursor": {
    "kind": "invisible",
    "state": "plain",
@@ -1721,11 +1635,6 @@
    "kind": "visible",
    "state": "plain",
    "value": "red"
-  },
-  "height": {
-   "kind": "visible",
-   "state": "plain",
-   "value": 3
   },
   "highlightbackground": {
    "kind": "invisible",
@@ -1749,11 +1658,6 @@
     9
    ]
   },
-  "image": {
-   "kind": "visible",
-   "state": "plain",
-   "value": "IMAGE"
-  },
   "justify": {
    "kind": "visible",
    "state": "plain",
@@ -1774,11 +1678,6 @@
    "state": "plain",
    "value": "groove"
   },
-  "state": {
-   "kind": "visible",
-   "state": "plain",
-   "value": "disabled"
-  },
   "takefocus": {
    "kind": "invisible",
    "state": "plain",
@@ -1795,17 +1694,7 @@
   "textvariable": {
    "kind": "behaviour"
   },
-  "underline": {
-   "kind": "visible",
-   "state": "plain",
-   "value": 0
-  },
   "width": {
-   "kind": "visible",
-   "state": "plain",
-   "value": 3
-  },
-  "wraplength": {
    "kind": "visible",
    "state": "plain",
    "value": 3
@@ -2010,11 +1899,6 @@
     "hand2"
    ]
   },
-  "foreground": {
-   "kind": "visible",
-   "state": "plain",
-   "value": "red"
-  },
   "handlepad": {
    "kind": "visible",
    "state": "plain",
@@ -2030,28 +1914,6 @@
    "state": "plain",
    "value": 3
   },
-  "highlightbackground": {
-   "kind": "invisible",
-   "state": "focus",
-   "tried": [
-    "red"
-   ]
-  },
-  "highlightcolor": {
-   "kind": "invisible",
-   "state": "focus",
-   "tried": [
-    "red"
-   ]
-  },
-  "highlightthickness": {
-   "kind": "invisible",
-   "state": "focus",
-   "tried": [
-    3,
-    9
-   ]
-  },
   "opaqueresize": {
    "kind": "invisible",
    "state": "plain",
@@ -2064,16 +1926,6 @@
    "kind": "visible",
    "state": "plain",
    "value": "vertical"
-  },
-  "padx": {
-   "kind": "visible",
-   "state": "plain",
-   "value": 3
-  },
-  "pady": {
-   "kind": "visible",
-   "state": "plain",
-   "value": 3
   },
   "proxybackground": {
    "kind": "invisible",
@@ -2128,14 +1980,6 @@
    "value": 3
   },
   "showhandle": {
-   "kind": "invisible",
-   "state": "plain",
-   "tried": [
-    0,
-    1
-   ]
-  },
-  "takefocus": {
    "kind": "invisible",
    "state": "plain",
    "tried": [
@@ -2448,16 +2292,6 @@
    "state": "plain",
    "value": "horizontal"
   },
-  "padx": {
-   "kind": "visible",
-   "state": "plain",
-   "value": 3
-  },
-  "pady": {
-   "kind": "visible",
-   "state": "plain",
-   "value": 3
-  },
   "relief": {
    "kind": "visible",
    "state": "plain",
@@ -2578,11 +2412,6 @@
     9
    ]
   },
-  "foreground": {
-   "kind": "visible",
-   "state": "plain",
-   "value": "red"
-  },
   "highlightbackground": {
    "kind": "invisible",
    "state": "focus",
@@ -2616,22 +2445,6 @@
    "kind": "visible",
    "state": "plain",
    "value": "horizontal"
-  },
-  "padx": {
-   "kind": "invisible",
-   "state": "plain",
-   "tried": [
-    3,
-    9
-   ]
-  },
-  "pady": {
-   "kind": "invisible",
-   "state": "plain",
-   "tried": [
-    3,
-    9
-   ]
   },
   "relief": {
    "kind": "visible",
@@ -2850,16 +2663,6 @@
    "state": "plain",
    "value": "right"
   },
-  "padx": {
-   "kind": "visible",
-   "state": "plain",
-   "value": 3
-  },
-  "pady": {
-   "kind": "visible",
-   "state": "plain",
-   "value": 3
-  },
   "placeholder": {
    "kind": "visible",
    "state": "empty",
@@ -2915,11 +2718,6 @@
    "kind": "visible",
    "state": "selected",
    "value": "red"
-  },
-  "show": {
-   "kind": "visible",
-   "state": "plain",
-   "value": "*"
   },
   "state": {
    "kind": "visible",
@@ -4095,7 +3893,7 @@
   "compound": {
    "kind": "visible",
    "state": "plain",
-   "value": "top"
+   "value": "left"
   },
   "cursor": {
    "kind": "invisible",
@@ -4130,7 +3928,9 @@
    "kind": "behaviour"
   },
   "padding": {
-   "kind": "missing"
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
   },
   "state": {
    "kind": "visible",

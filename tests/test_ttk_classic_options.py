@@ -41,9 +41,7 @@ RECORD = json.loads(
 
 #: Tk has these and TkCurses does not yet; the option-surface comparison
 #: against real tkinter keeps the same list.
-MISSING = {
-    "OptionMenu": {"padding"},
-}
+MISSING: dict[str, set[str]] = {}
 
 
 def build(name: str, root: tkcurses.Misc) -> tkcurses.Widget:
@@ -129,3 +127,16 @@ def test_the_drawing_still_reads_the_classic_defaults():
     assert ttk.Notebook(root)._options["relief"] == "solid"
     assert ttk.Treeview(root)._options["relief"] == "sunken"
     assert ttk.LabeledScale(root).scale._options["relief"] == "flat"
+
+
+def test_an_option_menu_is_padded_as_a_menubutton_is():
+    """Tk 9.0.2's ttk.OptionMenu is a ttk.Menubutton, and takes ``padding``
+    with it: left, top, right, bottom, the last two defaulting."""
+    root = tkcurses.Misc()
+    menu = build("OptionMenu", root)
+    plain = menu._content_padding()
+    menu.configure(padding="2 1")
+    assert menu.cget("padding") == "2 1"
+    padded = menu._content_padding()
+    assert (padded.left - plain.left, padded.top - plain.top) == (2, 1)
+    assert (padded.right - plain.right, padded.bottom - plain.bottom) == (2, 1)

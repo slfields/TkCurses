@@ -33,6 +33,8 @@ in CI. TkCurses-vgkb.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 pytest.importorskip("tkinter", reason="the comparison needs real tkinter")
@@ -82,7 +84,6 @@ NOT_VALUES = frozenset(
         "tearoffcommand",
         "values",
         "font",
-        "cursor",
         "style",
         "bitmap",
         "tile",
@@ -101,19 +102,16 @@ NOT_VALUES = frozenset(
         "placeholder",
         "inactiveselectbackground",
         "mode",
-        "sashcursor",
         "value",
         "onvalue",
         "offvalue",
         "tristatevalue",
-        "exportselection",
     ]
 )
 VALUES = ("abc", "2.5", -3)
 
-#: (module, widget, option) that still take a value Tk refuses. A cursor
-#: needs Tk's table of cursor names, which nothing here has (TkCurses-reba).
-STILL_TAKEN = frozenset({("tk", "Spinbox", "buttoncursor")})
+#: (module, widget, option) that still take a value Tk refuses.
+STILL_TAKEN: frozenset[tuple[str, str, str]] = frozenset()
 
 
 @pytest.fixture(scope="module")
@@ -178,3 +176,64 @@ def test_a_bad_value_is_answered_as_tkinter_answers_it(real_root, module, name):
             ):
                 wrong.append(f"{case}: Tk {their_message!r}, ours {our_message!r}")
     assert not wrong, f"{module}.{name}:\n  " + "\n  ".join(wrong)
+
+
+@pytest.mark.parametrize(
+    ("spec", "message"),
+    [("WATCH", 'bad cursor spec "WATCH"'),
+     ("pointer", 'bad cursor spec "pointer"'),
+     ("watch red blue green", 'bad cursor spec "watch red blue green"'),
+     ("watch nocolour", 'invalid color name "nocolour"'),
+     ("@/nonexistent.xbm black", 'cleanup reading bitmap file "/nonexistent.xbm"'),
+     ("@/nonexistent.xbm", 'bad cursor spec "@/nonexistent.xbm"')],
+)  # fmt: skip
+def test_a_cursor_tk_would_not_make_is_refused(spec, message):
+    """Measured on Tk 9.0.2 on X11: the cursor font's names and ``none``,
+    case and all, with up to two colours; a bitmap file is read."""
+    root = tkcurses.Misc()
+    for widget, option in (
+        (tkcurses.Button(root), "cursor"),
+        (tkcurses.Spinbox(root), "buttoncursor"),
+        (tkcurses.PanedWindow(root), "sashcursor"),
+    ):
+        with pytest.raises(tkcurses.TclError, match=re.escape(message)):
+            widget.configure(**{option: spec})
+
+
+def test_a_cursor_bitmap_needs_a_hot_spot_and_its_mask_does_not(tmp_path):
+    """``@cursor.xbm mask.xbm fg bg``: Tk reads both, and only the cursor's
+    own bitmap must say where its hot spot is."""
+    bits = "static unsigned char c_bits[] = { 0x01, 0x02 };\n"
+    plain = tmp_path / "plain.xbm"
+    plain.write_text("#define c_width 2\n#define c_height 2\n" + bits)
+    hot = tmp_path / "hot.xbm"
+    hot.write_text(
+        "#define c_width 2\n#define c_height 2\n"
+        "#define c_x_hot 0\n#define c_y_hot 0\n" + bits
+    )
+    button = tkcurses.Button(tkcurses.Misc())
+    button.configure(cursor=f"@{hot} {plain} black white")
+    assert button.cget("cursor") == f"@{hot} {plain} black white"
+    with pytest.raises(tkcurses.TclError, match="bad hot spot in bitmap file"):
+        button.configure(cursor=f"@{plain} black")
+    button.configure(cursor=("watch", "red"))
+    assert button.cget("cursor") == "watch red"
+
+
+@pytest.mark.parametrize(
+    "value", ["2c", "1i", "3m", "10p", " 2 c ", "1e1c", "0x10c", "2x", "2C", "c"]
+)
+def test_a_distance_with_a_unit_is_taken_or_refused_as_tk_does(value, real_root):
+    """Tk's unit suffixes are read, at ten cells to the inch. What Tk takes
+    is taken and what it refuses is refused, with its message."""
+    try:
+        tkinter.Button(real_root, borderwidth=value)
+        theirs = None
+    except tkinter.TclError as error:
+        theirs = str(error)
+    try:
+        tkcurses.Button(tkcurses.Misc(), borderwidth=value)
+        ours = None
+    except tkcurses.TclError as error:
+        ours = str(error)
+    assert ours == theirs
