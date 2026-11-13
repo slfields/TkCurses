@@ -358,6 +358,70 @@ def test_art_stops_being_drawn_when_its_image_is_collected(terminal, tmp_path):
     assert "dropped 2x1" in "\n".join(term.display)
 
 
+@pytest.mark.parametrize(
+    ("show", "hide"),
+    [("place(x=0, y=0)", "destroy()"),
+     ("place(x=0, y=0)", "place_forget()"),
+     ("pack(anchor='nw')", "pack_forget()")],
+)  # fmt: skip
+def test_a_picture_goes_with_its_widget(terminal, tmp_path, show, hide):
+    """A picture's cells are written past curses, and re-emitted every
+    frame; a widget destroyed or unmapped must take them with it, or they
+    go on being painted over whatever curses draws there. They did: only
+    drawing cleared them, and a gone widget does not draw."""
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            f"lab = tkcurses.Label(root, image=art, anchor='nw', borderwidth=0)\n"
+            f"lab.{show}\n"
+            "def drop():\n"
+            f"    lab.{hide}\n"
+            "    tkcurses.Label(root, text='ab', borderwidth=0).place(x=0, y=0)\n"
+            # A picture drawn afterwards is what brought the old one back:
+            # the painter wrote out everything it held whenever it changed.
+            "    tkcurses.Label(root, image=art, borderwidth=0).place(x=9, y=0)\n"
+            "root.after(200, drop)"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_text(FULL)
+    # What is drawn where the picture was must show, not the picture.
+    term.wait_for_cell(0, 9, lambda cell: cell.data == FULL, message="the new one")
+    term.wait_for_text("ab", timeout=3)
+    term.wait_for_idle()
+    assert block(term, 0, 0, 2, 1) == ["ab"]
+
+
+def test_a_picture_is_painted_again_when_curses_repaints_it(terminal, tmp_path):
+    """Curses writes a picture's cells in the nearest colour it can name,
+    and the exact colour has to be painted over them again that frame. It
+    was not, because the frame was judged by the screen buffer alone, and
+    widgets draw on panels."""
+    term = terminal(cols=40, rows=12)
+    term.run_source(
+        program(
+            "lab = tkcurses.Label(root, image=art, anchor='nw', borderwidth=0)\n"
+            "lab.place(x=0, y=0)\n"
+            # The same picture in the same place on a new widget: curses
+            # writes the new cells in its own colours, and the painter holds
+            # exactly what it wrote last, so only a frame known to have
+            # repainted sends the exact colour again.
+            "def redraw():\n"
+            "    lab.destroy()\n"
+            "    again = tkcurses.Label(root, image=art, anchor='nw', borderwidth=0)\n"
+            "    again.place(x=0, y=0)\n"
+            "    tkcurses.Label(root, text='redrawn').place(x=0, y=5)\n"
+            "root.after(200, redraw)"
+        ),
+        workdir=tmp_path,
+    )
+    term.wait_for_cell(0, 0, lambda cell: cell.data == FULL, message="the picture")
+    term.wait_for_text("redrawn")
+    term.wait_for_idle()
+    # cd0000 is red written past curses; "red" is curses' own pair.
+    assert term.attrs_at(0, 0)["fg"] == "cd0000"
+
+
 def test_an_image_larger_than_its_window_fills_it_to_the_edges(terminal, tmp_path):
     """The clipped draw must reach the last visible row and column.
 

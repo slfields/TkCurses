@@ -3174,6 +3174,30 @@ Eight- and sixteen-colour terminals are left to curses, because 8x8 is 64
 combinations and there is no ceiling to escape. `TKCURSES_DISPLAY_DIRECT_IMAGES=0`
 turns the whole thing off, for a terminal that mis-renders the sequences.
 
+**Two ways the overlay went stale** (`TkCurses-gdvq`), found as three
+Checkbutton and Radiobutton options the option recorder could never settle -
+`selectimage`, `tristateimage`, `compound` - because its after-baseline
+differed from its before-baseline. Measured with `RECORD_DEBUG=1`:
+
+- **A widget gone from the screen kept its cells.** Only drawing cleared a
+  widget's entry, and a destroyed or unmapped widget does not draw, so its
+  cells were written again over whatever replaced it the next time any
+  picture changed - in the record, the rebuilt indicator `[x]` was covered by
+  the old widget's glyphs, in `00cdcd` where curses would say `cyan`. The
+  panel stack now calls `on_gone` with a panel's owner whenever it hides or
+  destroys one, and the painter forgets that owner.
+- **A frame that redrew a picture's widget did not repaint the picture.**
+  The loop asked only the screen buffer whether anything was painted, and
+  widgets draw on panels, so a frame in which curses rewrote a picture's
+  cells in its nearest pair colours was taken as quiet, and the exact colours
+  were not sent again. `PanelStack.update` now reports whether a window was
+  touched or a panel shown, hidden, moved or restacked, and that counts.
+
+`tests/test_widget_images_tty.py::test_a_picture_goes_with_its_widget` and
+`::test_a_picture_is_painted_again_when_curses_repaints_it` fail against the
+code before this. With both fixed the three options record as visible, three
+runs out of three, and `tristateimage` - recorded as invisible - is drawn.
+
 The pair table is still what widgets and text use, and still what an image
 falls back on when the terminal has not said it takes direct colour. Its
 ceiling has not moved; it just no longer decides what a photograph looks

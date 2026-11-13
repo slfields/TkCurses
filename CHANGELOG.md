@@ -6,6 +6,21 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-13
+
+The first 0.3 release. Since the third candidate the Canvas has its arcs,
+images, bitmaps and embedded windows and the rest of Tk's item methods; Text
+has embedded windows and images, `edit`, `count`, `dump` and `replace`; and
+Frame, Toplevel and the root take a background image. ttk.Treeview selects
+single cells, as in Tk 9.0, and follows `selectmode` and Tk's arrow keys.
+
+PhotoImage reads and writes Tk's formats - PNG, GIF and PPM - and takes
+Tk's rows of colours and image data, and `tk.call` answers the Tcl
+commands tkinter programs most often reach for. A value Tk refuses for an
+option is now refused here too, with Tk's message, so a program that ran
+here only because a mistake went unnoticed will now fail as it would under
+tkinter.
+
 ### Added
 - ttk.Treeview's cell selection, from Tk 9.0: `selecttype="cell"` makes a
   click, the arrow keys, Control-click and Shift-click select single cells
@@ -150,6 +165,11 @@ All notable changes to TkCurses. The format follows
   "name": no such variable`), as tkinter does; it returned `None`.
 
 ### Fixed
+- A picture's cells no longer outlive their widget: destroying or unmapping
+  a widget that showed an image left its exact-colour cells to be painted
+  again over whatever took its place. And a picture whose widget redrew is
+  painted again in its exact colours that frame, rather than left in
+  curses' nearest ones.
 - Four methods take tkinter's positional arguments: `winfo_containing`'s
   `displayof`, `Canvas.tag_unbind`'s `funcid` (with `Canvas.tag_bind` now
   returning the handle it takes, and answering the sequences or callbacks
@@ -591,7 +611,8 @@ Phase 2 of the original codebase: the base widget classes, `Tk` and `Toplevel`,
 the variable classes and the panel stack. Superseded by the rebuild; it has no
 `Entry` or `Text`.
 
-[Unreleased]: https://github.com/slfields/TkCurses/compare/v0.3.0rc3...HEAD
+[Unreleased]: https://github.com/slfields/TkCurses/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/slfields/TkCurses/compare/v0.3.0rc3...v0.3.0
 [0.3.0rc3]: https://github.com/slfields/TkCurses/compare/v0.3.0rc2...v0.3.0rc3
 [0.3.0rc2]: https://github.com/slfields/TkCurses/compare/v0.3.0rc1...v0.3.0rc2
 [0.3.0rc1]: https://github.com/slfields/TkCurses/compare/v0.2.0...v0.3.0rc1

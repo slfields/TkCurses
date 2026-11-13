@@ -437,7 +437,7 @@
   "compound": {
    "kind": "visible",
    "state": "plain",
-   "value": "top"
+   "value": "left"
   },
   "cursor": {
    "kind": "invisible",
@@ -546,7 +546,9 @@
    "value": "red"
   },
   "selectimage": {
-   "kind": "unsettled"
+   "kind": "visible",
+   "state": "on",
+   "value": "IMAGE2"
   },
   "state": {
    "kind": "visible",
@@ -570,11 +572,9 @@
    "kind": "behaviour"
   },
   "tristateimage": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "tristate",
-   "tried": [
-    "IMAGE2"
-   ]
+   "value": "IMAGE2"
   },
   "tristatevalue": {
    "kind": "behaviour"
@@ -2190,7 +2190,7 @@
   "compound": {
    "kind": "visible",
    "state": "plain",
-   "value": "top"
+   "value": "left"
   },
   "cursor": {
    "kind": "invisible",
@@ -2293,7 +2293,9 @@
    "value": "red"
   },
   "selectimage": {
-   "kind": "unsettled"
+   "kind": "visible",
+   "state": "on",
+   "value": "IMAGE2"
   },
   "state": {
    "kind": "visible",
@@ -2317,11 +2319,9 @@
    "kind": "behaviour"
   },
   "tristateimage": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "tristate",
-   "tried": [
-    "IMAGE2"
-   ]
+   "value": "IMAGE2"
   },
   "tristatevalue": {
    "kind": "behaviour"

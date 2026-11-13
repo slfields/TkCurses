@@ -6380,6 +6380,11 @@ class Tk(_Backdrop, BaseWidget, Wm):
             )
             self._screen.cursor = cursor
             self.tk.panels.cursor = cursor
+            if self.tk.painter is not None:
+                # A widget gone from the screen draws no more, so nothing
+                # else would forget its cells: they were painted again over
+                # whatever came after it, the next time any picture changed.
+                self.tk.panels.on_gone = self.tk.painter.clear
             self._rect = Rect(0, 0, buffer.width, buffer.height)
             self._mapped = True
             self._started = True
@@ -7005,16 +7010,21 @@ class Tk(_Backdrop, BaseWidget, Wm):
         if not self._started:
             return
         self._renew_colour_pairs()
-        painted = self._screen.refresh()
+        painted = bool(self._screen.refresh())
         if self.tk.panels is not None:
-            self.tk.panels.update()
+            # The widgets draw on panels, not on the screen buffer, so what
+            # the screen painted says nothing about them: the stack is asked
+            # too. Counting the screen alone, a frame that redrew a picture's
+            # widget never painted the picture again, and curses' nearest
+            # colours stayed where it had drawn - TkCurses-gdvq.
+            painted = self.tk.panels.update() or painted
         # After doupdate, never before: curses has finished writing and
         # cannot paint over the picture within this frame. Every frame it
         # has cells, because curses repaints them whenever anything near
         # them changes and does not say so.
         painter = getattr(self.tk, "painter", None)
         if painter is not None and painter.pending:
-            CursesDispatcher.get().call(painter.paint, bool(painted))
+            CursesDispatcher.get().call(painter.paint, painted)
 
     def update(self) -> None:
         """Process everything pending without entering the loop.
@@ -9777,6 +9787,15 @@ class Checkbutton(_ChoiceWidget):
                                     compound="left")
             button.pack(side="left", padx=1)
         button.select()
+
+    Sample output (tristateimage):
+        off = tk.PhotoImage(width=4, height=2)
+        off.put("grey", to=(0, 0, 4, 2))
+        mixed = tk.PhotoImage(width=4, height=2)
+        mixed.put("yellow", to=(0, 0, 4, 2))
+        state = tk.StringVar(value="")
+        tk.Checkbutton(root, text="mixed", variable=state, image=off,
+                       tristateimage=mixed, compound="left").pack()
     """
 
     _INDICATORS: ClassVar[dict[str, tuple[str, str]]] = {
@@ -9914,6 +9933,16 @@ class Radiobutton(_ChoiceWidget):
             tk.Radiobutton(root, text=name, value=name, variable=choice,
                            image=off, selectimage=on,
                            compound="left").pack(side="left", padx=1)
+
+    Sample output (tristateimage):
+        off = tk.PhotoImage(width=4, height=2)
+        off.put("grey", to=(0, 0, 4, 2))
+        mixed = tk.PhotoImage(width=4, height=2)
+        mixed.put("yellow", to=(0, 0, 4, 2))
+        choice = tk.StringVar(value="")
+        tk.Radiobutton(root, text="mixed", value="a", variable=choice,
+                       image=off, tristateimage=mixed,
+                       compound="left").pack()
     """
 
     _INDICATORS: ClassVar[dict[str, tuple[str, str]]] = {

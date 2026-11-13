@@ -130,6 +130,15 @@ class PanelStack:
         self._order: list[Panel] = []
         #: Placed before every flush when set; see screen.TerminalCursor.
         self.cursor: Any = None
+        #: Called with a panel's ``userptr`` when the panel is hidden or
+        #: destroyed, so what was drawn past curses for it can be forgotten:
+        #: see _core/direct.py. Gone from the stack, it draws no more, and
+        #: nothing else would clear it.
+        self.on_gone: Callable[[Any], None] | None = None
+        #: Set by anything that changes what the stack shows without writing
+        #: to a window - showing, hiding, moving, restacking - and read by
+        #: :meth:`update`, which curses gives no other way to ask.
+        self._restacked = False
 
     # ------------------------------------------------------------ creation
 
@@ -154,6 +163,7 @@ class PanelStack:
         if panel._destroyed:
             return
         panel._destroyed = True
+        self._gone(panel)
         # destroy() is the only thing that removes a panel, so a panel that is
         # not yet destroyed is necessarily still in the order.
         self._order.remove(panel)
@@ -245,6 +255,7 @@ class PanelStack:
         if not panel._hidden:
             return
         panel._hidden = False
+        self._restacked = True
         if panel._panel is not None:
             self._dispatcher.call(panel._panel.show)
         self._apply_order()
@@ -259,6 +270,7 @@ class PanelStack:
         if panel._hidden:
             return
         panel._hidden = True
+        self._gone(panel)
         if panel._panel is not None:
             self._dispatcher.call(panel._panel.hide)
 
@@ -268,6 +280,7 @@ class PanelStack:
         """Move ``panel`` so its top-left corner is at ``(x, y)``."""
         self._check(panel)
         panel._rect = Rect(x, y, panel._rect.width, panel._rect.height)
+        self._restacked = True
         if panel._panel is not None:
             self._dispatcher.call(panel._panel.move, y, x)
 
@@ -281,6 +294,7 @@ class PanelStack:
         if rect.is_empty:
             raise ValueError(f"panel must have a non-zero size, got {rect}")
         window = self._dispatcher.call(self._window_factory, rect)
+        self._restacked = True
         if panel._panel is not None:
             self._dispatcher.call(panel._panel.replace, window)
         panel._window = window
@@ -324,6 +338,7 @@ class PanelStack:
         """
         if self._panel_factory is None:
             return
+        self._restacked = True
         self._dispatcher.call(self._touch)
 
     def _touch(self) -> None:
@@ -334,20 +349,46 @@ class PanelStack:
             with contextlib.suppress(curses.error):
                 panel._window.touchwin()
 
-    def update(self) -> None:
-        """Push the stack to the terminal."""
-        if self._panel_factory is None:
-            return
-        self._dispatcher.call(self._refresh)
+    def update(self) -> bool:
+        """Push the stack to the terminal.
 
-    def _refresh(self) -> None:
+        Returns:
+            True if anything may have reached the terminal: a window was
+            written to, or a panel shown, hidden, moved or restacked. What
+            is painted past curses has to be painted again after that,
+            since curses repaints those cells and does not say so.
+        """
+        if self._panel_factory is None:
+            return False
+        return bool(self._dispatcher.call(self._refresh))
+
+    def _gone(self, panel: Panel) -> None:
+        """A panel leaving the screen: say so, and whose it was."""
+        self._restacked = True
+        owner = panel.userptr()
+        if self.on_gone is not None and owner is not None:
+            self.on_gone(owner)
+
+    def _refresh(self) -> bool:
         """Run the curses side of :meth:`update` on the dispatcher's thread."""
+        changed = self._restacked
+        self._restacked = False
+        if not changed:
+            for panel in self._order:
+                window = panel._window
+                if panel.hidden or window is None:
+                    continue
+                with contextlib.suppress(curses.error, AttributeError):
+                    if window.is_wintouched():
+                        changed = True
+                        break
         curses.panel.update_panels()
         if self.cursor is not None:
             # After update_panels, which leaves the virtual cursor wherever
             # the last panel's window had it, and before the flush.
             self.cursor.place()
         curses.doupdate()
+        return changed
 
     # ----------------------------------------------------------- internals
 
@@ -368,6 +409,7 @@ class PanelStack:
         matching ours, which is cheaper to reason about than tracking the
         difference between the two.
         """
+        self._restacked = True
         if self._panel_factory is None:
             return
         for panel in self._order:
