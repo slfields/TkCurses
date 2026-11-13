@@ -58,7 +58,7 @@ def test_every_tkcurses_program_is_run():
         if "mainloop()" in block and "import tkcurses" in block
     ]
     assert sorted(whole) == sorted(programs().values())
-    assert len(whole) == 4
+    assert len(whole) == 5
 
 
 def test_the_star_import_the_page_promises():

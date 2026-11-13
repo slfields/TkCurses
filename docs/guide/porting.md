@@ -266,10 +266,50 @@ reads XBM, as Tk's do. A picture is drawn with block characters at two
 pixels to a cell, one above the other, so a 64 by 64 image takes 64 columns
 and 32 rows; `subsample` makes it smaller. See [Images](../reference/images.md).
 
+## Calls into Tcl: `tk.call`
+
+tkinter programs reach for `widget.tk.call(...)` where tkinter has no
+method: a Treeview's cell selection, or Tk's own questions about itself.
+There is no Tcl interpreter here, so `tk.call` runs only the commands
+TkCurses serves, each answering as Tk 9.0.2 does - the same values, in the
+same shapes, and the same `TclError` for a mistake:
+
+| Command | Answers |
+|---------|---------|
+| `info patchlevel`, `info tclversion` | `"9.0.2"` and `"9.0"` |
+| `tk windowingsystem` | `"x11"`: the keys, mouse and virtual events here are Tk's X11 bindings |
+| `tk scaling` | `10/72`, a pixel being a cell at ten to the inch. Setting it reads back as Tk's does, and changes nothing else: a cell cannot shrink |
+| *widget* `cget -option` | The option's value |
+| *widget* `configure` | Tk's five-tuples, with dashed names: all of them, one by name, or set with `"-text", "Go"` pairs |
+| *treeview* `cellselection ...` | The cell selection, which tkinter has no methods for; `tk.splitlist` reads the answer |
+
+A command name or a widget comes first, as in tkinter, and an unambiguous
+prefix of a subcommand works (`"conf"`), as Tk's do:
+
+% expect: Tk 9.0.2 on x11
+
+```python
+import tkcurses as tk
+
+root = tk.Tk()
+label = tk.Label(root, text="Hello")
+label.pack()
+root.tk.call(label, "configure", "-text", "Tk " + root.tk.call("info", "patchlevel"))
+system = root.tk.call("tk", "windowingsystem")
+tk.Label(root, text=f"{root.tk.call(label, 'cget', '-text')} on {system}").pack()
+root.mainloop()
+```
+
+Anything else - `tk.call("source", "app.tcl")`, a widget subcommand that has
+a tkinter method - raises `TclError` saying TkCurses does not run it. Use
+the method instead: `label.configure(text="Go")` is what `tk.call` stands
+in for. `tk.eval` and `tkinter.Tcl()` have nothing behind them.
+
 ## What is not there
 
-A few parts of tkinter have nothing behind them here: `tkinter.Tcl()` and
-anything that evaluates Tcl, and tear-off menus. The [README](https://github.com/slfields/TkCurses#known-gaps)
+A few parts of tkinter have nothing behind them here: `tkinter.Tcl()`,
+`tk.eval` and any Tcl beyond the commands `tk.call` serves, and tear-off
+menus. The [README](https://github.com/slfields/TkCurses#known-gaps)
 lists what is still missing. Calling one raises an error rather than
 quietly doing nothing.
 
