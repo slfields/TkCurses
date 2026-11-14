@@ -441,8 +441,9 @@ Measured at 106x33 against a Lanczos reference:
 
 - [ ] With `truecolor` or `palette`, the status line says the ceiling does
       not apply and the colour count is in the hundreds or thousands.
-      `exhausted` may say `True` and **does not matter** — that is the curses
-      layer underneath, which is only a fallback.
+      `exhausted` says `False`: the curses layer underneath, which is only a
+      fallback, is drawn in the eight basic colours so that it leaves the
+      pair table to the text around the picture.
 - [ ] With `off`, the status line reads `pairs wanted: N of M budget` with N
       at or below M, and `t` reports `exhausted=False`.
 - [ ] These four give the three, and the first should look best:
@@ -477,16 +478,20 @@ TKCURSES_DISPLAY_DIRECT_IMAGES=0 python3 -m uat 37
 
 - [ ] Fitted, it reports what the picture *would* have wanted:
       `(unfitted this picture would want 991)` against a budget near 231.
-- [ ] With `f` off, `t` now reports `exhausted=True` on a photograph at 256
-      colours — that is the ceiling being hit, and it is what fitting avoids.
-- [ ] With `f` off the picture is **worse**, not better: colours drift as
-      later cells fall back to whatever pair is nearest among those already
-      taken.
-- [ ] Press `f` again and it recovers.
+- [ ] With `f` off the scenario hands the Label the picture **unfitted**,
+      and the library fits it itself as it draws: `t` still reports
+      `exhausted=False`, and the picture looks **the same** as fitted, give
+      or take a few colours, since the two budgets differ slightly.
+- [ ] Press `f` again and nothing gets worse.
 
-**`f` does nothing unless `direct=off`**, because there is no ceiling to fit
-to otherwise. Run `TKCURSES_DISPLAY_DIRECT_IMAGES=0 python3 -m uat 37` to
-exercise this check.
+Until the terminal-environment cycle, `f` off reported `exhausted=True` and
+the picture drifted as later cells fell back to whatever pair was nearest
+among those already taken - and so did the status lines drawn after it. A
+program had to call `fit_pairs` itself to avoid that.
+
+**`f` does nothing unless `direct=off`**, because the scenario only fits
+there. Run `TKCURSES_DISPLAY_DIRECT_IMAGES=0 python3 -m uat 37` to exercise
+this check.
 
 ---
 

@@ -32,10 +32,11 @@ import time
 
 import pytest
 
-from tkcurses._core.clipboard import CLIPBOARD, PRIMARY, Selections
+from tkcurses._core.clipboard import CLIPBOARD, PRIMARY, PRIMARY_SETTLE, Selections
 from tkcurses._core.errors import TclError
 from tkcurses._core.system_clipboard import (
     CommandClipboard,
+    CommandPush,
     Osc52Clipboard,
     Route,
     ask_terminal_for_osc52,
@@ -370,3 +371,165 @@ def test_every_reason_fits_the_readout(setting, environ, terminal_says, installe
         setting, environ, ask_terminal=lambda: terminal_says, which=tools(*installed)
     )
     assert len(route.reason) <= READOUT_ROOM, route.reason
+
+
+# ------------------------------------------------------------- PRIMARY
+
+
+def test_osc52_sets_the_primary_selection_with_its_p_target():
+    sent = []
+    Osc52Clipboard(write=sent.append, target="p").copy("hi")
+    assert sent == [b"\x1b]52;p;" + base64.b64encode(b"hi") + b"\x07"]
+
+
+@pytest.mark.parametrize(
+    ("environ", "installed", "command"),
+    [
+        (WAYLAND, ("wl-copy", "wl-paste"), ["wl-copy", "--primary"]),
+        ({"DISPLAY": ":0"}, ("xclip",), ["xclip", "-selection", "primary", "-in"]),
+        ({"DISPLAY": ":0"}, ("xsel",), ["xsel", "--primary", "--input"]),
+    ],
+)
+def test_the_desktop_tool_sets_primary_too(environ, installed, command):
+    route = choose_route(
+        "auto", environ, ask_terminal=lambda: False, which=tools(*installed)
+    )
+    assert isinstance(route.primary, CommandPush)
+    assert route.primary._command == command
+
+
+@pytest.mark.parametrize("setting", ["auto", "osc52"])
+def test_an_osc52_route_sets_primary_by_osc52(setting):
+    route = choose_route(setting, {}, ask_terminal=lambda: True, which=tools())
+    sent = []
+    route.primary._write = sent.append
+    route.primary.copy("x")
+    assert sent[0].startswith(b"\x1b]52;p;")
+
+
+def test_no_route_sets_no_primary():
+    for setting in ("off", "auto"):
+        route = choose_route(setting, {}, ask_terminal=lambda: False, which=tools())
+        assert route.primary is None
+
+
+class FakeProcess:
+    def __init__(self, *, stuck=False):
+        self.stuck, self.given, self.killed = stuck, None, False
+
+    def communicate(self, data, timeout):
+        self.given = data
+        if self.stuck:
+            raise subprocess.TimeoutExpired("tool", timeout)
+
+    def poll(self):
+        return None if self.stuck and not self.killed else 0
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, timeout):
+        return 0
+
+
+def started(processes):
+    def popen(command, **kwargs):
+        assert kwargs["start_new_session"], "never in the terminal's job"
+        processes.append(FakeProcess(stuck=bool(len(processes) == 0)))
+        return processes[-1]
+
+    return popen
+
+
+def test_a_push_hands_over_the_text_and_does_not_wait_on_a_stuck_tool():
+    """GNOME keeps wl-copy waiting for focus: the push gives up waiting
+    after a moment, and the next push ends the one still stuck."""
+    processes = []
+    push = CommandPush("wl-copy", ["wl-copy", "--primary"], popen=started(processes))
+    began = time.monotonic()
+    assert push.copy("first") is True
+    assert time.monotonic() - began < 1
+    assert processes[0].given == b"first"
+    assert push.copy("second") is True
+    assert processes[0].killed
+    assert processes[1].given == b"second"
+    push.close()
+    assert not processes[1].killed, "a tool that finished is left alone"
+
+
+def test_a_push_that_cannot_start_says_so():
+    def missing(command, **kwargs):
+        raise FileNotFoundError(command[0])
+
+    assert CommandPush("xclip", ["xclip"], popen=missing).copy("x") is False
+
+
+class Owner:
+    def __init__(self, text):
+        self.text = text
+
+    def __call__(self, first, last):
+        if self.text is None:
+            raise TclError("PRIMARY selection doesn't exist")
+        return self.text
+
+
+def primary_with(text):
+    selections = Selections()
+    writer = Recorder()
+    selections.route = Route(None, None, "test", primary=writer)
+    owner = Owner(text)
+    selections.own(owner, PRIMARY)
+    selections.handle(owner, owner, PRIMARY)
+    return selections, writer, owner
+
+
+def test_primary_is_sent_once_it_holds_still():
+    selections, writer, _ = primary_with("chosen")
+    selections.push_primary(0.0)
+    assert writer.sent == [], "seen once: it may still be moving"
+    selections.push_primary(PRIMARY_SETTLE)
+    assert writer.sent == ["chosen"]
+    selections.push_primary(PRIMARY_SETTLE * 2)
+    assert writer.sent == ["chosen"], "not sent again unchanged"
+
+
+def test_a_selection_being_dragged_out_is_not_sent():
+    selections, writer, owner = primary_with("a")
+    for step, text in enumerate(["ab", "abc", "abcd"], start=1):
+        owner.text = text
+        selections.push_primary(step * PRIMARY_SETTLE)
+    assert writer.sent == []
+    selections.push_primary(4 * PRIMARY_SETTLE)
+    assert writer.sent == ["abcd"]
+
+
+def test_primary_is_looked_at_only_every_settle_interval():
+    selections, writer, _ = primary_with("x")
+    selections.push_primary(0.0)
+    selections.push_primary(PRIMARY_SETTLE / 2)
+    assert writer.sent == []
+    selections.push_primary(PRIMARY_SETTLE)
+    assert writer.sent == ["x"]
+
+
+@pytest.mark.parametrize("text", [None, ""], ids=["nothing selected", "empty"])
+def test_nothing_to_send_sends_nothing(text):
+    selections, writer, _ = primary_with(text)
+    for step in range(3):
+        selections.push_primary(step * PRIMARY_SETTLE)
+    assert writer.sent == []
+
+
+def test_without_an_owner_or_a_route_primary_is_not_looked_at():
+    selections = Selections()
+    selections.route = Route(None, None, "test", primary=Recorder())
+    selections.set("held", PRIMARY)
+    for step in range(3):
+        selections.push_primary(step * PRIMARY_SETTLE)
+    assert selections.route.primary.sent == []
+    selections, writer, _ = primary_with("x")
+    selections.route.primary = None
+    for step in range(3):
+        selections.push_primary(step * PRIMARY_SETTLE)
+    assert writer.sent == []

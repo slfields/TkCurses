@@ -35,7 +35,7 @@ import gc
 import pytest
 
 import tkcurses
-from tkcurses import BitmapImage, Misc, PhotoImage, TclError
+from tkcurses import BitmapImage, Misc, PhotoImage, TclError, _pair_palette
 from tkcurses._core.canvas import compose
 from tkcurses._core.colors import ColorDepth
 from tkcurses._core.images import cells_tall
@@ -1138,6 +1138,116 @@ def test_fit_pairs_leaves_a_picture_that_already_fits_untouched(root):
 def test_fit_pairs_refuses_a_budget_of_nothing(root):
     with pytest.raises(TclError):
         rainbow(root, 8, 8).fit_pairs(0)
+
+
+# ------------------------------------- fitted when drawn through curses
+
+
+class PairTable:
+    """What the palette asks of a colour manager, and nothing else."""
+
+    def __init__(self, remaining, depth=ColorDepth.DIRECT, capacity=255):
+        self.remaining = remaining
+        self.capacity = capacity
+        self.depth = depth
+        self.generation = 0
+        self.asked = 0
+
+    def ask_for_renewal(self):
+        self.asked += 1
+
+
+def settled_palette(art, table):
+    """The palette a picture ends up with: a new one that does not fit asks
+    for the table to be emptied, and is fitted on the repaint after."""
+    first = _pair_palette(art, table)
+    if table.asked:
+        assert first is None, "nothing is fitted before the table is emptied"
+        table.generation += 1
+        return _pair_palette(art, table)
+    return first
+
+
+def test_a_picture_that_fits_is_drawn_in_its_own_colours(root):
+    table = PairTable(255)
+    assert _pair_palette(rainbow(root, 4, 4), table) is None
+    assert table.asked == 0
+
+
+def test_a_picture_that_does_not_fit_is_mapped_into_the_pairs_left(root):
+    art = rainbow(root, 20, 20)
+    palette = settled_palette(art, PairTable(80))
+    assert palette is not None
+    mapped = art.copy()
+    mapped.put(
+        " ".join(
+            "{" + " ".join(palette[pixel] for pixel in row) + "}" for row in art.rows()
+        )
+    )
+    # An eighth of the table is left for whatever is drawn after it.
+    assert mapped.pairs_needed() <= 80 - 255 // 8
+    assert set(palette) == {pixel for row in art.rows() for pixel in row}
+
+
+def test_a_new_picture_that_does_not_fit_asks_for_an_empty_table_once(root):
+    """What the previous picture left behind may be nothing still shown;
+    only emptying the table says. Once: the repaint after is fitted."""
+    art = rainbow(root, 20, 20)
+    table = PairTable(80)
+    assert _pair_palette(art, table) is None
+    assert table.asked == 1
+    assert _pair_palette(art, table) is not None, "fitted if no renewal came"
+    table.generation += 1
+    assert _pair_palette(art, table) is not None
+    assert table.asked == 1
+
+
+def test_the_palette_is_kept_while_nothing_moves(root, monkeypatch):
+    """A repaint compares a tuple: fitting costs 200ms on a photograph."""
+    art = rainbow(root, 20, 20)
+    table = PairTable(80)
+    first = settled_palette(art, table)
+    monkeypatch.setattr(PhotoImage, "fit_pairs", None)
+    monkeypatch.setattr(PhotoImage, "pairs_needed", None)
+    table.remaining = 3
+    assert _pair_palette(art, table) is first
+
+
+@pytest.mark.parametrize("move", ["picture", "table", "depth"])
+def test_the_palette_is_chosen_again_when_something_moves(root, move):
+    art = rainbow(root, 20, 20)
+    table = PairTable(80)
+    first = settled_palette(art, table)
+    table.remaining = 30
+    table.asked = 0
+    if move == "picture":
+        art.put("#000000", to=(0, 0, 1, 1))
+    elif move == "table":
+        table.generation += 1
+    else:
+        table.depth = ColorDepth.EXTENDED
+    second = settled_palette(art, table)
+    # A changed picture is a new one, and asks again; the same picture in
+    # an emptied table or at another depth is simply fitted again.
+    assert table.asked == (1 if move == "picture" else 0)
+    assert second is not first
+    assert len(set(second.values())) < len(set(first.values()))
+
+
+def test_a_nearly_full_table_still_gets_a_fitted_picture(root):
+    """Too little left for the reserve: fitted to what there is."""
+    palette = settled_palette(rainbow(root, 20, 20), PairTable(10))
+    assert palette is not None
+    assert len(set(palette.values())) <= 10
+
+
+def test_a_bitmap_is_never_fitted(root):
+    assert _pair_palette(BitmapImage(master=root), PairTable(1)) is None
+
+
+def test_a_full_table_leaves_the_picture_alone(root):
+    """Nothing to fit into; the table is renewed at the next frame."""
+    assert _pair_palette(rainbow(root, 20, 20), PairTable(0)) is None
 
 
 def test_fit_pairs_survives_a_budget_of_one(root):

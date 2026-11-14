@@ -35,7 +35,7 @@ selected**. It wants a terminal at least **90 columns by 24 rows**.
 | Terminal | |
 | Size | |
 | Date | 2026-10-04 |
-| Result | **Accepted.** Run by the author: "I consider uat 43 as complete, now", after the five faults listed at the end were fixed. Terminal and size not recorded. "Reaching other applications" was added afterwards (`TkCurses-hpr`) and accepted on its own on 2026-10-13: "That works". Whether `wl-copy` flickers on GNOME was not reported either way. |
+| Result | **Accepted.** Run by the author: "I consider uat 43 as complete, now", after the five faults listed at the end were fixed. Terminal and size not recorded. "Reaching other applications" was added afterwards (`TkCurses-hpr`) and accepted on its own on 2026-10-13: "That works". Whether `wl-copy` flickers on GNOME was not reported either way. "Middle-click paste in other applications" (`TkCurses-r1k1`) accepted on 2026-11-14: "I don't notice any flicker for loss of focus when using middle click paste." |
 
 The boxes below are left unticked deliberately: the acceptance was given as a
 whole rather than item by item, and ticking them would claim a record that was
@@ -153,6 +153,24 @@ After installing it:
       window briefly appears: GNOME does not give clipboard tools a way to
       work unseen, and `wl-clipboard` may briefly show a window of its own to
       reach it. *Not measured yet - this checklist is where it would be*
+
+Middle-click paste in other applications, with `wl-clipboard` installed
+(*added by the terminal-environment cycle, `TkCurses-r1k1`*). Selecting is
+enough here, with no Ctrl-C: a Tk program on X11 does the same.
+
+- [ ] Drag across `hello` in **source** and let go. Wait half a second, then
+      **middle-click** in another application's text field. `hello` arrives
+- [ ] Select something else in **source** and middle-click elsewhere again.
+      The new selection arrives, not the old one
+- [ ] The clipboard is untouched by that: **Ctrl-V** in another application
+      still pastes what was last copied with Ctrl-C
+- [ ] Watch while you drag out a selection and let go: does anything
+      **flicker**, does a window appear, does the terminal lose focus for a
+      moment? GNOME gives `wl-copy` no way to set a selection unseen, so it
+      may. *Run by the author on GNOME, 2026-11-14: no flicker and no loss
+      of focus*
+- [ ] Run it as `TKCURSES_CLIPBOARD_PRIMARY=0 python3 -m uat 43`. Selecting
+      and middle-clicking elsewhere pastes whatever was there before
 
 The setting, either way:
 

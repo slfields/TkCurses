@@ -693,6 +693,57 @@ def test_an_exhausted_table_is_renewed_and_asks_for_a_repaint(manager):
     assert manager.remaining == manager.capacity
 
 
+def test_emptying_the_table_moves_the_generation(manager):
+    """What a picture's fitted palette is keyed on: chosen for the pairs
+    that were left, it is wrong once they all are again."""
+    manager.start()
+    before = manager.generation
+    manager.pair_number(curses.COLOR_RED, curses.COLOR_BLACK)
+    manager.renew_if_exhausted()
+    assert manager.generation == before, "a table with room left is kept"
+    _exhaust(manager)
+    manager.renew_if_exhausted()
+    assert manager.generation == before + 1
+    manager.reset()
+    assert manager.generation == before + 2
+
+
+def test_a_renewal_asked_for_empties_the_table_once(manager):
+    """For a new picture, which must not be fitted into what an old one
+    left. Not counted towards giving up: a table that then runs dry is
+    still renewed, as one that ran dry on its own would be."""
+    manager.start()
+    manager.pair_number(curses.COLOR_RED, curses.COLOR_BLACK)
+    before = manager.generation
+    manager.ask_for_renewal()
+    assert manager.renew_if_exhausted() is True
+    assert manager.allocated == 0
+    assert manager.generation == before + 1
+    assert manager.renew_if_exhausted() is False, "asked once, done once"
+    _exhaust(manager)
+    assert manager.renew_if_exhausted() is True
+
+
+@pytest.mark.parametrize("manager", [256], indirect=True)
+def test_the_layer_under_a_direct_picture_stays_in_eight_colours(manager, monkeypatch):
+    """At most 64 pairs whatever the picture holds, so the table is left
+    for everything else on screen."""
+    monkeypatch.setattr(curses, "COLOR_PAIRS", 256, raising=False)
+    manager.start()
+    shades = [
+        f"#{n:02x}{(n * 7) % 256:02x}{(n * 13) % 256:02x}" for n in range(0, 256, 9)
+    ]
+    for fore in shades:
+        for back in shades:
+            manager.fallback_attribute_for(fore, back)
+    assert not manager.exhausted
+    assert 1 < manager.allocated <= 64
+    assert all(fg < 8 and bg < 8 for _, fg, bg in manager.allocated_pairs)
+    assert manager.fallback_attribute_for(shades[3], shades[5]) == (
+        manager.fallback_attribute_for(shades[3], shades[5])
+    )
+
+
 def test_renewal_drops_the_attribute_cache_too(manager):
     """The one trap: that cache is keyed by colours but holds pair NUMBERS.
 

@@ -327,6 +327,12 @@ class Image:
             weakref.WeakKeyDictionary()
         )
         self._options: dict[str, Any] = {}
+        #: Counts changes, so something derived from the pixels - a palette
+        #: fitted to the colour pairs left - knows when it is stale.
+        self._revision = 0
+        #: The colours last chosen to fit the colour pairs left, and what
+        #: they were chosen for.
+        self._fit_cache: tuple[Any, dict[str, str] | None] | None = None
         self._tk.images[self._name] = self
         options = {**(cnf or {}), **kw}
         self._init(options)
@@ -479,6 +485,7 @@ class Image:
         9.0.2, resizing an image under a live Label moved the label's
         requested size with no call on the label at all.
         """
+        self._revision += 1
         for callback in list(self._users.values()):
             callback()
 
@@ -1565,6 +1572,9 @@ class PhotoImage(Image):
         Reduces the palette - by the same median cut :meth:`quantize` uses - only
         as far as it has to, and not at all if the picture already fits. Small or
         flat art comes back untouched.
+
+        A widget showing a picture does this for itself when it draws, so a
+        program calls it only to choose the budget, or to see the result.
 
         Args:
             budget: The most pairs the result may need. Defaults to what the

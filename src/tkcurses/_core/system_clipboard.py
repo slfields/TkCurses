@@ -60,6 +60,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CommandClipboard",
+    "CommandPush",
     "Osc52Clipboard",
     "Route",
     "ask_terminal_for_osc52",
@@ -77,22 +78,87 @@ QUERY_TIMEOUT = 0.5
 
 
 class Osc52Clipboard:
-    """Copy by asking the terminal to set the clipboard. Cannot paste."""
+    """Copy by asking the terminal to set the clipboard. Cannot paste.
+
+    ``target`` is OSC 52's selection letter: ``c`` for the clipboard, ``p``
+    for the primary selection, which a middle click pastes.
+    """
 
     name = "osc52"
 
-    def __init__(self, write: Callable[[bytes], object] | None = None) -> None:
+    def __init__(
+        self, write: Callable[[bytes], object] | None = None, target: str = "c"
+    ) -> None:
         self._write = write or _write_to_terminal
+        self._target = target.encode("ascii")
 
     def copy(self, text: str) -> bool:
         """Send the text to the terminal's clipboard."""
         payload = base64.b64encode(text.encode("utf-8"))
-        self._write(b"\x1b]52;c;" + payload + b"\x07")
+        self._write(b"\x1b]52;" + self._target + b";" + payload + b"\x07")
         return True
 
     def paste(self) -> str | None:
         """Never: see the module docstring."""
         return None
+
+    def close(self) -> None:
+        """Nothing is left running."""
+
+
+class CommandPush:
+    """Hand text to a desktop tool without waiting for it to finish.
+
+    For the primary selection, which changes whenever a selection does: a
+    copy may wait up to two seconds for its tool, which is fine for Ctrl-C
+    and not for every selection. The tool is given the text and left to
+    it. ``wl-copy`` and ``xclip`` read it and leave a process of their own
+    serving the selection, so the one started here ends at once - unless
+    the desktop keeps it waiting, as GNOME keeps ``wl-copy`` waiting for
+    keyboard focus. A newer push then ends the one still waiting, since its
+    text is out of date anyway.
+    """
+
+    #: The longest a push waits for its tool to take the text.
+    TIMEOUT = 0.2
+
+    def __init__(
+        self,
+        name: str,
+        command: list[str],
+        popen: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
+    ) -> None:
+        self.name = name
+        self._command = command
+        self._popen = popen
+        self._running: subprocess.Popen[bytes] | None = None
+
+    def copy(self, text: str) -> bool:
+        """Start the tool with ``text``. False if it could not be started."""
+        self.close()
+        try:
+            process = self._popen(
+                self._command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError:
+            return False
+        self._running = process
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            process.communicate(text.encode("utf-8"), timeout=self.TIMEOUT)
+        return True
+
+    def close(self) -> None:
+        """End a push still waiting on its tool."""
+        process, self._running = self._running, None
+        if process is not None and process.poll() is None:
+            with contextlib.suppress(OSError):
+                process.kill()
+            with contextlib.suppress(OSError, subprocess.SubprocessError):
+                process.wait(timeout=self.TIMEOUT)
 
 
 class CommandClipboard:
@@ -104,11 +170,16 @@ class CommandClipboard:
         copy_command: list[str],
         paste_command: list[str],
         run: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+        primary_command: list[str] | None = None,
     ) -> None:
         self.name = name
         self._copy = copy_command
         self._paste = paste_command
         self._run = run
+        #: Sets the primary selection, when the tool can.
+        self.primary = (
+            CommandPush(name, primary_command) if primary_command is not None else None
+        )
 
     def copy(self, text: str) -> bool:
         """Hand the text to the tool. False if it could not be run."""
@@ -146,15 +217,24 @@ class CommandClipboard:
         return done.stdout.decode("utf-8", errors="replace")
 
 
-#: The desktop tools, in the order they are tried for each kind of session.
-_WAYLAND_TOOLS = (("wl-copy", ["wl-copy"], ["wl-paste", "--no-newline"]),)
+#: The desktop tools, in the order they are tried for each kind of session:
+#: name, copy, paste, and setting the primary selection.
+_WAYLAND_TOOLS = (
+    ("wl-copy", ["wl-copy"], ["wl-paste", "--no-newline"], ["wl-copy", "--primary"]),
+)
 _X11_TOOLS = (
     (
         "xclip",
         ["xclip", "-selection", "clipboard", "-in"],
         ["xclip", "-selection", "clipboard", "-out"],
+        ["xclip", "-selection", "primary", "-in"],
     ),
-    ("xsel", ["xsel", "--clipboard", "--input"], ["xsel", "--clipboard", "--output"]),
+    (
+        "xsel",
+        ["xsel", "--clipboard", "--input"],
+        ["xsel", "--clipboard", "--output"],
+        ["xsel", "--primary", "--input"],
+    ),
 )
 
 
@@ -171,6 +251,9 @@ class Route:
     #: Whether a copy that stays inside is worth telling the person about.
     #: Not when they turned the system clipboard off themselves.
     notify: bool = True
+    #: Sets the system's primary selection - what a middle click pastes in
+    #: other applications - or None.
+    primary: Osc52Clipboard | CommandPush | None = None
 
 
 def parse_osc52_answer(reply: bytes) -> bool | None:
@@ -251,13 +334,23 @@ def choose_route(
     if setting == "command":
         if tool is None:
             return Route(None, None, _no_tool_reason(environ))
-        return Route(tool, tool, f"the desktop's {tool.name}")
+        return Route(tool, tool, f"the desktop's {tool.name}", primary=tool.primary)
     if setting == "osc52":
-        return Route(Osc52Clipboard(), tool, "OSC 52, as configured")
+        return Route(
+            Osc52Clipboard(),
+            tool,
+            "OSC 52, as configured",
+            primary=Osc52Clipboard(target="p"),
+        )
     if ask_terminal():
-        return Route(Osc52Clipboard(), tool, "OSC 52 - the terminal says it has it")
+        return Route(
+            Osc52Clipboard(),
+            tool,
+            "OSC 52 - the terminal says it has it",
+            primary=Osc52Clipboard(target="p"),
+        )
     if tool is not None:
-        return Route(tool, tool, f"the desktop's {tool.name}")
+        return Route(tool, tool, f"the desktop's {tool.name}", primary=tool.primary)
     return Route(
         None,
         None,
@@ -277,14 +370,14 @@ def _desktop_tool(
     """The clipboard tool for a local desktop session, if one is installed."""
     if _remote(environ):
         return None
-    tools: tuple[tuple[str, list[str], list[str]], ...] = ()
+    tools: tuple[tuple[str, list[str], list[str], list[str]], ...] = ()
     if environ.get("WAYLAND_DISPLAY"):
         tools += _WAYLAND_TOOLS
     if environ.get("DISPLAY"):
         tools += _X11_TOOLS
-    for name, copy, paste in tools:
+    for name, copy, paste, primary in tools:
         if which(copy[0]) and which(paste[0]):
-            return CommandClipboard(name, copy, paste)
+            return CommandClipboard(name, copy, paste, primary_command=primary)
     return None
 
 

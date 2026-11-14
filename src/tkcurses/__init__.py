@@ -62,7 +62,7 @@ import threading
 import time
 import traceback
 import weakref
-from collections.abc import Collection, MutableMapping
+from collections.abc import Collection, Mapping, MutableMapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
@@ -7180,6 +7180,10 @@ class Tk(_Backdrop, BaseWidget, Wm):
         ``backgroundimage`` fills the screen behind every window, as
         :class:`Frame` describes; the root draws no border, so it starts at
         the top left corner.
+
+        Where tkinter raises ``TclError`` for a display it cannot connect
+        to, this raises one for a terminal it cannot draw on: one whose
+        ``TERM`` has no way to position the cursor, such as ``dumb``.
     """
 
     #: Measured on Tk 9.0.2: not options of Tk's widget.
@@ -7334,18 +7338,32 @@ class Tk(_Backdrop, BaseWidget, Wm):
         # Before curses starts: deciding on OSC 52 asks the terminal a
         # question, and curses would read the answer as keystrokes.
         settings = TkCursesConfig.load()
-        self.tk.selections.route = choose_route(
+        route = choose_route(
             settings.clipboard.system,
             os.environ,
             ask_terminal=ask_terminal_for_osc52,
         )
+        if not settings.clipboard.primary:
+            route.primary = None
+        self.tk.selections.route = route
         buffer = self._screen.start()
         try:
+            if not self._screen.addressable:
+                # Tk refuses a display it cannot use at construction, with
+                # 'couldn't connect to display'; the equivalent here is a
+                # terminal that cannot be drawn on.
+                raise TclError(
+                    "this terminal cannot position the cursor "
+                    f"(TERM={os.environ.get('TERM', '')}); "
+                    "run in one that can, such as TERM=xterm-256color"
+                )
             # Malformed values and settings that no longer do anything, said
             # once the terminal is back: there is nowhere to say them now.
             self._held_reports.extend(
                 f"tkcurses: {warning}\n" for warning in settings.warnings
             )
+            if not self._screen.utf8:
+                self._held_reports.append(_not_utf8_report(os.environ))
             # ncurses cannot tell a lone Escape from the start of an escape
             # sequence until this long has passed with nothing following. The
             # default is a full second, which makes Escape - the key that
@@ -7688,6 +7706,7 @@ class Tk(_Backdrop, BaseWidget, Wm):
         # root's <Configure>, an event in another window.
         self._guard(self._announce_mapped)
         self._guard(self.tk.timers.run_due)
+        self._guard(self.tk.selections.push_primary, time.monotonic())
         self._read_input()
         # Layout settles before anything is drawn, so a widget is never
         # painted at a size it is about to stop having.
@@ -8141,6 +8160,10 @@ class Tk(_Backdrop, BaseWidget, Wm):
             self._screen.stop()
             self._flush_held_reports()
             self._report_clipboard_kept_inside()
+        route = self.tk.selections.route
+        if route is not None and route.primary is not None:
+            with contextlib.suppress(Exception):
+                route.primary.close()
         CursesDispatcher.reset()
 
     def __enter__(self) -> Tk:
@@ -8222,6 +8245,27 @@ class Tk(_Backdrop, BaseWidget, Wm):
         held, self._held_reports = self._held_reports, []
         for text in held:
             _write_to_stderr(text)
+
+
+def _not_utf8_report(environ: Mapping[str, str]) -> str:
+    """What to say when the locale cannot carry Unicode, naming the setting
+    that chose it.
+
+    The C library reads ``LC_ALL``, then ``LC_CTYPE``, then ``LANG``, so the
+    first of them that is set is the one to change: setting ``LANG`` does
+    nothing while ``LC_ALL=C`` stands over it.
+    """
+    for name in ("LC_ALL", "LC_CTYPE", "LANG"):
+        if environ.get(name):
+            chosen, to_set = f"{name}={environ[name]}", name
+            break
+    else:
+        chosen, to_set = "no LANG set", "LANG"
+    return (
+        f"tkcurses: the locale is not UTF-8 ({chosen}), so letters outside "
+        "ASCII and the lines of boxes were drawn wrong. "
+        f"Set {to_set}=C.UTF-8, or another UTF-8 locale.\n"
+    )
 
 
 def _stderr_is_a_terminal() -> bool:
@@ -9927,6 +9971,59 @@ class _TextWidget(_Drawable):
             )
 
 
+def _pair_palette(image: Image, colors: Any) -> dict[str, str] | None:
+    """The colours to write ``image`` through curses in, so that it fits the
+    colour pairs left: each pixel colour mapped to its stand-in, or None when
+    the picture fits as it is.
+
+    A picture can want far more combinations than the 255 pairs hold - a
+    busy photograph at 256 colours wants over a thousand - and drawn as it
+    is, it fills the table, after which every colour asked for falls back to
+    whichever pair happened to be allocated first. Not only the picture's:
+    measured, Labels packed under one drew in ``#87005f`` on ``#0000ff``
+    instead of the reds and blues they asked for.
+
+    **A new picture that does not fit asks for the table to be emptied
+    first**, and is fitted on the repaint that follows. Fitted at once, it
+    would be fitted into whatever the previous picture left behind - pairs
+    nothing shows any more, which only emptying the table gives back.
+    Measured, a second picture came out in 24 colour pairs of the 192 it
+    was built from.
+
+    Fitting a full-screen photograph costs about 200ms, so the answer is
+    kept on the image and chosen again only when the picture changes, the
+    pair table is emptied, or the depth moves: a repaint compares a tuple.
+    The budget is what the table has left, less an eighth of it for
+    whatever is drawn after the picture - text in colours of its own, which
+    would otherwise find the table full.
+    """
+    if not isinstance(image, PhotoImage):
+        return None
+    key = (image._revision, colors.generation, colors.depth)
+    cached = image._fit_cache
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    seen = cached is not None and cached[0][0] == image._revision
+    remaining = colors.remaining
+    budget = max(remaining - max(8, colors.capacity // 8), min(remaining, 16))
+    palette: dict[str, str] | None = None
+    if budget > 0 and image.pairs_needed(colors.depth) > budget:
+        if not seen:
+            colors.ask_for_renewal()
+            # Never a hit, so the repaint after the renewal fits it - and
+            # if no renewal comes, the next draw does.
+            image._fit_cache = ((image._revision, None, colors.depth), None)
+            return None
+        fitted = image.fit_pairs(budget, colors.depth)
+        palette = {}
+        for row, fitted_row in zip(image._pixels, fitted._pixels, strict=True):
+            for pixel, stand_in in zip(row, fitted_row, strict=True):
+                if pixel is not None and stand_in is not None:
+                    palette[pixel] = stand_in
+    image._fit_cache = (key, palette)
+    return palette
+
+
 def _paint_image(
     widget: Any,
     dispatcher: CursesDispatcher,
@@ -9950,6 +10047,10 @@ def _paint_image(
     # the unlit half should show the widget's own colour rather than one
     # of the image's.
     colors = widget.tk.colors
+    direct = painter is not None and painter.enabled
+    palette = None
+    if colors is not None and not direct:
+        palette = _pair_palette(image, colors)
     # Absolute screen position, because the painter writes past curses
     # and curses windows are the only thing that knows about offsets.
     where = widget._screen_rect()
@@ -9979,13 +10080,23 @@ def _paint_image(
         if colors is None:
             attribute = _curses.A_NORMAL
         else:
-            attribute = colors.attribute_for(fore, back or background)
+            if direct:
+                # Shows only where the writes past curses do not, so eight
+                # colours will do, and they cannot fill the pair table.
+                attribute = colors.fallback_attribute_for(fore, back or background)
+            elif palette is None:
+                attribute = colors.attribute_for(fore, back or background)
+            else:
+                attribute = colors.attribute_for(
+                    palette.get(fore, fore),
+                    background if back is None else palette.get(back, back),
+                )
         # Written through curses as well, always. If direct painting
         # never happens - no truecolor, a terminal that ignores it, a
         # closed stream - what shows is the ordinary rendering rather
         # than a hole where the picture was.
         widget._write_line(dispatcher, window, line, column, glyph, attribute)
-        if painter is not None and painter.enabled:
+        if direct and painter is not None:
             screen_row = where.y + line
             screen_column = where.x + column
             # Clipped to the screen, because this writes to the terminal

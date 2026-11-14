@@ -50,8 +50,10 @@ terminal takes. Press `t` and read `direct=`:
 
 **Both of the first two escape the ceiling**, which is easy to miss: a
 256-colour terminal has no pair limit either once the sequences are written
-by hand. Only at `off` is the picture cut down to fit the free pairs, by
-`PhotoImage.fit_pairs()`, and only there does `f` do anything.
+by hand. Only at `off` does this scenario cut the picture down to the free
+pairs itself, by `PhotoImage.fit_pairs()`, and only there does `f` do
+anything: `f` off hands the picture over unfitted, and the library then fits
+it as it draws.
 
 What to look for: docs/UAT_IMAGES.md, "UAT: Image rendering quality",
 checks 37.0 to 37.4.

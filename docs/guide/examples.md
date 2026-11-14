@@ -211,7 +211,9 @@ Give it a PNG, GIF or PPM file and it shows that instead:
 `python3 examples/picture.py photo.png`. The program works out the
 largest size that keeps the picture's proportions, `resize` resamples it
 to that, and `fit_pairs` reduces its colours, only if it has to, to the
-colour pairs the terminal has left.
+colour pairs the terminal has left. A program need not do that last step:
+a picture drawn through curses is fitted when it is drawn, and the call is
+there to show the choice being made.
 
 ## Wallpaper
 

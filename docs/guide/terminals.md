@@ -11,12 +11,15 @@ itself, and what to do when a terminal falls short.
 - **A `TERM` that can move the cursor.** TkCurses learns what the terminal
   can do from the terminfo entry `TERM` names, as every curses program
   does. Anything descended from xterm or VT100 will do, and so will the
-  Linux console. `TERM=dumb`, which cannot position the cursor, starts and
-  draws nothing.
+  Linux console. `TERM=dumb` cannot position the cursor, so nothing could be
+  drawn there: `Tk()` refuses it with a `TclError` that says so, as tkinter's
+  does for a display it cannot reach.
 - **A UTF-8 locale.** Borders are drawn with box-drawing characters, and
-  text is whatever Unicode the program shows. Under `LANG=C`, an accented
-  letter comes out as `�` and the lines of a box as `^`. Set
-  `LANG=C.UTF-8`, or any `.UTF-8` locale, if your system does not already.
+  text is whatever Unicode the program shows. Under `LC_ALL=C`, an accented
+  letter comes out as `�` and the lines of a box as `^`, and TkCurses says
+  so on the way out, naming the variable to change. Set it to `C.UTF-8`,
+  or any `.UTF-8` locale. (`LANG=C` on its own is fine: Python turns it
+  into `C.UTF-8` when it starts.)
   A terminal whose font has no box-drawing characters can have boxes,
   arrows and bars drawn in plain ASCII instead, with
   `TKCURSES_DISPLAY_UNICODE=0`.
@@ -184,6 +187,12 @@ chosen when the program starts:
 copy that could not leave is reported once, on standard error, when the
 program ends.
 
+Selected text goes the same way to the desktop's *primary selection*, which
+a middle click pastes in other applications, as it would from a Tk program
+on X11. It is sent once the selection stops changing, not on every movement
+of the mouse. `TKCURSES_CLIPBOARD_PRIMARY=0` keeps it inside: on GNOME,
+`wl-copy` may show a window of its own for a moment each time.
+
 % expect: Copy
 
 ```python
@@ -270,6 +279,7 @@ system = command
 | `TKCURSES_MOUSE_REPORT_MOTION` | `[mouse] report_motion` | on |
 | `TKCURSES_MOUSE_REPORT_HOVER` | `[mouse] report_hover` | off |
 | `TKCURSES_CLIPBOARD_SYSTEM` | `[clipboard] system` | `auto` |
+| `TKCURSES_CLIPBOARD_PRIMARY` | `[clipboard] primary` | on |
 | `TKCURSES_DISPLAY_DIRECT_IMAGES` | `[display] direct_images` | on |
 
 `TKCURSES_DISPLAY_DIRECT_IMAGES=0` draws pictures through curses' own

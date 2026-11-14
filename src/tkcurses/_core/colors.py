@@ -743,6 +743,11 @@ def parse_color(
     return _resolve_rgb(x11colors.NAMES[name], depth, background=background)
 
 
+#: Marks a cached attribute as :meth:`ColorManager.fallback_attribute_for`'s,
+#: where the attributes argument goes: no real attribute is negative.
+_FALLBACK = -1
+
+
 class ColorManager:
     """Allocates curses colour pairs on demand.
 
@@ -784,6 +789,10 @@ class ColorManager:
         self._renewed = False
         self._futile = False
         self._depth = ColorDepth.NONE
+        #: Moves whenever the pair table is emptied, so a palette chosen to
+        #: fit what was left in it can tell that it should be chosen again.
+        self.generation = 0
+        self._wanted = False
 
     # ---------------------------------------------------------- lifecycle
 
@@ -848,7 +857,9 @@ class ColorManager:
         self._exhausted = False
         self._renewed = False
         self._futile = False
+        self._wanted = False
         self._depth = ColorDepth.NONE
+        self.generation += 1
 
     @property
     def has_colors(self) -> bool:
@@ -944,6 +955,13 @@ class ColorManager:
         hand out a recycled number under its old meaning - the one trap in
         an otherwise mechanical change.
         """
+        if self._wanted:
+            # Asked for, not run into: a new picture that would otherwise be
+            # fitted into what an old one left behind. Asked once per
+            # picture, so it is not counted towards giving up.
+            self._wanted = False
+            self._empty()
+            return True
         if not self._exhausted:
             # A frame began with pairs still to spare, so the last renewal
             # did its job and the next one is allowed to try again.
@@ -959,12 +977,27 @@ class ColorManager:
             # stable to look at.
             self._futile = True
             return False
+        self._empty()
+        self._renewed = True
+        return True
+
+    def _empty(self) -> None:
+        """Forget every pair, keeping the terminal's colour support."""
         self._pairs.clear()
         self._attributes.clear()
         self._next = 1
         self._exhausted = False
-        self._renewed = True
-        return True
+        self.generation += 1
+
+    def ask_for_renewal(self) -> None:
+        """Have the next frame empty the table and repaint, as running out
+        does.
+
+        For a picture about to be fitted into the pairs left: those may be
+        held by a picture no longer shown, and only emptying the table
+        finds out which colours are still wanted.
+        """
+        self._wanted = True
 
     # --------------------------------------------------------- allocation
 
@@ -1103,6 +1136,29 @@ class ColorManager:
         # answers with the nearest pair it already has instead, which is a
         # real and stable answer and worth keeping.
         self._attributes[(fg, bg, attr)] = combined
+        return combined
+
+    def fallback_attribute_for(self, fg: str, bg: str) -> int:
+        """An attribute for ``fg`` on ``bg`` in the eight basic colours.
+
+        For the cells written under a picture that is drawn past curses:
+        they show only on a terminal that ignores those writes, and asking
+        for every combination a photograph holds fills the pair table that
+        everything else is drawn from. Eight colours make at most 64 pairs,
+        and resolving one costs a dictionary lookup once seen.
+        """
+        key = (fg, bg, _FALLBACK)
+        cached = self._attributes.get(key)
+        if cached is not None:
+            return cached
+        depth = min(self._depth, ColorDepth.BASIC)
+        foreground = parse_color(fg, depth)
+        background = parse_color(bg, depth, background=True)
+        combined = foreground.attr
+        pair = self.pair_number(foreground.color, background.color)
+        if pair:
+            combined |= curses.color_pair(pair)
+        self._attributes[key] = combined
         return combined
 
     def preallocate(self, combinations: Iterable[tuple[str, str]]) -> int:

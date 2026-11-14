@@ -20,10 +20,10 @@ a torn-off copy; **Ctrl+Q** quits.
 
 | | |
 |---|---|
-| Terminal | |
-| Size | |
-| Date | |
-| Result | |
+| Terminal | not recorded |
+| Size | not recorded |
+| Date | 2026-11-14 |
+| Result | **Accepted.** Run by the author, dragging a torn-off menu included: "I've approved UAT 50". |
 
 What is driven mechanically is the scenario 50 tests in
 `tests/test_uat_scenarios_tty.py`; the boxes below are for a person.

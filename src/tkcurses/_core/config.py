@@ -137,6 +137,12 @@ class ClipboardSettings:
     #: keeps the clipboard inside the program.
     system: str = "auto"
     # TkCurses-hpr.
+    #: Whether selecting text also sets the desktop's primary selection, so
+    #: a middle click in another application pastes it, as it would from a
+    #: Tk program on X11. Sent once the selection stops changing, by the
+    #: same route as the clipboard. Turn it off if the desktop's tool shows
+    #: a window of its own each time.
+    primary: bool = True
 
 
 #: One row per setting: section, key, the environment variable that overrides
@@ -152,6 +158,7 @@ _FIELDS: tuple[tuple[str, str, str, str | None, tuple[int, int] | None], ...] = 
     ("display", "direct_images", "bool", "TKCURSES_DISPLAY_DIRECT_IMAGES", None),
     ("input", "escape_delay", "int", "TKCURSES_INPUT_ESCAPE_DELAY", (0, 1000)),
     ("clipboard", "system", "choice", "TKCURSES_CLIPBOARD_SYSTEM", None),
+    ("clipboard", "primary", "bool", "TKCURSES_CLIPBOARD_PRIMARY", None),
 )
 
 #: Settings that were accepted once and never did anything, by section,

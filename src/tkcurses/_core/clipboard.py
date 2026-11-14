@@ -40,13 +40,17 @@ if TYPE_CHECKING:
 
     from tkcurses._core.system_clipboard import Route
 
-__all__ = ["CLIPBOARD", "PRIMARY", "Selections"]
+__all__ = ["CLIPBOARD", "PRIMARY", "PRIMARY_SETTLE", "Selections"]
 
 #: The selection ``clipboard_*`` works on.
 CLIPBOARD = "CLIPBOARD"
 
 #: The selection ``selection_*`` works on by default, as in tkinter.
 PRIMARY = "PRIMARY"
+
+#: Seconds between looks at PRIMARY for :meth:`Selections.push_primary`, and
+#: how long its text must hold still before it is sent.
+PRIMARY_SETTLE = 0.25
 
 
 class Selections:
@@ -69,6 +73,11 @@ class Selections:
         #: what the notice at exit is about.
         self.kept_inside = False
         self._handlers: dict[tuple[str, Any], Callable[..., str]] = {}
+        #: What PRIMARY held at the last look, what was last sent to the
+        #: system, and when to look again.
+        self._primary_seen: str | None = None
+        self._primary_sent: str | None = None
+        self._primary_due = 0.0
 
     # ------------------------------------------------------------- contents
 
@@ -141,6 +150,39 @@ class Selections:
     def __contains__(self, selection: object) -> bool:
         """True if ``selection`` currently holds anything."""
         return selection in self._content
+
+    def push_primary(self, now: float) -> None:
+        """Send PRIMARY to the system once it has stopped changing.
+
+        X11 tells other applications about a selection the moment it is
+        made, and a middle click there pastes it. Here PRIMARY lives in the
+        process, and starting a desktop tool on every change of a selection
+        being dragged out would cost a process per mouse report. So it is
+        looked at every :data:`PRIMARY_SETTLE` seconds, and sent when it
+        reads the same twice running and differs from what was sent last.
+
+        Called by the event loop on every pass, with the time; cheap when
+        nothing owns PRIMARY or there is no route for it.
+        """
+        writer = self.route.primary if self.route is not None else None
+        if writer is None or PRIMARY not in self._owners:
+            self._primary_seen = None
+            return
+        if now < self._primary_due:
+            return
+        self._primary_due = now + PRIMARY_SETTLE
+        try:
+            text = self.resolve(PRIMARY)
+        except TclError:
+            self._primary_seen = None
+            return
+        if text != self._primary_seen:
+            self._primary_seen = text
+            return
+        if not text or text == self._primary_sent:
+            return
+        if writer.copy(text):
+            self._primary_sent = text
 
     # --------------------------------------------------------------- owners
 

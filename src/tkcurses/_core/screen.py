@@ -34,6 +34,7 @@ without a pty in the loop.
 from __future__ import annotations
 
 import atexit
+import codecs
 import contextlib
 import curses
 import os
@@ -574,6 +575,33 @@ class CursesScreen:
         height, width = stdscr.getmaxyx()
         self._buffer = ScreenBuffer(width, height)
         return self._buffer
+
+    @property
+    def addressable(self) -> bool:
+        """True if the terminal can move its cursor to a given cell.
+
+        Everything here is drawn by moving the cursor to a cell and writing
+        there, so a terminal without ``cup`` - ``TERM=dumb`` - can start
+        curses and run a main loop while showing nothing at all. Asked of
+        terminfo once curses has read it.
+        """
+        try:
+            return curses.tigetstr("cup") is not None
+        except curses.error:
+            return False
+
+    @property
+    def utf8(self) -> bool:
+        """True if curses encodes text as UTF-8, which is the locale's choice.
+
+        Anything else cannot carry an accented letter or a box-drawing
+        line: measured under ``LC_ALL=C``, ``café`` is drawn as ``caf�`` and
+        an Entry's border as ``^``.
+        """
+        try:
+            return codecs.lookup(self.stdscr.encoding).name == "utf-8"
+        except LookupError:
+            return False
 
     def stop(self) -> None:
         """Restore the terminal. Safe to call more than once."""

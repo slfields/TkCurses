@@ -1756,6 +1756,8 @@ escape_delay = 25
 [clipboard]
 ; auto, osc52, command or off.
 system = auto
+; Set the desktop's primary selection, for middle-click paste elsewhere.
+primary = true
 ```
 
 ### Configuration Implementation
@@ -1824,6 +1826,61 @@ for a run of one ASCII character when the locale is not UTF-8 - measured,
 borders under `LANG=C` sees `+-+` where a terminal draws the whole rail.
 `TkCurses-go7y`.
 
+**What the terminal environment is told, and when.** Two conditions used
+to fail without a word (`TkCurses-a1nm`):
+
+- **A terminal without `cup`** - `TERM=dumb` - started, ran its main loop,
+  drew nothing and exited 0. `Tk()` now raises `TclError` naming `TERM`,
+  after giving the terminal back, which is the place tkinter raises
+  "couldn't connect to display". `vt100`, `linux`, `screen` and every
+  xterm entry have `cup`; measured with `curses.tigetstr("cup")`.
+- **A locale that is not UTF-8** is said on stderr once the screen is
+  given back, naming the first of `LC_ALL`, `LC_CTYPE` and `LANG` that is
+  set, since that is the one the C library obeys. The test is the
+  encoding curses itself uses, `stdscr.encoding`. Measured: `LANG=C` alone
+  is *not* such a locale by the time curses starts - Python coerces a C
+  `LC_CTYPE` to `C.UTF-8` at start-up (PEP 538) and exports it - so only
+  `LC_ALL=C`, a non-C non-UTF-8 locale such as `en_GB.iso885915`, or
+  `PYTHONCOERCECLOCALE=0` reaches the warning.
+
+**A picture no longer fills the colour-pair table** (`TkCurses-o1x`). The
+note on that issue concluded it did not matter from 256 colours up,
+because the picture is written past curses there. Measured, it did: the
+curses layer written *under* those writes, as the fallback for a terminal
+that ignores them, still asked for every combination. A 60x40 picture of
+random colours wanted 1179 pairs, filled the table, the table was renewed
+once and filled again, and three Labels packed under it drew in `#87005f`
+on `#0000ff` instead of the `#d70000` on `#0000d7` asked for. Two answers,
+by which layer shows:
+
+- **Written past curses**, the layer underneath is drawn in the eight
+  basic colours, `ColorManager.fallback_attribute_for`: at most 64 pairs
+  whatever the picture, no fitting, and a lookup per cell once seen.
+- **Drawn through curses** - eight or sixteen colours, or
+  `TKCURSES_DISPLAY_DIRECT_IMAGES=0` - it is fitted (`_pair_palette`):
+  each pixel colour mapped to a stand-in from `PhotoImage.fit_pairs`. The
+  budget is what the table has left, less an eighth of the capacity (at
+  least 8) for what is drawn after the picture, never below 16 or what is
+  left. The mapping is kept on the image, keyed on its change count,
+  `ColorManager.generation` (moved whenever the table is emptied) and the
+  depth. Measured on `earth.gif` resampled to 160x100: wanted 528, the
+  first fit took 271ms and gave 69 colours, and a cached lookup takes
+  0.2µs.
+
+**A new or changed picture that does not fit asks for the table to be
+emptied before it is fitted** (`ColorManager.ask_for_renewal`). Fitted at
+once, it was fitted into what the previous picture had left: the second of
+two pictures came out in 24 pairs of the 192 it was built from, where
+before any fitting the old picture ran the table dry, the renewal freed its
+pairs, and the new one had them all (`test_color_pairs_tty.py`). The
+renewal runs at the start of `_update_display`, after the widgets have
+drawn, so it lands in the same frame; it is asked once per picture
+revision and does not count towards the latch that stops renewing a
+screen which really wants more pairs than there are. The cost is a
+repaint of everything per change of an over-budget picture drawn through
+curses, plus the fit - an animation of one pays both every frame. Canvas
+images go through the canvas plane, not here, and are not fitted.
+
 ### Environment Variables Reference
 
 | Variable | INI Equivalent | Type | Description |
@@ -1837,6 +1894,7 @@ borders under `LANG=C` sees `+-+` where a terminal draws the whole rail.
 | `TKCURSES_DISPLAY_DIRECT_IMAGES` | `[display] direct_images` | bool | Pictures past curses' pairs |
 | `TKCURSES_INPUT_ESCAPE_DELAY` | `[input] escape_delay` | int | ESC sequence delay (ms) |
 | `TKCURSES_CLIPBOARD_SYSTEM` | `[clipboard] system` | str | `auto`, `osc52`, `command` or `off`: how the clipboard reaches other applications |
+| `TKCURSES_CLIPBOARD_PRIMARY` | `[clipboard] primary` | bool | Set the desktop's primary selection - middle-click paste - once a selection settles |
 
 ### Usage Examples
 
@@ -2250,9 +2308,30 @@ A copy that cannot leave — no route, or a tool that failed — is **said once,
 on stderr, after the screen is given back**: what was copied stayed inside
 this program, and why. Not when the person chose `off`. A copy is sent whole
 after every `clipboard_append`, because the system clipboard has no append.
-**PRIMARY stays in the process**: X11 updates it on every change of selection,
-and running `wl-copy --primary` for each one is not worth it; the terminal's
-own middle-click pastes its own PRIMARY anyway.
+**PRIMARY reaches the system once it settles** (`TkCurses-r1k1`), so a
+middle click in another application pastes what was selected here, as from
+Tk on X11. X11 announces a selection on every change; starting a desktop
+tool per mouse report is not worth it, so `Selections.push_primary`, run by
+the event loop on every pass, looks at PRIMARY every 250ms
+(`PRIMARY_SETTLE`) while something owns it, and sends it when it reads the
+same twice running and differs from what was last sent. The route is the
+clipboard's: OSC 52 with its `p` target, `wl-copy --primary`,
+`xclip -selection primary` or `xsel --primary`. The tool is **not waited
+for** (`CommandPush`): it is handed the text, given 200ms to take it, and
+left running in its own session; `wl-copy` and `xclip` fork a process to
+serve the selection and the one started here ends at once. A push that is
+still waiting when the next is made is killed, since its text is stale.
+
+Measured on GNOME Shell 50.4 (Wayland): the compositor offers
+`zwp_primary_selection_device_manager_v1` and `wl_data_device_manager` but
+no data-control protocol, so `wl-copy` can set a selection only by mapping a
+surface of its own and waiting for keyboard focus. Run from a process with
+no window, `wl-copy` and `wl-copy --primary` both waited until killed (5s);
+from a focused terminal the clipboard route was accepted in UAT 43. From a
+focused terminal the primary push is **not seen**: run by the author in UAT
+43 on 2026-11-14, middle-click paste in another application worked with "no
+flicker or loss of focus". So it is on by default, and
+`clipboard.primary` (`TKCURSES_CLIPBOARD_PRIMARY`) turns it off.
 
 The test harness turns the setting **off** for every child, so a test run
 never touches a developer's clipboard, and answers DA1 and `Ms` as a real
