@@ -5032,10 +5032,24 @@ Tk's Scale and Scrollbar schedule the next step at 0 ms for ever. Tk's Scale
 skips a step to catch up after a slow `command`; here the after-queue starts
 counting once the command has returned. Tk cancels a Spinbox's repeat when a
 held pointer comes back over it (`<B1-Enter>`), and that binding is not made
-here. And the ttk widgets keep
-their own procedures, which repeat with fixed timing (`ttk::Repeatedly`) and
-are not taken here: a ttk Scale still jumps on button 1, and a ttk Spinbox
-steps on the press without repeating (`TkCurses-1wos`).
+here.
+
+**The ttk widgets repeat as ttk's scripts do** (`TkCurses-1wos`), through
+`ttk::Repeatedly`: the action at once, again after 300 ms, then every 100 ms
+- ttk/utils.tcl's `Repeat(delay)` and `Repeat(interval)`, fixed, with no
+option to change them - until the release (`ttk::CancelRepeat`). A ttk
+Scrollbar repeats its arrows by units and its trough by pages
+(`ttk::scrollbar::Press`); a ttk Spinbox generates `<<Increment>>` or
+`<<Decrement>>` on the press and again while held (`ttk::spinbox::Press`),
+and a disabled one does nothing. A ttk Scale no longer jumps on button 1:
+`ttk::scale::Press` steps a trough press by 1 - not `-resolution` -
+towards the value under the pointer, the direction settled at the press,
+and a press on the slider drags it centred on the pointer
+(`ttk::scale::Drag` sets `[$w get $x $y]`, with no lead kept). Buttons 2 and
+3 jump (`ttk::scale::Jump`). Measured on Tk 9.0.2: a ttk Scale from 0 to 100
+at 50, pressed on the trough beyond the slider, reads 51 at once and 53 after
+450 ms, and from 100 to 0 the same press reads 49 then 47. A ttk Button does
+not repeat. `tests/test_auto_repeat.py` holds these.
 
 **Validation gates `insert` and `delete`, not only keystrokes.** `-validate`
 is a condition, and the two that name an edit - `key` and `all` - apply to a
@@ -5631,7 +5645,7 @@ Scroll control widget.
 | tkinter Method | TkCurses | Notes |
 |----------------|----------|-------|
 | `__init__(master=None, cnf={}, **kw)` | ○ | `▲█░░▼` display |
-| `activate(element=None)` | ○ | Records `arrow1`, `slider` or `arrow2`; drawn no differently |
+| `activate(element=None)` | ○ | `arrow1`, `slider` or `arrow2`, drawn in `-activebackground` and `-activerelief` |
 | `delta(deltax, deltay)` | ○ | Calculate delta |
 | `fraction(x, y)` | ○ | Position fraction |
 | `identify(x, y)` | ○ | Element at cell |
@@ -5647,6 +5661,34 @@ follows the pointer rather than jumping to it; `<ButtonRelease-1>` forgets
 the drag. The implicit grab is what makes a drag that wanders off the bar
 still arrive - with coordinates outside it, which is what the arithmetic
 wants.
+
+**Hover** follows `scrlbar.tcl` too (`TkCurses-mvvv`): `<Enter>` and
+`<Motion>` run `activate [identify %x %y]`, `<Leave>` activates nothing, and
+the release activates whatever is under the pointer (`tk::ScrollButtonUp`).
+The press does not, and while it is held neither motion nor `<Leave>`
+changes anything - Tk's `<B1-Motion>` and empty `<B1-Leave>` take those. Under
+`tk_strictMotif` `<Enter>` puts `-activebackground` aside for `-background`
+and `<Leave>` restores it. Measured on Tk 9.0.2 with `event_generate`; the
+sequence is in `tests/test_scrollbar.py`. A pointer moving with no button
+held reaches a widget only when the terminal is asked to report it -
+`[mouse] report_hover`, off by default - so otherwise the hover shows only
+what a press and release pass through.
+
+**Keys** follow `scrlbar.tcl`, which binds the navigation virtual events
+rather than the keys (`TkCurses-rs2l`). `<<PrevLine>>`/`<<NextLine>>` scroll a
+unit and `<<PrevPara>>`/`<<NextPara>>` a page, on a vertical scrollbar only;
+`<<PrevChar>>`/`<<NextChar>>` and `<<PrevWord>>`/`<<NextWord>>` the same on a
+horizontal one; `<Prior>`/`<Next>` a page and `<<LineStart>>`/`<<LineEnd>>`
+`moveto 0`/`1` on either. None breaks. Measured on Tk 9.0.2 by generating each
+key on a focused scrollbar and logging its `-command`; the table is in
+`tests/test_navigation_bindings.py`. ttk's scrollbar binds no keys.
+
+**One difference: Tab passes a classic scrollbar by.** Tk's `-takefocus`
+defaults to `""`, and `tk::FocusOK` then accepts any widget whose class
+bindings mention `Key` - which the `<Key-Prior>` binding does, so in Tk Tab
+stops on every classic scrollbar (measured: `tk_focusNext` of an Entry before
+one is the scrollbar). Here `takefocus` defaults to false, so the keys answer
+only once a program gives a scrollbar the focus or sets `takefocus`.
 
 **Rendering:**
 ```
@@ -5672,6 +5714,19 @@ Slider control.
 | `set(value)` | ✓ | Set value |
 | `coords(value=None)` | ○ | Cell position |
 | `identify(x, y)` | ○ | Element at cell |
+
+**Keys** follow `scale.tcl` and `ttk/scale.tcl`, which bind the navigation
+virtual events (`TkCurses-rs2l`). Line and character events step, paragraph
+and word events take a big step, and `<<LineStart>>`/`<<LineEnd>>` set
+`-from`/`-to`. **The orientation does not matter**: Up and Left both step
+towards `-from`, Down and Right towards `-to`, on a vertical scale and a
+horizontal one, and a reversed scale steps the other way. The classic step is
+`tk::ScaleIncrement`'s - `-resolution`, or `-bigincrement` (a tenth of the
+range when 0, never below the resolution); ttk's is `ttk::scale::Increment`'s,
+1 and 10, whatever the range. `<Prior>` and `<Next>` are bound by neither
+script and do nothing; nothing breaks, so the key reaches `all`. A disabled
+scale does not move. Measured on Tk 9.0.2 with a scale from 0 to 100 at 50,
+one key generated each; `tests/test_navigation_bindings.py` holds the table.
 
 **Rendering:**
 ```
@@ -5817,6 +5872,13 @@ key**, as Tk's Menu class does (`<KeyPress>` … `break`): a key it had no use
 for used to go on to `bind_all` shortcuts behind it. **Left in a dropdown of
 the menubar** opens the menu to its left, where it closed the dropdown; only
 a submenu closes back to its parent. All three found running UAT 46.
+
+**The arrows are the navigation events** (`TkCurses-rs2l`). menu.tcl binds
+`tk::MenuUpArrow` and the rest to `<<PrevLine>>`, `<<NextLine>>`,
+`<<PrevChar>>` and `<<NextChar>>`, so Control-p and Control-n move through a
+menu too, a key `event_add`ed to one of them does, and an arrow
+`event_delete`d from its event does nothing. Those four bindings do not break
+in Tk; here they do, keeping the rule above that an open menu keeps every key.
 
 **A window's `-menu` is a widget, a path name, or `""` for none.** The manual
 says only that it names a menu to use as the menubar. Measured on Tk 9.0.2:

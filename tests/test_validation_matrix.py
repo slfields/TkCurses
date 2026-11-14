@@ -184,3 +184,24 @@ def test_an_approval_and_the_invalid_state_set_by_hand(root, condition, expected
     assert scenario(root, ttk.Entry, condition, "accept", preset_invalid=True)[2] is (
         expected
     )
+
+
+def test_a_validator_editing_on_a_variable_write_leaves_the_variable_in_step(root):
+    """The one deliberate divergence from Tk in the forced condition. Tk
+    abandons the update and is left showing ``hello`` while its variable holds
+    ``world``; here the write and the validator's edit both land, and the
+    variable follows the entry, so the two never disagree."""
+    variable = StringVar(root, value="hello")
+    entry = placed(Entry(root, name="e", textvariable=variable), 4)
+    calls: list[tuple[str, str]] = []
+
+    def validator(proposed):
+        calls.append((proposed, entry.get()))
+        entry.insert("end", "!")
+        return True
+
+    entry.configure(validate="key", validatecommand=validator)
+    variable.set("world")
+    assert calls == [("world", "world")]
+    assert entry.get() == variable.get() == "world!"
+    assert entry.cget("validate") == "none"

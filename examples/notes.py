@@ -73,7 +73,9 @@ title_field = tk.Entry(right, textvariable=title, width=1)
 title_field.grid(row=0, column=1, columnspan=2, sticky="ew")
 body = tk.Text(right, wrap="word", undo=True, width=1, height=1)
 body.grid(row=1, column=0, columnspan=2, sticky="nsew")
-bar = tk.Scrollbar(right, command=body.yview)
+# The part of the scrollbar under the mouse is drawn in activebackground,
+# in a terminal asked to report the pointer: TKCURSES_MOUSE_REPORT_HOVER=1.
+bar = tk.Scrollbar(right, command=body.yview, activebackground="cyan")
 bar.grid(row=1, column=2, sticky="ns")
 body.configure(yscrollcommand=bar.set)
 right.columnconfigure(1, weight=1)

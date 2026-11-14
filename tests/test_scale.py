@@ -348,12 +348,15 @@ def test_the_arrows_step_by_the_resolution(root):
     assert scale.get() == 0
 
 
-def test_a_vertical_scale_answers_the_other_two_arrows(root):
-    scale = Scale(root, name="s", from_=0, to=10)
-    scale._handle(KeyEvent(keysym="Down"))
-    assert scale.get() == 1
-    scale._handle(KeyEvent(keysym="Right"))
-    assert scale.get() == 1
+def test_every_arrow_steps_whatever_the_orientation(root):
+    """scale.tcl binds <<PrevLine>> and <<PrevChar>> alike: on Tk 9.0.2 Up
+    and Left both step towards ``from``, Down and Right towards ``to``, on a
+    vertical scale and a horizontal one."""
+    for orient in ("vertical", "horizontal"):
+        scale = Scale(root, orient=orient, from_=0, to=10)
+        for keysym, expected in (("Down", 1), ("Right", 2), ("Up", 1), ("Left", 0)):
+            scale._handle(KeyEvent(keysym=keysym))
+            assert scale.get() == expected, (orient, keysym)
 
 
 def test_control_steps_by_the_big_increment(root):

@@ -10336,11 +10336,30 @@ def _repeat_after(widget: Misc, ms: int, func: Callable[..., Any], *args: Any) -
     widget.tk.repeat = widget.after(ms, step)
 
 
+#: ``ttk::Repeatedly``'s timing, ttk/utils.tcl's ``Repeat(delay)`` and
+#: ``Repeat(interval)``: fixed, where the classic widgets' are options.
+_TTK_REPEAT_DELAY = 300
+_TTK_REPEAT_INTERVAL = 100
+
+
+def _ttk_repeatedly(widget: Misc, func: Callable[..., Any], *args: Any) -> None:
+    """``ttk::Repeatedly``: ``func`` now, again after 300 ms, then every
+    100 ms until :func:`_cancel_repeat` - ``ttk::CancelRepeat`` - stops it.
+    Each repeat is scheduled before it runs, as ``ttk::Repeat`` does."""
+
+    def again() -> None:
+        _repeat_after(widget, _TTK_REPEAT_INTERVAL, again)
+        func(*args)
+
+    _repeat_after(widget, _TTK_REPEAT_DELAY, again)
+    func(*args)
+
+
 def _repeat_option(widget: Any, name: str) -> int:
     """``repeatdelay`` or ``repeatinterval``, as milliseconds; 0 for none.
 
     A ttk widget has neither, in Tk: its repeat is ``ttk::Repeatedly``, with
-    its own timing, and is not taken here.
+    fixed timing - :func:`_ttk_repeatedly` - and a ttk button has none.
     """
     if _is_ttk(widget) or name not in widget._options:
         return 0
@@ -11160,6 +11179,13 @@ class Entry(_Drawable, XView):
         ``highlightthickness`` are accepted and draw nothing: the focus is shown
         by markers instead. So is ``cursor``: the mouse pointer belongs to the
         terminal.
+
+        A ``validatecommand`` that edits the entry while it is being asked
+        about a write to the ``textvariable`` - the ``forced`` condition -
+        keeps both the write and its own edit, and the variable holds the
+        result. Tk discards both and leaves the entry showing its old text
+        while the variable holds the new one. Validation is turned off either
+        way.
 
     TkCurses extension:
         A ``validatecommand`` may be a Python callable rather than a
@@ -14498,9 +14524,9 @@ def _spinbox_click(event: Event) -> None:
     """Press an arrow, or place the cursor in the text.
 
     A classic arrow steps when it is released, or repeatedly while it is
-    held, as ``tk::spinbox::ArrowPress`` arranges. ttk's steps on the press
-    (``ttk::spinbox::Press``), and repeats with timing of its own that is
-    not taken here.
+    held, as ``tk::spinbox::ArrowPress`` arranges. ttk's steps on the press,
+    and again while it is held (``ttk::spinbox::Press``, through
+    ``ttk::Repeatedly``); a disabled one does nothing.
     """
     spinbox = event.widget
     # The classic method, by name: a ttk subclass's own identify answers
@@ -14509,13 +14535,16 @@ def _spinbox_click(event: Event) -> None:
     if part not in ("buttonup", "buttondown"):
         _entry_click(event)
         return
-    spinbox.focus_set()
     if _is_ttk(spinbox):
-        # ttk::spinbox::Press: the arrow generates the event, which steps.
-        spinbox.event_generate(
-            "<<Increment>>" if part == "buttonup" else "<<Decrement>>"
-        )
+        # ttk::spinbox::Press: the arrow generates the event, which steps,
+        # and goes on generating it while held.
+        if spinbox.instate(["disabled"]):
+            return
+        spinbox.focus_set()
+        sequence = "<<Increment>>" if part == "buttonup" else "<<Decrement>>"
+        _ttk_repeatedly(spinbox, spinbox.event_generate, sequence)
         return
+    spinbox.focus_set()
     spinbox._held_arrow = part
     spinbox.selection_element(part)  # tk::spinbox::ArrowPress
     spinbox._repeated = 0
@@ -20888,6 +20917,10 @@ class Menu(_Drawable):
         self.tk.bound_classes.add(name)
         bind = self.bind_class
         bind(name, "<Any-Key>", _menu_key)
+        # menu.tcl's arrows, on the navigation events: a key event_added to
+        # <<NextLine>> moves through a menu as Down does.
+        for sequence, keysym in _MENU_ARROWS.items():
+            bind(name, sequence, _menu_arrow_binding(keysym))
         bind(name, "<Button-1>", _menu_click)
         bind(name, "<Motion>", _menu_motion)
 
@@ -21714,31 +21747,12 @@ def _menu_key(event: Event) -> str | None:
         return "break"
     if menu._as_menubar:
         return _menubar_key(menu, keysym)
-    if keysym == "Up":
-        menu._step(-1)
-    elif keysym == "Down":
-        menu._step(1)
-    elif keysym == "Home":
+    if keysym == "Home":
         menu.activate(_first_selectable(menu, 1))
     elif keysym == "End":
         menu.activate(_first_selectable(menu, -1))
     elif keysym in ("Return", "space"):
         menu.invoke("active")
-    elif keysym == "Right":
-        if menu.type("active") == "cascade":
-            menu.invoke("active")
-        else:
-            _to_parent_bar(menu, 1)
-    elif keysym == "Left":
-        # A submenu closes back to the menu it came from; a dropdown of the
-        # menubar moves along the bar instead, as Tk's MenuNextMenu does.
-        # This asked only "is there a parent?", and a menubar is one, so Left
-        # in a dropdown closed it rather than opening the menu to its left.
-        parent = menu._parent_menu
-        if parent is not None and not parent._as_menubar:
-            menu.unpost()
-        else:
-            _to_parent_bar(menu, -1)
     else:
         _by_mnemonic(menu, event.char)
     # Every key, whether the menu had a use for it or not: Tk's Menu class
@@ -21750,17 +21764,65 @@ def _menu_key(event: Event) -> str | None:
 
 
 def _menubar_key(menu: Menu, keysym: str) -> str | None:
-    """Move along a menubar, and open what is under the cursor."""
-    if keysym == "Left":
-        menu._step(-1)
-        _reopen(menu)
-    elif keysym == "Right":
-        menu._step(1)
-        _reopen(menu)
-    elif keysym in ("Down", "Return", "space"):
+    """Open what is under the cursor on a menubar."""
+    if keysym in ("Return", "space"):
         menu.invoke("active")
+        return "break"
+    return None
+
+
+#: menu.tcl binds ``tk::MenuUpArrow`` and the rest to the navigation events,
+#: not to the keys; each is named here by the arrow that raises it.
+_MENU_ARROWS: dict[str, str] = {
+    "<<PrevLine>>": "Up",
+    "<<NextLine>>": "Down",
+    "<<PrevChar>>": "Left",
+    "<<NextChar>>": "Right",
+}
+
+
+def _menu_arrow_binding(keysym: str) -> Callable[[Event], str | None]:
+    """A binding that moves through the menu the event reached as ``keysym``
+    would."""
+    return lambda event: _menu_arrow(event.widget, keysym)
+
+
+def _menu_arrow(menu: Menu, keysym: str) -> str | None:
+    """``tk::MenuUpArrow``, ``MenuDownArrow``, ``MenuLeftArrow`` and
+    ``MenuRightArrow``: move through a posted menu, or along a menubar.
+
+    menu.tcl's bindings for these do not break, but a posted menu here keeps
+    every key it is sent, as its ``<KeyPress>`` binding does in Tk (see
+    :func:`_menu_key`), so that a ``bind_all`` shortcut cannot fire behind it.
+    """
+    if menu._as_menubar:
+        if keysym in ("Left", "Right"):
+            menu._step(-1 if keysym == "Left" else 1)
+            _reopen(menu)
+        elif keysym == "Down":
+            menu.invoke("active")
+        else:
+            return None
+        return "break"
+    if keysym == "Up":
+        menu._step(-1)
+    elif keysym == "Down":
+        menu._step(1)
+    elif keysym == "Right":
+        if menu.type("active") == "cascade":
+            menu.invoke("active")
+        else:
+            _to_parent_bar(menu, 1)
     else:
-        return None
+        # A submenu closes back to the menu it came from; a dropdown of the
+        # menubar moves along the bar instead, as Tk's MenuNextMenu does.
+        # This asked only "is there a parent?", and a menubar is one, so Left
+        # in a dropdown closed it rather than opening the menu to its left.
+        parent = menu._parent_menu
+        if parent is not None and not parent._as_menubar:
+            menu.unpost()
+        else:
+            _to_parent_bar(menu, -1)
     return "break"
 
 
@@ -24110,6 +24172,58 @@ def _paned_key(event: Event) -> str | None:
     return "break"
 
 
+def _scrollbar_key_binding(
+    action: Callable[[Scrollbar], None],
+) -> Callable[[Event], None]:
+    """A binding that runs ``action`` on the scrollbar the key reached. None
+    of them breaks, as none of scrlbar.tcl's does."""
+    return lambda event: action(event.widget)
+
+
+def _scroll_by(orient: str, amount: int, what: str) -> Callable[[Scrollbar], None]:
+    """``tk::ScrollByUnits`` and ``tk::ScrollByPages``: scroll by ``amount``
+    units or pages, if the scrollbar has a command and lies along one of the
+    orientations ``orient`` names - ``v``, ``h`` or ``hv``."""
+
+    def action(bar: Scrollbar) -> None:
+        command = bar._options["command"]
+        if command is None or str(bar._options["orient"])[:1] not in orient:
+            return
+        command("scroll", amount, what)
+
+    return action
+
+
+def _scroll_to(fraction: float) -> Callable[[Scrollbar], None]:
+    """``tk::ScrollToPos``: move the view to one end, either orientation."""
+
+    def action(bar: Scrollbar) -> None:
+        command = bar._options["command"]
+        if command is not None:
+            command("moveto", fraction)
+
+    return action
+
+
+#: scrlbar.tcl's key bindings, on the navigation virtual events as Tk binds
+#: them: the line events scroll a vertical scrollbar, the character and word
+#: events a horizontal one, and Prior, Next, Home and End either.
+_SCROLLBAR_KEYS: dict[str, Callable[[Scrollbar], None]] = {
+    "<<PrevLine>>": _scroll_by("v", -1, "units"),
+    "<<NextLine>>": _scroll_by("v", 1, "units"),
+    "<<PrevPara>>": _scroll_by("v", -1, "pages"),
+    "<<NextPara>>": _scroll_by("v", 1, "pages"),
+    "<<PrevChar>>": _scroll_by("h", -1, "units"),
+    "<<NextChar>>": _scroll_by("h", 1, "units"),
+    "<<PrevWord>>": _scroll_by("h", -1, "pages"),
+    "<<NextWord>>": _scroll_by("h", 1, "pages"),
+    "<Key-Prior>": _scroll_by("hv", -1, "pages"),
+    "<Key-Next>": _scroll_by("hv", 1, "pages"),
+    "<<LineStart>>": _scroll_to(0),
+    "<<LineEnd>>": _scroll_to(1),
+}
+
+
 class Scrollbar(_Drawable):
     """A scroll control: arrows, a trough, and a thumb showing the view.
 
@@ -24124,6 +24238,11 @@ class Scrollbar(_Drawable):
     The command is called the way Tk calls it: ``("moveto", fraction)`` when
     the thumb is dragged, and ``("scroll", count, "units" | "pages")`` when an
     arrow or the trough is clicked.
+
+    With the focus, the keys scroll as well: Up and Down by a unit on a
+    vertical scrollbar, Left and Right on a horizontal one, a page with
+    Control; Prior and Next by a page and Home and End to either end, on
+    both.
 
     Sample output:
         items = tk.Listbox(root, height=5)
@@ -24151,6 +24270,9 @@ class Scrollbar(_Drawable):
         ``highlightbackground``, ``highlightcolor`` and ``highlightthickness``
         are accepted and draw nothing: the focus is shown by markers instead. So
         is ``cursor``: the mouse pointer belongs to the terminal.
+
+        Tab passes a scrollbar by unless its ``takefocus`` is true. Tk stops
+        on one, because it has key bindings.
 
     Sample output (activerelief):
         bar = tk.Scrollbar(root, activerelief="sunken", width=3)
@@ -24227,6 +24349,9 @@ class Scrollbar(_Drawable):
         self._drag_origin = 0.0
         #: The element :meth:`activate` named, or "" for none.
         self._active_element = ""
+        #: The activebackground put aside while the pointer is over the bar
+        #: under tk_strictMotif, as scrlbar.tcl's Priv(activeBg).
+        self._motif_active_background: Any = None
         super().__init__(master, cnf, name=name, **kw)
         self._apply_requested_size()
         self._install_class_bindings()
@@ -24248,6 +24373,14 @@ class Scrollbar(_Drawable):
         # outside it, which is what the arithmetic wants.
         bind(name, "<B1-Motion>", _scrollbar_drag)
         bind(name, "<ButtonRelease-1>", _scrollbar_release)
+        if not _is_ttk(self):
+            # scrlbar.tcl's hover; ttk's scrollbar shows none.
+            bind(name, "<Enter>", _scrollbar_enter)
+            bind(name, "<Motion>", _scrollbar_hover)
+            bind(name, "<Leave>", _scrollbar_leave)
+            # scrlbar.tcl's keys; ttk/scrollbar.tcl binds none.
+            for sequence, action in _SCROLLBAR_KEYS.items():
+                bind(name, sequence, _scrollbar_key_binding(action))
 
     @property
     def _vertical(self) -> bool:
@@ -24302,21 +24435,19 @@ class Scrollbar(_Drawable):
         the trough included, clears it rather than raising, and asking with none
         active answers None. The active element is drawn on
         ``activebackground``, when one is given, and dim while ``activerelief``
-        is sunken, which a press makes it.
+        is sunken, which a press makes it. A classic scrollbar activates the
+        element under the mouse pointer as it moves, and clears it when the
+        pointer leaves - in a terminal asked to report a pointer moving with
+        no button held, which ``[mouse] report_hover`` turns on.
 
         Args:
             index: The element to make active. Omitted, nothing changes.
 
         Returns:
             The active element's name when asked, None when setting.
-
-        Differences from tkinter:
-            Tk activates the element under the mouse as it moves; here only a
-            press does.
         """
         # Measured on Tk 9.0.2. activebackground: TkCurses-gm66.4; activerelief:
-        # TkCurses-gm66.5. Tk's scrlbar.tcl activates on <Enter> and <Motion>,
-        # which is not bound here.
+        # TkCurses-gm66.5; the hover bindings: TkCurses-mvvv.
         if index is None:
             return self._active_element or None
         self._active_element = index if index in ("arrow1", "slider", "arrow2") else ""
@@ -24523,12 +24654,23 @@ def _scrollbar_select(bar: Any, part: str, repeat: str) -> None:
     command = bar._options["command"]
     if step is None or command is None:
         return
+    if _is_ttk(bar):
+        # ttk::scrollbar::Press: ttk::Repeatedly Scroll, with ttk's timing.
+        _ttk_repeatedly(bar, _ttk_scroll, bar, *step)
+        return
     command("scroll", *step)
     wait = _repeat_option(
         bar, "repeatdelay" if repeat == "initial" else "repeatinterval"
     )
     if wait > 0:
         _repeat_after(bar, wait, _scrollbar_select, bar, part, "again")
+
+
+def _ttk_scroll(bar: Any, amount: int, what: str) -> None:
+    """``ttk::scrollbar::Scroll``: the command as it is now, if there is one."""
+    command = bar._options["command"]
+    if command is not None:
+        command("scroll", amount, what)
 
 
 def _scrollbar_drag(event: Event) -> None:
@@ -24580,6 +24722,46 @@ def _scrollbar_release(event: Event) -> None:
     if relief is not None:
         bar._active_relief = None
         bar.configure(activerelief=relief)
+        # tk::ScrollButtonUp: the part under the pointer now.
+        bar.activate(Scrollbar.identify(bar, event.x, event.y))
+
+
+def _scrollbar_enter(event: Event) -> None:
+    """scrlbar.tcl's ``<Enter>``: the part under the pointer goes active.
+
+    Under ``tk_strictMotif`` the active part is drawn in the ordinary
+    background, as Motif draws it: ``activebackground`` is put aside until
+    the pointer leaves. Nothing happens while a press on the bar is held -
+    scrlbar.tcl's empty ``<B1-Enter>``.
+    """
+    bar = event.widget
+    if bar._active_relief is not None:
+        return
+    if bar.tk.strict_motif:
+        bar._motif_active_background = bar.cget("activebackground")
+        bar.configure(activebackground=bar.cget("background"))
+    _scrollbar_hover(event)
+
+
+def _scrollbar_hover(event: Event) -> None:
+    """scrlbar.tcl's ``<Motion>``: ``%W activate [%W identify %x %y]``. A
+    drag is ``<B1-Motion>``'s, so a held press does not change it."""
+    bar = event.widget
+    if bar._active_relief is None:
+        bar.activate(Scrollbar.identify(bar, event.x, event.y))
+
+
+def _scrollbar_leave(event: Event) -> None:
+    """scrlbar.tcl's ``<Leave>``: nothing is active, and a background put
+    aside under ``tk_strictMotif`` comes back. Not while a press is held -
+    its empty ``<B1-Leave>``."""
+    bar = event.widget
+    if bar._active_relief is not None:
+        return
+    saved, bar._motif_active_background = bar._motif_active_background, None
+    if saved is not None:
+        bar.configure(activebackground=saved)
+    bar.activate("")
 
 
 class Scale(_Drawable):
@@ -24587,8 +24769,10 @@ class Scale(_Drawable):
 
     The value is the widget's own, so ``get`` and ``set`` work with no
     variable at all; a ``variable`` makes it visible to other widgets, and
-    the two are kept in step both ways. The arrow keys move the slider by
-    ``resolution``, and Control with them by ``bigincrement``.
+    the two are kept in step both ways. Every arrow key moves the slider by
+    ``resolution`` - Up and Left towards ``from``, Down and Right towards
+    ``to``, whichever way the scale lies - Control with one by
+    ``bigincrement``, and Home and End to the two ends.
 
     Focus is shown by caps at the ends of the trough, ``[`` and ``]``. Room
     for them is kept whether or not they are showing, so nothing moves when
@@ -24763,13 +24947,20 @@ class Scale(_Drawable):
         bind(name, "<Button-1>", _scale_press)
         bind(name, "<Button-2>", _scale_jump)
         bind(name, "<ButtonRelease-2>", _scale_release)
+        if _is_ttk(self):
+            # ttk/scale.tcl binds button 3 as it does button 2.
+            bind(name, "<Button-3>", _scale_jump)
+            bind(name, "<ButtonRelease-3>", _scale_release)
         # A drag arrives as Motion: curses reports motion-with-a-button, and
         # there is no Button1 modifier to match a <B1-Motion> against. The
         # press holds the implicit grab, so every one of these belongs to
         # this scale however far the pointer has wandered.
         bind(name, "<Motion>", _scale_motion)
         bind(name, "<ButtonRelease-1>", _scale_release)
-        bind(name, "<Any-Key>", _scale_key)
+        for sequence, (direction, big) in _SCALE_KEYS.items():
+            bind(name, sequence, _scale_key_binding(direction, big))
+        bind(name, "<<LineStart>>", _scale_to_end("from"))
+        bind(name, "<<LineEnd>>", _scale_to_end("to"))
         bind(name, "<FocusIn>", _scale_refresh)
         bind(name, "<FocusOut>", _scale_refresh)
 
@@ -25256,8 +25447,9 @@ def _scale_press(event: Event) -> None:
     Tk's ``tk::ScaleButtonDown``: the trough steps one ``resolution`` at a
     time, and again while it is held (``tk::ScaleIncrement``); only the
     handle drags, from where it was taken hold of. Button 2 jumps the handle
-    to the pointer instead (``_scale_jump``). A ttk scale jumps on button 1,
-    as it always has here.
+    to the pointer instead (``_scale_jump``). A ttk scale follows
+    ``ttk::scale::Press``: the trough steps 1 towards the pointer, again
+    while held, and the slider drags centred on the pointer.
 
     The focus stays where it was, as it does in Tk: the arrows move a scale
     that has the focus, and a click is already a way of setting the value.
@@ -25265,11 +25457,11 @@ def _scale_press(event: Event) -> None:
     scale = event.widget
     if scale._disabled:
         return
-    if _is_ttk(scale):
-        _scale_jump(event)
-        return
     x = event.x_root - scale.winfo_rootx()
     y = event.y_root - scale.winfo_rooty()
+    if _is_ttk(scale):
+        _ttk_scale_press(scale, x, y)
+        return
     part = Scale.identify(scale, x, y)
     if part == "slider":
         scale._dragging = True
@@ -25279,6 +25471,23 @@ def _scale_press(event: Event) -> None:
         _scale_increment(scale, "up", "initial")
     elif part == "trough2":
         _scale_increment(scale, "down", "initial")
+
+
+def _ttk_scale_press(scale: Any, x: int, y: int) -> None:
+    """``ttk::scale::Press``. On the trough, ``ttk::Repeatedly Increment``
+    by 1 towards the value under the pointer - the direction settled at the
+    press; on the slider, a drag that keeps the slider centred on the
+    pointer, as ``ttk::scale::Drag`` sets ``[$w get $x $y]``."""
+    if scale.instate(["disabled"]):
+        return
+    part = scale._element_at(x, y)
+    if part == "trough":
+        low, high = scale._range()
+        down = (scale.get(x, y) <= scale.get()) != (low > high)
+        _ttk_repeatedly(scale, _scale_key_step, scale, -1 if down else 1, False)
+    elif part == "slider":
+        scale._dragging = True
+        scale._drag_lead = 0
 
 
 def _scale_jump(event: Event) -> None:
@@ -25359,40 +25568,64 @@ def _scale_offset(scale: Scale, event: Event) -> int:
     return event.x_root - scale.winfo_rootx() - origin_x
 
 
-def _scale_key(event: Event) -> str | None:
-    """Move the handle by the keyboard.
+#: The navigation events scale.tcl and ttk/scale.tcl bind, each with the
+#: direction it steps (-1 towards ``from``) and whether it is a big step.
+#: Both arrows of a pair step the same way, whatever the orientation.
+_SCALE_KEYS: dict[str, tuple[int, bool]] = {
+    "<<PrevLine>>": (-1, False),
+    "<<NextLine>>": (1, False),
+    "<<PrevChar>>": (-1, False),
+    "<<NextChar>>": (1, False),
+    "<<PrevPara>>": (-1, True),
+    "<<NextPara>>": (1, True),
+    "<<PrevWord>>": (-1, True),
+    "<<NextWord>>": (1, True),
+}
 
-    The arrows along the scale's own direction step by the resolution, with
-    Control stepping by ``bigincrement``; Home and End go to the two ends.
-    Anything else is left alone so that Tab still leaves the widget.
+
+def _scale_key_binding(direction: int, big: bool) -> Callable[[Event], None]:
+    """A binding that steps the scale the key reached. None of them breaks,
+    as none of the scripts' does, so the key goes on to the toplevel's
+    bindings and ``all``'s."""
+    return lambda event: _scale_key_step(event.widget, direction, big)
+
+
+def _scale_key_step(scale: Scale, direction: int, big: bool) -> None:
+    """Step the scale once from the keyboard.
+
+    The classic scale follows ``tk::ScaleIncrement`` with ``noRepeat``: a
+    step of ``resolution``, or for a big one ``bigincrement`` - a tenth of
+    the range when that is 0 - and never less than ``resolution``. A themed
+    one follows ``ttk::scale::Increment``, stepping 1 or 10. Either way the
+    step is towards ``to`` for a positive ``direction``, whichever end that
+    is. A disabled scale does not move.
     """
-    scale = event.widget
-    if scale._disabled:
-        return None
+    themed: Any = scale
+    if scale._disabled or (_is_ttk(scale) and themed.instate(["disabled"])):
+        return
     low, high = scale._range()
-    step = abs(float(scale._options["resolution"])) or 1.0
-    big = abs(float(scale._options["bigincrement"])) or abs(high - low) / 10 or step
-    if event.state & _TK_CONTROL:
-        step = big
-    if high < low:
-        step = -step
-    back, forward = ("Up", "Down") if scale._vertical else ("Left", "Right")
-    keysym = event.keysym
-    if keysym == back:
-        scale.set(scale._value - step)
-    elif keysym == forward:
-        scale.set(scale._value + step)
-    elif keysym == "Prior":
-        scale.set(scale._value - (big if high >= low else -big))
-    elif keysym == "Next":
-        scale.set(scale._value + (big if high >= low else -big))
-    elif keysym == "Home":
-        scale.set(low)
-    elif keysym == "End":
-        scale.set(high)
+    if _is_ttk(scale):
+        step = 10.0 if big else 1.0
     else:
-        return None
-    return "break"
+        resolution = float(scale._options["resolution"])
+        step = resolution
+        if big:
+            step = float(scale._options["bigincrement"]) or abs(high - low) / 10.0
+            step = max(step, resolution)
+    step = abs(step) if (direction > 0) == (low <= high) else -abs(step)
+    scale.set(scale._value + step)
+
+
+def _scale_to_end(option: str) -> Callable[[Event], None]:
+    """``<<LineStart>>`` and ``<<LineEnd>>``: ``%W set [%W cget -from]``, or
+    ``-to``, in both scripts."""
+
+    def binding(event: Event) -> None:
+        scale = event.widget
+        if not scale._disabled:
+            scale.set(float(scale._options[option]))
+
+    return binding
 
 
 def _scale_refresh(event: Event) -> None:

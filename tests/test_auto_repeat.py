@@ -264,6 +264,60 @@ def test_holding_the_trough_does_not_drag(root, clock):
     assert widget.get() == 1
 
 
+def ttk_scale(root, **kw):
+    return laid_out(ttk.Scale(root, from_=0, to=100, length=30, **kw), 30)
+
+
+@pytest.mark.parametrize(
+    ("column", "expected"), [(28, [51, 52, 53]), (1, [49, 48, 47])]
+)
+def test_a_ttk_trough_steps_one_towards_the_pointer_while_held(
+    root, clock, column, expected
+):
+    """``ttk::scale::Press`` - ``ttk::Repeatedly Increment`` by 1, where a
+    ttk scale used to jump to the click - on ttk's timing."""
+    widget = ttk_scale(root)
+    widget.set(50)
+    press(widget, column)
+    seen = [widget.get()]
+    hold(root, clock, 300)
+    seen.append(widget.get())
+    hold(root, clock, 100)
+    seen.append(widget.get())
+    release(widget, column)
+    hold(root, clock, 500)
+    assert seen == expected
+    assert widget.get() == expected[-1]
+
+
+def test_a_reversed_ttk_trough_still_steps_towards_the_pointer(root, clock):
+    widget = laid_out(ttk.Scale(root, from_=100, to=0, length=30), 30)
+    widget.set(50)
+    press(widget, 28)
+    release(widget, 28)
+    assert widget.get() == 49
+
+
+def test_a_ttk_slider_drags_centred_on_the_pointer(root, clock):
+    """``ttk::scale::Drag`` sets ``[$w get $x $y]``: no lead kept."""
+    widget = ttk_scale(root)
+    widget.set(50)
+    slider = next(x for x in range(30) if widget.identify(x, 0) == "slider")
+    press(widget, slider)
+    assert widget.get() == 50
+    move(widget, 20)
+    assert widget.get() == widget.get(20, 0)
+    release(widget, 20)
+
+
+@pytest.mark.parametrize("button", [2, 3])
+def test_a_ttk_scale_jumps_on_buttons_two_and_three(root, clock, button):
+    widget = ttk_scale(root)
+    press(widget, 20, button=button)
+    release(widget, 20, button=button)
+    assert widget.get() == widget.get(20, 0)
+
+
 def test_a_held_handle_drags_from_where_it_was_taken(root, clock):
     """Tk's ``Priv(deltaX)``: the handle does not jump to the pointer."""
     widget = scale(root, sliderlength=3)
@@ -360,17 +414,31 @@ def test_with_jump_the_drag_scrolls_once_at_the_release(root, clock):
     assert calls == [("moveto", pytest.approx(0.45))]
 
 
-def test_a_ttk_scrollbar_neither_repeats_nor_jumps(root, clock):
+def test_a_ttk_scrollbar_repeats_on_ttks_timing_and_does_not_jump(root, clock):
+    """``ttk::scrollbar::Press`` through ``ttk::Repeatedly``: once, at 300,
+    then every 100, with no ``repeatdelay`` or ``jump`` to change it."""
     calls = []
     with pytest.raises(TclError, match='unknown option "-jump"'):
         ttk.Scrollbar(root, jump=True)
+    with pytest.raises(TclError, match='unknown option "-repeatdelay"'):
+        ttk.Scrollbar(root, repeatdelay=50)
     bar = ttk.Scrollbar(root, command=lambda *a: calls.append(a))
     laid_out(bar, 1, 10)
     bar.set(0.2, 0.4)
     press(bar, 0, 0)
-    hold(root, clock, 1000)
-    release(bar, 0, 0)
+    assert calls == [("scroll", -1, "units")]
+    hold(root, clock, 299)
     assert len(calls) == 1
+    hold(root, clock, 1)
+    assert len(calls) == 2
+    hold(root, clock, 200)
+    assert len(calls) == 4
+    release(bar, 0, 0)
+    hold(root, clock, 500)
+    assert len(calls) == 4
+    press(bar, 0, 8)
+    release(bar, 0, 8)
+    assert calls[-1] == ("scroll", 1, "pages")
     press(bar, 0, 3)
     move(bar, 0, 5)
     assert calls[-1][0] == "moveto", "the drag scrolls as it goes"
@@ -421,16 +489,33 @@ def test_a_release_off_the_arrow_still_steps(root, clock):
     assert widget.get() == "1"
 
 
-def test_a_ttk_spinbox_steps_on_the_press(root, clock):
+def test_a_ttk_spinbox_steps_on_the_press_and_again_while_held(root, clock):
+    """``ttk::spinbox::Press``: ``ttk::Repeatedly event generate
+    <<Increment>>``, once at the press, at 300, then every 100."""
     widget = laid_out(ttk.Spinbox(root, from_=0, to=99, width=10), 12, 3)
     # A ttk spinbox starts empty, as Tk's does - TkCurses-fdl9.
     widget.set("0")
     up, _ = widget._arrow_columns()
     press(widget, up, 1)
     assert widget.get() == "1"
-    hold(root, clock, 1000)
+    hold(root, clock, 300)
+    assert widget.get() == "2"
+    hold(root, clock, 100)
+    assert widget.get() == "3"
     release(widget, up, 1)
-    assert widget.get() == "1"
+    hold(root, clock, 500)
+    assert widget.get() == "3"
+
+
+def test_a_disabled_ttk_spinbox_arrow_does_nothing(root, clock):
+    widget = laid_out(ttk.Spinbox(root, from_=0, to=99, width=10), 12, 3)
+    widget.set("0")
+    widget.state(["disabled"])
+    up, _ = widget._arrow_columns()
+    press(widget, up, 1)
+    hold(root, clock, 500)
+    release(widget, up, 1)
+    assert widget.get() == "0"
 
 
 # ------------------------------------------------------- the lost release
@@ -459,3 +544,13 @@ def test_a_second_press_stops_a_repeat_whose_release_was_lost(clock):
     assert len(count) == 2
     assert not widget._pressed
     app.destroy()
+
+
+def test_a_ttk_scale_disabled_by_its_state_flag_ignores_the_trough(root, clock):
+    widget = ttk_scale(root)
+    widget.set(50)
+    widget.state(["disabled"])
+    press(widget, 28)
+    hold(root, clock, 500)
+    release(widget, 28)
+    assert widget.get() == 50

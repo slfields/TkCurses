@@ -365,3 +365,74 @@ def test_any_other_name_clears_it_rather_than_raising(bar, other):
     bar.activate("slider")
     bar.activate(other)
     assert bar.activate() is None
+
+
+# ------------------------------------------------- hover, as scrlbar.tcl
+
+
+def _row_of(bar, part):
+    return next(y for y in range(12) if bar.identify(0, y) == part)
+
+
+def _hover(bar, sequence, part, **kw):
+    bar.event_generate(sequence, x=0, y=_row_of(bar, part), **kw)
+    return bar.activate()
+
+
+def test_the_part_under_the_pointer_goes_active_and_leaving_clears_it(bar):
+    """Measured on Tk 9.0.2 with event_generate: <Enter> and <Motion>
+    activate what identify names - nothing over the trough - and <Leave>
+    clears it."""
+    bar.set(0.3, 0.5)
+    assert _hover(bar, "<Enter>", "arrow1") == "arrow1"
+    assert _hover(bar, "<Motion>", "slider") == "slider"
+    assert _hover(bar, "<Motion>", "trough1") is None
+    assert _hover(bar, "<Motion>", "arrow2") == "arrow2"
+    bar.event_generate("<Leave>", x=0, y=0)
+    assert bar.activate() is None
+
+
+def test_a_held_press_keeps_the_active_part_until_the_release(bar):
+    """The press does not activate; <Motion> and <Leave> while held change
+    nothing; the release activates what is under the pointer
+    (tk::ScrollButtonUp)."""
+    bar.set(0.3, 0.5)
+    _hover(bar, "<Enter>", "slider")
+    bar.event_generate("<Button-1>", x=0, y=_row_of(bar, "arrow2"))
+    assert bar.activate() == "slider"
+    assert bar.cget("activerelief") == "sunken"
+    assert _hover(bar, "<Motion>", "arrow1") == "slider"
+    bar.event_generate("<Leave>", x=0, y=0)
+    assert bar.activate() == "slider"
+    assert _hover(bar, "<ButtonRelease-1>", "arrow1") == "arrow1"
+    assert bar.cget("activerelief") == "raised"
+
+
+def test_strict_motif_draws_the_active_part_in_the_background(bar):
+    """scrlbar.tcl puts activebackground aside while the pointer is over the
+    bar under tk_strictMotif, and puts it back on <Leave>."""
+    bar.configure(activebackground="red", background="grey")
+    bar.tk_strictMotif(True)
+    try:
+        _hover(bar, "<Enter>", "arrow1")
+        assert bar.cget("activebackground") == "grey"
+        bar.event_generate("<Leave>", x=0, y=0)
+        assert bar.cget("activebackground") == "red"
+    finally:
+        bar.tk_strictMotif(False)
+
+
+def test_without_strict_motif_the_active_background_stays(bar):
+    bar.configure(activebackground="red", background="grey")
+    _hover(bar, "<Enter>", "arrow1")
+    assert bar.cget("activebackground") == "red"
+
+
+def test_a_themed_scrollbar_does_not_follow_the_pointer(root):
+    from tkcurses import ttk
+
+    bar = ttk.Scrollbar(root)
+    bar._allocate(Rect(0, 0, 1, 12))
+    bar._map()
+    bar.event_generate("<Enter>", x=0, y=0)
+    assert not bar._active_element

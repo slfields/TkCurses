@@ -489,6 +489,47 @@ def test_notes_are_written_and_saved_beside_the_program(terminal, tmp_path):
 
 
 @pytest.mark.tty
+def test_notes_scrollbar_lights_the_part_under_the_mouse(terminal, tmp_path):
+    """With hover reported, the scrollbar arrow under the pointer is drawn in
+    the example's activebackground, and goes back when the pointer leaves."""
+    term = terminal(cols=60, rows=16)
+    hover = "import os\nos.environ['TKCURSES_MOUSE_REPORT_HOVER'] = '1'\n"
+    term.run_source(hover + source("notes"), workdir=tmp_path)
+    term.wait_for_text("1 of 1 notes")
+    row, column = next(
+        (r, line.index("\u25b2"))
+        for r, line in enumerate(term.display)
+        if "\u25b2" in line
+    )
+    # SGR code 35: motion with no button held, which send_mouse cannot spell.
+    term.send(f"\x1b[<35;{column + 1};{row + 1}M".encode())
+    term.wait_for_cell(row, column, lambda c: c.bg == "cyan", message="the lit arrow")
+    term.send(f"\x1b[<35;{column - 10};{row + 1}M".encode())
+    term.wait_for_cell(row, column, lambda c: c.bg != "cyan", message="the arrow unlit")
+    term.send_keys("<Control-q>")
+    assert term.wait_for_exit() == 0
+
+
+@pytest.mark.tty
+def test_table_scrollbar_arrow_held_down_keeps_scrolling(terminal, tmp_path):
+    """The ttk Scrollbar repeats as ttk::Repeatedly does: one press, held,
+    scrolls the table past more than the one row a click would."""
+    term = start(terminal, tmp_path, "table", rows=8)
+    term.wait_for_text("Mercury")
+    row, column = next(
+        (r, line.rindex("\u25bc"))
+        for r, line in enumerate(term.display)
+        if "\u25bc" in line
+    )
+    term.send_mouse(column, row, action="press")
+    term.wait_for(
+        lambda t: not t.contains("Venus") and not t.contains("Earth"),
+        message="three rows scrolled away while the arrow is held",
+    )
+    term.send_mouse(column, row, action="release")
+
+
+@pytest.mark.tty
 def test_notes_search_narrows_the_list(terminal, tmp_path):
     store = tmp_path / "mine.json"
     store.write_text(

@@ -5987,7 +5987,10 @@ class Scale(Widget, tkcurses.Scale):
 
     Unlike the classic Scale it is horizontal by default, takes its value as
     an option, and shows only the slider: no number, label or ticks. A
-    :class:`LabeledScale` writes the value beside it.
+    :class:`LabeledScale` writes the value beside it. The arrow keys move it
+    by 1, and by 10 with Control. A click on the trough steps it by 1
+    towards the pointer, and goes on stepping while the button is held; the
+    middle and right buttons put the slider under the pointer.
 
     Sample output:
         ttk.Scale(root, from_=0, to=100, value=30, length=30).pack(pady=1)
@@ -6703,7 +6706,9 @@ class Spinbox(Widget, _EntryCommands, tkcurses.Spinbox):
     to ``to`` by ``increment``. :meth:`set` puts any text in it, checked
     against neither. Up and Down, and the arrows, generate
     ``<<Increment>>`` and ``<<Decrement>>``, which do the stepping, so a
-    program can generate them to step it, or bind them to stop it.
+    program can generate them to step it, or bind them to stop it. An arrow
+    held down generates its event again after 300 ms and then every 100 ms,
+    as Tk's does.
 
     Sample output:
         spin = ttk.Spinbox(root, from_=1, to=10, width=6)
@@ -6826,6 +6831,9 @@ class Scrollbar(Widget, tkcurses.Scrollbar):
     Connected to a widget the same way as the classic one: the scrollbar's
     ``command`` is the widget's ``yview`` or ``xview``, and the widget's
     ``yscrollcommand`` or ``xscrollcommand`` is the scrollbar's :meth:`set`.
+    An arrow or the trough held down scrolls again after 300 ms and then
+    every 100 ms, as Tk's does; unlike the classic scrollbar it has no
+    options to change that, and it takes no keys.
 
     Sample output:
         text = tk.Text(root, width=30, height=6)
