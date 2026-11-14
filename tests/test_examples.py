@@ -170,6 +170,31 @@ def test_the_editor_view_menu_recolours_it(terminal, tmp_path):
 
 
 @pytest.mark.tty
+def test_the_editor_view_menu_shows_swatches_and_tears_off(terminal, tmp_path):
+    term = start(terminal, tmp_path, "editor")
+    term.wait_for_text("untitled")
+    term.send_keys("<F10>", "<Right>", "<Right>")
+    term.wait_for_text("Bisque")
+    row = next(r for r, line in enumerate(term.display) if "Bisque" in line)
+    swatch = term.display[row].index("Bisque") - 3
+    term.wait_for_cell(row, swatch, lambda c: c.data == "█", message="a swatch")
+    # Down lands on the dashed line first; Return tears the menu off.
+    term.send_keys("<Down>", "<Return>")
+    term.wait_for(
+        lambda t: any("─View" in line for line in t.display),
+        message="the torn-off View menu, titled",
+    )
+    term.send_keys("<Down>", "<Down>", "<Return>")
+    term.wait_for(
+        lambda t: (
+            t.attrs_at(row + 4, 5)["bg"] not in (None, "black")
+            and any("─View" in line for line in t.display)
+        ),
+        message="Bisque chosen, and the copy still up",
+    )
+
+
+@pytest.mark.tty
 def test_the_table_shows_the_chosen_planet(terminal, tmp_path):
     term = start(terminal, tmp_path, "table", cols=52, rows=14)
     term.wait_for_text("Neptune")

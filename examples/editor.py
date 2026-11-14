@@ -19,7 +19,9 @@
 
 F10, or Alt and an underlined letter, opens the menus. Ctrl-O, Ctrl-S and
 Ctrl-Q open, save and quit; Ctrl-Z undoes. The View menu recolours the
-whole editor with ``tk_setPalette``. Give a file name to open it:
+whole editor with ``tk_setPalette``, shows a swatch of each colour, and
+tears off - choose its dashed line to keep it on screen, and Escape to put
+it away. Give a file name to open it:
 ``python3 editor.py notes.txt``.
 """
 
@@ -114,12 +116,33 @@ edit.add_command(
     label="Paste", underline=0, command=lambda: text.event_generate("<<Paste>>")
 )
 menubar.add_cascade(label="Edit", underline=0, menu=edit)
-# A palette recolours every widget from one background, as Tk's does.
-view = tk.Menu(menubar, tearoff=0)
+
+
+# A palette recolours every widget from one background, as Tk's does. Each
+# entry shows a swatch: two pixels square is one cell high, so the entries
+# stay a row each. The dashed line at the top tears the menu off.
+def swatch(colour):
+    image = tk.PhotoImage(width=2, height=2)
+    image.put(colour, to=(0, 0, 2, 2))
+    return image
+
+
+swatches = {"Dark": swatch("#1e2430"), "Bisque": swatch("bisque")}
+view = tk.Menu(menubar, tearoff=1)
 view.add_command(
-    label="Dark", underline=0, command=lambda: root.tk_setPalette("#1e2430")
+    label="Dark",
+    underline=0,
+    image=swatches["Dark"],
+    compound="left",
+    command=lambda: root.tk_setPalette("#1e2430"),
 )
-view.add_command(label="Bisque", underline=0, command=root.tk_bisque)
+view.add_command(
+    label="Bisque",
+    underline=0,
+    image=swatches["Bisque"],
+    compound="left",
+    command=root.tk_bisque,
+)
 menubar.add_cascade(label="View", underline=0, menu=view)
 root.config(menu=menubar)
 files.bind_accelerators()

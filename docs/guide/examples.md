@@ -77,7 +77,10 @@ A Text with a scrollbar, a menu bar, a status line, and files: Open and
 Save ask for a name with the file dialog, and quitting with changes not
 saved asks first. The menus open with F10, or with Alt and the underlined
 letter; `bind_accelerators` makes the shortcuts written in the menus work.
-The screen is taken after typing two lines and pressing F10.
+The View menu shows a swatch beside each colour - an entry's `image`, with
+`compound="left"` - and tears off: its dashed top line leaves a copy on the
+screen that stays after a choice, until Escape. The screen is taken after
+typing two lines and pressing F10.
 
 ```{tkcurses-example} examples/editor.py
 :size: 60x14

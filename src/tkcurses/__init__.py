@@ -169,6 +169,7 @@ from tkcurses._core.menus import (
 )
 from tkcurses._core.menus import (
     COLUMN_GAP,
+    TEAROFF,
     MenuEntry,
     Placed,
     accelerator_sequence,
@@ -9790,7 +9791,6 @@ class _TextWidget(_Drawable):
         bits - show whatever is behind them instead of punching a block of
         background through it.
         """
-        painter = getattr(self.tk, "painter", None)
         image = self._drawn_image()
         if image is None:
             self._draw_bitmap_glyph(dispatcher, window, area, place)
@@ -9800,69 +9800,16 @@ class _TextWidget(_Drawable):
         across, down = parse_anchor(str(self._options["anchor"]))
         origin_x = area.x + int((area.width - content_width) * across)
         origin_y = max(area.y, area.y + int((area.height - content_height) * down))
-        # The same compose() a Canvas draws through, on the same plane: it
-        # folds each pair of pixel rows into one cell and says which glyph
-        # and which two colours that cell needs. A background of None means
-        # the unlit half should show the widget's own colour rather than one
-        # of the image's.
-        colors = self.tk.colors
-        # Absolute screen position, because the painter writes past curses
-        # and curses windows are the only thing that knows about offsets.
-        where = self._screen_rect()
-        buffer = self.tk.screen.buffer if self.tk.screen is not None else None
-        background = str(self._options["background"] or "black")
-        # Only the pixels that can land in the area. Composing the whole
-        # image and discarding what falls outside made a repaint cost what
-        # the IMAGE costs rather than what the WINDOW costs: measured, a
-        # 320x200 photograph took 47ms a repaint on a 24-row screen, which
-        # is past the 50-80ms boundary where ncurses starts dropping mouse
-        # reports once a runner is a few times slower.
-        # Exact, with no slack. A cell holds ROWS_PER_CELL pixel rows and
-        # compose() pairs them from the image's own origin, so area.height
-        # cells span exactly that many rows - a spare cell either way was
-        # only ever a margin against arithmetic nobody had checked.
-        first_row = (area.y - origin_y - place.y) * ROWS_PER_CELL
-        last_row = first_row + area.height * ROWS_PER_CELL
-        first_column = area.x - origin_x - place.x
-        last_column = first_column + area.width
-        visible = image.lit((first_column, first_row, last_column, last_row))
-        for (x, y), (glyph, fore, back) in compose(visible).items():
-            line = origin_y + place.y + y
-            column = origin_x + place.x + x
-            if not (area.y <= line < area.y + area.height):
-                continue
-            if not (area.x <= column < area.x + area.width):
-                continue
-            if colors is None:
-                attribute = _curses.A_NORMAL
-            else:
-                attribute = colors.attribute_for(fore, back or background)
-            # Written through curses as well, always. If direct painting
-            # never happens - no truecolor, a terminal that ignores it, a
-            # closed stream - what shows is the ordinary rendering rather
-            # than a hole where the picture was.
-            self._write_line(dispatcher, window, line, column, glyph, attribute)
-            if painter is not None and painter.enabled:
-                screen_row = where.y + line
-                screen_column = where.x + column
-                # Clipped to the screen, because this writes to the terminal
-                # rather than to a window: a position outside it is not
-                # ignored the way curses ignores one, it lands somewhere
-                # else and can scroll what is already there.
-                on_screen = buffer is not None and buffer.contains(
-                    screen_row, screen_column
-                )
-                exact_fore = rgb_of(fore) if on_screen else None
-                exact_back = rgb_of(back or background) if on_screen else None
-                if exact_fore is not None and exact_back is not None:
-                    painter.add(
-                        self,
-                        screen_row,
-                        screen_column,
-                        glyph,
-                        exact_fore,
-                        exact_back,
-                    )
+        _paint_image(
+            self,
+            dispatcher,
+            window,
+            image,
+            origin_x + place.x,
+            origin_y + place.y,
+            area,
+            str(self._options["background"] or "black"),
+        )
 
     def _text_area(self) -> Rect:
         """Where the text may go, in cells relative to this widget's window."""
@@ -9978,6 +9925,87 @@ class _TextWidget(_Drawable):
                 line[letter],
                 attribute | _curses.A_UNDERLINE,
             )
+
+
+def _paint_image(
+    widget: Any,
+    dispatcher: CursesDispatcher,
+    window: Any,
+    image: Image,
+    left: int,
+    top: int,
+    area: Rect,
+    background: str,
+) -> None:
+    """Paint ``image`` with its top-left cell at ``(left, top)`` in
+    ``widget``'s window, only where it falls inside ``area``.
+
+    A cell holding None is a hole and is skipped rather than written as a
+    space, so art that is not a full rectangle shows what is behind it.
+    """
+    painter = getattr(widget.tk, "painter", None)
+    # The same compose() a Canvas draws through, on the same plane: it
+    # folds each pair of pixel rows into one cell and says which glyph
+    # and which two colours that cell needs. A background of None means
+    # the unlit half should show the widget's own colour rather than one
+    # of the image's.
+    colors = widget.tk.colors
+    # Absolute screen position, because the painter writes past curses
+    # and curses windows are the only thing that knows about offsets.
+    where = widget._screen_rect()
+    buffer = widget.tk.screen.buffer if widget.tk.screen is not None else None
+    # Only the pixels that can land in the area. Composing the whole
+    # image and discarding what falls outside made a repaint cost what
+    # the IMAGE costs rather than what the WINDOW costs: measured, a
+    # 320x200 photograph took 47ms a repaint on a 24-row screen, which
+    # is past the 50-80ms boundary where ncurses starts dropping mouse
+    # reports once a runner is a few times slower.
+    # Exact, with no slack. A cell holds ROWS_PER_CELL pixel rows and
+    # compose() pairs them from the image's own origin, so area.height
+    # cells span exactly that many rows - a spare cell either way was
+    # only ever a margin against arithmetic nobody had checked.
+    first_row = (area.y - top) * ROWS_PER_CELL
+    last_row = first_row + area.height * ROWS_PER_CELL
+    first_column = area.x - left
+    last_column = first_column + area.width
+    visible = image.lit((first_column, first_row, last_column, last_row))
+    for (x, y), (glyph, fore, back) in compose(visible).items():
+        line = top + y
+        column = left + x
+        if not (area.y <= line < area.y + area.height):
+            continue
+        if not (area.x <= column < area.x + area.width):
+            continue
+        if colors is None:
+            attribute = _curses.A_NORMAL
+        else:
+            attribute = colors.attribute_for(fore, back or background)
+        # Written through curses as well, always. If direct painting
+        # never happens - no truecolor, a terminal that ignores it, a
+        # closed stream - what shows is the ordinary rendering rather
+        # than a hole where the picture was.
+        widget._write_line(dispatcher, window, line, column, glyph, attribute)
+        if painter is not None and painter.enabled:
+            screen_row = where.y + line
+            screen_column = where.x + column
+            # Clipped to the screen, because this writes to the terminal
+            # rather than to a window: a position outside it is not
+            # ignored the way curses ignores one, it lands somewhere
+            # else and can scroll what is already there.
+            on_screen = buffer is not None and buffer.contains(
+                screen_row, screen_column
+            )
+            exact_fore = rgb_of(fore) if on_screen else None
+            exact_back = rgb_of(back or background) if on_screen else None
+            if exact_fore is not None and exact_back is not None:
+                painter.add(
+                    widget,
+                    screen_row,
+                    screen_column,
+                    glyph,
+                    exact_fore,
+                    exact_back,
+                )
 
 
 class Label(_TextWidget):
@@ -20717,6 +20745,13 @@ def _canvas_mouse(event: Event) -> None:
         canvas._deliver(canvas._current, sequence, event)
 
 
+#: The tear-off entry, drawn across the menu as Tk draws its dashed line.
+TEAROFF_LINE = "╌"
+
+#: A menu entry's ``-compound`` values, as Tk lists them in its error.
+_MENU_COMPOUNDS = ("bottom", "center", "left", "none", "right", "top")
+
+
 class Menu(_Drawable):
     """A list of things to choose, posted over everything else.
 
@@ -20757,7 +20792,11 @@ class Menu(_Drawable):
         selectcolor: The colour of a check or radio entry's indicator while it
             is on.
         tearoff: Whether the menu starts with an entry that tears it off into
-            a window of its own.
+            a window of its own: a dashed line at index 0. Choosing it puts
+            a copy of the menu where the menu was, titled by ``title`` or by
+            what opened it, which stays up after a choice, moves by
+            dragging its title, and closes with Escape. Off by default, as
+            in Tk 9.
         tearoffcommand: Called when the menu is torn off.
         title: The title of the window a torn-off menu becomes.
         type: ``normal``, ``menubar`` or ``tearoff``.
@@ -20768,16 +20807,31 @@ class Menu(_Drawable):
     ``font``, ``foreground``, ``relief``, ``takefocus``.
 
     Differences from tkinter:
-        A menu cannot be torn off: ``tearoff`` is kept and counted in the
-        indices as in Tk, and no tear-off line is drawn, so ``title`` has
-        nothing to name. ``activeborderwidth`` draws nothing; the active entry
+        A torn-off menu is not a toplevel with a window manager: its title
+        is drawn in its border and drags it, as a Toplevel's does, Escape
+        closes it, and ``wm`` does not reach it. Its cascades open the original submenus where Tk's open copies
+        of them. A menubar's tear-off entry is counted and not drawn.
+        ``activeborderwidth`` draws nothing; the active entry
         is shown by its colours and ``activerelief``. ``cursor`` is accepted
         and draws nothing: the mouse pointer belongs to the terminal. Of an
-        entry's own options,
-        ``font``, ``image``, ``bitmap``, ``compound`` and ``selectimage`` are
-        accepted and draw nothing: an entry is a row of text. Its colours,
-        ``selectcolor``, ``indicatoron`` and ``hidemargin`` are drawn, an
-        entry's colours over the menu's.
+        entry's own options, ``font`` and ``bitmap`` are accepted and draw
+        nothing. Its colours, ``selectcolor``, ``indicatoron`` and
+        ``hidemargin`` are drawn, an entry's colours over the menu's.
+
+        An entry's ``image`` is drawn as the terminal draws every image, two
+        pixel rows to a cell, so the entry is as many rows tall as that -
+        and a row more with ``compound`` ``top`` or ``bottom``. Even a small
+        icon makes a tall entry. ``compound`` ``none``, the default, shows
+        the image in place of the label, as in Tk, and a chosen check or
+        radio entry shows its ``selectimage``. On a menubar only the labels
+        are drawn.
+
+    Sample output (tearoff):
+        # size: 40x7
+        menu = tk.Menu(root, tearoff=1)
+        menu.add_command(label="Open...")
+        menu.add_command(label="Save")
+        menu.post(2, 1)
 
     Sample output (activerelief):
         # size: 40x7
@@ -20843,6 +20897,10 @@ class Menu(_Drawable):
         """Every option an entry of this kind takes, with its default."""
         if kind == "separator":
             return dict(cls._ENTRY_OPTIONS[kind])
+        if kind == TEAROFF:
+            # Measured on Tk 9.0.2: entryconfigure on the tear-off entry
+            # answers these two and nothing else.
+            return {"background": "", "state": "normal"}
         return {**cls._COMMON_ENTRY_OPTIONS, **cls._ENTRY_OPTIONS[kind]}
 
     #: What a ticked checkbutton and a chosen radiobutton look like.
@@ -20871,9 +20929,8 @@ class Menu(_Drawable):
         "postcommand": None,
         "relief": "raised",
         "takefocus": False,
+        # Tk 9.0.2's default, measured; Tk 8.6's was true.
         "tearoff": False,
-        # Kept: a menu is never torn off here, so there is nothing to call,
-        # and "type" changes nothing.
         "tearoffcommand": "",
         "title": "",
         "type": "normal",
@@ -20902,9 +20959,57 @@ class Menu(_Drawable):
         self._open_cascade: Menu | None = None
         self._parent_menu: Menu | None = None
         self._focus_before: Misc | None = None
+        #: What a torn-off menu's border names it: the window title Tk's
+        #: tk::TearOffMenu gives the copy.
+        self._torn_title = ""
+        #: Where a drag of a torn-off menu's title started: the pointer's
+        #: screen cell and the menu's, or None when not dragging.
+        self._drag_origin: tuple[int, int, int, int] | None = None
         super().__init__(master, cnf, name=name, **kw)
+        self._sync_tearoff()
         self._apply_requested_size()
         self._install_class_bindings()
+
+    def configure(self, cnf: dict[str, Any] | None = None, **kw: Any) -> Any:
+        """Set options, or report them; see :meth:`BaseWidget.configure`.
+
+        Turning ``tearoff`` on puts the tear-off entry in at index 0, and
+        turning it off takes it out, moving every other index by one - as
+        in Tk.
+        """
+        answer = super().configure(cnf, **kw)
+        if "tearoff" in _given(cnf, kw):
+            self._sync_tearoff()
+            self._apply_requested_size()
+            self._refresh()
+        return answer
+
+    config = configure
+
+    def _has_tearoff(self) -> bool:
+        """Whether entry 0 is the tear-off entry."""
+        return bool(self._entries) and self._entries[0].kind == TEAROFF
+
+    def _sync_tearoff(self) -> None:
+        """Put the tear-off entry in, or take it out, as ``tearoff`` says."""
+        wanted = bool(self._options.get("tearoff"))
+        if wanted and not self._has_tearoff():
+            self._entries.insert(0, MenuEntry(TEAROFF, self._entry_spec(TEAROFF)))
+            if self._active is not None:
+                self._active += 1
+        elif not wanted and self._has_tearoff():
+            del self._entries[0]
+            if self._active is not None:
+                self._active = self._active - 1 if self._active > 0 else None
+        if self._has_tearoff():
+            # A torn-off menu keeps the entry at 0, as Tk's does, and neither
+            # draws it nor lands on it: tk::MenuNextEntry skips it there.
+            self._entries[0].hidden = self._torn_off
+
+    @property
+    def _torn_off(self) -> bool:
+        """Whether this menu is a torn-off copy: ``type`` ``tearoff``."""
+        return self._options.get("type") == "tearoff"
 
     def _install_class_bindings(self) -> None:
         """Register the keys and clicks every Menu answers."""
@@ -20923,6 +21028,10 @@ class Menu(_Drawable):
             bind(name, sequence, _menu_arrow_binding(keysym))
         bind(name, "<Button-1>", _menu_click)
         bind(name, "<Motion>", _menu_motion)
+        # A held button: dragging a torn-off menu by its title, else the
+        # pointer running down the entries as <Motion> does.
+        bind(name, "<B1-Motion>", _menu_drag)
+        bind(name, "<ButtonRelease-1>", _menu_release)
 
     # ---------------------------------------------------------- making entries
 
@@ -20944,7 +21053,10 @@ class Menu(_Drawable):
             TclError: If the kind or an option is not one Tk defines.
         """
         if kind not in self._ENTRY_OPTIONS:
-            raise TclError(f'bad menu entry type "{kind}"')
+            raise TclError(
+                f'bad menu entry type "{kind}": must be cascade, checkbutton, '
+                "command, radiobutton, or separator"
+            )
         entry = MenuEntry(kind, self._checked_entry(kind, _given(cnf, kw)))
         self._entries.insert(self._insert_at(index), entry)
         self._apply_requested_size()
@@ -21012,8 +21124,18 @@ class Menu(_Drawable):
             option = _OPTION_ALIASES.get(name, name)
             if option not in spec:
                 raise TclError(f'unknown option "-{name}"')
-            options[option] = value
+            options[option] = self._entry_value(option, value)
         return options
+
+    def _entry_value(self, option: str, value: Any) -> Any:
+        """An entry option's value as Tk checks it. An image must exist and a
+        ``compound`` be one of Tk's six, in Tk 9.0.2's words; the rest are
+        kept as given."""
+        if option in ("image", "selectimage"):
+            return _image_name(self, value)
+        if option == "compound":
+            return _tcl_index(value, _MENU_COMPOUNDS, "compound")
+        return value
 
     # -------------------------------------------------------------- indices
 
@@ -21050,11 +21172,14 @@ class Menu(_Drawable):
         )
 
     def _insert_at(self, spec: Any) -> int:
-        """Where an insertion goes, clamped into the list."""
+        """Where an insertion goes, clamped into the list - and never ahead
+        of the tear-off entry, which Tk keeps first."""
         if isinstance(spec, int):
-            return max(0, min(spec, len(self._entries)))
-        resolved = self.index(spec)
-        return len(self._entries) if resolved is None else resolved
+            at = max(0, min(spec, len(self._entries)))
+        else:
+            resolved = self.index(spec)
+            at = len(self._entries) if resolved is None else resolved
+        return max(at, 1) if self._has_tearoff() else at
 
     def _entry_at_row(self, row: int) -> int | None:
         """Which entry a row within the widget falls on, in the first column."""
@@ -21074,9 +21199,9 @@ class Menu(_Drawable):
         area = self._text_area()
         places = self._places()
         columned = self._columned(places)
-        wanted = row - area.y + (0 if columned else self._first)
+        wanted = row - area.y + self._top_row(places)
         for number, place in enumerate(places):
-            if place.row != wanted:
+            if not place.row <= wanted < place.row + place.height:
                 continue
             if not columned:
                 return number
@@ -21086,8 +21211,38 @@ class Menu(_Drawable):
 
     def _places(self) -> list[Placed]:
         """Where each entry goes when posted - see :func:`lay_out`."""
-        places, _ = lay_out(self._entries, indicators=self._has_indicators())
+        places, _ = self._laid_out()
         return places
+
+    def _laid_out(self) -> tuple[list[Placed], tuple[int, int]]:
+        """:func:`lay_out`, with each entry's image measured first."""
+        for entry in self._entries:
+            image = self._entry_image(entry)
+            entry.picture = (
+                None if image is None else (image.width(), image.cell_height())
+            )
+        return lay_out(self._entries, indicators=self._has_indicators())
+
+    def _entry_image(self, entry: MenuEntry, *, drawn: bool = False) -> Image | None:
+        """The image an entry shows, or None. Drawn, a chosen check or radio
+        entry shows its ``selectimage`` if it has one; the size is always
+        the ``image``'s. A deleted image is no image, as a Label's is."""
+        name = str(entry.options.get("image") or "")
+        image: Image | None = self.tk.images.get(name) if name else None
+        if image is None or not drawn or entry.kind not in self._INDICATORS:
+            return image
+        chosen = self._indicator_for(entry) == self._INDICATORS[entry.kind][0]
+        select = str(entry.options.get("selectimage") or "")
+        if chosen and select:
+            chosen_image: Image | None = self.tk.images.get(select)
+            return chosen_image or image
+        return image
+
+    def _top_row(self, places: list[Placed]) -> int:
+        """The first row shown: the scrolled-to entry's, in one column."""
+        if self._columned(places) or not places:
+            return 0
+        return places[min(self._first, len(places) - 1)].row
 
     @staticmethod
     def _columned(places: list[Placed]) -> bool:
@@ -21098,6 +21253,8 @@ class Menu(_Drawable):
         """Which menubar entry a column falls on."""
         at = self._text_area().x
         for number, entry in enumerate(self._entries):
+            if entry.kind == TEAROFF:
+                continue
             width = cells(entry.label) + 2
             if at <= column < at + width:
                 return number
@@ -21118,9 +21275,7 @@ class Menu(_Drawable):
         if at is None:
             return 0
         places = self._places()
-        if self._columned(places):
-            return places[at].row
-        return at - self._first
+        return places[at].row - self._top_row(places)
 
     def xposition(self, spec: Any) -> int:
         """The column an entry's column starts at, counted as yposition is.
@@ -21146,6 +21301,10 @@ class Menu(_Drawable):
         stop = start if last is None else self.index(last)
         if stop is None:
             stop = len(self._entries) - 1
+        if start == 0 and self._has_tearoff():
+            # Measured on Tk 9.0.2: deleting from 0 leaves the tear-off
+            # entry where it is, and "delete 0" alone deletes nothing.
+            start = 1
         del self._entries[start : stop + 1]
         if self._active is not None and self._active >= len(self._entries):
             self._active = None
@@ -21175,7 +21334,7 @@ class Menu(_Drawable):
             option = _OPTION_ALIASES.get(name, name)
             if option not in spec_for_kind:
                 raise TclError(f'unknown option "-{name}"')
-            entry.options[option] = value
+            entry.options[option] = self._entry_value(option, value)
         self._apply_requested_size()
         self._refresh()
         return None
@@ -21222,6 +21381,8 @@ class Menu(_Drawable):
         entry = self._entries[at]
         if not entry.selectable:
             return None
+        if entry.kind == TEAROFF:
+            return self._tear_off()
         if entry.kind == "cascade":
             self._open(at)
             return None
@@ -21229,6 +21390,84 @@ class Menu(_Drawable):
         self._dismiss_all()
         command = entry.options.get("command")
         return None if command is None else command()
+
+    def _raise_torn_off(self) -> None:
+        """Bring a torn-off menu in front of the other windows, and give it
+        the keys - as clicking a window does where a window manager would."""
+        stack = self.tk.panels
+        if stack is not None and self._panel is not None:
+            stack.raise_to_top(self._panel)
+        self.focus_set()
+        self._refresh()
+
+    def _move_to_screen_cell(self, x: int, y: int) -> None:
+        """Place the menu with its corner at a screen cell."""
+        master = self.master
+        origin_x = master.winfo_rootx() if master is not None else 0
+        origin_y = master.winfo_rooty() if master is not None else 0
+        self._allocate(
+            Rect(x - origin_x, y - origin_y, self._rect.width, self._rect.height)
+        )
+
+    def _move_torn_off(self, x: int, y: int) -> None:
+        """Move a torn-off menu, kept wholly on the screen as ``geometry``
+        keeps a Toplevel being dragged."""
+        screen_width, screen_height = self._screen_size()
+        x = max(0, min(x, screen_width - self._rect.width))
+        y = max(0, min(y, screen_height - self._rect.height))
+        if (x, y) == (self.winfo_rootx(), self.winfo_rooty()):
+            return
+        self._move_to_screen_cell(x, y)
+        self._map()
+        self._raise_torn_off()
+
+    def _tear_off(self) -> str:
+        """Copy this menu into a window of its own, which stays up.
+
+        Follows ``tk::TearOffMenu`` and ``tk::MenuDup``: the copy is a menu
+        of ``type`` ``tearoff`` named ``tearoff1``, ``tearoff2`` and so on in
+        the nearest toplevel, with every option and entry of this one; it is
+        titled by ``title``, else by the Menubutton's text or the cascade's
+        label it came from; it appears where this menu was; and
+        ``tearoffcommand`` is called with both menus' names. Returns the
+        copy's name, as Tk's invoke does.
+        """
+        x, y = self.winfo_rootx(), self.winfo_rooty()
+        # Titled before this menu is unposted, which takes the parent's
+        # active entry with it.
+        title = str(self._options.get("title") or "")
+        source = self.master
+        if not title and isinstance(source, Menubutton):
+            title = str(source.cget("text"))
+        elif not title and isinstance(source, Menu):
+            with contextlib.suppress(TclError, IndexError):
+                active = source.index("active")
+                if active is not None:
+                    title = source._entries[active].label
+        self._dismiss_all()
+        parent: Misc = self.master if self.master is not None else self
+        while (
+            isinstance(parent, Menu) or parent.winfo_toplevel() is not parent
+        ) and parent.master is not None:
+            parent = parent.master
+        number = 1
+        while f"tearoff{number}" in parent.children:
+            number += 1
+        options = {
+            name: self._options[name]
+            for name in self._public_options()
+            if name != "type" and name in self._options
+        }
+        copy = Menu(parent, name=f"tearoff{number}", type="tearoff", **options)
+        for entry in self._entries:
+            if entry.kind != TEAROFF:
+                copy.add(entry.kind, dict(entry.options))
+        copy._torn_title = title or f"tearoff{number}"
+        copy.post(x, y)
+        command = self._options.get("tearoffcommand")
+        if callable(command):
+            command(str(self), str(copy))
+        return str(copy)
 
     def bind_accelerators(self, target: Misc | None = None) -> list[str]:
         """Bind every entry's accelerator to the entry, submenus included.
@@ -21352,7 +21591,10 @@ class Menu(_Drawable):
         self._map()
         self._restack_panels()
         self._focus_before = self.tk.focus
-        self.grab_set()
+        if not self._torn_off:
+            # A torn-off menu is a window among the others, and takes no
+            # grab: a click elsewhere goes elsewhere, as in Tk.
+            self.grab_set()
         self.focus_set()
         self._first = self._scrolled_to(self._active or 0)
         self._refresh()
@@ -21391,7 +21633,8 @@ class Menu(_Drawable):
                 return
         if parent is not None and parent._posted:
             parent._open_cascade = None
-            parent.grab_set()
+            if not parent._torn_off:
+                parent.grab_set()
             parent.focus_set()
         elif previous is not None and previous.winfo_exists():
             previous.focus_set()
@@ -21428,7 +21671,7 @@ class Menu(_Drawable):
         else:
             submenu.post(
                 self.winfo_rootx() + self._rect.width,
-                self.winfo_rooty() + (at - self._first),
+                self.winfo_rooty() + self.yposition(at),
             )
         self._refresh()
 
@@ -21436,7 +21679,8 @@ class Menu(_Drawable):
         """Where one menubar label starts, relative to the bar."""
         column = self._text_area().x
         for entry in self._entries[:at]:
-            column += cells(entry.label) + 2
+            if entry.kind != TEAROFF:
+                column += cells(entry.label) + 2
         return column
 
     def _dismiss_all(self) -> None:
@@ -21450,6 +21694,12 @@ class Menu(_Drawable):
         menu: Menu | None = self
         while menu is not None:
             parent = menu._parent_menu
+            if menu._torn_off:
+                # A torn-off menu stays up after a choice: it is a window
+                # now, not a popup. What was opened from it goes.
+                menu._open_cascade = None
+                menu._refresh()
+                return
             if menu._posted:
                 menu.unpost()
             else:
@@ -21466,13 +21716,15 @@ class Menu(_Drawable):
         A menu laid out in columns does not scroll - a column is how a long
         menu was made short - so it always starts at the top.
         """
-        if self._columned(self._places()):
+        places = self._places()
+        if self._columned(places):
             return 0
-        return visible_window(len(self._entries), at, self._rows())
+        heights = [place.height for place in places]
+        return visible_window(len(self._entries), at, self._rows(), heights)
 
     def _posted_size(self) -> tuple[int, int]:
         """The size a posted menu wants, border included."""
-        _, (width, height) = lay_out(self._entries, indicators=self._has_indicators())
+        _, (width, height) = self._laid_out()
         edge = 2 * BORDER_WIDTH if self._bordered else 0
         return (width + edge + 2, height + edge)
 
@@ -21515,6 +21767,12 @@ class Menu(_Drawable):
         window = self._window
         if window is None or self.tk.screen is None:
             return
+        # Images go to the terminal past curses as well, kept per widget
+        # until cleared: without this, a menu that moved - a torn-off one
+        # being dragged - left its pictures where it had been.
+        painter = getattr(self.tk, "painter", None)
+        if painter is not None:
+            painter.clear(self)
         dispatcher = CursesDispatcher.get()
         attribute = self._background_attribute() | self._font_attribute()
         with contextlib.suppress(_curses.error):
@@ -21527,6 +21785,17 @@ class Menu(_Drawable):
                 self._draw_border(
                     dispatcher, window, self._rect.width, self._rect.height, attribute
                 )
+                if self._torn_off and self._torn_title:
+                    room = self._rect.width - 4
+                    if room > 0:
+                        self._write_line(
+                            dispatcher,
+                            window,
+                            0,
+                            2,
+                            clip_text(self._torn_title, room),
+                            attribute,
+                        )
             self._draw_entries(dispatcher, window, attribute)
 
     def _draw_bar(
@@ -21535,6 +21804,9 @@ class Menu(_Drawable):
         """Draw the labels in a row, the open one picked out."""
         column = 0
         for number, entry in enumerate(self._entries):
+            if entry.kind == TEAROFF:
+                # A menubar's tear-off entry is counted and not drawn.
+                continue
             text = f" {entry.label} "
             style = self._entry_style(entry, attribute, number == self._active)
             self._write_line(
@@ -21559,9 +21831,10 @@ class Menu(_Drawable):
         cascades = any(entry.kind == "cascade" for entry in self._entries)
         places = self._places()
         columned = self._columned(places)
+        top = self._top_row(places)
         for number, place in enumerate(places):
-            row = place.row - (0 if columned else self._first)
-            if not 0 <= row < area.height:
+            first = place.row - top
+            if first >= area.height or first + place.height <= 0:
                 continue
             entry = self._entries[number]
             # One column draws across the whole menu, as it always has; a
@@ -21570,49 +21843,139 @@ class Menu(_Drawable):
             width = min(place.width, area.width - place.x) if columned else area.width
             if width <= 0:
                 continue
+            if entry.hidden:
+                continue
             style = self._entry_style(entry, attribute, number == self._active)
+            if entry.kind == TEAROFF:
+                self._write_line(
+                    dispatcher, window, area.y + first, x, TEAROFF_LINE * width, style
+                )
+                continue
             if entry.kind == "separator":
                 self._write_line(
                     dispatcher,
                     window,
-                    area.y + row,
+                    area.y + first,
                     x - 1 if not columned else x,
                     "─" * (width + 2 if not columned else width),
                     style,
                 )
                 continue
-            text = self._indicator_for(entry) + entry.label
+            # An entry taller than a row - one with an image - is filled in
+            # its colours on every row, so the active one is picked out whole.
+            for extra in range(place.height):
+                if 0 <= first + extra < area.height and extra != entry.label_row:
+                    self._write_line(
+                        dispatcher,
+                        window,
+                        area.y + first + extra,
+                        x,
+                        " " * width,
+                        style,
+                    )
+            indicator = self._indicator_for(entry)
+            label_at = self._label_offset(entry)
+            text = (
+                indicator + " " * label_at + (entry.label if entry.shows_label else "")
+            )
             line = pad_cells(text, width)
             accelerator = entry.accelerator
             if accelerator:
                 line = pad_cells(line, width - cells(accelerator)) + accelerator
             if entry.kind == "cascade" and cascades:
                 line = pad_cells(line, width - 1) + CASCADE_GLYPH
-            self._write_line(
+            row = first + entry.label_row
+            if 0 <= row < area.height:
+                self._write_line(
+                    dispatcher,
+                    window,
+                    area.y + row,
+                    x,
+                    clip_text(line, width),
+                    style,
+                )
+                self._draw_chosen_mark(
+                    dispatcher,
+                    window,
+                    area.y + row,
+                    x,
+                    entry,
+                    style,
+                    number == self._active,
+                )
+                if entry.shows_label:
+                    self._draw_underline(
+                        dispatcher,
+                        window,
+                        Rect(x + label_at, area.y, width - label_at, area.height),
+                        row,
+                        entry,
+                        style,
+                    )
+            self._draw_entry_image(
                 dispatcher,
                 window,
-                area.y + row,
-                x,
-                clip_text(line, width),
-                style,
-            )
-            self._draw_chosen_mark(
-                dispatcher,
-                window,
-                area.y + row,
-                x,
                 entry,
-                style,
+                Rect(x + cells(indicator), area.y + first, width, place.height),
+                Rect(x, area.y, width, area.height),
                 number == self._active,
             )
-            self._draw_underline(
-                dispatcher,
-                window,
-                Rect(x, area.y, width, area.height),
-                row,
-                entry,
-                style,
-            )
+
+    def _label_offset(self, entry: MenuEntry) -> int:
+        """How far the label starts after the indicator: past an image on
+        its left, centred with one above, below or behind it."""
+        if entry.picture is None or not entry.shows_label:
+            return 0
+        width, _ = entry.picture
+        if entry.compound == "left":
+            return width + IMAGE_GAP
+        if entry.compound == "right":
+            return 0
+        return (entry.content_width - cells(entry.label)) // 2
+
+    def _draw_entry_image(
+        self,
+        dispatcher: CursesDispatcher,
+        window: Any,
+        entry: MenuEntry,
+        block: Rect,
+        area: Rect,
+        active: bool,
+    ) -> None:
+        """Paint an entry's image within ``block``, the entry's rows from
+        after its indicator, as ``compound`` places it - clipped to
+        ``area``, the part of the menu showing."""
+        image = self._entry_image(entry, drawn=True)
+        if image is None or entry.picture is None:
+            return
+        width, _ = entry.picture
+        left = block.x
+        top = block.y
+        if entry.shows_label:
+            if entry.compound == "right":
+                left += cells(entry.label) + IMAGE_GAP
+            elif entry.compound in ("top", "bottom", "center"):
+                left += (entry.content_width - width) // 2
+            if entry.compound == "bottom":
+                top += 1
+        own = entry.options.get("activebackground" if active else "background")
+        state = self._state_colours("active") if active else None
+        background = (
+            own
+            or (state[1] if state is not None else "")
+            or str(self._options["background"] or "black")
+        )
+        clip = Rect(
+            area.x,
+            max(area.y, block.y),
+            area.width,
+            max(
+                0,
+                min(area.y + area.height, block.y + block.height)
+                - max(area.y, block.y),
+            ),
+        )
+        _paint_image(self, dispatcher, window, image, left, top, clip, str(background))
 
     def _entry_style(self, entry: MenuEntry, attribute: int, active: bool) -> int:
         """How one entry is drawn: its own colours, where it has them, win.
@@ -21742,6 +22105,13 @@ def _menu_key(event: Event) -> str | None:
     if keysym == "Escape":
         if menu._as_menubar and not menu._posted:
             _leave_menubar(menu)
+        elif menu._torn_off:
+            # There is no window manager here to close a torn-off menu's
+            # window, so Escape does: it goes, as closing it does in Tk.
+            previous = menu._focus_before
+            menu.destroy()
+            if previous is not None and previous.winfo_exists():
+                previous.focus_set()
         else:
             menu.unpost()
         return "break"
@@ -22011,8 +22381,20 @@ def _menu_click(event: Event) -> None:
 
     A posted menu holds the grab, so a click anywhere on the screen arrives
     here - which is exactly what makes clicking away from a menu close it.
+    A press on a torn-off menu raises it, and on its title row starts a drag,
+    as a Toplevel's title does.
     """
     menu = event.widget
+    if menu._torn_off and menu._within(event.x_root, event.y_root):
+        menu._raise_torn_off()
+        if event.y_root == menu.winfo_rooty():
+            menu._drag_origin = (
+                event.x_root,
+                event.y_root,
+                menu.winfo_rootx(),
+                menu.winfo_rooty(),
+            )
+            return
     if not menu._within(event.x_root, event.y_root):
         if menu._as_menubar:
             menu._open_cascade = None
@@ -22027,6 +22409,24 @@ def _menu_click(event: Event) -> None:
     if at is not None:
         menu.activate(at)
         menu.invoke(at)
+
+
+def _menu_drag(event: Event) -> None:
+    """Move a torn-off menu by however far the pointer has travelled since
+    its title was pressed, as a Toplevel's title moves it; otherwise follow
+    the pointer as :func:`_menu_motion` does."""
+    menu = event.widget
+    origin = menu._drag_origin
+    if origin is None:
+        _menu_motion(event)
+        return
+    press_x, press_y, left, top = origin
+    menu._move_torn_off(left + event.x_root - press_x, top + event.y_root - press_y)
+
+
+def _menu_release(event: Event) -> None:
+    """End a drag of a torn-off menu."""
+    event.widget._drag_origin = None
 
 
 def _menu_motion(event: Event) -> None:

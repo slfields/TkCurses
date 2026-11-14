@@ -36,7 +36,7 @@
   "compound": {
    "kind": "visible",
    "state": "plain",
-   "value": "top"
+   "value": "left"
   },
   "cursor": {
    "kind": "invisible",
@@ -936,7 +936,7 @@
   "compound": {
    "kind": "visible",
    "state": "plain",
-   "value": "top"
+   "value": "left"
   },
   "cursor": {
    "kind": "invisible",
@@ -1400,12 +1400,9 @@
    ]
   },
   "tearoff": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    0,
-    1
-   ]
+   "value": 1
   },
   "tearoffcommand": {
    "kind": "behaviour"
@@ -1463,7 +1460,7 @@
   "compound": {
    "kind": "visible",
    "state": "plain",
-   "value": "top"
+   "value": "left"
   },
   "cursor": {
    "kind": "invisible",
@@ -1738,7 +1735,7 @@
   "compound": {
    "kind": "visible",
    "state": "plain",
-   "value": "top"
+   "value": "left"
   },
   "cursor": {
    "kind": "invisible",
@@ -3054,7 +3051,7 @@
   "compound": {
    "kind": "visible",
    "state": "plain",
-   "value": "top"
+   "value": "left"
   },
   "cursor": {
    "kind": "invisible",
@@ -3138,7 +3135,7 @@
   "compound": {
    "kind": "visible",
    "state": "plain",
-   "value": "top"
+   "value": "left"
   },
   "cursor": {
    "kind": "invisible",
@@ -3523,7 +3520,7 @@
   "compound": {
    "kind": "visible",
    "state": "plain",
-   "value": "top"
+   "value": "left"
   },
   "cursor": {
    "kind": "invisible",
@@ -3762,7 +3759,7 @@
   "compound": {
    "kind": "visible",
    "state": "plain",
-   "value": "top"
+   "value": "left"
   },
   "cursor": {
    "kind": "invisible",
@@ -4131,7 +4128,7 @@
   "compound": {
    "kind": "visible",
    "state": "plain",
-   "value": "top"
+   "value": "left"
   },
   "cursor": {
    "kind": "invisible",

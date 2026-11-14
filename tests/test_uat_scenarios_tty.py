@@ -1987,3 +1987,105 @@ def test_scenario_49_undo_keeps_three_groups(uat_terminal):
         term._drain(0.05)
     term.wait_for_text("undo groups: 0 of 3")
     term.send(ESCAPE)
+
+
+# ---------------------------------------------------------------------------
+# Menu images and tear-offs. The readout's "last chosen: -" is drawn after the
+# menubar, and the bar by a widget. TkCurses-53hb.
+
+
+def _scenario_50(uat_terminal):
+    term = uat_terminal(cols=80, rows=20)
+    term.run([sys.executable, "-m", "uat.scenario_50_menu_images_tearoffs"])
+    term.wait_for_text("Icons")
+    term.wait_for_text("last chosen: -")
+    term.wait_for_idle()
+    return term
+
+
+def _row_with(term, text):
+    return next(r for r, line in enumerate(term.display) if text in line)
+
+
+def test_scenario_50_a_ticked_entry_shows_its_selectimage(uat_terminal):
+    term = _scenario_50(uat_terminal)
+    term.send_keys("<F2>")
+    term.wait_for_text("Magnet")
+    row = _row_with(term, "Magnet")
+    column = term.display[row].index("Magnet") - 3
+    term.wait_for_cell(row, column, lambda c: c.data == "█", message="the picture")
+    before = term.attrs_at(row, column)["fg"]
+    term.click(column, row)
+    term.wait_for_text("last chosen: Magnet on")
+    term.send_keys("<F2>")
+    term.wait_for_cell(
+        row,
+        column,
+        lambda c: c.data == "█" and term.attrs_at(row, column)["fg"] != before,
+        message="the selectimage",
+    )
+    term.send(ESCAPE)
+
+
+def test_scenario_50_the_long_menu_scrolls_past_tall_entries(uat_terminal):
+    term = _scenario_50(uat_terminal)
+    term.send_keys("<F4>")
+    term.wait_for_text("Red")
+    for _ in range(11):  # Red ... Brown, two rows each: Red scrolls away
+        term.send_keys("<Down>")
+        term.wait_for_idle()
+    term.wait_for(
+        lambda t: "Brown" in "".join(t.display) and "Red " not in "".join(t.display),
+        message="the menu scrolled to Brown",
+    )
+    term.send(b"\r")
+    term.wait_for_text("last chosen: icon brown")
+
+
+def test_scenario_50_a_menubuttons_menu_tears_off_and_stays(uat_terminal):
+    term = _scenario_50(uat_terminal)
+    row = _row_with(term, "Pens")
+    term.click(term.display[row].index("Pens") + 1, row)
+    term.wait_for_text("Broad")
+    term.send_keys("<Down>", "<Return>")
+    term.wait_for_text("torn off: .tearoff1")
+    term.wait_for(
+        lambda t: any("─Pens" in line for line in t.display), message="titled Pens"
+    )
+    row = _row_with(term, "Broad")
+    term.click(term.display[row].index("Broad") + 1, row)
+    term.wait_for(
+        lambda t: (
+            "last chosen: pen Broad" in "".join(t.display) and "Broad" in t.display[row]
+        ),
+        message="chosen, and the copy still up",
+    )
+    term.send(ESCAPE)
+    term.wait_for(lambda t: "─Pens" not in "".join(t.display), message="closed")
+
+
+def test_scenario_50_a_torn_off_menu_drags_by_its_title(uat_terminal):
+    """Its pictures go with it: none is left where the copy was."""
+    term = _scenario_50(uat_terminal)
+    term.send_keys("<F2>")
+    term.wait_for_text("Magnet")
+    term.send_keys("<Down>", "<Return>")
+    term.wait_for(lambda t: "─Tools" in "".join(t.display), message="the copy")
+    row = _row_with(term, "─Tools")
+    column = term.display[row].index("Tools")
+    picture = _row_with(term, "Hammer")
+    left = term.display[picture].index("████")
+    term.send_mouse(column, row, action="press")
+    term.send_mouse(column + 10, row + 2, action="move")
+    term.send_mouse(column + 20, row + 3, action="move")
+    term.send_mouse(column + 20, row + 3, action="release")
+    term.wait_for(
+        lambda t: (
+            t.display[row + 3][column + 18 : column + 25] == "┌─Tools"
+            and t.display[picture + 3][left + 20 : left + 24] == "████"
+            and t.display[picture][left : left + 4] != "████"
+        ),
+        message="the copy moved, its pictures with it, and none left behind",
+    )
+    term.click(term.display[picture + 3].index("Hammer"), picture + 3)
+    term.wait_for_text("last chosen: Hammer")

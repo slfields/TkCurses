@@ -5873,6 +5873,20 @@ for used to go on to `bind_all` shortcuts behind it. **Left in a dropdown of
 the menubar** opens the menu to its left, where it closed the dropdown; only
 a submenu closes back to its parent. All three found running UAT 46.
 
+**An entry with an image is as tall as its image** (`TkCurses-z3zs`). An
+image is half-block pixels, two pixel rows to a cell, so a 16x16 icon makes an
+8-row entry; `compound` `top` or `bottom` adds the label's row. Measured on
+Tk 9.0.2: `-compound` defaults to `none`, which shows the image in place of
+the label; a missing image is `image "x" does not exist` and a bad compound
+`bad compound "x": must be bottom, center, left, none, right, or top`; and
+`yposition` moves each later entry down by the one before - a 16x40 image
+makes its entry 45 pixels where a plain one is 24, and with `-compound top`
+66. Here every row-per-entry assumption became a row-per-height one:
+`lay_out` stacks entries by height, `yposition`, hit-testing and where a
+cascade opens read those rows, and a menu too tall for the screen scrolls by
+rows so the whole active entry shows (`visible_window` with `heights`). A
+menubar draws only labels.
+
 **The arrows are the navigation events** (`TkCurses-rs2l`). menu.tcl binds
 `tk::MenuUpArrow` and the rest to `<<PrevLine>>`, `<<NextLine>>`,
 `<<PrevChar>>` and `<<NextChar>>`, so Control-p and Control-n move through a
@@ -5948,8 +5962,29 @@ each entry's text, in its submenus too, and binds it:
 the labels as every widget's font does here: bold, italic, underline. `type`
 is `menubar`, `normal` or `tearoff`, or a prefix (`m` is `menubar`), and
 `""` is `ambiguous type`; it is checked and kept, and changes nothing here.
-`tearoffcommand` is kept: no menu is torn off here, so there is nothing to
-call it for.
+`tearoffcommand` is called when the menu is torn off, below.
+
+**Tear-off menus** (`TkCurses-1k8x`). Measured on Tk 9.0.2, and held by
+`tests/test_menu_tearoff.py` comparing call by call: `-tearoff` defaults to
+false (8.6's was true); the tear-off entry is index 0, of type `tearoff`,
+with `-background` and `-state` and nothing else; an insert at 0 goes after
+it, `delete 0` leaves it, `add tearoff` is refused, and turning the option
+on and off adds and removes it. Invoking it is `tk::TearOffMenu`: a copy
+made by `tk::MenuDup` - every option, every entry, type `tearoff` - named
+`tearoffN` in the nearest toplevel, posted where the menu was, titled by
+`-title`, else the Menubutton's text or the active label of the parent menu,
+else its own name; `-tearoffcommand` gets both names, and the widget's
+`invoke` returns the copy's. The copy keeps its tear-off entry at 0 with no
+height (`yposition 0` equals `yposition 1`), and `tk::MenuNextEntry` skips
+it. Here the copy is a Menu taking no grab, with the title in its border; a
+choice leaves it up, and Escape destroys it because there is no window
+manager to close it. A press raises it and takes the focus, and a press on
+its title row drags it, kept on the screen, as `_toplevel_press` drags a
+Toplevel - the author's request on running UAT 50. Moving it showed that a
+Menu never cleared the cells the painter writes past curses, so its
+pictures stayed where it had been; it clears them on every redraw now, as
+Label does. Tk's `clone` also copies cascade submenus; here the
+copy's cascades open the originals.
 
 ---
 

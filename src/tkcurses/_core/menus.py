@@ -58,11 +58,19 @@ __all__ = [
 #: Entry kinds, in the spelling Tk uses for ``type``.
 KINDS = ("command", "cascade", "checkbutton", "radiobutton", "separator")
 
+#: The entry a menu with ``tearoff`` starts with. Not one of :data:`KINDS`:
+#: a program never adds one, the menu does.
+TEAROFF = "tearoff"
+
 #: Drawn to the right of an entry that opens a submenu.
 CASCADE = "▸"
 
 #: Cells between a label and an accelerator, so the two never touch.
 GAP = 2
+
+#: Cells between an entry's image and its label, beside each other - as a
+#: Label leaves.
+IMAGE_GAP = 1
 
 
 @dataclass
@@ -76,11 +84,69 @@ class MenuEntry:
 
     kind: str
     options: dict[str, Any] = field(default_factory=dict)
+    #: The size of the entry's image in cells, ``(width, height)``, or None
+    #: for an entry with no image. Set by the menu, which knows the images,
+    #: before it lays the entries out.
+    picture: tuple[int, int] | None = None
+    #: True for an entry that takes no room and cannot be chosen: the
+    #: tear-off entry of a menu that has already been torn off, which Tk
+    #: keeps at index 0 and does not draw.
+    hidden: bool = False
+
+    @property
+    def compound(self) -> str:
+        """Where the image goes against the label: ``-compound``."""
+        return str(self.options.get("compound") or "none")
+
+    @property
+    def shows_label(self) -> bool:
+        """False for an image that takes the label's place - ``compound``
+        ``none`` - as in Tk; True for the rest."""
+        return self.picture is None or (self.compound != "none" and bool(self.label))
+
+    @property
+    def content_width(self) -> int:
+        """How wide the image and the label are together, in cells."""
+        label = cells(self.label)
+        if self.picture is None:
+            return label
+        width, _ = self.picture
+        if not self.shows_label:
+            return width
+        if self.compound in ("left", "right"):
+            return width + IMAGE_GAP + label
+        return max(width, label)
+
+    @property
+    def height(self) -> int:
+        """How many rows the entry takes: one, or its image's, and a row
+        more for a label above or below it."""
+        if self.hidden:
+            return 0
+        if self.picture is None:
+            return 1
+        _, height = self.picture
+        if self.shows_label and self.compound in ("top", "bottom"):
+            return height + 1
+        return max(1, height)
+
+    @property
+    def label_row(self) -> int:
+        """Which of the entry's rows its label, accelerator and indicator go
+        on: under or over an image stacked with it, else the middle one."""
+        if self.picture is not None and self.shows_label:
+            if self.compound == "top":
+                return self.height - 1
+            if self.compound == "bottom":
+                return 0
+        return (self.height - 1) // 2
 
     @property
     def label(self) -> str:
         """The text on the left, empty for a separator."""
-        return "" if self.kind == "separator" else str(self.options.get("label") or "")
+        if self.kind in ("separator", TEAROFF):
+            return ""
+        return str(self.options.get("label") or "")
 
     @property
     def accelerator(self) -> str:
@@ -101,7 +167,11 @@ class MenuEntry:
         either - so both are skipped rather than landed on, which is what
         stops an arrow key appearing to do nothing.
         """
-        return self.kind != "separator" and str(self.options.get("state")) != "disabled"
+        return (
+            self.kind != "separator"
+            and not self.hidden
+            and str(self.options.get("state")) != "disabled"
+        )
 
 
 def measure_entries(entries: list[MenuEntry], *, indicators: bool) -> tuple[int, int]:
@@ -113,7 +183,7 @@ def measure_entries(entries: list[MenuEntry], *, indicators: bool) -> tuple[int,
             Kept for every entry once any entry needs it, so the labels line
             up rather than stepping in and out.
     """
-    labels = max((cells(entry.label) for entry in entries), default=0)
+    labels = max((entry.content_width for entry in entries), default=0)
     accelerators = max((cells(entry.accelerator) for entry in entries), default=0)
     cascades = any(entry.kind == "cascade" for entry in entries)
     width = labels
@@ -123,7 +193,7 @@ def measure_entries(entries: list[MenuEntry], *, indicators: bool) -> tuple[int,
         width += GAP + accelerators
     if cascades:
         width += 2
-    return (max(1, width), max(1, len(entries)))
+    return (max(1, width), max(1, sum(entry.height for entry in entries)))
 
 
 def place_popup(
@@ -156,17 +226,30 @@ def place_popup(
     return (x, y, height)
 
 
-def visible_window(count: int, active: int, rows: int) -> int:
-    """The first entry to show, so that ``active`` is among ``rows`` of them.
+def visible_window(
+    count: int, active: int, rows: int, heights: list[int] | None = None
+) -> int:
+    """The first entry to show, so that ``active`` is among ``rows`` rows.
 
     Scrolls the least it can: a menu already showing the active entry does
     not move, which is what stops the list jumping about under the arrow
-    keys.
+    keys. ``heights`` gives each entry's rows when they are not all one; an
+    active entry taller than the window starts it.
     """
-    if rows <= 0 or count <= rows:
+    sizes = heights if heights is not None else [1] * count
+    if rows <= 0 or sum(sizes) <= rows or not sizes:
         return 0
-    first = min(max(0, active - rows + 1), count - rows)
-    return max(0, min(first, count - rows))
+    active = max(0, min(active, len(sizes) - 1))
+    first, used = active, sizes[active]
+    while first > 0 and used + sizes[first - 1] <= rows:
+        first -= 1
+        used += sizes[first]
+    # Never past the first entry from which the rest fill the window.
+    last_first, tail = len(sizes), 0
+    while last_first > 0 and tail + sizes[last_first - 1] <= rows:
+        last_first -= 1
+        tail += sizes[last_first]
+    return max(0, min(first, last_first))
 
 
 #: Cells between one column of a menu and the next.
@@ -183,6 +266,8 @@ class Placed:
     row: int
     #: The column's width, which the entry is drawn across.
     width: int
+    #: How many rows the entry takes.
+    height: int = 1
 
 
 def lay_out(
@@ -210,11 +295,20 @@ def lay_out(
         width, _ = measure_entries(
             [entries[number] for number in column], indicators=indicators
         )
-        for row, number in enumerate(column):
-            placed[number] = Placed(x, row, width)
+        row = 0
+        for number in column:
+            tall = entries[number].height
+            placed[number] = Placed(x, row, width, tall)
+            row += tall
         x += width + COLUMN_GAP
     total_width = max(1, x - COLUMN_GAP)
-    height = max(1, max((len(column) for column in columns), default=1))
+    height = max(
+        1,
+        max(
+            (sum(entries[number].height for number in column) for column in columns),
+            default=1,
+        ),
+    )
     return [placed[number] for number in range(len(entries))], (total_width, height)
 
 
