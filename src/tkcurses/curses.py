@@ -14,6 +14,11 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Portions follow the behaviour of ncurses routines, each named beside the
+# code that follows it. ncurses is copyright Thomas E. Dickey and the Free
+# Software Foundation, Inc., and is credited under its own licence; see
+# THIRD_PARTY_NOTICES.md.
 
 """The curses API, on the same screen as the widgets.
 

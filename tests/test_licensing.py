@@ -192,6 +192,26 @@ def test_the_notices_carry_both_licences():
     assert "a brief summary of the changes" in text
 
 
+def test_the_notices_carry_the_ncurses_licence():
+    text = " ".join(NOTICES.read_text(encoding="utf-8").split())
+    assert "Copyright 1998-2017,2018 Free Software Foundation, Inc." in text
+    assert "Thomas E. Dickey" in text
+    assert "holders shall not be used in advertising" in text
+
+
+def test_the_curses_module_credits_the_ncurses_routines_it_follows():
+    """``curses.py`` follows ``pnoutrefresh``, ``copywin`` and the ``putwin``
+    format; its header credits ncurses, and each routine it names in a
+    docstring or comment is in the notices' ncurses table."""
+    source = (ROOT / "src" / "tkcurses" / "curses.py").read_text(encoding="utf-8")
+    header = source.split('"""', 1)[0]
+    assert "ncurses is copyright Thomas E. Dickey" in header
+    notices = NOTICES.read_text(encoding="utf-8")
+    for routine in ("pnoutrefresh", "copywin", "write_win", "read_win"):
+        assert routine in source
+        assert f"`{routine}`" in notices
+
+
 @pytest.mark.parametrize(
     "path",
     [path for path in source_files() if path.is_relative_to(ROOT / "src")],

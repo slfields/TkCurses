@@ -3,11 +3,11 @@
 TkCurses is free software under the **GNU General Public License, version 3
 only** — see [`LICENSE`](https://github.com/slfields/TkCurses/blob/master/LICENSE). This file records the work of others that
 TkCurses builds on, what was taken from each and how, and the licence each is
-under. Both licences below are permissive and compatible with the GPL.
+under. All the licences below are permissive and compatible with the GPL.
 
-TkCurses depends on neither at run time. It does not import tkinter and needs
-no Tcl or Tk installed: it is a separate implementation of tkinter's interface
-that draws with curses.
+TkCurses does not depend on Tcl, Tk or tkinter at run time. It does not import
+tkinter and needs no Tcl or Tk installed: it is a separate implementation of
+tkinter's interface that draws with curses.
 
 ## Tcl and Tk
 
@@ -231,6 +231,54 @@ products or services of Licensee, or any third party.
 8. By copying, installing or otherwise using Python, Licensee
 agrees to be bound by the terms and conditions of this License
 Agreement.
+```
+
+## ncurses
+
+**How TkCurses uses it.** TkCurses draws through Python's `curses` module,
+which the system's ncurses library supplies; no part of ncurses ships with
+TkCurses. Separately, TkCurses's own `tkcurses.curses` module reimplements
+some of the curses interface on the same screen as the widgets, and there
+**follows the behaviour of these ncurses routines**, measured against ncurses
+6.6 and named in the source beside the code. No ncurses code is included.
+
+| Routine | In TkCurses |
+|---|---|
+| `pnoutrefresh`, `prefresh` | which part of a pad a refresh shows, and the arguments it refuses (`curses.py`) |
+| `overlay`, `overwrite`, `copywin` | the rectangle two windows overlap in, and when a copy fails (`curses.py`) |
+| `putwin`, `getwin` (`write_win` and `read_win` in `ncurses/base/lib_screen.c`) | the file format of a saved window, so that either module reads what the other writes (`curses.py`) |
+
+### ncurses licence
+
+As distributed with ncurses 6.6 (`COPYING`):
+
+```text
+Copyright 2018-2024,2025 Thomas E. Dickey
+Copyright 1998-2017,2018 Free Software Foundation, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, distribute with modifications, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included
+in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE ABOVE COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR
+THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Except as contained in this notice, the name(s) of the above copyright
+holders shall not be used in advertising or otherwise to promote the
+sale, use or other dealings in this Software without prior written
+authorization.
 ```
 
 ## chafa
