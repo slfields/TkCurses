@@ -184,6 +184,44 @@ def test_a_busy_picture_leaves_other_widgets_their_colours(terminal, tmp_path, d
         )
 
 
+#: The same picture shown each other way a picture can be: on a Canvas, in
+#: a Text, and as a window's background. Each draws its own way, and each
+#: used to fill the table as a Label's picture did.
+ELSEWHERE = {
+    "canvas": (
+        "c = tk.Canvas(root, width=60, height=20, highlightthickness=0)\n"
+        "c.create_image(0, 0, image=image, anchor='nw')\n"
+        "c.pack()"
+    ),
+    "text": (
+        "t = tk.Text(root, width=62, height=21)\n"
+        "t.image_create('1.0', image=image)\n"
+        "t.pack()"
+    ),
+    "background": "tk.Frame(root, width=60, height=20, backgroundimage=image).pack()",
+}
+
+
+@pytest.mark.parametrize("shown", sorted(ELSEWHERE))
+def test_a_busy_picture_anywhere_leaves_other_widgets_their_colours(
+    terminal, tmp_path, shown
+):
+    """Measured before the fix: all three left the Labels in #87005f on
+    #0000ff, the picture holding 252 of the pairs."""
+    source = BUSY_PICTURE.replace(
+        "tk.Label(root, image=image).pack()", ELSEWHERE[shown]
+    )
+    assert source != BUSY_PICTURE
+    term = terminal(cols=70, rows=30, env={"TKCURSES_DISPLAY_DIRECT_IMAGES": "0"})
+    term.run_source(source, workdir=tmp_path)
+    term.wait_for_text("settled")
+    for i in range(3):
+        row, column = term.find_text(f"after{i}")
+        term.wait_for_cell(
+            row, column, lambda cell: (cell.fg, cell.bg) == ("d70000", "0000d7")
+        )
+
+
 # ------------------------------------------- PRIMARY to other applications
 
 SELECTS = """

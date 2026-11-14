@@ -369,3 +369,44 @@ def test_real_input_has_tkinters_types(core, expected):
     else:
         raw = MouseEvent(state=core, button=1)
     assert tkcurses.Event._from_core(raw, widget).type is tkcurses.EventType[expected]
+
+
+# ------------------------------------------------- TkCurses' own version
+
+#: Every shape setuptools-scm writes, in the order PEP 440 sorts them.
+VERSIONS_IN_ORDER = [
+    ("0+unknown", (0, 0, 0, "alpha", 0)),
+    ("0.2.9", (0, 2, 9, "final", 0)),
+    ("0.3.0rc1.dev3+g1a2b3c4", (0, 3, 0, "candidate", 0)),
+    ("0.3.0rc1", (0, 3, 0, "candidate", 1)),
+    ("0.3.0rc2.dev2+ge7c8fdbfd.d20261105", (0, 3, 0, "candidate", 1)),
+    ("0.3.0rc2", (0, 3, 0, "candidate", 2)),
+    ("0.3.0", (0, 3, 0, "final", 0)),
+    ("0.3.1.dev5+g1a2b3c4", (0, 3, 1, "alpha", 0)),
+    ("0.3.1a1", (0, 3, 1, "alpha", 1)),
+    ("0.3.1b2", (0, 3, 1, "beta", 2)),
+    ("0.3.1", (0, 3, 1, "final", 0)),
+    ("0.4", (0, 4, 0, "final", 0)),
+    ("1.0.0.post1", (1, 0, 0, "final", 0)),
+]
+
+
+@pytest.mark.parametrize(("version", "expected"), VERSIONS_IN_ORDER)
+def test_a_version_reads_as_its_parts(version, expected):
+    assert tuple(tkcurses._version_info(version)) == expected
+
+
+def test_versions_compare_in_release_order():
+    """Each compares no lower than the one before: the order a program
+    checking ``version_info >= (0, 3)`` relies on."""
+    infos = [tkcurses._version_info(version) for version, _ in VERSIONS_IN_ORDER]
+    assert infos == sorted(infos)
+
+
+def test_the_installed_version_is_described_both_ways():
+    info = tkcurses.version_info
+    assert info == tkcurses._version_info(tkcurses.__version__)
+    assert info._fields == ("major", "minor", "micro", "releaselevel", "serial")
+    assert info._fields == tkcurses.Misc().info_patchlevel()._fields
+    assert info >= (0, 3)
+    assert "version_info" in tkcurses.__all__

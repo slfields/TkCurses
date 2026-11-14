@@ -1878,8 +1878,22 @@ drawn, so it lands in the same frame; it is asked once per picture
 revision and does not count towards the latch that stops renewing a
 screen which really wants more pairs than there are. The cost is a
 repaint of everything per change of an over-budget picture drawn through
-curses, plus the fit - an animation of one pays both every frame. Canvas
-images go through the canvas plane, not here, and are not fitted.
+curses, plus the fit - an animation of one pays both every frame.
+
+**Every other way to show a picture is fitted the same way**
+(`TkCurses-o79a`): a Canvas image item, a picture embedded in a Text, and
+a window's `backgroundimage`. None of the three has a direct-painted
+layer, so each is always drawn through curses, and each was drawing the
+picture as it is. Measured with the same 60x40 picture and three Labels
+under it: all three left the Labels in `#87005f` on `#0000ff`, the
+picture holding 252-254 pairs, where a Label's picture held 169 and left
+them their colours. A Canvas puts the stand-ins on its plane, in
+`_item_pixels`, so that what is composed from them - including a cell
+shared with a line drawn over the picture - asks only for colours the
+table has room for. The Text and the background map each cell's two
+colours at the point they are written, as `_paint_image` does. Two busy
+pictures on one canvas share the table as two Labels would: the first
+fitted takes the budget and the second what is left.
 
 ### Environment Variables Reference
 

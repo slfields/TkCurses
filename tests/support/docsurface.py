@@ -369,7 +369,12 @@ def data_docs(source: str) -> dict[str, str]:
             target = node.target
         else:
             continue
-        if not isinstance(target, ast.Name) or target.id.startswith("_"):
+        if not isinstance(target, ast.Name):
+            continue
+        # Private names are not data a reader is shown; dunders such as
+        # ``__version__`` are public API despite the underscore.
+        dunder = target.id.startswith("__") and target.id.endswith("__")
+        if target.id.startswith("_") and not dunder:
             continue
         comment: list[str] = []
         row = node.lineno - 2

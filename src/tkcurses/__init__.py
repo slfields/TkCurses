@@ -302,14 +302,28 @@ if TYPE_CHECKING:
     from tkcurses._core.layout import Layout
     from tkcurses._core.panels import Panel
 
-try:
-    # What the build recorded, which setuptools-scm took from git - so it
-    # changes with every commit instead of when someone remembers to.
-    __version__ = importlib.metadata.version("tkcurses")
-except importlib.metadata.PackageNotFoundError:  # pragma: no cover
-    # A source tree imported without ever being installed. Its version is
-    # git's to say, and git is not asked at import time.
-    __version__ = "0+unknown"
+
+def _installed_version() -> str:
+    """What the build recorded, which setuptools-scm took from git - so it
+    changes with every commit instead of when someone remembers to."""
+    try:
+        return importlib.metadata.version("tkcurses")
+    except importlib.metadata.PackageNotFoundError:  # pragma: no cover
+        # A source tree imported without ever being installed. Its version
+        # is git's to say, and git is not asked at import time.
+        return "0+unknown"
+
+
+#: The version of TkCurses itself, exactly as installed: ``"0.3.0"`` for
+#: a release, and for a build between releases the one it leads up to,
+#: how far past the last release it is and which commit -
+#: ``"0.3.1.dev5+g1a2b3c4"``. :data:`version_info` is the same version in
+#: a form that compares.
+#:
+#: TkCurses extension:
+#:     tkinter's ``TkVersion`` and ``info_patchlevel`` describe Tk and Tcl,
+#:     which this library follows; this describes the library.
+__version__ = _installed_version()
 __author__ = "Scott L. Fields"
 __copyright__ = "Copyright (C) 2026 Scott L. Fields"
 __license__ = "GPL-3.0-only"
@@ -463,6 +477,7 @@ __all__ = [
     "image_names",
     "image_types",
     "mainloop",
+    "version_info",
 ]
 
 #: Cells per inch, for screen distances such as ``"2i"``: see
@@ -4452,7 +4467,49 @@ class _VersionInfo(NamedTuple):
     serial: int
 
 
+#: The Tcl this library behaves as, alongside :data:`TkVersion`.
 TclVersion = 9.0
+
+#: A release's version: digits, a pre-release, a post-release, a
+#: development build and a local part, as PEP 440 orders them.
+_RELEASE = re.compile(
+    r"(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:(a|b|rc)(\d+))?"
+    r"(?:\.post\d+)?(?:\.dev(\d+))?(?:\+.*)?"
+)
+_LEVELS = {"a": "alpha", "b": "beta", "rc": "candidate", None: "final"}
+
+
+def _version_info(version: str) -> _VersionInfo:
+    """``version`` - a ``__version__`` - as a :data:`version_info`."""
+    found = _RELEASE.fullmatch(version)
+    if found is None or version.startswith("0+"):
+        # Not installed, so not known: lower than any release.
+        return _VersionInfo(0, 0, 0, "alpha", 0)
+    major, minor, micro, pre, serial, dev = found.groups()
+    level, number = _LEVELS[pre], int(serial or 0)
+    if dev is not None:
+        # Development builds come before the release they lead to. CPython
+        # marks its own as alpha 0 (3.14.0a0); one leading to a pre-release
+        # is one serial short of it, so 0.3.0rc2.dev4 follows rc1.
+        level, number = (level, number - 1) if pre else ("alpha", 0)
+    return _VersionInfo(int(major), int(minor or 0), int(micro or 0), level, number)
+
+
+#: :data:`__version__` as ``major``, ``minor``, ``micro``, ``releaselevel``
+#: and ``serial`` - the shape of :data:`sys.version_info` and of
+#: :meth:`~Misc.info_patchlevel` - so a program can ask
+#: ``tkcurses.version_info >= (0, 3)``. ``releaselevel`` is ``"alpha"``,
+#: ``"beta"``, ``"candidate"`` or ``"final"``.
+#:
+#: A build between releases compares below the release it leads up to, as
+#: CPython's own do: ``0.3.1.dev5`` is ``(0, 3, 1, 'alpha', 0)``, and
+#: ``0.3.0rc2.dev4`` is ``(0, 3, 0, 'candidate', 1)``. To tell two such
+#: builds apart, read :data:`__version__`. A copy that was never installed
+#: has no version to report, and gives ``(0, 0, 0, 'alpha', 0)``.
+#:
+#: TkCurses extension:
+#:     The library's own version, beside the Tk it follows.
+version_info = _version_info(__version__)
 
 #: ``createfilehandler``'s masks, with tkinter's values.
 READABLE = 2
@@ -7154,13 +7211,24 @@ class _Backdrop(_BackdropBase):
         """
         rect = self._rect
         colors = self.tk.colors
+        name = str(self._options.get("backgroundimage") or "")
+        image = self.tk.images.get(name) if name else None
+        # Fitted to the colour pairs left, as a Label's picture is.
+        palette = (
+            _pair_palette(image, colors)
+            if colors is not None and image is not None
+            else None
+        ) or {}
         for (column, row), (glyph, fore, back) in self._backdrop(
             rect.width, rect.height, edge
         ).items():
             attribute = (
                 _curses.A_NORMAL
                 if colors is None
-                else colors.attribute_for(fore, back or background)
+                else colors.attribute_for(
+                    palette.get(fore, fore),
+                    background if back is None else palette.get(back, back),
+                )
             )
             self._write_line(dispatcher, window, row, column, glyph, attribute)
 
@@ -16291,6 +16359,10 @@ class Text(_Drawable, XView, YView):
             first_column = max(0, -place.x)
             last_column = min(area.width, place.x + place.width) - place.x
             visible = image.lit((first_column, first_row, last_column, last_row))
+            # Fitted to the colour pairs left, as a Label's picture is.
+            palette = (
+                _pair_palette(image, colors) if colors is not None else None
+            ) or {}
             for (x, y), (glyph, fore, back) in compose(visible).items():
                 column, row = place.x + x, place.y + y
                 if not (0 <= row < area.height and 0 <= column < area.width):
@@ -16298,7 +16370,10 @@ class Text(_Drawable, XView, YView):
                 look = (
                     attribute
                     if colors is None
-                    else colors.attribute_for(fore, back or background)
+                    else colors.attribute_for(
+                        palette.get(fore, fore),
+                        background if back is None else palette.get(back, back),
+                    )
                 )
                 self._write_line(
                     dispatcher, window, area.y + row, area.x + column, glyph, look
@@ -20395,8 +20470,15 @@ class Canvas(_Drawable, XView, YView):
                     self._left - x0 + width,
                     self._top - y0 + height,
                 )
+                # Fitted to the colour pairs left, as a Label's picture is:
+                # the stand-ins go on the plane, so every cell composed from
+                # them is in colours the table has room for.
+                colors = self.tk.colors
+                palette = (
+                    _pair_palette(picture, colors) if colors is not None else None
+                ) or {}
                 for (x, y), colour in picture.lit(region).items():
-                    pixels[(x0 + x, y0 + y)] = colour
+                    pixels[(x0 + x, y0 + y)] = palette.get(colour, colour)
         elif item.kind == "polygon":
             if fill:
                 pixels.update(dict.fromkeys(filled_polygon_pixels(points), fill))

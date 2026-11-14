@@ -7,6 +7,11 @@ All notable changes to TkCurses. The format follows
 ## [Unreleased]
 
 ### Added
+- `tkcurses.version_info`: the library's own version as a tuple that
+  compares, `(0, 3, 0, 'final', 0)`, in the shape of `sys.version_info`
+  and `info_patchlevel()`, so a program can check
+  `tkcurses.version_info >= (0, 3)`. `tkcurses.__version__`, the exact
+  string, is now documented beside it and beside `TkVersion`.
 - tkinter's bare names for the geometry managers' methods: `bbox`, `size`
   and `anchor` on every widget for grid's, `location` for
   `grid_location`, and `configure`, `forget`, `info`, `slaves` and

@@ -27,6 +27,7 @@ palette's colours - it is compared with real tkinter.
 from __future__ import annotations
 
 import contextlib
+import re
 from typing import Any
 
 import pytest
@@ -84,12 +85,47 @@ def _answers(root: Any, errors: tuple[type, ...]) -> list:
     return found
 
 
+def _alone(answers: list) -> list:
+    """Tk's answers as they would be with no other Tk on the display.
+
+    The name and the interpreter list are the X server's, shared by every
+    Tk application on it: a second one open at the same moment is named
+    ``tk #2`` and both are listed. Measured with two in one process -
+    ``'tk #2' ('tk #2', 'tk')``. Under ``pytest -n 4`` that second one is
+    another worker's test, so the comparison failed once in a while and
+    never alone. TkCurses has no display to share and always answers as
+    the only one.
+    """
+    alone = []
+    for answer in answers:
+        if answer[0] == "root's name":
+            answer = (answer[0], re.sub(r" #\d+$", "", answer[1]))
+        elif answer[0] == "interps":
+            mine = next(a[1] for a in alone if a[0] == "root's name")
+            names = {re.sub(r" #\d+$", "", name) for name in answer[1]}
+            answer = (answer[0], (mine,) if mine in names else ())
+        alone.append(answer)
+    return alone
+
+
 def test_the_answers_tk_can_give_are_tks(real_root):
     ours = _answers(tkcurses.Misc(), (tkcurses.TclError,))
-    theirs = _answers(real_root, (tkinter.TclError,))
+    theirs = _alone(_answers(real_root, (tkinter.TclError,)))
     # The atom made for "TKC" is numbered by the server in Tk and from 69
     # here; both keep it and give it back, which is what is compared.
     assert ours == theirs
+
+
+def test_the_comparison_holds_with_another_tk_open(real_root):
+    """The race made certain: a second Tk, as another worker's would be."""
+    second = tkinter.Tk()
+    second.withdraw()
+    try:
+        assert second.winfo_name() != "tk"
+        ours = _answers(tkcurses.Misc(), (tkcurses.TclError,))
+        assert ours == _alone(_answers(second, (tkinter.TclError,)))
+    finally:
+        second.destroy()
 
 
 def test_the_screen_is_described_in_cells_at_ten_to_the_inch():

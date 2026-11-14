@@ -67,11 +67,11 @@ if TYPE_CHECKING:
     from tkcurses import Event, Misc
     from tkcurses._core.paned import PaneOptions
 
-#: Everything tkinter.ttk's star-import gives, plus this module's themes. It
-#: listed nine names while the module had twenty-three of tkinter.ttk's
-#: twenty-five, so ``from tkcurses.ttk import *`` left out Button, Entry,
-#: Frame, Notebook and the rest of the commonest widgets - TkCurses-2q6o.9,
-#: and tests/test_tkinter_namespace.py now compares it with tkinter.ttk's.
+# Everything tkinter.ttk's star-import gives, plus this module's themes. It
+# listed nine names while the module had twenty-three of tkinter.ttk's
+# twenty-five, so ``from tkcurses.ttk import *`` left out Button, Entry,
+# Frame, Notebook and the rest of the commonest widgets - TkCurses-2q6o.9,
+# and tests/test_tkinter_namespace.py now compares it with tkinter.ttk's.
 __all__ = [
     "THEMES",
     "Button",
