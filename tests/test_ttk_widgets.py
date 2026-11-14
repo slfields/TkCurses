@@ -2482,7 +2482,8 @@ def test_identify_dispatches_every_component_tk_defines(laid_out):
     assert laid_out.identify("column", x, y) == "#0"
     assert laid_out.identify("region", x, y) == "tree"
     assert laid_out.identify("cell", x, y) == (laid_out.row, "#0")
-    assert laid_out.identify("element", x, y) == ""
+    assert laid_out.identify("element", x, y) == laid_out.identify_element(x, y)
+    assert laid_out.identify("element", x, y) == "text"
 
 
 def test_identify_cell_is_offered_although_tkinter_lacks_it(laid_out):
@@ -2527,10 +2528,9 @@ def test_bbox_raises_for_an_item_that_does_not_exist(laid_out):
         laid_out.bbox("nosuch")
 
 
-def test_identify_element_is_empty_rather_than_absent(laid_out):
-    """Tk answers a themed element name from an element tree this library does
-    not have, and documents no fixed set of values. Present and empty so the
-    dispatcher has something to call."""
+def test_identify_element_names_nothing_off_the_items(laid_out):
+    """The corner and far outside are no item's: "", as in Tk. What it names
+    over an item is held to Tk in test_treeview_elements.py."""
     assert laid_out.identify_element(0, 0) == ""
     assert laid_out.identify_element(99, 99) == ""
 

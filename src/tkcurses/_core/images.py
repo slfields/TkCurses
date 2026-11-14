@@ -356,18 +356,68 @@ class Image:
         return hash((type(self).__name__, self._name))
 
     def type(self) -> str:
-        """``'photo'`` or ``'bitmap'``, as Tk names its image types."""
+        """``'photo'`` or ``'bitmap'``, as Tk names its image types.
+
+        Raises:
+            TclError: If the image has been deleted, in Tk's words.
+        """
+        self._check_exists()
         return self._type
 
     # -------------------------------------------------------------- shape
 
     def width(self) -> int:
-        """The image's width in pixels, which is also its width in cells."""
+        """The image's width in pixels, which is also its width in cells.
+
+        Raises:
+            TclError: If the image has been deleted, in Tk's words.
+        """
+        self._check_exists()
         return len(self._pixels[0]) if self._pixels else 0
 
     def height(self) -> int:
-        """The image's height in pixels. Two pixel rows make a cell."""
+        """The image's height in pixels. Two pixel rows make a cell.
+
+        Raises:
+            TclError: If the image has been deleted, in Tk's words.
+        """
+        self._check_exists()
         return len(self._pixels)
+
+    # ----------------------------------------------------------- deleting
+
+    #: Set by ``image delete``: the name is gone, and this object, as
+    #: tkinter's does, answers that it no longer exists.
+    _deleted = False
+
+    def _check_exists(self) -> None:
+        if self._deleted:
+            raise TclError(f'image "{self._name}" does not exist')
+
+    def _delete(self) -> None:
+        """``image delete``: drop the name, and repaint whatever showed it.
+
+        A widget showing it keeps its name and its size and draws nothing
+        where the image was, as Tk's does.
+        """
+        self._deleted = True
+        if self._tk.images.get(self._name) is self:
+            del self._tk.images[self._name]
+        if self._tk.created_images.get(self._name) is self:
+            del self._tk.created_images[self._name]
+        for user in list(self._users):
+            redraw = getattr(user, "_redraw", None)
+            if redraw is not None:
+                redraw()
+        self._users.clear()
+
+    def _in_use(self) -> bool:
+        """Whether a living widget shows this image: ``image inuse``."""
+        for user in list(self._users):
+            exists = getattr(user, "winfo_exists", None)
+            if exists is None or exists():
+                return True
+        return False
 
     def cell_height(self) -> int:
         """Rows of terminal needed to show it: two pixel rows to a cell, a lone

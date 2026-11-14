@@ -103,7 +103,7 @@ def test_image_names_lists_what_is_still_held(root):
 
 
 def test_image_types_are_the_two_there_are(root):
-    assert root.image_types() == ("bitmap", "photo")
+    assert root.image_types() == ("photo", "bitmap")
 
 
 def test_two_images_of_a_name_are_equal(root):

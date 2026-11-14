@@ -7,6 +7,47 @@ All notable changes to TkCurses. The format follows
 ## [Unreleased]
 
 ### Added
+- tkinter's bare names for the geometry managers' methods: `bbox`, `size`
+  and `anchor` on every widget for grid's, `location` for
+  `grid_location`, and `configure`, `forget`, `info`, `slaves` and
+  `propagate` on the `Pack`, `Grid` and `Place` classes. Each reaches the
+  method it reaches in tkinter - a Listbox's `size` is still its own.
+- The window manager hints a terminal has no use for - `iconname`,
+  `iconbitmap`, `iconphoto`, `group`, `aspect`, `positionfrom` and the
+  rest of tkinter's `Wm` methods - are taken, checked as Tk checks them, and
+  read back, so a program that sets a window's icon runs unchanged. Nothing
+  on the screen changes.
+- The busy family - `tk_busy_hold`, `tk_busy_forget`, `tk_busy_status`,
+  `tk_busy_current`, `tk_busy_cget`, `tk_busy_configure`, with their
+  `busy_` spellings. A held window and everything in it no longer take the
+  mouse; keys still reach a focused widget, as in Tk. The form example
+  holds itself busy while it creates the account.
+- `register()`, and tkinter's validation idiom with it:
+  `validatecommand=(root.register(check), "%P")`, with every percent code
+  Tk substitutes. A program validating this way used to have its first
+  keystroke refused and validation switched off.
+- `event_generate` gives a key event the character its keysym types, as Tk
+  does, and takes `when=` - `now`, or `tail`, `head` and `mark`, which wait
+  for the next `update`.
+- The rest of tkinter's `Misc`: the screen asked about - `winfo_visual`,
+  `winfo_screenmmwidth`, `winfo_server` and the rest - answered for the
+  terminal; `winfo_atom`, `winfo_atomname` and `winfo_pathname`; `send` to
+  the application itself; `info_patchlevel`; and `tk_setPalette`,
+  `tk_bisque` and `tk_strictMotif`. A palette colours every classic widget
+  as Tk 9.0's does.
+- `Listbox.scan_mark` and `scan_dragto`, as Tk's: a row of drag scrolls ten
+  items, and a drag past an end starts again from it.
+- `tk.call("image", ...)`: every subcommand of Tk's `image` command, so a
+  program can delete an image by name, or ask whether one is in use.
+- `tkcurses.curses`: pads (`newpad`, `subpad`, and the six-argument
+  `refresh`), `Window.overlay` and `overwrite`, `putwin` and `getwin` in
+  ncurses' own format, and `Window.encoding`. A run of the same program on
+  the standard library's curses answers the same, and each reads the other's
+  saved windows. The new `scroller` example scrolls a pad.
+- `PanedWindow.sash`, `sash_mark`, `proxy`, `proxy_coord`, `proxy_forget` and
+  `proxy_place`, as Tk's; the method surface now has no gaps left.
+- `ttk.Treeview.identify_element` names an item's indicator, text and
+  padding as Tk does; it always answered `""`.
 - Screen distances take Tk's units - `2c`, `1i`, `3m`, `10p` - in every
   option, pad and `place` position, converted at ten cells to the inch as
   `winfo_pixels` already was. `Button(padx="3m")`, from a tkinter program,
@@ -40,6 +81,19 @@ All notable changes to TkCurses. The format follows
   Set the caption with `configure(text=...)`.
 
 ### Fixed
+- `PanedWindow.sash_coord` and `sash_place` refuse an index that is not a
+  sash, in Tk's words; `identify` off a sash answers `""`, as Tk does, not `()`.
+- `tkcurses.curses`: `Window.bkgd` gives cells holding the old background
+  character the new one, as curses does; `bkgd(".")` left a blank window blank.
+- `image_types()` answers `("photo", "bitmap")`, Tk's order; it was sorted.
+- The root's `winfo_name()` is the application's name, `tk`, as in Tk;
+  it answered `.`, its path. `configure("background")` on a bare root
+  answers the five-tuple its docstring promised.
+- Backspace or Delete with a selection deleted it without asking the
+  `validatecommand`, and typing over a selection asked once instead of
+  twice. Both are validated as Tk validates them.
+- A `validatecommand` that takes no argument is called with none, as in
+  tkinter, rather than refusing every change.
 - `cursor`, and the Spinbox's `buttoncursor` and the PanedWindow's
   `sashcursor`, refuse what Tk on X11 refuses - a name not in the X cursor
   font (`pointer`, `WATCH`), a colour it cannot read, an unreadable

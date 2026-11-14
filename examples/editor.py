@@ -18,7 +18,8 @@
 """A text editor: a Text with a scrollbar, a menu bar, files and a status line.
 
 F10, or Alt and an underlined letter, opens the menus. Ctrl-O, Ctrl-S and
-Ctrl-Q open, save and quit; Ctrl-Z undoes. Give a file name to open it:
+Ctrl-Q open, save and quit; Ctrl-Z undoes. The View menu recolours the
+whole editor with ``tk_setPalette``. Give a file name to open it:
 ``python3 editor.py notes.txt``.
 """
 
@@ -113,6 +114,13 @@ edit.add_command(
     label="Paste", underline=0, command=lambda: text.event_generate("<<Paste>>")
 )
 menubar.add_cascade(label="Edit", underline=0, menu=edit)
+# A palette recolours every widget from one background, as Tk's does.
+view = tk.Menu(menubar, tearoff=0)
+view.add_command(
+    label="Dark", underline=0, command=lambda: root.tk_setPalette("#1e2430")
+)
+view.add_command(label="Bisque", underline=0, command=root.tk_bisque)
+menubar.add_cascade(label="View", underline=0, menu=view)
 root.config(menu=menubar)
 files.bind_accelerators()
 edit.bind_accelerators()

@@ -156,7 +156,7 @@ def test_identify_finds_a_sash(paned):
 
 
 def test_identify_finds_nothing_in_the_middle_of_a_pane(paned):
-    assert paned.identify(1, 1) == ()
+    assert paned.identify(1, 1) == ""
 
 
 def test_a_sash_can_be_placed(paned):

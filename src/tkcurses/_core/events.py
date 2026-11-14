@@ -51,6 +51,7 @@ __all__ = [
     "MouseState",
     "ResizeEvent",
     "canonical_keysym",
+    "char_for_keysym",
     "keysym_for",
     "modified_key",
     "modifier_names",
@@ -270,6 +271,26 @@ def canonical_keysym(name: str) -> str:
     if name == "space":
         return "space"
     return PUNCTUATION_KEYSYMS.get(name, name)
+
+
+#: The character the named control keys carry, as Tk 9.0.2 reports for a
+#: generated event: ``event_generate("<KeyPress>", keysym="Return")`` has
+#: ``event.char`` ``"\r"``.
+_CONTROL_CHARS: dict[str, str] = {
+    "BackSpace": "\b",
+    "Delete": "\x7f",
+    "Escape": "\x1b",
+    "Return": "\r",
+    "Tab": "\t",
+}
+
+
+def char_for_keysym(keysym: str) -> str:
+    """The character a key with this keysym types, or ``""`` for one that
+    types none - an arrow, a function key."""
+    if len(keysym) == 1:
+        return keysym
+    return PUNCTUATION_KEYSYMS.get(keysym) or _CONTROL_CHARS.get(keysym, "")
 
 
 #: Curses key codes that map to a named tkinter keysym.

@@ -69,6 +69,7 @@ from __future__ import annotations
 
 import contextlib
 import curses as _curses
+import locale
 from typing import TYPE_CHECKING, Any
 
 from tkcurses._core.cells import cells, char_cells, clip_cells, skip_cells
@@ -92,12 +93,14 @@ __all__ = [
     "endwin",
     "flash",
     "flushinp",
+    "getwin",
     "has_colors",
     "init_pair",
     "initscr",
     "isendwin",
     "keyname",
     "napms",
+    "newpad",
     "newwin",
     "nl",
     "nocbreak",
@@ -330,6 +333,22 @@ def newwin(nlines: int, ncols: int, begin_y: int = 0, begin_x: int = 0) -> Windo
     )
 
 
+def newpad(nlines: int, ncols: int) -> Window:
+    """A pad: a window as large as it needs to be, never on the screen
+    itself, a part of which :meth:`Window.refresh` shows wherever it is
+    told to.
+
+    Raises:
+        error: If either size is not above nought, as curses does.
+    """
+    _require_screen()
+    if nlines <= 0 or ncols <= 0:
+        raise _curses.error("curses function returned NULL")
+    pad = Window(ScreenBuffer(ncols, nlines), 0, 0, nlines, ncols, owns=True)
+    pad._pad = True
+    return pad
+
+
 def doupdate() -> None:
     """Paint everything marked by :meth:`Window.noutrefresh`."""
     if _screen is not None:
@@ -548,6 +567,13 @@ class Window:
         self._keypad = False
         self._leave_ok = False
         self._clear_ok = False
+        #: Whether this is a pad, made by :func:`newpad` or :meth:`subpad`.
+        self._pad = False
+        #: Where a pad was last shown, as its six refresh arguments, so a
+        #: pad shown somewhere new is copied whole. None until then.
+        self._pad_view: tuple[int, int, int, int, int, int] | None = None
+        #: What :attr:`encoding` answers: the locale's, as curses takes it.
+        self._encoding = _screen_encoding()
         # What has changed since the last refresh, as ``row: (first, last)``
         # columns - and this is the whole of curses' refresh rule.
         #
@@ -604,7 +630,13 @@ class Window:
         self._cursor_y, self._cursor_x = y, x
 
     def mvwin(self, y: int, x: int) -> None:
-        """Move the whole window to ``(y, x)`` on the screen."""
+        """Move the whole window to ``(y, x)`` on the screen.
+
+        Raises:
+            error: For a pad, which is never on the screen to move.
+        """
+        if self._pad:
+            raise _curses.error("mvwin() returned ERR")
         self._begin_y, self._begin_x = y, x
 
     def mvderwin(self, y: int, x: int) -> None:
@@ -631,7 +663,14 @@ class Window:
             ncols = self._begin_x + self._width - begin_x
         else:
             nlines, ncols, begin_y, begin_x = args
-        return self._derive(nlines, ncols, begin_y, begin_x)
+        window = self._derive(nlines, ncols, begin_y, begin_x)
+        # The standard library's subwin passes its encoding on, and its
+        # derwin does not: measured, and kept.
+        window._encoding = self._encoding
+        return window
+
+    #: A pad's subwindows are pads, and made the same way.
+    subpad = subwin
 
     def derwin(self, *args: int) -> Window:
         """The same as :meth:`subwin`, but positioned within this window."""
@@ -649,7 +688,7 @@ class Window:
         """One subwindow, sharing this window's storage at an offset."""
         nlines = nlines or max(0, self._begin_y + self._height - begin_y)
         ncols = ncols or max(0, self._begin_x + self._width - begin_x)
-        return Window(
+        window = Window(
             self._buffer,
             begin_y,
             begin_x,
@@ -659,6 +698,8 @@ class Window:
             offset_y=self._offset_y + (begin_y - self._begin_y),
             offset_x=self._offset_x + (begin_x - self._begin_x),
         )
+        window._pad = self._pad
+        return window
 
     # ------------------------------------------------------------- writing
 
@@ -953,10 +994,17 @@ class Window:
         self._background_attr = attr
 
     def bkgd(self, ch: Any = BLANK, attr: int = 0) -> None:
-        """Set the background, and apply it to every cell already there."""
+        """Set the background, and apply it to every cell already there: a
+        cell holding the old background character takes the new one, as
+        curses' ``wbkgd`` does, so ``bkgd(".")`` fills a blank window."""
+        previous = self._background
         self.bkgdset(ch, attr)
         for row in range(self._height):
-            self._put(row, 0, self._read(row, 0, self._width), attr)
+            text = self._read(row, 0, self._width)
+            text = "".join(
+                self._background if char == previous else char for char in text
+            )
+            self._put(row, 0, text, attr)
 
     def getbkgd(self) -> int:
         """The background character and its attributes, packed as curses does."""
@@ -1042,8 +1090,19 @@ class Window:
 
     # ------------------------------------------------------------ painting
 
-    def noutrefresh(self) -> None:
-        """Copy this window onto the screen, without painting it yet."""
+    def noutrefresh(self, *args: int) -> None:
+        """Copy this window onto the screen, without painting it yet.
+
+        A pad takes six arguments, as :meth:`refresh` does, and nothing
+        else does.
+        """
+        if self._pad or args:
+            self._pad_refresh(args, "noutrefresh", "pnoutrefresh")
+            return
+        self._copy_touched()
+
+    def _copy_touched(self) -> None:
+        """Copy what has changed in this window onto the screen."""
         screen = _require_screen()
         destination = screen.buffer
         if self is _stdscr and (
@@ -1075,14 +1134,79 @@ class Window:
                 )
         self._touched.clear()
 
-    def refresh(self) -> None:
-        """Copy this window onto the screen and paint it."""
-        self.noutrefresh()
+    def refresh(self, *args: int) -> None:
+        """Copy this window onto the screen and paint it.
+
+        A pad shows the part of itself from ``(pminrow, pmincol)`` in the
+        screen's rectangle from ``(sminrow, smincol)`` to ``(smaxrow,
+        smaxcol)``: ``pad.refresh(pminrow, pmincol, sminrow, smincol,
+        smaxrow, smaxcol)``. The rectangle is cut short where the pad ends.
+
+        Raises:
+            error: For a pad without the six arguments, or a rectangle that
+                runs off the screen or is inside out, in curses' words.
+            TypeError: For arguments to a window that is not a pad.
+        """
+        if self._pad or args:
+            self._pad_refresh(args, "refresh", "prefresh")
+            doupdate()
+            return
+        self._copy_touched()
         if self._clear_ok:
             self._clear_ok = False
             _repaint()
             return
         doupdate()
+
+    def _pad_refresh(self, args: tuple[int, ...], name: str, pname: str) -> None:
+        """A pad's refresh, as ncurses' ``pnoutrefresh`` works it out."""
+        if not self._pad:
+            raise TypeError(f"{name}() takes no arguments ({len(args)} given)")
+        if len(args) != 6:
+            if name == "refresh":
+                raise _curses.error("refresh() for a pad requires 6 arguments")
+            raise _curses.error(f"{name}() called for a pad requires 6 arguments")
+        pminrow, pmincol, sminrow, smincol, smaxrow, smaxcol = (int(a) for a in args)
+        pminrow, pmincol = max(0, pminrow), max(0, pmincol)
+        sminrow, smincol = max(0, sminrow), max(0, smincol)
+        pmaxrow = pminrow + smaxrow - sminrow
+        if pmaxrow > self._height - 1:
+            smaxrow -= pmaxrow - (self._height - 1)
+        pmaxcol = pmincol + smaxcol - smincol
+        if pmaxcol > self._width - 1:
+            smaxcol -= pmaxcol - (self._width - 1)
+        screen = _require_screen()
+        destination = screen.buffer
+        if (
+            smaxrow >= destination.height
+            or smaxcol >= destination.width
+            or sminrow > smaxrow
+            or smincol > smaxcol
+        ):
+            raise _curses.error(f"{pname}() returned ERR")
+        view = (pminrow, pmincol, sminrow, smincol, smaxrow, smaxcol)
+        whole = view != self._pad_view
+        self._pad_view = view
+        for offset in range(smaxrow - sminrow + 1):
+            row = pminrow + offset
+            touched = self._touched.pop(row, None)
+            if whole:
+                first, last = pmincol, pmincol + smaxcol - smincol
+            elif touched is None:
+                continue
+            else:
+                first = max(touched[0], pmincol)
+                last = min(touched[1], pmincol + smaxcol - smincol)
+            for column in range(first, last + 1):
+                cell = self._buffer.cell(self._offset_y + row, self._offset_x + column)
+                destination.write(
+                    sminrow + offset,
+                    smincol + column - pmincol,
+                    cell.char,
+                    fg=cell.fg,
+                    bg=cell.bg,
+                    attr=cell.attr,
+                )
 
     def redrawwin(self) -> None:
         """Copy and repaint the whole window at the next refresh."""
@@ -1282,8 +1406,365 @@ class Window:
         """
         return self._read(self._cursor_y, self._cursor_x, self._width).encode()
 
+    # ------------------------------------------------------------ encoding
+
+    @property
+    def encoding(self) -> str:
+        """The encoding the window's bytes are in: the locale's, as curses
+        takes it at the start. A subwindow made by :meth:`subwin` takes its
+        parent's, and one made by :meth:`derwin` the locale's - the standard
+        library's own inconsistency, kept.
+
+        Raises:
+            TypeError: When set to anything but a string, or deleted.
+        """
+        return self._encoding
+
+    @encoding.setter
+    def encoding(self, value: str) -> None:
+        if not isinstance(value, str):
+            raise TypeError("setting encoding to a non-string")
+        self._encoding = value
+
+    @encoding.deleter
+    def encoding(self) -> None:
+        raise TypeError("encoding may not be deleted")
+
+    # ------------------------------------------------------------- copying
+
+    def overlay(self, destwin: Window, *args: int) -> None:
+        """Copy this window's text onto ``destwin`` where they overlap on the
+        screen, leaving ``destwin`` as it was wherever this one is blank.
+
+        With six more arguments - ``sminrow, smincol, dminrow, dmincol,
+        dmaxrow, dmaxcol`` - the rectangle is given instead: from
+        ``(sminrow, smincol)`` in this window to ``(dminrow, dmincol)``
+        through ``(dmaxrow, dmaxcol)`` in ``destwin``.
+
+        Raises:
+            error: If the windows do not overlap, or the rectangle runs off
+                either window, in curses' words.
+        """
+        self._copy_onto(destwin, args, "overlay", over=True)
+
+    def overwrite(self, destwin: Window, *args: int) -> None:
+        """Copy this window onto ``destwin`` where they overlap on the
+        screen, blanks too; with six more arguments, a rectangle, as
+        :meth:`overlay` takes it.
+
+        Raises:
+            error: If the windows do not overlap, or the rectangle runs off
+                either window, in curses' words.
+        """
+        self._copy_onto(destwin, args, "overwrite", over=False)
+
+    def _copy_onto(
+        self, destwin: Window, args: tuple[int, ...], name: str, *, over: bool
+    ) -> None:
+        """ncurses' ``overlap`` and ``copywin``: the overlap worked out from
+        where the two windows begin, or the rectangle given."""
+        if len(args) not in (0, 6):
+            raise TypeError(f"_curses.window.{name} requires 1 to 7 arguments")
+        if args:
+            sminrow, smincol, dminrow, dmincol, dmaxrow, dmaxcol = map(int, args)
+            message = "copywin() returned ERR"
+        else:
+            top = max(self._begin_y, destwin._begin_y)
+            left = max(self._begin_x, destwin._begin_x)
+            bottom = min(
+                self._begin_y + self._height, destwin._begin_y + destwin._height
+            )
+            right = min(self._begin_x + self._width, destwin._begin_x + destwin._width)
+            if bottom <= top or right <= left:
+                raise _curses.error(f"{name}() returned ERR")
+            sminrow, smincol = top - self._begin_y, left - self._begin_x
+            dminrow, dmincol = top - destwin._begin_y, left - destwin._begin_x
+            dmaxrow = bottom - 1 - destwin._begin_y
+            dmaxcol = right - 1 - destwin._begin_x
+            message = f"{name}() returned ERR"
+        rows, columns = dmaxrow - dminrow, dmaxcol - dmincol
+        if (
+            min(sminrow, smincol, dminrow, dmincol) < 0
+            or dmaxrow >= destwin._height
+            or dmaxcol >= destwin._width
+            or sminrow + rows >= self._height
+            or smincol + columns >= self._width
+            or rows < 0
+            or columns < 0
+        ):
+            raise _curses.error(message)
+        for row in range(rows + 1):
+            for column in range(columns + 1):
+                cell = self._buffer.cell(
+                    self._offset_y + sminrow + row, self._offset_x + smincol + column
+                )
+                if not cell.char or (over and cell.char == " "):
+                    continue
+                destwin._buffer.write(
+                    destwin._offset_y + dminrow + row,
+                    destwin._offset_x + dmincol + column,
+                    cell.char,
+                    fg=cell.fg,
+                    bg=cell.bg,
+                    attr=cell.attr,
+                )
+            destwin._mark(dminrow + row, dmincol, dmincol + columns)
+
+    # -------------------------------------------------------------- saving
+
+    def putwin(self, file: Any) -> None:
+        """Write the window to ``file``, opened for bytes, in ncurses' own
+        format, so that :func:`getwin` - or the standard library's - can
+        read it back.
+
+        Differences from curses:
+            A character beyond Latin-1 is written as its UTF-8 bytes, which
+            a curses built for wide characters reads as several.
+        """
+        file.write(_window_text(self).encode("latin-1"))
+
     def __repr__(self) -> str:
         return (
             f"<tkcurses.curses.Window {self._width}x{self._height}"
             f" at ({self._begin_y}, {self._begin_x})>"
         )
+
+
+# --------------------------------------------------------------------------
+# putwin and getwin
+# --------------------------------------------------------------------------
+#
+# ncurses' own text format for a saved window (write_win and read_win in
+# ncurses/base/lib_screen.c), measured from the standard library's putwin
+# against ncurses 6.6: four 0x88 bytes and a version line, ``name=value``
+# lines for what is not the default, ``rows:``, then one line a row. In a
+# row, ``\s`` is a space, ``\\`` a backslash, ``\NNN`` a byte in octal
+# and ``\{BOLD|C1}`` the attributes - and colour pair - from there on.
+
+_MAGIC = b"\x88\x88\x88\x88"
+
+#: The attribute names ncurses writes, in its order.
+_ATTRIBUTE_NAMES = (
+    "STANDOUT", "UNDERLINE", "REVERSE", "BLINK", "DIM", "BOLD", "ALTCHARSET",
+    "INVIS", "PROTECT", "HORIZONTAL", "LEFT", "LOW", "RIGHT", "TOP",
+    "VERTICAL", "ITALIC",
+)  # fmt: skip
+
+
+def _screen_encoding() -> str:
+    """The locale's encoding, which is what curses gives a window."""
+    try:
+        return locale.nl_langinfo(locale.CODESET) or "utf-8"
+    except (AttributeError, ValueError):  # pragma: no cover - not POSIX
+        return "utf-8"
+
+
+def _attribute_bits(name: str) -> int:
+    return int(getattr(_curses, f"A_{name}", 0))
+
+
+def _split_attr(attr: int) -> tuple[int, int]:
+    """Attributes without the character or colour, and the colour pair."""
+    pair = (attr & _curses.A_COLOR) >> 8
+    return attr & ~(_curses.A_COLOR | _curses.A_CHARTEXT), pair
+
+
+def _attribute_spec(attrs: int, pair: int | None) -> str:
+    names = [n for n in _ATTRIBUTE_NAMES if attrs & _attribute_bits(n)] or ["NORMAL"]
+    if pair is not None:
+        names.append(f"C{pair}")
+    return "\\{" + "|".join(names) + "}"
+
+
+def _escaped(char: str) -> str:
+    if char == " ":
+        return "\\s"
+    if char == "\\":
+        return "\\\\"
+    if " " < char < "\x7f":
+        return char
+    try:
+        data = char.encode("latin-1")
+    except UnicodeEncodeError:
+        data = char.encode("utf-8")
+    return "".join(f"\\{byte:03o}" for byte in data)
+
+
+def _window_text(window: Window) -> str:
+    """The window in ncurses' putwin format, as text of bytes below 256."""
+    version = ".".join(map(str, getattr(_curses, "ncurses_version", (6, 0, 0))))
+    lines = [f"ncurses {version}"]
+
+    def field(name: str, value: int) -> None:
+        if value:
+            lines.append(f"{name}={value}")
+
+    field("_cury", window._cursor_y)
+    field("_curx", window._cursor_x)
+    field("_maxy", window._height - 1)
+    field("_maxx", window._width - 1)
+    field("_begy", 0 if window._pad else window._begin_y)
+    field("_begx", 0 if window._pad else window._begin_x)
+    field("_flags", (16 if window._pad else 0) | (0 if window._owns else 1))
+    attrs, pair = _split_attr(window._attr)
+    if attrs:
+        lines.append(f"_attrs={_attribute_spec(attrs, None)}")
+    for flag, on in (
+        ("_clear", window._clear_ok),
+        ("_leaveok", window._leave_ok),
+        ("_scroll", window._scroll_ok),
+        ("_idcok", True),
+        ("_use_keypad", window._keypad),
+    ):
+        if on:
+            lines.append(f"flag={flag}")
+    lines.append("_delay=-1")
+    top, bottom = window._region or (0, window._height - 1)
+    field("_regtop", top)
+    field("_regbottom", bottom)
+    if window._pad:
+        for name, value in zip(
+            ("y", "x", "top", "left", "bottom", "right"),
+            window._pad_view or (-1,) * 6,
+            strict=True,
+        ):
+            lines.append(f"_pad._pad_{name}={value}")
+    background_attrs, _ = _split_attr(window._background_attr)
+    spec = _attribute_spec(background_attrs, None) if background_attrs else ""
+    lines.append(f"_bkgrnd={spec}{_escaped(window._background)}")
+    field("_color", pair)
+    lines.append("rows:")
+    for row in range(window._height):
+        text, current = "", (0, 0)
+        for column in range(window._width):
+            cell = window._buffer.cell(
+                window._offset_y + row, window._offset_x + column
+            )
+            if not cell.char:
+                continue
+            attrs, pair = _split_attr(cell.attr)
+            if (attrs, pair) != current:
+                text += _attribute_spec(attrs, pair if pair != current[1] else None)
+                current = (attrs, pair)
+            text += "".join(_escaped(char) for char in cell.char)
+        lines.append(f"{row + 1}:{text}")
+    return _MAGIC.decode("latin-1") + "\n".join(lines) + "\n"
+
+
+def _unescaped_row(text: str) -> list[tuple[str, int]]:
+    """A saved row's characters, each with its attributes."""
+    cells: list[tuple[str, int]] = []
+    attrs = pair = 0
+    pending = bytearray()
+
+    def settle() -> None:
+        if not pending:
+            return
+        try:
+            chars = pending.decode("utf-8")
+        except UnicodeDecodeError:
+            chars = pending.decode("latin-1")
+        cells.extend((char, attrs | (pair << 8)) for char in chars)
+        pending.clear()
+
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char != "\\":
+            settle()
+            cells.append((char, attrs | (pair << 8)))
+            index += 1
+            continue
+        following = text[index + 1 : index + 2]
+        if following == "s":
+            settle()
+            cells.append((" ", attrs | (pair << 8)))
+            index += 2
+        elif following == "{":
+            settle()
+            end = text.index("}", index)
+            attrs = 0
+            for name in text[index + 2 : end].split("|"):
+                if name.startswith("C") and name[1:].isdigit():
+                    pair = int(name[1:])
+                elif name != "NORMAL":
+                    attrs |= _attribute_bits(name)
+            index = end + 1
+        elif following.isdigit():
+            pending.append(int(text[index + 1 : index + 4], 8) & 0xFF)
+            index += 4
+        else:
+            settle()
+            cells.append((following, attrs | (pair << 8)))
+            index += 2
+    settle()
+    return cells
+
+
+def getwin(file: Any) -> Window:
+    """Read a window :meth:`Window.putwin` wrote - or the standard
+    library's - from ``file``, opened for bytes, and make it again where it
+    was.
+
+    Raises:
+        error: If what is read is not a saved window.
+        TypeError: If the file gives text rather than bytes.
+    """
+    _require_screen()
+    data = file.read()
+    if isinstance(data, str):
+        raise TypeError("f.read() returned str instead of bytes")
+    if not data.startswith(_MAGIC):
+        raise _curses.error("curses function returned NULL")
+    lines = data[len(_MAGIC) :].decode("latin-1").split("\n")
+    if not lines[0].startswith("ncurses"):
+        raise _curses.error("curses function returned NULL")
+    fields: dict[str, str] = {}
+    flags: set[str] = set()
+    rows: list[str] = []
+    in_rows = False
+    for line in lines[1:]:
+        if in_rows:
+            if ":" in line:
+                rows.append(line.split(":", 1)[1])
+        elif line == "rows:":
+            in_rows = True
+        elif line.startswith("flag="):
+            flags.add(line[5:])
+        elif "=" in line:
+            name, value = line.split("=", 1)
+            fields[name] = value
+
+    def number(name: str) -> int:
+        return int(fields.get(name, "0"))
+
+    height, width = number("_maxy") + 1, number("_maxx") + 1
+    window = Window(
+        ScreenBuffer(width, height),
+        number("_begy"),
+        number("_begx"),
+        height,
+        width,
+        owns=True,
+    )
+    window._pad = bool(number("_flags") & 16)
+    window._cursor_y, window._cursor_x = number("_cury"), number("_curx")
+    attrs = sum(attr for _, attr in _unescaped_row(fields.get("_attrs", "") + "x"))
+    window._attr = attrs | (number("_color") << 8)
+    background = _unescaped_row(fields.get("_bkgrnd", "\\s"))
+    if background:
+        window._background, window._background_attr = background[-1]
+    window._clear_ok = "_clear" in flags
+    window._leave_ok = "_leaveok" in flags
+    window._scroll_ok = "_scroll" in flags
+    window._keypad = "_use_keypad" in flags
+    if "_regtop" in fields or "_regbottom" in fields:
+        region = (number("_regtop"), number("_regbottom"))
+        if region != (0, height - 1):
+            window._region = region
+    for y, text in enumerate(rows[:height]):
+        x = 0
+        for char, attr in _unescaped_row(text):
+            window._put(y, x, char, attr)
+            x += max(1, char_cells(char))
+    return window

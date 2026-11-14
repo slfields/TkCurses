@@ -18,7 +18,8 @@
 """A form: labelled fields laid out with grid, and a check before it is sent.
 
 Tab moves between the fields, space ticks a box or chooses a plan, and
-Return presses the focused button.
+Return presses the focused button. While the account is being made the form
+is busy: a click on it does nothing until it is done.
 """
 
 import tkcurses as tk
@@ -65,6 +66,17 @@ def submit():
     if not name.get().strip() or "@" not in email.get():
         status.config(text="A name and an email address, please")
         return
+    # Busy holds the pointer off the form while the work is done. Keys
+    # still reach the focused widget, as in Tk, so the focus goes to the
+    # status line, which takes none.
+    status.config(text="Creating your account...")
+    form.tk_busy_hold()
+    status.focus_set()
+    root.after(1000, created)
+
+
+def created():
+    form.tk_busy_forget()
     status.config(text="")
     messagebox.showinfo(
         "Welcome", f"{name.get()}, your {plan.get()} account is ready.", parent=root

@@ -53,8 +53,10 @@ def tree(root):
 
 
 def test_the_root_is_named_for_itself(root):
+    """Its path is ".", and its name the application's, as Tk's
+    ``winfo name .`` answers: the class name, first letter lowered."""
     assert str(root) == "."
-    assert root.winfo_name() == "."
+    assert root.winfo_name() == "tk"
     assert root.winfo_parent() == ""
 
 

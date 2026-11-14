@@ -268,7 +268,7 @@ def test_image_names_and_types_are_the_default_roots(default_root):
     image = tkcurses.PhotoImage(master=default_root, width=1, height=1)
     assert tkcurses.image_names() == default_root.image_names()
     assert str(image) in tkcurses.image_names()
-    assert tkcurses.image_types() == ("bitmap", "photo")
+    assert tkcurses.image_types() == ("photo", "bitmap")
 
 
 def test_mainloop_runs_the_default_roots_loop(monkeypatch):

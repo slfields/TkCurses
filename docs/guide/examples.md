@@ -240,3 +240,15 @@ and it runs under tkinter too.
 :size: 60x14
 ```
 
+## A scrolled pad
+
+A curses program, with nothing of tkinter in it: `tkcurses.curses` runs
+it. A pad holds two hundred lines and `refresh` shows the part of it that
+fits under the title, moved by the arrow keys, Page Up and Down, Home and
+End. Change the import to `import curses` and the standard library runs it
+the same way.
+
+```{tkcurses-example} examples/scroller.py
+:size: 44x12
+:keys: ["<Down>", "<Down>"]
+```

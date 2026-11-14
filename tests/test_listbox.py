@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -1278,3 +1279,67 @@ def test_an_items_colours_go_with_it(root):
     assert (box.itemcget(0, "bg"), box.itemcget(1, "bg")) == ("", "red")
     box.delete(1)
     assert [box.itemcget(i, "bg") for i in range(box.size())] == ["", ""]
+
+
+# ----------------------------------------------------------------- scanning
+
+#: A scan, as (operation, x, y) in characters and lines.
+SCAN = [
+    ("mark", 0, 0), ("drag", 0, -1), ("drag", 0, -2), ("drag", 0, -5),
+    ("drag", 0, -4), ("drag", -1, -4), ("drag", -3, 0), ("drag", 2, 1),
+    ("drag", 9, 9), ("drag", 8, 8), ("mark", 3, 3), ("drag", 3, 2),
+    ("drag", 2, 2), ("drag", 5, 5),
+]  # fmt: skip
+
+SCAN_ITEMS = [f"item {n:02d} " + "x" * (n % 7) * 4 for n in range(30)]
+
+
+def _scanned(box: Any, line: int, char: int) -> list[tuple[int, int]]:
+    """The top item and the first character in view after each step."""
+    widest = max(len(item) for item in SCAN_ITEMS)
+    found = []
+    for operation, x, y in SCAN:
+        method = box.scan_mark if operation == "mark" else box.scan_dragto
+        method(x * char, y * line)
+        found.append((box.nearest(0), round(box.xview()[0] * widest)))
+    return found
+
+
+def test_a_scan_drags_ten_to_one_and_restarts_at_an_edge_as_tks_does(root):
+    """Measured against Tk's ListboxScanTo with a fixed font, its pixels
+    scaled to lines and characters: a line of drag is ten items, a drag past
+    either end leaves the view there, and turning back moves it at once."""
+    tkinter = pytest.importorskip("tkinter")
+    from tkinter import font
+
+    try:
+        real = tkinter.Tk()
+    except Exception:  # pragma: no cover - no display
+        pytest.skip("no display for real tkinter")
+    try:
+        theirs_box = tkinter.Listbox(
+            real, height=5, width=10, selectborderwidth=0, font="TkFixedFont"
+        )
+        theirs_box.insert("end", *SCAN_ITEMS)
+        theirs_box.pack()
+        real.update()
+        # A listbox line is the font's linespace and one; bbox gives the first.
+        line = theirs_box.bbox(0)[3] + 1
+        char = font.nametofont("TkFixedFont").measure("0")
+        theirs = _scanned(theirs_box, line, char)
+    finally:
+        real.destroy()
+
+    box = Listbox(root, name="scan", height=5)
+    box._allocate(Rect(0, 0, 14, 7))
+    box._map()
+    box.insert("end", *SCAN_ITEMS)
+    assert box._body_width() == 10 and box._text_area().height == 5
+    assert _scanned(box, 1, 1) == theirs
+
+
+def test_a_scan_refuses_what_is_not_an_integer(listbox):
+    with pytest.raises(TclError, match='expected integer but got "a"'):
+        listbox.scan_mark("a", 1)
+    with pytest.raises(TclError, match='expected integer but got "b"'):
+        listbox.scan_dragto(1, "b")

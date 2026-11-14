@@ -185,94 +185,17 @@ NOT_INSTANTIATED = frozenset(
 #:
 #: A gap not listed here is a test failure, which is the point: this list may
 #: shrink and must never silently grow.
+#:
+#: On 2026-11-13 it lost TkCurses-zmf's aliases, TkCurses-k1i's Wm hints and
+#: all of TkCurses-0ap: the busy family, the screen and visual questions,
+#: atoms, send, register, info_patchlevel and the palette; and with
+#: Listbox.scan_mark and scan_dragto, the last of TkCurses-6lh.
 GAPS: dict[str, dict[str, str]] = {
     "tk.Canvas": {},
-    "tk.Grid": {
-        "location": "TkCurses-zmf",
-    },
-    "tk.Listbox": {
-        "scan_dragto": "TkCurses-6lh",
-        "scan_mark": "TkCurses-6lh",
-    },
-    "tk.Misc": {
-        "anchor": "TkCurses-zmf",
-        "bbox": "TkCurses-zmf",
-        "busy": "TkCurses-0ap",
-        "busy_cget": "TkCurses-0ap",
-        "busy_config": "TkCurses-0ap",
-        "busy_configure": "TkCurses-0ap",
-        "busy_current": "TkCurses-0ap",
-        "busy_forget": "TkCurses-0ap",
-        "busy_hold": "TkCurses-0ap",
-        "busy_status": "TkCurses-0ap",
-        "info_patchlevel": "TkCurses-0ap",
-        "register": "TkCurses-0ap",
-        "send": "TkCurses-0ap",
-        "size": "TkCurses-zmf",
-        "tk_bisque": "TkCurses-0ap",
-        "tk_busy": "TkCurses-0ap",
-        "tk_busy_cget": "TkCurses-0ap",
-        "tk_busy_config": "TkCurses-0ap",
-        "tk_busy_configure": "TkCurses-0ap",
-        "tk_busy_current": "TkCurses-0ap",
-        "tk_busy_forget": "TkCurses-0ap",
-        "tk_busy_hold": "TkCurses-0ap",
-        "tk_busy_status": "TkCurses-0ap",
-        "tk_setPalette": "TkCurses-0ap",
-        "tk_strictMotif": "TkCurses-0ap",
-        "winfo_atom": "TkCurses-0ap",
-        "winfo_atomname": "TkCurses-0ap",
-        "winfo_colormapfull": "TkCurses-0ap",
-        "winfo_interps": "TkCurses-0ap",
-        "winfo_pathname": "TkCurses-0ap",
-        "winfo_screen": "TkCurses-0ap",
-        "winfo_screencells": "TkCurses-0ap",
-        "winfo_screenmmheight": "TkCurses-0ap",
-        "winfo_screenmmwidth": "TkCurses-0ap",
-        "winfo_screenvisual": "TkCurses-0ap",
-        "winfo_server": "TkCurses-0ap",
-        "winfo_visual": "TkCurses-0ap",
-        "winfo_visualid": "TkCurses-0ap",
-        "winfo_visualsavailable": "TkCurses-0ap",
-        "winfo_vrootx": "TkCurses-0ap",
-        "winfo_vrooty": "TkCurses-0ap",
-    },
-    "tk.PanedWindow": {
-        "proxy": "TkCurses-xy2",
-        "proxy_coord": "TkCurses-xy2",
-        "proxy_forget": "TkCurses-xy2",
-        "proxy_place": "TkCurses-xy2",
-        "sash": "TkCurses-xy2",
-        "sash_mark": "TkCurses-xy2",
-    },
-    "tk.Wm": {
-        "aspect": "TkCurses-k1i",
-        "client": "TkCurses-k1i",
-        "colormapwindows": "TkCurses-k1i",
-        "command": "TkCurses-k1i",
-        "group": "TkCurses-k1i",
-        "iconbitmap": "TkCurses-k1i",
-        "iconmask": "TkCurses-k1i",
-        "iconname": "TkCurses-k1i",
-        "iconphoto": "TkCurses-k1i",
-        "iconposition": "TkCurses-k1i",
-        "iconwindow": "TkCurses-k1i",
-        "positionfrom": "TkCurses-k1i",
-        "sizefrom": "TkCurses-k1i",
-        "wm_aspect": "TkCurses-k1i",
-        "wm_client": "TkCurses-k1i",
-        "wm_colormapwindows": "TkCurses-k1i",
-        "wm_command": "TkCurses-k1i",
-        "wm_group": "TkCurses-k1i",
-        "wm_iconbitmap": "TkCurses-k1i",
-        "wm_iconmask": "TkCurses-k1i",
-        "wm_iconname": "TkCurses-k1i",
-        "wm_iconphoto": "TkCurses-k1i",
-        "wm_iconposition": "TkCurses-k1i",
-        "wm_iconwindow": "TkCurses-k1i",
-        "wm_positionfrom": "TkCurses-k1i",
-        "wm_sizefrom": "TkCurses-k1i",
-    },
+    "tk.Listbox": {},
+    "tk.Misc": {},
+    "tk.PanedWindow": {},
+    "tk.Wm": {},
 }
 
 #: The six methods some of our classes have and others do not, by OUR class.
@@ -816,3 +739,32 @@ def test_no_table_claims_something_we_have_not_implemented() -> None:
         f"ARCHITECTURE.md asserts {len(false_claims)} things that do not "
         f"exist:\n" + "\n".join(false_claims)
     )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "anchor", "bbox", "columnconfigure", "config", "configure", "forget",
+        "info", "location", "propagate", "rowconfigure", "size", "slaves",
+    ],
+)  # fmt: skip
+def test_a_bare_name_reaches_the_method_tkinters_does(name):
+    """tkinter gives the geometry managers' methods bare names - bbox for
+    grid_bbox, slaves for pack_slaves - and which manager a widget's bare
+    name reaches follows its method order. Every one reaches the same
+    method here, on the classes that define them and on a widget."""
+    for cls in ("Misc", "Pack", "Grid", "Place", "Widget"):
+        theirs = getattr(getattr(tkinter, cls), name, None)
+        ours = getattr(getattr(tkcurses, cls), name, None)
+        assert (ours is None) == (theirs is None), (cls, name)
+        if theirs is not None:
+            # By what tkinter's reaches, looked up here: grid_propagate and
+            # pack_propagate are one method in TkCurses, one flag to a
+            # container.
+            # Like tkinter's own, the query methods all live on Misc.
+            target = getattr(
+                getattr(tkcurses, cls),
+                theirs.__name__,
+                getattr(tkcurses.Misc, theirs.__name__, None),
+            )
+            assert ours.__qualname__ == target.__qualname__, (cls, name)

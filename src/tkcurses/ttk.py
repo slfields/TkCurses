@@ -2208,7 +2208,9 @@ class _EntryCommands(tkcurses.Entry):
           False with no ``invalidcommand``, ``invalid`` is set - and
           validation stays ON. The classic Entry turns it off; ttk does not.
         """
-        verdict = self._ask_validator(self._field.text, can_raise=True)
+        verdict = self._ask_validator(
+            self._field.text, can_raise=True, condition="forced"
+        )
         self.state(["!invalid" if verdict else "invalid"])
         return verdict
 
@@ -2232,13 +2234,14 @@ class _EntryCommands(tkcurses.Entry):
         if can_raise:
             raise TclError('expected boolean value but got "None"')
 
-    def _validate_forced(self) -> None:
+    def _validate_forced(self, previous: str) -> None:
         """Nothing: ttk does not validate a ``textvariable`` write at all.
 
         Measured on all three ttk entries: with ``validate="all"`` the
         validator is not called when the variable is set, where the classic
         Entry calls it with ``%V`` = ``forced``.
         """
+        del previous
 
     def _validate_focus(self, condition: str) -> bool | None:
         """As the classic Entry, and the ``invalid`` state follows the answer.
@@ -4877,18 +4880,46 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
         return "tree" if column == TREE_COLUMN else "cell"
 
     def identify_element(self, x: int, y: int) -> str:
-        """The style element at ``(x, y)``.
+        """The element of an item's layout at ``(x, y)``, as Tk names it:
+        ``Treeitem.indicator`` for the open/closed marker, ``text`` over the
+        text itself, and ``padding`` over the rest of its column; ``""`` for
+        an item's indent, between columns, on a heading, and where there is
+        no item.
 
         Differences from tkinter:
-            Always ``""``. Tk names an element of the theme's layout -
-            ``padding``, ``text``, ``image`` - and the themes here have no such
-            elements.
+            Never ``image``: an item's image is not drawn here.
         """
-        # Tk documents no fixed set of return values either, so nothing
-        # portable can be written against them. Present and empty rather than
-        # absent, because identify dispatches to it. TkCurses-p9h;
-        # TkCurses-at9 tracks naming them.
-        del x, y
+        # Measured on Tk 9.0.2's default theme, scanning a tree pixel by
+        # pixel: every row has its indicator, leaves included; Tk names it in
+        # full and its text and padding bare; the few pixels at the start of
+        # each data cell answer "", which here is the one cell joining it to
+        # the column before; a heading answers "" throughout.
+        if self.identify_region(x, y) not in ("tree", "cell"):
+            return ""
+        iid = self._row_at(y)
+        if iid is None:  # pragma: no cover - the region said there was a row
+            return ""
+        offset = self._content_x(x - self._rows_area().x)
+        for name, start, end in self._column_spans():
+            if offset >= end:
+                continue
+            if offset < start:
+                return ""
+            within = offset - start
+            anchor = self._columns_entry(name)["anchor"]
+            if name == TREE_COLUMN:
+                indent = INDENT * self._depth(iid)
+                if within < indent:
+                    return ""
+                if within == indent:
+                    return "Treeitem.indicator"
+                text = str(self._items[iid].options["text"])
+                lead = indent + 1
+            else:
+                text, lead = self._cell_text(iid, name), 0
+            room = end - start - lead
+            lead += max(0, int((room - cells(text)) * _across(anchor)))
+            return "text" if lead <= within < lead + cells(text) else "padding"
         return ""
 
     def identify(self, component: str, x: int, y: int) -> Any:  # type: ignore[override]
@@ -5322,6 +5353,15 @@ class Treeview(Widget, tkcurses.Frame, tkcurses.XView, tkcurses.YView):
 _POINTER_TAG_EVENTS = frozenset({"Button", "ButtonRelease", "Motion"})
 
 
+def _across(anchor: Any) -> float:
+    """How far across its room an anchor puts text: 0 left, 1 right."""
+    try:
+        across, _down = parse_anchor(str(anchor) or "w")
+    except ValueError:
+        across = 0.0
+    return across
+
+
 def _anchored(text: str, width: int, anchor: Any) -> str:
     """``text`` placed across ``width`` cells as ``anchor`` places it.
 
@@ -5330,11 +5370,7 @@ def _anchored(text: str, width: int, anchor: Any) -> str:
     whoever draws it, whatever the anchor - seen on Tk 9.0.2, where a long
     value under ``anchor="e"`` shows its beginning, not its end.
     """
-    try:
-        across, _down = parse_anchor(str(anchor) or "w")
-    except ValueError:
-        across = 0.0
-    return " " * max(0, int((width - cells(text)) * across)) + text
+    return " " * max(0, int((width - cells(text)) * _across(anchor))) + text
 
 
 def _change_element(selected: list[str], column: str, op: str) -> bool:

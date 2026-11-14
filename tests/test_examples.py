@@ -55,7 +55,7 @@ def test_every_example_is_on_the_page_and_nothing_else_is():
     shown = DIRECTIVE.findall(PAGE.read_text())
     files = sorted(f"examples/{path.name}" for path in EXAMPLES.glob("*.py"))
     assert sorted(shown) == files
-    assert len(files) == 15
+    assert len(files) == 16
 
 
 def test_every_example_carries_the_notice():
@@ -96,6 +96,8 @@ def test_the_form_welcomes_a_new_account(terminal, tmp_path):
     # Tab to the Pro radio button, and space to choose it, as in Tk.
     term.send_keys("Ada", "<Tab>", "ada@example.org", "<Tab>", "<Tab>", "<Tab>", " ")
     term.send_keys(*["<Tab>"] * 3, "<Return>")
+    # Busy for a second first, while the account is made.
+    term.wait_for_text("Creating your account...")
     term.wait_for_text("Ada, your pro account is ready.")
 
 
@@ -150,6 +152,21 @@ def test_the_editor_menu_opens_from_the_keyboard(terminal, tmp_path):
     term.send_keys("<F10>")
     term.wait_for_text("Ctrl+O")
     assert term.contains("Save as...")
+
+
+@pytest.mark.tty
+def test_the_editor_view_menu_recolours_it(terminal, tmp_path):
+    term = start(terminal, tmp_path, "editor")
+    term.wait_for_text("untitled")
+    row = next(r for r, line in enumerate(term.display) if "View" in line) + 2
+    before = term.attrs_at(row, 5)["bg"]
+    term.send_keys("<F10>", "<Right>", "<Right>")
+    term.wait_for_text("Bisque")
+    term.send_keys("d")
+    term.wait_for(
+        lambda t: t.attrs_at(row, 5)["bg"] not in (before, None),
+        message="the text recoloured",
+    )
 
 
 @pytest.mark.tty
@@ -604,3 +621,18 @@ def test_the_mark_book_adds_up_the_cells_selected(terminal, tmp_path):
     term.click(column, row)
     # The keyboard stayed on Grace: 88, 79, 95 and 91.
     term.wait_for_text("4 marks, total 353, mean 88.2")
+
+
+@pytest.mark.tty
+def test_the_scroller_moves_its_pad_with_the_keys(terminal, tmp_path):
+    term = start(terminal, tmp_path, "scroller", cols=44, rows=12)
+    term.wait_for(lambda t: t.row(1).startswith("line 001"), message="line 001")
+    term.send_keys("<Down>", "<Down>")
+    term.wait_for(lambda t: t.row(1).startswith("line 003"), message="line 003")
+    term.send_keys("<End>")
+    term.wait_for(
+        lambda t: t.row(1).startswith("line 191") and t.row(10).startswith("line 200"),
+        message="the last screenful",
+    )
+    term.send_keys("q")
+    assert term.wait_for_exit(timeout=10) == 0

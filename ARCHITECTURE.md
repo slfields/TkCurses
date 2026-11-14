@@ -2277,6 +2277,45 @@ over painting a better imitation:
   wrapped in a cursor save and restore (DECSC / DECRC); otherwise the cursor
   would be left wherever the last image cell went.
 
+**Validation takes tkinter's registered form** (`TkCurses-5ufn.2`).
+`validatecommand=(root.register(check), "%P")` - a command name and Tk's
+percent codes, as a tuple or one string - is called with each code
+substituted. Measured on Tk 9.0.2, path by path, and held by
+`tests/test_validation_registered.py`, which runs every path on real tkinter
+too:
+
+| Path | `%d` | `%i` | `%S` | `%V` |
+|------|------|------|------|------|
+| `insert`, a typed key | 1 | where | the text inserted | `key` |
+| `delete`, Backspace, Delete | 0 | where | the text deleted | `key` |
+| focus in / out | -1 | -1 | `""` | `focusin` / `focusout` |
+| a `textvariable` write (classic only), `validate()`, a Spinbox arrow | -1 | -1 | `""` | `forced` |
+
+`%s` is the text before the change - for a variable write, before the write,
+though the field already holds the new value when the validator runs.
+**Typing over a selection is two validations**, a delete and then an insert,
+as `tk::EntryInsert` makes them; the insert is tried even when the delete was
+refused. Backspace and Delete with a selection used to delete it without
+asking the validator at all. `%%` is `%`, and a code Tk does not know is its
+own letter. The answer is read as a Tcl boolean: `"no"` and `0` refuse, while
+`None`, a raise, or a name nothing registered turns validation off, as Tk
+does. `cget("validatecommand")` answers the one string tkinter would have
+passed, `"<name> %P"`.
+
+**Busy windows take the pointer and nothing else** (`TkCurses-0ap`). Tk's
+`tk busy hold` maps a transparent window over the one held, so every pointer
+event meant for it or a descendant lands on the busy window instead. Here the
+router drops such an event: in `_route`, when no press is in progress and no
+grab elsewhere would take it. A press made before the hold keeps its implicit
+grab and gets its release, so a button is never left held down. **Keys are not
+stopped**, because Tk's are not: `busy.n` says a widget that already had the
+focus "still may receive keyboard events", and Tab can still reach one,
+measured on Tk 9.0.2 with an Entry inside a held Frame. A program that wants
+the keyboard out too moves the focus, as `examples/form.py` does. Every answer
+and refusal of the family - `cannot find busy window`, a hold with a bad
+option leaving the window busy all the same - is compared with real tkinter
+by `tests/test_busy.py`.
+
 **Screen distances take Tk's units** (`TkCurses-2qo`): `2c`, `1i`, `3m`,
 `10p`, at ten cells to the inch - the figure `winfo_fpixels` and `tk scaling`
 already used, and an assumption, since a terminal does not say how large its
@@ -3623,7 +3662,7 @@ Base mixin providing common widget functionality.
 |----------------|----------|-------|
 | **Core** | | |
 | `destroy()` | ✓ | Remove widget and children |
-| `deletecommand(name)` | ○ | Remove callback (no Tcl, internal registry) |
+| `deletecommand(name)` | ○ | A name `register` made, or a binding's handle |
 | **Focus Management** | | |
 | `focus_set()` | ○ | Set focus (highlight widget) |
 | `focus_force()` | ○ | Force focus |
@@ -3650,6 +3689,12 @@ Base mixin providing common widget functionality.
 | `grab_set()` | ✓ | Set local grab |
 | `grab_set_global()` | ✓ | Set global grab |
 | `grab_status()` | ✓ | Get grab status |
+| `tk_busy_hold(**kw)` | ○ | The pointer no longer reaches the window or its descendants; keys still do, as in Tk. `cursor` is kept, and nothing is drawn |
+| `tk_busy_forget()` | ✓ | |
+| `tk_busy_status()` | ✓ | |
+| `tk_busy_current(pattern=None)` | ✓ | Glob on path names |
+| `tk_busy_cget(option)` | ✓ | |
+| `tk_busy_configure(cnf=None, **kw)` | ✓ | Five-tuples, as `configure` |
 | **Widget Stacking** | | |
 | `lower(belowThis=None)` | ✓ | Lower in stacking order |
 | `tkraise(aboveThis=None)` | ✓ | Raise in stacking order |
@@ -3666,7 +3711,7 @@ Base mixin providing common widget functionality.
 | `winfo_id()` | ✓ | Internal widget ID |
 | `winfo_ismapped()` | ✓ | Visibility check |
 | `winfo_manager()` | ✓ | Geometry manager name |
-| `winfo_name()` | ✓ | Widget name |
+| `winfo_name()` | ✓ | Widget name; the root's is the application's, `tk` |
 | `winfo_parent()` | ✓ | Parent widget path |
 | `winfo_reqheight()` | ○ | Requested height in cells |
 | `winfo_reqwidth()` | ○ | Requested width in cells |
@@ -3684,17 +3729,30 @@ Base mixin providing common widget functionality.
 | `winfo_pointerx()` | ○ | Mouse cell X |
 | `winfo_pointery()` | ○ | Mouse cell Y |
 | `winfo_pointerxy()` | ○ | Mouse cell (X, Y) |
-| `winfo_screen()` | ✗ | N/A (no X11 screen) |
-| `winfo_screencells()` | ✗ | N/A |
+| `winfo_screen()` | ○ | The terminal's device, `/dev/pts/3`, where Tk names a display |
+| `winfo_screencells()` | ○ | As `winfo_cells` |
 | `winfo_screendepth()` | ○ | Simulated depth |
-| `winfo_screenmmheight()` | ✗ | N/A (no physical size) |
-| `winfo_screenmmwidth()` | ✗ | N/A |
-| `winfo_screenvisual()` | ✗ | N/A |
-| `winfo_server()` | ✗ | N/A |
-| `winfo_visual()` | ✗ | N/A |
-| `winfo_visualid()` | ✗ | N/A |
+| `winfo_screenmmheight()` | ○ | Rows at ten to the inch, as `winfo_fpixels` takes them |
+| `winfo_screenmmwidth()` | ○ | Columns at ten to the inch |
+| `winfo_screenvisual()` | ○ | As `winfo_visual` |
+| `winfo_server()` | ○ | `TkCurses <version> <TERM>` |
+| `winfo_visual()` | ○ | `truecolor` for direct colour, `staticcolor` for a palette, `staticgray` for none |
+| `winfo_visualid()` | ○ | The one visual's id: its depth, in hex |
+| `winfo_visualsavailable(includeids=False)` | ○ | The one visual |
+| `winfo_colormapfull()` | ○ | False: a palette is fixed |
 | `winfo_vrootheight()` | ○ | Virtual screen cells |
 | `winfo_vrootwidth()` | ○ | Virtual screen cells |
+| `winfo_vrootx()`, `winfo_vrooty()` | ○ | 0 |
+| `winfo_interps(displayof=0)` | ○ | This application alone |
+| `winfo_atom(name, displayof=0)` | ✓ | X's 68 predefined atoms by their numbers; new ones from 69 |
+| `winfo_atomname(id, displayof=0)` | ✓ | |
+| `winfo_pathname(id, displayof=0)` | ✓ | By `winfo_id` |
+| `send(interp, cmd, *args)` | ○ | To this application only; any other is Tk's `no application named` |
+| `register(func, subst=None, needcleanup=1)` | ✓ | For `validatecommand` with `%` codes, see above |
+| `info_patchlevel()` | ✓ | 9.0.2, the Tcl the library follows |
+| `tk_setPalette(*args, **kw)` | ○ | Tk 9.0's `palette.tcl`; ttk's default theme is not retinted |
+| `tk_bisque()` | ✓ | |
+| `tk_strictMotif(boolean=None)` | ○ | Kept and read back; no binding changes |
 | **Event Loop** | | |
 | `update()` | ✓ | Process pending events |
 | `update_idletasks()` | ✓ | Process idle callbacks, then lay out and redraw, as Tk's geometry and display idle handlers do (`TkCurses-q6b1`) |
@@ -3818,7 +3876,7 @@ directions now, so neither can grow back.
 | `selection_own_get(**kw)` | ✓ | Get selection owner |
 | **Image** | | |
 | `image_names()` | ○ | Names still held; the registry is weak |
-| `image_types()` | ○ | `bitmap` and `photo` |
+| `image_types()` | ✓ | `photo` and `bitmap`, in Tk's order |
 | **Grid Manager (from Misc)** | | |
 | `grid_anchor(anchor=None)` | ○ | Cell-based anchor |
 | `grid_bbox(column, row, col2, row2)` | ○ | Cell bounding box |
@@ -3857,6 +3915,15 @@ Where the table above and the implementation need reading together.
   | `tk scaling` *factor* | Read back as Tk reads it, and nothing else changes |
   | *widget* `cget` / `configure` | Tk's dashed names and shapes: `configure -text` is the five-tuple with `-text` first, and a set answers `""` |
   | a Treeview's `cellselection` | See the Treeview section |
+  | `image create`, `delete`, `height`, `inuse`, `names`, `type`, `types`, `width` | Over the application's images (`tests/test_image_command.py`). Tk's message-box icons, `::tk::icons::...`, are not among the names |
+
+  `image delete` behaves as Tk's does, measured: the name is gone, a widget
+  showing the image keeps the name in its option and its size and draws
+  nothing there, and the Python object that made it answers `image "pic" does
+  not exist` to `width()`. An image `image create` makes with no name is
+  `image1`, Tk's numbering rather than tkinter's `pyimage1`, and it is held
+  by the application until deleted: no Python object refers to it, and in Tk
+  it would last.
 
   `tk scaling` follows ScalingCmd in tkCmds.c. Tk keeps no factor: it gives
   the screen a new width in millimetres, rounded and at least one, and reads
@@ -3950,33 +4017,33 @@ Window manager interface for toplevel windows.
 
 | tkinter Method | TkCurses | Notes |
 |----------------|----------|-------|
-| `wm_aspect(minN, minD, maxN, maxD)` | ✗ | N/A (fixed cells) |
+| `wm_aspect(minN, minD, maxN, maxD)` | ○ | Kept and read back; the window is not held to it. Four integers above zero, or four empty strings to clear |
 | `wm_attributes(*args, **kwargs)` | ◐ | Limited attributes |
-| `wm_client(name=None)` | ✗ | N/A |
-| `wm_colormapwindows(*wlist)` | ✗ | N/A |
-| `wm_command(value=None)` | ✗ | N/A |
+| `wm_client(name=None)` | ○ | Kept and read back |
+| `wm_colormapwindows(*wlist)` | ○ | Kept and read back as widgets; a path naming no window is refused |
+| `wm_command(value=None)` | ○ | Kept and read back |
 | `wm_deiconify()` | ○ | Show window |
 | `wm_focusmodel(model=None)` | ○ | Focus behavior |
 | `wm_forget(window)` | ✓ | Unmapped until a geometry manager takes it; the root and non-windows are left alone |
 | `wm_frame()` | ○ | Returns self |
 | `wm_geometry(newGeometry=None)` | ○ | Cell geometry "WxH+X+Y" (see below) |
 | `wm_grid(baseW, baseH, wInc, hInc)` | ○ | Cell grid sizing |
-| `wm_group(pathName=None)` | ✗ | N/A |
-| `wm_iconbitmap(bitmap, default)` | ✗ | N/A (no icons) |
+| `wm_group(pathName=None)` | ○ | Kept and read back as a path; a path naming no window is refused |
+| `wm_iconbitmap(bitmap, default)` | ○ | Kept and read back; Tk's bitmap names and `@file` only. `default` is refused, as on X11 |
 | `wm_iconify()` | ○ | Hide window |
-| `wm_iconmask(bitmap=None)` | ✗ | N/A |
-| `wm_iconname(newName=None)` | ✗ | N/A |
-| `wm_iconphoto(default, *args)` | ✗ | N/A |
-| `wm_iconposition(x=None, y=None)` | ✗ | N/A |
-| `wm_iconwindow(pathName=None)` | ✗ | N/A |
+| `wm_iconmask(bitmap=None)` | ○ | Kept and read back, checked as `iconbitmap` |
+| `wm_iconname(newName=None)` | ○ | Kept and read back |
+| `wm_iconphoto(default, *args)` | ○ | Kept; each image must be a photo image |
+| `wm_iconposition(x=None, y=None)` | ○ | Kept and read back; two integers, or two empty strings |
+| `wm_iconwindow(pathName=None)` | ○ | Kept and read back as a path |
 | `wm_manage(widget)` | ✓ | A classic Frame, LabelFrame or Toplevel becomes a window, centred at its requested size; pack, grid and place refuse it, in Tk's words |
 | `wm_maxsize(width, height)` | ○ | Max cell size |
 | `wm_minsize(width, height)` | ○ | Min cell size |
 | `wm_overrideredirect(boolean)` | ○ | Borderless mode |
-| `wm_positionfrom(who=None)` | ✗ | N/A |
+| `wm_positionfrom(who=None)` | ○ | Kept and read back; `program` or `user`, abbreviated as Tk allows |
 | `wm_protocol(name, func)` | ✓ | Protocol handlers |
 | `wm_resizable(width, height)` | ○ | Resize enable |
-| `wm_sizefrom(who=None)` | ✗ | N/A |
+| `wm_sizefrom(who=None)` | ○ | Kept and read back, as `positionfrom` |
 | `wm_state(newstate=None)` | ○ | Window state |
 | `wm_title(string=None)` | ○ | Title bar text |
 | `wm_transient(master=None)` | ○ | Transient relationship |
@@ -3998,7 +4065,17 @@ Window manager interface for toplevel windows.
 | `deiconify` | `wm_deiconify` | `frame` | `wm_frame` |
 | `iconify` | `wm_iconify` | `group` | `wm_group` |
 
-> **Note:** Aliases are only provided for methods that are implemented in TkCurses. Methods marked ✗ (N/A) in the table above do not have aliases
+Every method has its alias, `aspect`, `iconphoto`, `iconposition`,
+`iconmask` and `iconwindow` among them.
+
+**The ○ hints with no effect** (`TkCurses-k1i`). These ask a window manager
+for something a terminal has none of: an icon, a group leader, a session's
+command line, an aspect ratio a compositor would enforce. They are not
+missing - each is checked as Tk 9.0.2 on X11 checks it, kept per window, and
+read back, so that a program setting one runs unchanged and one reading one
+back gets what it set. Nothing on the screen changes. The answers - `''` from
+a setter, `None` from an unset `aspect` or `iconposition`, a tuple once set -
+and every refusal are held to real tkinter's by `tests/test_wm_hints.py`.
 
 **Geometry Behavior:**
 
@@ -5314,8 +5391,8 @@ Scrollable selection list.
 | `index(index)` | ✓ | Parse index |
 | `insert(index, *elements)` | ✓ | Insert items |
 | `nearest(y)` | ✓ | Nearest visible item |
-| `scan_mark(x, y)` | ☐ | Scan start - not implemented; TkCurses-6lh |
-| `scan_dragto(x, y)` | ☐ | Scan drag - not implemented; TkCurses-6lh |
+| `scan_mark(x, y)` | ○ | In cells |
+| `scan_dragto(x, y)` | ○ | Tk's `ListboxScanTo`, in cells: a row of drag is ten items; measured against Tk 9.0.2 with a fixed font. No class binding: the middle button pastes here |
 | `see(index)` | ✓ | Scroll to item: to the edge if near, else centred |
 | `selection_anchor(index)` | ✓ | Set anchor |
 | `selection_clear(first, last=None)` | ✓ | Clear selection |
@@ -6042,11 +6119,13 @@ Resizable paned container.
 | `remove(child)` | ✓ | Remove pane |
 | `forget(child)` | ✓ | Alias for remove |
 | `identify(x, y)` | ○ | Identify at cell |
-| `proxy_coord()` | ☐ | Proxy cell coords - not implemented; TkCurses-xy2 |
-| `proxy_forget()` | ☐ | Hide proxy - not implemented; TkCurses-xy2 |
-| `proxy_place(x, y)` | ☐ | Place proxy - not implemented; TkCurses-xy2 |
-| `sash_coord(index)` | ○ | Sash cell coords |
-| `sash_mark(index)` | ☐ | Mark sash - not implemented; TkCurses-xy2 |
+| `proxy(*args)` | ○ | Tk's `proxy coord`, `forget` and `place` |
+| `proxy_coord()` | ○ | Where it was last placed, kept after `proxy_forget`, as in Tk |
+| `proxy_forget()` | ○ | Takes the proxy panel down |
+| `proxy_place(x, y)` | ○ | Along the panes, nought to the far side less the sash; across, the border |
+| `sash(*args)` | ○ | Tk's `sash coord`, `dragto`, `mark` and `place`, refusals in Tk's words |
+| `sash_coord(index)` | ○ | Sash cell coords; an index that is not a sash is Tk's `invalid sash index` |
+| `sash_mark(index)` | ○ | The mark `sash("mark", index, x, y)` set; `dragto` moves by the distance from it, from where the sash is, and leaves it |
 | `sash_place(index, x, y)` | ○ | Place sash; pins every pane's `width`, as Tk's `MoveSash` |
 | `panecget(child, option)` | ✓ | Get pane option |
 | `paneconfigure(child, **kw)` | ✓ | Configure pane |
@@ -6133,8 +6212,21 @@ cell: Tk takes `sashwidth 0` and a negative `sashpad`, which would leave
 nothing here to see or grab. `sashrelief` and `proxyrelief` show only
 `sunken`, dim, as every one-cell part's relief does (`_part_relief`);
 `proxyborderwidth` has no edge to draw in. `sashcursor` is kept and read back:
-a terminal shows no pointer shape. The proxy *methods* - `proxy_place`,
-`proxy_coord`, `proxy_forget`, `sash_mark` - are still `TkCurses-xy2`.
+a terminal shows no pointer shape.
+
+**`sash` and `proxy`, the commands** (`TkCurses-xy2`), follow
+`PanedWindowSashCommand` and `PanedWindowProxyCommand` in tkPanedWindow.c,
+and `tests/test_panedwindow_sash_proxy.py` holds them to real Tk in what
+does not depend on the unit: every refusal, the marks, how far a drag moves
+a sash. Measured on Tk 9.0.2: `sash dragto` moves the sash by the pointer's
+distance from the mark *from where the sash is now* and never moves the
+mark, so two drags to the same place move it twice (100, 110, 130 for
+marks at 50 and drags to 60 then 70); `proxy place` keeps only the
+coordinate along the panes, clamped between nought and the width less the
+border and the sash, and puts the other at the border; `proxy forget` hides
+it and `proxy coord` still answers where it was. Setting either answers
+`()`, as tkinter's `_getints(...) or ()` makes of Tk's empty result, and
+`identify` off a sash is Tk's `""`.
 
 ---
 
@@ -6642,7 +6734,7 @@ The bindings that hit-test (spinbox arrows, scrollbar clicks, sash drags) call
 the **classic** method by name, because they act on the domain answer.
 
 `ttk.Treeview` keeps its own `identify(component, x, y)`, as tkinter's does.
-Its `identify_element` still answers `""` (`TkCurses-at9`).
+Its `identify_element` names an item's elements, below.
 
 ### ttk.Style Class
 
@@ -6848,7 +6940,7 @@ tkinter, where the manual is silent:
 | `identify_row(y)` | ○ | Item at a row; `""` over the heading |
 | `identify_column(x)` | ○ | `#0`, `#1`… at a column |
 | `identify_region(x, y)` | ◐ | `heading`/`tree`/`cell`/`nothing`; never `separator` |
-| `identify_element(x, y)` | ✗ | Always `""`; the item and heading elements are not measured yet (TkCurses-at9) |
+| `identify_element(x, y)` | ○ | Tk's item elements in Tk's order; never `image`, which is not drawn |
 | `index(item)` | ✓ | Item index |
 | `insert(parent, index, iid, **kw)` | ✓ | Insert item |
 | `item(item, option, **kw)` | ✓ | Item options |
@@ -7056,12 +7148,19 @@ Three answers differ from Tk deliberately:
 - **`identify_region` never returns `separator`.** Tk's separator is the
   draggable gap between column headings; this widget draws none and offers no
   such drag, so returning it would name something that is not there.
-- **`identify_element` always returns `""`.** Tk answers a themed element name
-  from the item and heading layouts, and documents no fixed set of values —
-  `'padding'` on one machine's default theme. The other ttk widgets now answer
-  the default theme's element names (see ttk.Widget), but a tree's item and
-  heading elements have not been measured yet (`TkCurses-at9`). Present and
-  empty so the dispatcher has something to call.
+- **`identify_element` names an item's elements as Tk 9.0.2 does**
+  (`TkCurses-at9`), measured by scanning the default theme's tree pixel by
+  pixel. Over an item: `""` across its indent, `Treeitem.indicator` over the
+  open/closed marker - every row has one, leaves included - then `text` over
+  the text itself and `padding` over the rest of the column, Tk naming the
+  indicator in full and the other two bare. A data cell is `""` for its first
+  few pixels, then `text` and `padding`; here that gap is the one cell
+  joining it to the column before. A heading answers `""` throughout, as does
+  the space below the items. `tests/test_treeview_elements.py` compares the
+  run of names across each row with Tk's for both `show` modes and an
+  `anchor="e"` column. Tk's `image` element has no counterpart: an item's
+  image is not drawn here, and an empty value, which Tk gives a sliver of
+  `text`, is all `padding`.
 - **`identify("cell", x, y)` is offered although tkinter has no wrapper for
   it.** Tk documents it and it answers the `(item, column)` pair that cell work
   wants; a tkinter program has to compose `identify_row` with
@@ -7423,7 +7522,8 @@ shows through the parent, as in curses.
 | `isendwin()` | ✓ | Check if ended |
 | `wrapper(func, *args, **kwargs)` | ✓ | Safe wrapper |
 | `newwin(nlines, ncols, begin_y, begin_x)` | ✓ | Create window |
-| `newpad(nlines, ncols)` | ☐ | Create pad - not implemented; TkCurses-8iv |
+| `newpad(nlines, ncols)` | ✓ | A pad; `refresh` and `noutrefresh` take its six arguments, clipped as ncurses' `pnoutrefresh` clips them, and `subpad` makes its subwindows |
+| `getwin(file)` | ✓ | Reads ncurses' own saved-window format, the standard library's included |
 | `start_color()` | ✓ | Initialize colors |
 | `init_pair(pair, fg, bg)` | ✓ | Define color pair |
 | `init_color(color, r, g, b)` | ✓ | Define color |
@@ -7521,15 +7621,15 @@ shows through the parent, as in curses.
 | `mvwin(y, x)` | ✓ | Move window |
 | `mvderwin(y, x)` | ✓ | Move derived |
 | `resize(nlines, ncols)` | ✓ | Resize window |
-| `overlay(destwin, ...)` | ☐ | Non-destructive copy - not implemented; TkCurses-8iv |
-| `overwrite(destwin, ...)` | ☐ | Destructive copy - not implemented; TkCurses-8iv |
+| `overlay(destwin, ...)` | ✓ | Where the windows overlap, or the six-argument rectangle; blanks left out |
+| `overwrite(destwin, ...)` | ✓ | The same, blanks too |
 | `syncup()` | ✓ | Sync to parent |
 | `syncdown()` | ✓ | Sync from parent |
 | `syncok(flag)` | ✓ | Auto sync |
 | `cursyncup()` | ✓ | Sync cursor |
-| `putwin(file)` | ☐ | Save window - not implemented; TkCurses-8iv |
+| `putwin(file)` | ✓ | ncurses' text format, byte for byte for what this layer keeps; read back by the standard library's `getwin` |
 | `enclose(y, x)` | ✓ | Check enclosed |
-| `encoding` | ☐ | Character encoding - not implemented; TkCurses-8iv |
+| `encoding` | ✓ | The locale's; `subwin` passes it on and `derwin` does not, as in the standard library |
 
 ### Constants
 

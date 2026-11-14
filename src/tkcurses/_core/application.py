@@ -52,7 +52,7 @@ from tkcurses._core.layout import LayoutEngine
 from tkcurses._core.timers import AfterQueue
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from tkcurses import Misc
     from tkcurses._core.colors import ColorManager
@@ -310,6 +310,80 @@ def _tcl_double(value: Any) -> float:
         raise TclError(f'expected floating-point number but got "{value}"') from None
 
 
+#: X11's predefined atoms, numbered from 1 in this order, as every X server
+#: numbers them: ``winfo_atom("PRIMARY")`` is 1. Read from an X.Org server.
+X_ATOMS: tuple[str, ...] = (
+    "PRIMARY",
+    "SECONDARY",
+    "ARC",
+    "ATOM",
+    "BITMAP",
+    "CARDINAL",
+    "COLORMAP",
+    "CURSOR",
+    "CUT_BUFFER0",
+    "CUT_BUFFER1",
+    "CUT_BUFFER2",
+    "CUT_BUFFER3",
+    "CUT_BUFFER4",
+    "CUT_BUFFER5",
+    "CUT_BUFFER6",
+    "CUT_BUFFER7",
+    "DRAWABLE",
+    "FONT",
+    "INTEGER",
+    "PIXMAP",
+    "POINT",
+    "RECTANGLE",
+    "RESOURCE_MANAGER",
+    "RGB_COLOR_MAP",
+    "RGB_BEST_MAP",
+    "RGB_BLUE_MAP",
+    "RGB_DEFAULT_MAP",
+    "RGB_GRAY_MAP",
+    "RGB_GREEN_MAP",
+    "RGB_RED_MAP",
+    "STRING",
+    "VISUALID",
+    "WINDOW",
+    "WM_COMMAND",
+    "WM_HINTS",
+    "WM_CLIENT_MACHINE",
+    "WM_ICON_NAME",
+    "WM_ICON_SIZE",
+    "WM_NAME",
+    "WM_NORMAL_HINTS",
+    "WM_SIZE_HINTS",
+    "WM_ZOOM_HINTS",
+    "MIN_SPACE",
+    "NORM_SPACE",
+    "MAX_SPACE",
+    "END_SPACE",
+    "SUPERSCRIPT_X",
+    "SUPERSCRIPT_Y",
+    "SUBSCRIPT_X",
+    "SUBSCRIPT_Y",
+    "UNDERLINE_POSITION",
+    "UNDERLINE_THICKNESS",
+    "STRIKEOUT_ASCENT",
+    "STRIKEOUT_DESCENT",
+    "ITALIC_ANGLE",
+    "X_HEIGHT",
+    "QUAD_WIDTH",
+    "WEIGHT",
+    "POINT_SIZE",
+    "RESOLUTION",
+    "COPYRIGHT",
+    "NOTICE",
+    "FONT_NAME",
+    "FAMILY_NAME",
+    "FULL_NAME",
+    "CAP_HEIGHT",
+    "WM_CLASS",
+    "WM_TRANSIENT_FOR",
+)
+
+
 class Application:
     """One widget tree's shared state.
 
@@ -426,6 +500,23 @@ class Application:
         self.grab: Misc | None = None
         self.grab_global = False
 
+        #: Windows made busy by ``tk_busy_hold``, by path name, each with its
+        #: busy options. Pointer events over one or its descendants are
+        #: dropped, as Tk's busy window takes them.
+        self.busy: dict[str, tuple[Misc, dict[str, Any]]] = {}
+
+        #: Python callables registered under a command name by ``register``,
+        #: which a ``validatecommand`` given in tkinter's form - the name and
+        #: Tk's percent codes - is called through.
+        self.commands: dict[str, Callable[..., Any]] = {}
+
+        #: Atoms by name, for ``winfo_atom``: X's 68 predefined ones, then
+        #: each new name as it is asked for. See :data:`X_ATOMS`.
+        self.atoms: dict[str, int] = {name: n for n, name in enumerate(X_ATOMS, 1)}
+
+        #: Tk's ``tk_strictMotif`` flag, kept for ``tk_strictMotif``.
+        self.strict_motif = False
+
         #: The ttk style database, one per application so that a Style()
         #: made anywhere changes widgets made anywhere else - which is what
         #: tkinter gets by talking to the interpreter. None until the first
@@ -451,6 +542,13 @@ class Application:
         #: as Tk keeps it; None for ten cells to the inch.
         self.screen_millimetres: float | None = None
 
+        #: How many images ``image create`` has named, as Tk counts them.
+        self.image_count = 0
+
+        #: The images ``image create`` made, held until ``image delete``:
+        #: no Python object refers to one, and the registry is weak.
+        self.created_images: dict[str, Any] = {}
+
         #: Counters behind automatic widget names (!button, !button2).
         self.name_counts: dict[str, int] = {}
 
@@ -472,7 +570,9 @@ class Application:
         * ``tk scaling``, read and set;
         * on any widget, ``cget`` and ``configure`` with Tk's arguments -
           ``tk.call(button, "configure", "-text", "Go")``;
-        * a Treeview's ``cellselection``.
+        * a Treeview's ``cellselection``;
+        * ``image``, every subcommand: ``create``, ``delete``, ``height``,
+          ``inuse``, ``names``, ``type``, ``types`` and ``width``.
 
         The first argument is a command name or a widget (or its path name);
         a single tuple of every argument is taken too, as tkinter takes it.
@@ -497,9 +597,86 @@ class Application:
             return self._info_command(args[1:])
         if command == "tk":
             return self._tk_command(args[1:])
+        if command == "image":
+            return self._image_command(args[1:])
         if command.startswith("."):
             raise TclError(f'invalid command name "{command}"')
         raise TclError(f'TkCurses has no Tcl interpreter: it does not run "{command}"')
+
+    def _image_command(self, args: tuple[Any, ...]) -> Any:
+        """Tk's ``image`` command, over the application's images, answering
+        and refusing as Tk 9.0.2 does."""
+        if not args:
+            raise TclError('wrong # args: should be "image option ?args?"')
+        option, rest = str(args[0]), args[1:]
+        if option == "create":
+            return self._image_create(rest)
+        if option == "names":
+            if rest:
+                raise TclError('wrong # args: should be "image names"')
+            return tuple(self.images)
+        if option == "types":
+            if rest:
+                raise TclError('wrong # args: should be "image types"')
+            return ("photo", "bitmap")
+        if option == "delete":
+            for name in map(str, rest):
+                image = self._named_image(name)
+                image._delete()
+            return ""
+        questions = ("height", "inuse", "type", "width")
+        if option not in questions:
+            raise TclError(
+                f'bad option "{option}": must be create, delete, height, '
+                "inuse, names, type, types, or width"
+            )
+        if len(rest) != 1:
+            raise TclError(f'wrong # args: should be "image {option} name"')
+        image = self._named_image(str(rest[0]))
+        if option == "inuse":
+            return int(image._in_use())
+        return getattr(image, option)()
+
+    def _named_image(self, name: str) -> Any:
+        """The image called ``name``, or Tk's refusal."""
+        image = self.images.get(name)
+        if image is None:
+            raise TclError(f'image "{name}" does not exist')
+        return image
+
+    def _image_create(self, args: tuple[Any, ...]) -> str:
+        """``image create type ?name? ?-option value ...?``. An image made
+        with no name is ``image1``, ``image2``, as Tk numbers them - not
+        tkinter's ``pyimage``, which tkinter's own classes choose."""
+        from tkcurses._core.images import BitmapImage, PhotoImage
+
+        if not args:
+            raise TclError(
+                'wrong # args: should be "image create type ?name? ?-option value ...?"'
+            )
+        kind, rest = str(args[0]), list(args[1:])
+        classes = {"photo": PhotoImage, "bitmap": BitmapImage}
+        if kind not in classes:
+            raise TclError(f'image type "{kind}" does not exist')
+        name = None
+        if rest and not str(rest[0]).startswith("-"):
+            name = str(rest.pop(0))
+        if len(rest) % 2:
+            raise TclError(f'value for "{rest[-1]}" missing')
+        options: dict[str, Any] = {
+            str(rest[i])[1:]: rest[i + 1] for i in range(0, len(rest), 2)
+        }
+        if name is None:
+            self.image_count += 1
+            name = f"image{self.image_count}"
+        master = self.widgets.get(".")
+        if master is None:
+            raise TclError("TkCurses has no root window to make an image for")
+        made: Any = classes[kind]
+        image = made(name=name, master=master, **options)
+        # Nothing in Python holds it, and in Tk it lasts until it is deleted.
+        self.created_images[name] = image
+        return name
 
     def _info_command(self, args: tuple[Any, ...]) -> str:
         """``info patchlevel`` and ``info tclversion``: the Tcl TkCurses

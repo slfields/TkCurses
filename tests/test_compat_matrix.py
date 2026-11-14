@@ -65,7 +65,8 @@ def row(modules, module, table, name):
         ("tkinter", "Listbox", "itemconfigure", compat.SUPPORTED),
         ("tkinter", "Canvas", "create_image", compat.PARTIAL),
         ("tkinter", "Canvas", "create_window", compat.PARTIAL),
-        ("tkinter", "Wm", "iconbitmap", compat.MISSING),
+        ("tkinter", "Wm", "iconbitmap", compat.PARTIAL),
+        ("tkinter", "Wm", "iconname", compat.SUPPORTED),
         ("tkinter", "Functions", "Tcl", compat.MISSING),
         ("tkinter", "Functions", "mainloop", compat.SUPPORTED),
         ("tkinter.messagebox", "Functions", "showinfo", compat.SUPPORTED),
@@ -82,14 +83,25 @@ def test_a_difference_is_partial_and_says_why(modules):
     assert "``" not in found.why and ":" not in found.why.split(" ")[0]
 
 
-def test_a_method_on_some_widgets_says_which(modules):
-    """Misc.bbox is grid_bbox's other name in tkinter; here bbox is only the
-    widgets' own, so it is partial and names them."""
-    found = row(modules, "tkinter", "Misc", "bbox")
+def test_a_method_on_some_widgets_says_which():
+    """A method only a few widgets have is partial, and names them rather
+    than the many that lack it."""
+
+    class BaseWidget:
+        z = 1
+
+    widgets = [type(f"W{n}", (), {}) for n in range(5)]
+    widgets.append(type("Canvas", (), {"z": 1}))
+    found = compat._row("z", [BaseWidget, *widgets])
     assert found.status == compat.PARTIAL
-    assert found.why.startswith("Only on ")
-    assert "Canvas" in found.why
-    assert "BaseWidget" not in found.why
+    assert found.why == "Only on Canvas."
+
+
+def test_the_grids_bare_names_are_on_every_widget(modules):
+    """tkinter's Misc.bbox, size and anchor are grid's under other names, on
+    every widget; one with its own answers with that instead."""
+    for name in ("anchor", "bbox", "size"):
+        assert row(modules, "tkinter", "Misc", name).status == compat.SUPPORTED
 
 
 def test_the_abstract_bases_do_not_count():

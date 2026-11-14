@@ -426,3 +426,183 @@ def test_a_scrolling_region_draws_the_same_thing_either_way(terminal, tmp_path):
     )
     ours.send(b"q")
     theirs.send(b"q")
+
+
+# ------------------------------------------------- copies, pads and saving
+
+#: Every call, in order, recorded to results.json: what it answered, or the
+#: exception's type and words. The same source runs on both modules.
+COPYING = """
+import io, json, os
+import {module} as curses
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+results = []
+
+
+def record(label, call):
+    try:
+        answer = call()
+    except Exception as error:
+        answer = [type(error).__name__, str(error)]
+    results.append([label, answer])
+
+
+def rows(window, count, width):
+    return [window.instr(row, 0, width).decode() for row in range(count)]
+
+
+def main(stdscr):
+    curses.start_color()
+    curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLUE)
+    a = curses.newwin(3, 6, 1, 1)
+    a.addstr(0, 0, "ab de")
+    a.addstr(1, 0, "  x   ")
+    a.addstr(2, 0, "12345")
+    for name in ("overlay", "overwrite"):
+        b = curses.newwin(3, 6, 2, 3)
+        b.bkgd(".")
+        b.addstr(0, 0, "QQQQQQ")
+        record(name, lambda: getattr(a, name)(b))
+        record(name + " gives", lambda: rows(b, 3, 6))
+        c = curses.newwin(4, 8, 10, 10)
+        c.bkgd("-")
+        record(name + " 7", lambda: getattr(a, name)(c, 0, 1, 1, 2, 2, 5))
+        record(name + " 7 gives", lambda: rows(c, 4, 8))
+        record(name + " off the source", lambda: getattr(a, name)(c, 0, 0, 0, 0, 2, 7))
+        record(name + " off the dest", lambda: getattr(a, name)(c, 0, 0, 0, 0, 5, 5))
+        record(name + " 3 args", lambda: getattr(a, name)(c, 0, 0))
+        far = curses.newwin(2, 3, 20, 20)
+        record(name + " apart", lambda: getattr(a, name)(far))
+    bold = curses.newwin(1, 2, 0, 0)
+    bold.addstr(0, 0, "B", curses.A_BOLD | curses.color_pair(1))
+    under = curses.newwin(1, 2, 0, 0)
+    bold.overlay(under)
+    record("attributes copied", lambda: under.inch(0, 0) == bold.inch(0, 0))
+
+    record("encoding", lambda: a.encoding)
+    a.encoding = "latin-1"
+    record("encoding set", lambda: a.encoding)
+    record("subwin's", lambda: a.subwin(1, 1, 1, 1).encoding)
+    record("derwin's", lambda: a.derwin(1, 1, 0, 0).encoding)
+    record("encoding 5", lambda: setattr(a, "encoding", 5))
+    record("del encoding", lambda: delattr(a, "encoding"))
+
+    pad = curses.newpad(5, 100)
+    pad.addstr(0, 0, "pad row zero " + "z" * 80)
+    pad.addstr(4, 90, "corner")
+    record("pad", lambda: (pad.getbegyx(), pad.getmaxyx()))
+    record("refresh()", lambda: pad.refresh())
+    record("noutrefresh()", lambda: pad.noutrefresh())
+    record("window refresh 6", lambda: a.refresh(0, 0, 0, 0, 1, 1))
+    record("window noutrefresh 6", lambda: a.noutrefresh(0, 0, 0, 0, 1, 1))
+    record("rows beyond", lambda: pad.refresh(0, 0, 0, 0, curses.LINES, 5))
+    record("cols beyond", lambda: pad.refresh(0, 0, 0, 0, 1, curses.COLS))
+    record("inside out", lambda: pad.refresh(0, 0, 3, 0, 1, 5))
+    record("mvwin", lambda: pad.mvwin(1, 1))
+    record("newpad 0", lambda: curses.newpad(0, 5))
+    record("subpad", lambda: pad.subpad(2, 5, 0, 4).instr(0, 0, 5).decode())
+    stdscr.clear()
+    stdscr.refresh()
+    pad.refresh(0, 4, 14, 2, 14, 20)
+    pad.refresh(4, 88, 15, 2, 20, 40)
+
+    w = curses.newwin(2, 5, 3, 7)
+    w.addstr(0, 0, "\\\\", curses.color_pair(1))
+    w.addstr(0, 1, "r s", curses.A_REVERSE | curses.A_UNDERLINE)
+    w.move(1, 2)
+    w.keypad(True)
+    w.scrollok(True)
+    w.bkgdset("~", curses.A_DIM)
+    w.attrset(curses.A_BOLD | curses.color_pair(1))
+    saved = io.BytesIO()
+    w.putwin(saved)
+    with open(os.path.join(HERE, "{module}.win"), "wb") as file:
+        file.write(saved.getvalue())
+    saved.seek(0)
+    back = curses.getwin(saved)
+    record("getwin", lambda: (
+        back.getbegyx(), back.getmaxyx(), back.getyx(),
+        [back.inch(0, x) for x in range(5)], rows(back, 2, 5),
+    ))
+    record("getwin junk", lambda: curses.getwin(io.BytesIO(b"junk")))
+    record("getwin text", lambda: curses.getwin(io.StringIO("x")))
+    record("putwin text", lambda: w.putwin(io.StringIO()))
+
+    with open(os.path.join(HERE, "results.json"), "w") as file:
+        json.dump(results, file)
+    stdscr.addstr(0, 0, "done")
+    stdscr.refresh()
+    stdscr.getch()
+
+
+curses.wrapper(main)
+"""
+
+
+def run_copying(terminal, tmp_path, module):
+    term = terminal(cols=60, rows=24)
+    term.run_source(COPYING.format(module=module), workdir=tmp_path)
+    term.wait_for_text("done")
+    term.wait_for_idle()
+    import json
+
+    return term, json.loads((tmp_path / "results.json").read_text())
+
+
+def test_copies_pads_encoding_and_saving_answer_as_curses_does(terminal, tmp_path):
+    ours, our_results = run_copying(terminal, tmp_path, "tkcurses.curses")
+    theirs, their_results = run_copying(terminal, tmp_path, "curses")
+    assert our_results == their_results
+    assert ours.display == theirs.display, (
+        f"tkcurses.curses:\n{ours.describe()}\n\nstdlib curses:\n{theirs.describe()}"
+    )
+    ours.send(b"q")
+    theirs.send(b"q")
+
+
+#: Reads a window the other module saved, with this one's getwin.
+READING = """
+import json, os
+import {module} as curses
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def main(stdscr):
+    with open(os.path.join(HERE, "{saved}.win"), "rb") as file:
+        back = curses.getwin(file)
+    found = [
+        back.getbegyx(), back.getmaxyx(), back.getyx(),
+        [back.inch(0, x) for x in range(5)],
+        [back.instr(row, 0, 5).decode() for row in range(2)],
+    ]
+    with open(os.path.join(HERE, "read-{saved}.json"), "w") as file:
+        json.dump(found, file)
+    stdscr.addstr(0, 0, "read")
+    stdscr.refresh()
+    stdscr.getch()
+
+
+curses.wrapper(main)
+"""
+
+
+def test_each_reads_the_window_the_other_saved(terminal, tmp_path):
+    """ncurses' format both ways: the standard library's getwin reads what
+    this module's putwin wrote, and this module's reads the standard
+    library's, and both make the same window of it."""
+    import json
+
+    for module in ("tkcurses.curses", "curses"):
+        term, _ = run_copying(terminal, tmp_path, module)
+        term.send(b"q")
+        term.wait_for_exit(timeout=10)
+    answers = {}
+    for reader, saved in (("curses", "tkcurses.curses"), ("tkcurses.curses", "curses")):
+        term = terminal(cols=60, rows=24)
+        term.run_source(READING.format(module=reader, saved=saved), workdir=tmp_path)
+        term.wait_for_text("read")
+        answers[reader] = json.loads((tmp_path / f"read-{saved}.json").read_text())
+        term.send(b"q")
+    assert answers["curses"] == answers["tkcurses.curses"]

@@ -48,6 +48,7 @@ import copy
 # resolve against the wrong module. Measured, not theorised: it clobbers.
 import curses as _curses
 import enum
+import fnmatch
 import functools
 import importlib.metadata
 import inspect
@@ -64,9 +65,10 @@ import weakref
 from collections.abc import Collection, MutableMapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
 
 from tkcurses._core import geometry as _geometry
+from tkcurses._core import x11colors as _x11colors
 from tkcurses._core.application import Application
 from tkcurses._core.attributes import (
     ASCII_GLYPHS,
@@ -130,6 +132,7 @@ from tkcurses._core.events import (
     KeyEvent,
     MouseEvent,
     ResizeEvent,
+    char_for_keysym,
 )
 from tkcurses._core.events import Event as CoreEvent
 from tkcurses._core.geometry import (
@@ -1571,6 +1574,58 @@ def _entry_flag(menu: Any, value: Any) -> bool:
         return False
 
 
+def _script(widget: Any, value: Any) -> Any:
+    """A command given as tkinter gives one to Tk: a tuple or list of words
+    - a name :meth:`Misc.register` made, and Tk's percent codes - is kept as
+    the one string tkinter would pass, so ``cget`` answers what it answers.
+    A Python callable is kept as it is."""
+    del widget
+    if isinstance(value, (list, tuple)) and all(
+        isinstance(word, (str, int)) and not isinstance(word, bool) for word in value
+    ):
+        return " ".join(_tcl_word(str(word)) for word in value)
+    return value
+
+
+#: The widget classes Tk's ``::tk_setPalette`` makes a prototype of, in its
+#: order (palette.tcl, Tk 9.0).
+_PALETTE_PROTOTYPES = (
+    "Button", "Canvas", "Checkbutton", "Entry", "Frame", "Label",
+    "LabelFrame", "Listbox", "Menubutton", "Menu", "Message", "Radiobutton",
+    "Scale", "Scrollbar", "Spinbox", "Text",
+)  # fmt: skip
+
+
+def _exact_rgb16(widget: Any, color: str) -> tuple[int, int, int]:
+    """A colour's channels, sixteen bits each, as asked for rather than as
+    this terminal would show it - what Tk's ``winfo rgb`` gives on a
+    true-colour display, so a palette worked out from it is the same."""
+    rgb = rgb_for(color)
+    if rgb is None:
+        name = _x11colors.lookup(color)
+        rgb = _x11colors.NAMES[name] if name is not None else None
+    if rgb is None:
+        return widget.winfo_rgb(color)  # type: ignore[no-any-return]
+    return (rgb[0] * 257, rgb[1] * 257, rgb[2] * 257)
+
+
+def _same_colour(widget: Any, first: Any, second: Any) -> bool:
+    """Whether two colours are the same, either being empty for none."""
+    if not first or not second:
+        return str(first) == str(second)
+    try:
+        return _exact_rgb16(widget, str(first)) == _exact_rgb16(widget, str(second))
+    except TclError:
+        return str(first) == str(second)
+
+
+def _tcl_word(text: str) -> str:
+    """``text`` as one word of a Tcl list, braced if it needs to be."""
+    if text and not any(char in text for char in ' \t\n{}"\\;$[]'):
+        return text
+    return "{" + text + "}"
+
+
 def _tcl_boolean(widget: Any, value: Any) -> int:
     """A boolean option, answered as Tk answers it: ``yes`` reads back 1.
 
@@ -1751,6 +1806,8 @@ _OPTION_VALUES: dict[str, Callable[[Any, Any], Any]] = {
     "cursor": _cursor_spec,
     "sashcursor": _cursor_spec,
     "exportselection": _tcl_boolean,
+    "invalidcommand": _script,
+    "validatecommand": _script,
     "highlightthickness": _screen_distance,
     "indicatoron": _tcl_boolean,
     "labelanchor": _choices(
@@ -2129,13 +2186,44 @@ class Misc:
         if self.master is not None:
             self.master.children.pop(self._name, None)
 
-    def deletecommand(self, name: str) -> None:
-        """Remove a registered callback by the handle ``bind`` returned.
+    def register(
+        self,
+        func: Callable[..., Any],
+        subst: Callable[..., Any] | None = None,
+        needcleanup: int = 1,
+    ) -> str:
+        """Register ``func`` under a command name, and return the name.
 
-        tkinter deletes a Tcl command here; the only handles TkCurses hands
-        out are binding ids, so that is what this removes.
+        The name is what tkinter's validation idiom passes, with Tk's percent
+        codes, as a ``validatecommand``::
+
+            check = root.register(lambda text: text.isdigit())
+            Entry(root, validate="key", validatecommand=(check, "%P"))
+
+        Args:
+            func: The callable.
+            subst: Called with the arguments first, and ``func`` with what
+                it returns, as in tkinter.
+            needcleanup: Accepted for tkinter's signature; a name lasts until
+                :meth:`deletecommand`.
         """
-        self.tk.bindings.unbind(self._w, funcid=name)
+        del needcleanup
+        name = repr(id(func))
+        with contextlib.suppress(AttributeError):
+            name += func.__name__
+        if subst is None:
+            self.tk.commands[name] = func
+        else:
+            self.tk.commands[name] = lambda *args: func(*subst(*args))
+        return name
+
+    _register = register
+
+    def deletecommand(self, name: str) -> None:
+        """Remove a command :meth:`register` made, or a binding by the handle
+        ``bind`` returned."""
+        if self.tk.commands.pop(name, None) is None:
+            self.tk.bindings.unbind(self._w, funcid=name)
 
     # ==================================================================
     # Binding
@@ -2271,6 +2359,16 @@ class Misc:
         ``keysym="Up", state=1`` runs a ``<Shift-Key-Up>`` binding. ``state`` is
         Tk's number - see :class:`Event` - and anything but an integer is
         refused, as Tk refuses it.
+
+        A key event's ``char`` is the character its keysym types, as in Tk -
+        ``"z"`` for ``z``, ``"\\r"`` for ``Return``, ``""`` for ``Up`` - unless
+        one is given. ``when="now"``, the default, delivers it before this
+        returns; ``tail``, ``head`` and ``mark`` when the program next goes
+        idle, as Tk's queue does at the next ``update``.
+
+        TkCurses extension:
+            Any :class:`Event` field may be given, ``char`` among them; Tk
+            takes only its own options.
         """
         # Measured on Tk 9.0.2: <KeyPress> with keysym='Up', state=1 runs
         # <Shift-Key-Up>; <Shift-KeyPress-Up> with state=0 runs <Key-Up>;
@@ -2284,18 +2382,25 @@ class Misc:
             raise TclError("only one event specification allowed")
         button = kw.pop("button", None)
         state = kw.pop("state", None)
+        when = str(kw.pop("when", "now"))
+        if when not in ("now", "head", "mark", "tail"):
+            raise TclError(
+                f'bad -when value "{when}": must be now, head, mark, or tail'
+            )
         event = Event(widget=self, **kw)
         event.type = _event_type(pattern.type)
         if pattern.is_virtual:
             if state is not None:
                 event.state = _tcl_integer(None, state)
-            self._dispatch(event, [pattern])
+            self._deliver_generated(event, [pattern], when)
             return
         detail, modifiers = pattern.detail, pattern.modifiers & ~MOD_ANY
         if pattern.type == "Key" and event.keysym:
             detail = event.keysym
         elif pattern.type == "Key":
             event.keysym = detail
+        if pattern.type == "Key" and "char" not in kw:
+            event.char = char_for_keysym(detail)
         if pattern.type.startswith("Button"):
             if button is not None:
                 detail = str(_tcl_integer(None, button))
@@ -2306,7 +2411,19 @@ class Misc:
         else:
             event.state = _tcl_integer(None, state)
             modifiers = _modifiers_of(event.state)
-        self._dispatch(event, [replace(pattern, detail=detail, modifiers=modifiers)])
+        patterns = [replace(pattern, detail=detail, modifiers=modifiers)]
+        self._deliver_generated(event, patterns, when)
+
+    def _deliver_generated(
+        self, event: Event, patterns: list[EventPattern], when: str
+    ) -> None:
+        """Deliver a generated event now, or when the program next goes idle
+        - where Tk's ``tail``, ``head`` and ``mark`` leave it in the queue
+        for the next ``update``."""
+        if when == "now":
+            self._dispatch(event, patterns)
+        else:
+            self.after_idle(self._dispatch, event, patterns)
 
     # ==================================================================
     # Event delivery
@@ -2646,8 +2763,8 @@ class Misc:
         return tuple(sorted(self.tk.images))
 
     def image_types(self) -> tuple[str, ...]:
-        """The image types that can be created, as Tk reports them."""
-        return ("bitmap", "photo")
+        """The image types that can be created, in Tk's order."""
+        return ("photo", "bitmap")
 
     def selection_own_get(self, **kw: Any) -> Misc:
         """The widget owning the selection.
@@ -2702,6 +2819,137 @@ class Misc:
         if self.tk.grab is not self:
             return None
         return "global" if self.tk.grab_global else "local"
+
+    # ==================================================================
+    # Busy
+    # ==================================================================
+
+    # Tk's busy command, ``tk busy``. Tk maps a transparent window over the
+    # one held, which takes every pointer event meant for it or its
+    # descendants and shows a busy cursor. Here there is no window to map and
+    # no cursor to show, and the router drops those pointer events instead:
+    # see _busy_covers. Keyboard events are not stopped, as the busy manual
+    # says they are not - a widget with the focus keeps it.
+
+    def tk_busy_hold(self, **kw: Any) -> None:
+        """Make this window busy: the pointer reaches neither it nor any of
+        its descendants until :meth:`tk_busy_forget`.
+
+        Keys still do - a widget inside that has the focus keeps it, and
+        Tab can still reach one - so a program that wants the keyboard kept
+        out too moves the focus elsewhere, as it would with Tk. Holding a
+        window already held configures it.
+
+        Args:
+            **kw: The busy options: ``cursor``, kept and read back, since a
+                terminal has no pointer to change.
+
+        Raises:
+            TclError: If an option is unknown or its value is refused. The
+                window is busy all the same, as in Tk.
+
+        Differences from tkinter:
+            Nothing is drawn over a busy window, and the pointer's shape does
+            not change.
+        """
+        path = str(self)
+        if path not in self.tk.busy:
+            self.tk.busy[path] = (self, {"cursor": "watch"})
+        self.tk_busy_configure(**kw)
+
+    busy = busy_hold = tk_busy = tk_busy_hold
+
+    def _busy_options(self) -> dict[str, Any]:
+        """This window's busy options, refused if it is not busy."""
+        held = self.tk.busy.get(str(self))
+        if held is None or held[0] is not self or not self.winfo_exists():
+            raise TclError(f'cannot find busy window "{self}"')
+        return held[1]
+
+    def tk_busy_cget(self, option: str) -> Any:
+        """The value of one busy option of this busy window.
+
+        Raises:
+            TclError: If the window is not busy, or the option is unknown.
+        """
+        options = self._busy_options()
+        if option not in options:
+            raise TclError(f'unknown option "-{option}"')
+        return options[option]
+
+    busy_cget = tk_busy_cget
+
+    def tk_busy_configure(
+        self, cnf: dict[str, Any] | str | None = None, **kw: Any
+    ) -> Any:
+        """Query or set this busy window's options, as :meth:`configure`
+        does a widget's: with none, each option's five-tuple; with a name,
+        that option's.
+
+        Raises:
+            TclError: If the window is not busy, or an option or value is
+                refused.
+        """
+        options = self._busy_options()
+        if isinstance(cnf, str):
+            if cnf not in options:
+                raise TclError(f'unknown option "-{cnf}"')
+            return (cnf, cnf, cnf.capitalize(), "watch", options[cnf])
+        given = {**(cnf or {}), **kw}
+        if not given:
+            return {
+                name: (name, name, name.capitalize(), "watch", value)
+                for name, value in options.items()
+            }
+        for name, value in given.items():
+            if name not in options:
+                raise TclError(f'unknown option "-{name}"')
+            options[name] = _cursor_spec(self, value)
+        return None
+
+    busy_config = busy_configure = tk_busy_config = tk_busy_configure
+
+    def tk_busy_current(self, pattern: str | None = None) -> list[Misc]:
+        """The busy windows, or those whose path names match the glob
+        ``pattern``."""
+        found = []
+        for path, (widget, _options) in list(self.tk.busy.items()):
+            if not widget.winfo_exists():
+                del self.tk.busy[path]
+            elif pattern is None or fnmatch.fnmatchcase(path, pattern):
+                found.append(widget)
+        return found
+
+    busy_current = tk_busy_current
+
+    def tk_busy_forget(self) -> None:
+        """Make this window take the pointer again.
+
+        Raises:
+            TclError: If it is not busy.
+        """
+        self._busy_options()
+        del self.tk.busy[str(self)]
+
+    busy_forget = tk_busy_forget
+
+    def tk_busy_status(self) -> bool:
+        """Whether this window is busy - itself, not one it is inside."""
+        held = self.tk.busy.get(str(self))
+        return held is not None and held[0] is self and self.winfo_exists()
+
+    busy_status = tk_busy_status
+
+    def _busy_covers(self) -> bool:
+        """Whether a busy window takes the pointer from this widget: it is
+        busy, or inside one that is."""
+        busy = self.tk.busy
+        if not busy:
+            return False
+        return any(
+            str(each) in busy and busy[str(each)][0] is each
+            for each in self._ancestry()
+        )
 
     # ==================================================================
     # Stacking
@@ -2989,7 +3237,7 @@ class Misc:
         # difference is stated rather than papered over with Any. TkCurses-d40.
         return cast("list[Misc]", list(manager.slaves(self)))
 
-    slaves = pack_slaves
+    slaves: Any = pack_slaves
 
     def grid_slaves(
         self, row: int | None = None, column: int | None = None
@@ -3174,8 +3422,18 @@ class Misc:
         return type(self).__name__
 
     def winfo_name(self) -> str:
-        """The widget's name within its parent."""
+        """The widget's name within its parent; for the root, the
+        application's name, as in Tk - its class name with the first letter
+        in lower case, ``tk`` for a ``Tk()``."""
+        if self.master is None:
+            return self._app_name()
         return self._name
+
+    def _app_name(self) -> str:
+        """The application's name: the root's class name, first letter
+        lowered, as tkinter makes it."""
+        name = str(getattr(self._root(), "className", "Tk"))
+        return name[:1].lower() + name[1:]
 
     def winfo_parent(self) -> str:
         """The parent's path name, empty for the root."""
@@ -3386,6 +3644,273 @@ class Misc:
     def winfo_vrootheight(self) -> int:
         """Virtual root height."""
         return self.winfo_screenheight()
+
+    def winfo_vrootx(self) -> int:
+        """Virtual root position across: 0, as there is no virtual desktop."""
+        return 0
+
+    def winfo_vrooty(self) -> int:
+        """Virtual root position down: 0, as there is no virtual desktop."""
+        return 0
+
+    def winfo_screenmmwidth(self) -> int:
+        """The screen's width in millimetres, at the ten cells to the inch
+        every distance here is converted at."""
+        return round(self.winfo_screenwidth() / _CELLS_PER_INCH * 25.4)
+
+    def winfo_screenmmheight(self) -> int:
+        """The screen's height in millimetres, at ten cells to the inch - a
+        row taken as a cell, as ``winfo_fpixels`` takes it."""
+        return round(self.winfo_screenheight() / _CELLS_PER_INCH * 25.4)
+
+    def winfo_screen(self) -> str:
+        """The terminal the application draws on - its device, such as
+        ``/dev/pts/3`` - where Tk names an X display. Empty if there is none.
+        """
+        for stream in (sys.stdout, sys.stdin):
+            with contextlib.suppress(AttributeError, OSError, ValueError):
+                return os.ttyname(stream.fileno())
+        return ""
+
+    def winfo_server(self) -> str:
+        """What draws the screen: TkCurses and the terminal type, where Tk
+        names the X server's version and vendor."""
+        return f"TkCurses {__version__} {os.environ.get('TERM', '')}".rstrip()
+
+    def winfo_visual(self) -> str:
+        """The screen's visual class, by how much colour the terminal has:
+        ``truecolor`` for direct colour, ``staticcolor`` for a fixed palette,
+        ``staticgray`` for none."""
+        depth = self.winfo_colordepth()
+        if depth >= ColorDepth.DIRECT:
+            return "truecolor"
+        return "staticcolor" if depth > ColorDepth.NONE else "staticgray"
+
+    winfo_screenvisual = winfo_visual
+
+    def winfo_visualid(self) -> str:
+        """The screen's one visual, as Tk names a visual: a hexadecimal id.
+        It is its depth."""
+        return hex(self.winfo_depth())
+
+    def winfo_visualsavailable(self, includeids: bool = False) -> list[tuple[Any, ...]]:
+        """The visuals there are: the one the terminal has, as ``(class,
+        depth)``, or ``(class, depth, id)`` with ``includeids``."""
+        found: tuple[Any, ...] = (self.winfo_visual(), self.winfo_depth())
+        if includeids:
+            found += (self.winfo_depth(),)
+        return [found]
+
+    def winfo_screencells(self) -> int:
+        """The colours in the screen's palette, as :meth:`winfo_cells`."""
+        return self.winfo_cells()
+
+    def winfo_colormapfull(self) -> bool:
+        """False: a terminal's palette is fixed, and never fills."""
+        return False
+
+    def winfo_interps(self, displayof: Any = 0) -> tuple[str, ...]:
+        """The applications that :meth:`send` can reach: this one."""
+        del displayof
+        return (self._app_name(),)
+
+    def winfo_atom(self, name: str, displayof: Any = 0) -> int:
+        """The number of the atom ``name``, made if it is new - X's own
+        numbers for its predefined atoms, ``PRIMARY`` being 1."""
+        del displayof
+        atoms = self.tk.atoms
+        text = str(name)
+        if text not in atoms:
+            atoms[text] = max(atoms.values()) + 1
+        return atoms[text]
+
+    def winfo_atomname(self, id: Any, displayof: Any = 0) -> str:
+        """The name of the atom numbered ``id``.
+
+        Raises:
+            TclError: If ``id`` is not a whole number, or no atom has it.
+        """
+        del displayof
+        number = _tcl_number(id)
+        if not isinstance(number, int) or isinstance(number, bool):
+            raise TclError(f'expected integer but got "{id}"')
+        for name, each in self.tk.atoms.items():
+            if each == number:
+                return name
+        raise TclError(f'no atom exists with id "{number}"')
+
+    def winfo_pathname(self, id: Any, displayof: Any = 0) -> str:
+        """The path name of the widget whose :meth:`winfo_id` is ``id``.
+
+        Raises:
+            TclError: If ``id`` is not a whole number, or names no widget.
+        """
+        del displayof
+        number = _tcl_number(id)
+        if not isinstance(number, int) or isinstance(number, bool):
+            raise TclError(f'expected integer but got "{id}"')
+        for path in self.tk.widgets:
+            widget = self.tk.widgets.get(path)
+            if widget is not None and widget.winfo_id() == number:
+                return str(widget)
+        raise TclError(f'window id "{hex(number)}" does not exist in this application')
+
+    def send(self, interp: str, cmd: str, *args: Any) -> Any:
+        """Run a command in the application named ``interp`` - which can
+        only be this one, as there is no other to reach.
+
+        Raises:
+            TclError: If ``interp`` names another application, as Tk's
+                ``no application named``.
+        """
+        if str(interp) != self._app_name():
+            raise TclError(f'no application named "{interp}"')
+        return self.tk.call(cmd, *args)
+
+    # ------------------------------------------------------------ palette
+
+    def tk_setPalette(self, *args: Any, **kw: Any) -> None:
+        """Recolour every widget from one background colour, or from named
+        colours, and make the colours the default for widgets made later.
+
+        Given a background alone, the rest are worked out from it as Tk
+        works them out: a foreground black or white by its brightness, an
+        active background lighter, a select background and trough darker.
+        ``tk_setPalette("#336699")``; ``tk_setPalette(background="black",
+        foreground="yellow")``; ``tk_setPalette("background", "black")``.
+
+        Raises:
+            TclError: If no background is given, or the names and colours do
+                not pair up.
+
+        Differences from tkinter:
+            Tk on X11 also recolours ttk's ``default`` theme; the themed
+            widgets here are left as they are. A widget's own default colour
+            here is the terminal's, ``""``, where Tk's is a colour such as
+            ``black``, and Tk compares against it in deciding which colours
+            to keep for a class: one palette over another can leave a class
+            a different colour for widgets made afterwards.
+        """
+        # Tk's ::tk_setPalette, palette.tcl (Tk 9.0).
+        if self.winfo_colordepth() == ColorDepth.NONE:
+            return
+        words = [*args]
+        for name, value in kw.items():
+            words += [name, value]
+        if len(words) == 1:
+            new = {"background": str(words[0])}
+        elif len(words) % 2:
+            raise TclError("list must have an even number of elements")
+        else:
+            new = {str(words[i]): str(words[i + 1]) for i in range(0, len(words), 2)}
+        if "background" not in new:
+            raise TclError("must specify a background color")
+        bg = _exact_rgb16(self, new["background"])
+        bright = bg[0] + 1.5 * bg[1] + 0.5 * bg[2] > 100000
+        new.setdefault("foreground", "black" if bright else "white")
+        fg = _exact_rgb16(self, new["foreground"])
+        darker = "#" + "".join(f"{(9 * c) // 2560:02x}" for c in bg)
+        for name in (
+            "activeForeground",
+            "insertBackground",
+            "selectForeground",
+            "highlightColor",
+        ):
+            new.setdefault(name, new["foreground"])
+        new.setdefault(
+            "disabledForeground",
+            "#"
+            + "".join(
+                f"{(3 * b + f) // 1024:02x}" for b, f in zip(bg, fg, strict=True)
+            ),
+        )
+        new.setdefault("highlightBackground", new["background"])
+        if "activeBackground" not in new:
+            lights = []
+            for c in bg:
+                light = c // 256
+                light += max((light * 15) // 100, (255 - light) // 3)
+                lights.append(min(light, 255))
+            new["activeBackground"] = "#" + "".join(f"{c:02x}" for c in lights)
+        new.setdefault("selectBackground", darker)
+        new.setdefault("troughColor", darker)
+        new.setdefault("buttonBackground", new["background"])
+        new.setdefault("selectColor", "white" if bright else "black")
+        # Tk makes one of each classic widget, in a window of its own made
+        # last, to tell an option-database default that applies from one that
+        # does not. They are recoloured with the rest, and since 9.0 that is
+        # before they are compared, so each leaves its class's colours in the
+        # database at priority 60 - measured, and why this keeps them.
+        root = self._root()
+        holder = Frame(root, name="___tk_set_palette")
+        prototypes = {}
+        for class_name in _PALETTE_PROTOTYPES:
+            made = globals()[class_name](holder, name=class_name.lower())
+            prototypes[made.winfo_class()] = made
+        try:
+            self._recolor_tree(root, new, prototypes)
+        finally:
+            holder.destroy()
+        for name, value in new.items():
+            self.option_add(f"*{name}", value, "widgetDefault")
+
+    def _recolor_tree(
+        self, widget: Misc, colors: dict[str, str], prototypes: dict[str, Misc]
+    ) -> None:
+        """Give ``widget`` and everything inside it each colour it has an
+        option for, as Tk's ``::tk::RecolorTree`` does - whatever it was set
+        to before, in Tk 9.0 - and keep a colour that is not the class's
+        default in the option database, for that class."""
+        for name, value in colors.items():
+            option = name.lower()
+            try:
+                entry = widget._configure_query(option)
+            except (TclError, KeyError):
+                continue
+            if len(entry) != 5:
+                continue
+            widget.configure({option: value})
+            default = widget.option_get(name, name[:1].upper() + name[1:])
+            prototype = prototypes.get(widget.winfo_class())
+            if not default or (
+                prototype is not None and str(prototype.cget(option)) != str(default)
+            ):
+                default = entry[3]
+            if _same_colour(widget, default, entry[4]):
+                continue
+            self.option_add(f"*{widget.winfo_class()}.{name}", value, 60)
+        for child in widget.winfo_children():
+            self._recolor_tree(child, colors, prototypes)
+
+    def tk_bisque(self) -> None:
+        """Recolour everything in Tk's old bisque palette, as Tk's
+        ``::tk_bisque`` does."""
+        self.tk_setPalette(
+            "activeBackground", "#e6ceb1", "activeForeground", "black",
+            "background", "#ffe4c4", "disabledForeground", "#b0b0b0",
+            "foreground", "black", "highlightBackground", "#ffe4c4",
+            "highlightColor", "black", "insertBackground", "black",
+            "selectBackground", "#e6ceb1", "selectForeground", "black",
+            "troughColor", "#cdb79e",
+        )  # fmt: skip
+
+    def tk_strictMotif(self, boolean: Any = None) -> bool:
+        """Get or set Tk's ``tk_strictMotif`` flag, and answer it.
+
+        Differences from tkinter:
+            Kept and read back; it changes no binding here.
+        """
+        if boolean is not None:
+            self.tk.strict_motif = bool(_tcl_boolean(self, boolean))
+        return self.tk.strict_motif
+
+    def info_patchlevel(self) -> _VersionInfo:
+        """The version of Tcl that TkCurses follows, as tkinter answers it:
+        ``major``, ``minor``, ``micro``, ``releaselevel`` and ``serial``."""
+        major, minor, micro = (
+            int(part) for part in str(self.tk.call("info", "patchlevel")).split(".")
+        )
+        return _VersionInfo(major, minor, micro, "final", 0)
 
     def winfo_cells(self) -> int:
         """Number of colours available, which is what Tk means by cells."""
@@ -3633,6 +4158,8 @@ class Misc:
         """
         # Those five-tuples come from Tcl's widget definitions; the one-option
         # form is answered by _configure_query.
+        if isinstance(cast("object", cnf), str):
+            return self._configure_query(cast("str", cnf))
         options = _given(cnf, kw)
         if not options:
             return {key: self._configure_query(key) for key in sorted(self._options)}
@@ -3843,6 +4370,15 @@ class Misc:
             return False
         raise TclError(f'expected boolean value but got "{s}"')
 
+    # tkinter's bare names for grid's methods, on every widget: Misc.bbox is
+    # Misc.grid_bbox. A widget with a bbox, size or anchor of its own - a
+    # Listbox, a Canvas - answers with that instead, as in tkinter.
+    # Typed loosely: a widget's own bbox and size take other arguments, as
+    # tkinter's do, and an alias has to admit both.
+    anchor = grid_anchor
+    bbox: Any = grid_bbox
+    size: Any = grid_size
+
 
 # ======================================================================
 # Default root
@@ -3895,6 +4431,18 @@ def _get_default_root(what: str = "create a widget") -> Misc:
 #: The Tk and Tcl this library behaves as: it is measured against Tk 9.0.2.
 #: Floats, as tkinter's are, so ``TkVersion >= 8.6`` works.
 TkVersion = 9.0
+
+
+class _VersionInfo(NamedTuple):
+    """A version as ``info_patchlevel`` answers it, the shape of tkinter's."""
+
+    major: int
+    minor: int
+    micro: int
+    releaselevel: str
+    serial: int
+
+
 TclVersion = 9.0
 
 #: ``createfilehandler``'s masks, with tkinter's values.
@@ -4983,6 +5531,12 @@ class Pack:
 
     info = pack_info
 
+    # tkinter's bare names. On a widget, configure is the widget's own, and
+    # forget and info are pack's, as tkinter's method order has them.
+    configure = config = pack_configure
+    propagate = Misc.pack_propagate
+    slaves: Any = Misc.pack_slaves
+
 
 #: What each layout class is called in the error a mixed container raises.
 _MANAGER_NAMES = {
@@ -5234,6 +5788,19 @@ class Grid:
             "ipady": options.ipady,
         }
 
+    # tkinter's bare names, reached on a widget only where neither Misc nor
+    # Pack has one first: location, as in tkinter.
+    configure = config = grid_configure
+    bbox: Any = Misc.grid_bbox
+    columnconfigure = Misc.grid_columnconfigure
+    forget = grid_forget
+    info = grid_info
+    location = Misc.grid_location
+    propagate = Misc.grid_propagate
+    rowconfigure = Misc.grid_rowconfigure
+    size: Any = Misc.grid_size
+    slaves: Any = Misc.grid_slaves
+
 
 def _grid_layout_of(container: Misc) -> GridLayout:
     """The container's grid manager, created on first use.
@@ -5390,6 +5957,12 @@ class Place:
         if options is None:
             raise TclError(f'window "{self}" is not placed')
         return {"in": container, **vars(options)}
+
+    # tkinter's bare names.
+    configure = config = place_configure
+    forget = place_forget
+    info = place_info
+    slaves: Any = Misc.place_slaves
 
 
 def _place_layout_of(container: Misc) -> PlaceLayout:
@@ -5633,6 +6206,9 @@ class Wm:
         self._grid_spec: tuple[int, int, int, int] | None = None
         self._topmost = False
         self._fullscreen = False
+        # Hints for a window manager, kept so that each reads back what was
+        # set: wm_iconname, wm_group and the rest below.
+        self._hints: dict[str, Any] = {}
 
     # ------------------------------------------------------------- titling
 
@@ -6126,6 +6702,256 @@ class Wm:
         window._unmap()
 
     forget = wm_forget
+
+    # ------------------------------------------------- hints with no effect
+    #
+    # Each asks a window manager for something a terminal has none of - an
+    # icon, a group, a session's command line, an aspect ratio. Each is
+    # checked as Tk 9.0.2 on X11 checks it, kept, and read back, so that a
+    # program setting one runs unchanged and one reading one back gets what
+    # it set. Nothing on the screen changes.
+
+    def _hint(self, name: str, value: Any, empty: Any = "") -> Any:
+        """Set the hint ``name`` when a value is given and answer ``""``, or
+        answer the one it has: ``empty`` for none, or a cleared one."""
+        if value is None:
+            return self._hints.get(name, empty)
+        if value == "":
+            self._hints.pop(name, None)
+        else:
+            self._hints[name] = value
+        return ""
+
+    def _window_path(self, window: Any) -> str:
+        """``window``'s path name, refused as Tk refuses a path naming no
+        window."""
+        text = str(window)
+        try:
+            self.nametowidget(text)  # type: ignore[attr-defined]
+        except (KeyError, TclError):
+            raise TclError(f'bad window path name "{text}"') from None
+        return text
+
+    @staticmethod
+    def _hint_ints(values: tuple[Any, ...]) -> tuple[int, ...]:
+        """Whole numbers for ``wm aspect`` or ``wm iconposition``, or all
+        empty to clear them: an empty tuple."""
+        if all(value == "" for value in values):
+            return ()
+        numbers = []
+        for value in values:
+            number = _tcl_number(value)
+            if not isinstance(number, int) or isinstance(number, bool):
+                raise TclError(f'expected integer but got "{value}"')
+            numbers.append(number)
+        return tuple(numbers)
+
+    def wm_aspect(
+        self,
+        minNumer: Any = None,
+        minDenom: Any = None,
+        maxNumer: Any = None,
+        maxDenom: Any = None,
+    ) -> tuple[int, int, int, int] | None:
+        """Get or set the range of width-to-height ratios the window may have.
+
+        Kept and read back; the window is not held to it. Four empty
+        strings clear it.
+
+        Raises:
+            TclError: If only some of the four are given, one is not a whole
+                number, or one is not above zero.
+        """
+        given = (minNumer, minDenom, maxNumer, maxDenom)
+        if all(value is None for value in given):
+            return self._hints.get("aspect")
+        if any(value is None for value in given):
+            raise TclError(
+                'wrong # args: should be "wm aspect window '
+                '?minNumer minDenom maxNumer maxDenom?"'
+            )
+        numbers = self._hint_ints(given)
+        if any(number <= 0 for number in numbers):
+            raise TclError("aspect number can't be <= 0")
+        self._hint("aspect", numbers or "")
+        return None
+
+    aspect = wm_aspect
+
+    def wm_client(self, name: str | None = None) -> str:
+        """Get or set the name of the machine the program runs on, for a
+        session manager. Kept and read back; ``""`` clears it."""
+        return str(self._hint("client", name))
+
+    client = wm_client
+
+    def wm_colormapwindows(self, *wlist: Any) -> list[Misc] | None:
+        """Get or set the windows whose colour maps the window manager should
+        install. Kept and read back as the widgets; nothing is installed.
+
+        Raises:
+            TclError: If one names no window.
+        """
+        if not wlist:
+            paths = self._hints.get("colormapwindows", [])
+            return [self.nametowidget(path) for path in paths]  # type: ignore[attr-defined]
+        if len(wlist) == 1 and isinstance(wlist[0], (list, tuple)):
+            wlist = tuple(wlist[0])
+        self._hints["colormapwindows"] = [self._window_path(w) for w in wlist]
+        return None
+
+    colormapwindows = wm_colormapwindows
+
+    def wm_command(self, value: Any = None) -> str:
+        """Get or set the command line that would start the program again,
+        for a session manager. Kept and read back; ``""`` clears it."""
+        if isinstance(value, (list, tuple)):
+            value = " ".join(str(part) for part in value)
+        return str(self._hint("command", value))
+
+    command = wm_command
+
+    def wm_group(self, pathName: Any = None) -> str:
+        """Get or set the window that leads this one's group, as a path name.
+        Kept and read back; ``""`` clears it.
+
+        Raises:
+            TclError: If the path names no window.
+        """
+        if pathName is None or pathName == "":
+            return str(self._hint("group", pathName))
+        return str(self._hint("group", self._window_path(pathName)))
+
+    group = wm_group
+
+    def wm_iconbitmap(self, bitmap: Any = None, default: Any = None) -> str:
+        """Get or set the bitmap for the window's icon: one of Tk's built-in
+        names or ``@file``. Kept and read back; there is no icon.
+
+        Differences from tkinter:
+            ``default``, which on Windows sets the icon of windows yet to be
+            made, is refused, as Tk on X11 refuses it.
+
+        Raises:
+            TclError: If the bitmap is not one Tk knows, or ``default`` is
+                given.
+        """
+        if default is not None:
+            raise TclError('wrong # args: should be "wm iconbitmap window ?bitmap?"')
+        if bitmap is None or bitmap == "":
+            return str(self._hint("iconbitmap", bitmap))
+        return str(self._hint("iconbitmap", _bitmap(self, bitmap)))
+
+    iconbitmap = wm_iconbitmap
+
+    def wm_iconmask(self, bitmap: Any = None) -> str:
+        """Get or set the mask for the window's icon bitmap. Kept and read
+        back, as :meth:`wm_iconbitmap`.
+
+        Raises:
+            TclError: If the bitmap is not one Tk knows.
+        """
+        if bitmap is None or bitmap == "":
+            return str(self._hint("iconmask", bitmap))
+        return str(self._hint("iconmask", _bitmap(self, bitmap)))
+
+    iconmask = wm_iconmask
+
+    def wm_iconname(self, newName: str | None = None) -> str:
+        """Get or set the name shown with the window's icon. Kept and read
+        back; ``""`` clears it."""
+        return str(self._hint("iconname", newName))
+
+    iconname = wm_iconname
+
+    def wm_iconphoto(self, default: bool = False, *args: Any) -> None:
+        """Set the window's icon from one or more photo images. Checked and
+        kept; there is no icon to show.
+
+        Raises:
+            TclError: If no image is given, or one is not a photo image.
+        """
+        if not args:
+            raise TclError(
+                'wrong # args: should be "wm iconphoto window ?-default? '
+                'image1 ?image2 ...?"'
+            )
+        names = []
+        for image in args:
+            name = str(image)
+            found = self.tk.images.get(name)
+            kind = getattr(found, "type", None)
+            if found is None or not callable(kind) or kind() != "photo":
+                raise TclError(f'can\'t use "{name}" as iconphoto: not a photo image')
+            names.append(name)
+        self._hints["iconphoto"] = names
+        if default:
+            self._hints["iconphoto_default"] = names
+        return None
+
+    iconphoto = wm_iconphoto
+
+    def wm_iconposition(self, x: Any = None, y: Any = None) -> tuple[int, int] | None:
+        """Get or set where the window's icon should go. Kept and read back;
+        two empty strings clear it.
+
+        Raises:
+            TclError: If only one is given, or one is not a whole number.
+        """
+        if x is None and y is None:
+            return self._hints.get("iconposition")
+        if x is None or y is None:
+            raise TclError('wrong # args: should be "wm iconposition window ?x y?"')
+        numbers = self._hint_ints((x, y))
+        self._hint("iconposition", numbers or "")
+        return None
+
+    iconposition = wm_iconposition
+
+    def wm_iconwindow(self, pathName: Any = None) -> str:
+        """Get or set a window to show as this one's icon, as a path name.
+        Kept and read back; the window is not used.
+
+        Raises:
+            TclError: If the path names no window.
+        """
+        if pathName is None or pathName == "":
+            return str(self._hint("iconwindow", pathName))
+        return str(self._hint("iconwindow", self._window_path(pathName)))
+
+    iconwindow = wm_iconwindow
+
+    def _who_from(self, name: str, who: str | None) -> str:
+        """``wm positionfrom`` and ``wm sizefrom``: ``program``, ``user``,
+        or ``""``, abbreviated as Tk allows."""
+        if who is None or who == "":
+            return str(self._hint(name, who))
+        for choice in ("program", "user"):
+            if choice.startswith(who):
+                return str(self._hint(name, choice))
+        raise TclError(f'bad argument "{who}": must be program or user')
+
+    def wm_positionfrom(self, who: str | None = None) -> str:
+        """Get or set who chose the window's position, ``program`` or
+        ``user``. Kept and read back; it changes nothing here.
+
+        Raises:
+            TclError: If it is neither.
+        """
+        return self._who_from("positionfrom", who)
+
+    positionfrom = wm_positionfrom
+
+    def wm_sizefrom(self, who: str | None = None) -> str:
+        """Get or set who chose the window's size, ``program`` or ``user``.
+        Kept and read back; it changes nothing here.
+
+        Raises:
+            TclError: If it is neither.
+        """
+        return self._who_from("sizefrom", who)
+
+    sizefrom = wm_sizefrom
 
 
 # ======================================================================
@@ -6982,6 +7808,17 @@ class Tk(_Backdrop, BaseWidget, Wm):
                 self._release_lost()
             held = self._mouse_owner
             target = self._mouse_target(event)
+            if (
+                held is None
+                and target._busy_covers()
+                and self._through_grab(target) is target
+            ):
+                # Taken by the busy window, as Tk's takes it. A press made
+                # before the hold still gets its release, through the
+                # implicit grab, so nothing is left held down.
+                self._mouse_owner = None
+                self._cross_to(None, event)
+                return
             if event.is_scroll:
                 self._through_grab(target)._handle(event)
                 return
@@ -10294,7 +11131,14 @@ class Entry(_Drawable, XView):
         validate: When ``validatecommand`` is asked: ``none``, ``focus``,
             ``focusin``, ``focusout``, ``key`` or ``all``.
         validatecommand: Asked whether a change may be made; returns true to
-            allow it.
+            allow it. As in tkinter, a name :meth:`~Misc.register` made with
+            Tk's percent codes - ``(root.register(check), "%P")`` - is called
+            with each code substituted: ``%d`` 1 for an insert, 0 for a
+            delete, -1 otherwise; ``%i`` the index; ``%P`` the text if the
+            change is allowed; ``%s`` the text before it; ``%S`` the text
+            inserted or deleted; ``%v`` the ``validate`` mode; ``%V`` what
+            asked - ``key``, ``focusin``, ``focusout`` or ``forced``; ``%W``
+            the entry. A Python callable may be given instead.
 
     Standard options, described in :doc:`/reference/options`:
     ``background``, ``borderwidth``, ``cursor``, ``disabledforeground``,
@@ -10316,6 +11160,12 @@ class Entry(_Drawable, XView):
         ``highlightthickness`` are accepted and draw nothing: the focus is shown
         by markers instead. So is ``cursor``: the mouse pointer belongs to the
         terminal.
+
+    TkCurses extension:
+        A ``validatecommand`` may be a Python callable rather than a
+        registered name. It is given the text the change would make, ``%P``,
+        if it takes an argument, and nothing if it does not - which is how
+        tkinter calls one.
 
     Sample output (disabledbackground, readonlybackground):
         for state, colour in (("disabled", "red"), ("readonly", "blue")):
@@ -10528,12 +11378,13 @@ class Entry(_Drawable, XView):
         variable = self._options["textvariable"]
         if variable is None:
             return
+        previous = self._field.text
         self._field.text = str(variable.get())
         # Tk's "forced" condition. Measured: this fires when the variable is
         # written AND when one is first attached, at construction or by
         # configure(), which is why it lives here rather than in the trace
         # handler alone. TkCurses-3xb.
-        self._validate_forced()
+        self._validate_forced(previous)
         self._publish_view()
         self._redraw()
 
@@ -10571,6 +11422,9 @@ class Entry(_Drawable, XView):
         self._edit(
             lambda: self._field.insert(where, string),
             text[:where] + string + text[where:],
+            action=1,
+            index=where,
+            changed=string,
         )
 
     def delete(self, first: Any, last: Any = None) -> None:
@@ -10586,7 +11440,13 @@ class Entry(_Drawable, XView):
         text = self._field.text
         if start >= len(text) or end <= start:
             return
-        self._edit(lambda: self._field.delete(start, end), text[:start] + text[end:])
+        self._edit(
+            lambda: self._field.delete(start, end),
+            text[:start] + text[end:],
+            action=0,
+            index=start,
+            changed=text[start:end],
+        )
 
     def icursor(self, index: Any) -> None:
         """Put the insertion cursor at ``index``, keeping any selection."""
@@ -10875,14 +11735,21 @@ class Entry(_Drawable, XView):
 
     # -------------------------------------------------------------- editing
 
-    def _validated(self, proposed: str) -> bool:
+    def _validated(
+        self,
+        proposed: str,
+        *,
+        action: int = -1,
+        index: int = -1,
+        changed: str = "",
+        condition: str = "key",
+    ) -> bool:
         """Ask the ``validatecommand`` whether an edit may go ahead.
 
-        tkinter passes Tcl substitution codes to a registered command; without
-        Tcl there is nothing to register against, so the callable is handed
-        the proposed contents directly. Anything it raises counts as a
-        refusal - a validator that fails should not take the application with
-        it.
+        A registered command is called with Tk's percent codes substituted,
+        and a Python callable with the proposed contents - see
+        :meth:`_run_validator`. Anything it raises counts as a refusal - a
+        validator that fails should not take the application with it.
 
         Only ``key`` and ``all`` gate an edit. The focus modes validate when
         the focus moves and let every edit through, which was measured rather
@@ -10903,10 +11770,26 @@ class Entry(_Drawable, XView):
             self._edited_while_validating = True
         if str(self._options["validate"]) not in _EDIT_VALIDATED:
             return True
-        return self._ask_validator(proposed, can_raise=True)
+        return self._ask_validator(
+            proposed,
+            can_raise=True,
+            action=action,
+            index=index,
+            changed=changed,
+            condition=condition,
+        )
 
     def _ask_validator(
-        self, proposed: str, *, notify: bool = True, can_raise: bool = False
+        self,
+        proposed: str,
+        *,
+        notify: bool = True,
+        can_raise: bool = False,
+        action: int = -1,
+        index: int = -1,
+        changed: str = "",
+        condition: str = "forced",
+        current: str | None = None,
     ) -> bool:
         """Run the ``validatecommand``, and the ``invalidcommand`` after it.
 
@@ -10925,6 +11808,13 @@ class Entry(_Drawable, XView):
             can_raise: Whether there is a caller to hand an error to - an edit
                 or ``validate()``, not a focus change. The classic Entry never
                 raises; ttk's does, see :meth:`_validator_raised`.
+            action: Tk's ``%d``: 1 for an insert, 0 for a delete, -1 else.
+            index: Tk's ``%i``: where the edit is, or -1.
+            changed: Tk's ``%S``: the text inserted or deleted.
+            condition: Tk's ``%V``: ``key``, ``focusin``, ``focusout`` or
+                ``forced``.
+            current: Tk's ``%s``, when the field has already changed: the
+                text before a variable write.
 
         Returns:
             Whether the validator approved. A validator that raises, or that
@@ -10943,11 +11833,21 @@ class Entry(_Drawable, XView):
             self._nested_edit()
             return True
         mode = str(self._options["validate"])
+        percents = {
+            "d": str(action),
+            "i": str(index),
+            "P": proposed,
+            "s": self._field.text if current is None else current,
+            "S": changed,
+            "v": mode,
+            "V": condition,
+            "W": self._w,
+        }
         self._edited_while_validating = False
         self._validating = True
         try:
             try:
-                allowed = bool(command(proposed))
+                allowed = self._run_validator(command, percents)
             except Exception:
                 # tkinter hands Tcl nothing when a Python callback raises, Tcl
                 # cannot read that as a boolean, and Tk turns validation off.
@@ -10963,10 +11863,33 @@ class Entry(_Drawable, XView):
                 # Whatever it returned, the edit is discarded.
                 return False
             if not allowed and notify:
-                self._refused(proposed)
+                self._refused(proposed, percents)
             return allowed
         finally:
             self._validating = False
+
+    def _run_validator(self, command: Any, percents: dict[str, str]) -> bool:
+        """Call a ``validatecommand`` and read its answer.
+
+        A Python callable is given the proposed text if it takes an argument
+        and nothing if it does not. tkinter's form - a name :meth:`register`
+        made, with Tk's percent codes, as a tuple or one string - is called
+        with each code substituted, and its answer read as Tcl reads one, so
+        ``"no"`` refuses.
+
+        Raises:
+            Exception: Whatever the callable raises; ``TclError`` for a name
+                nothing registered, or an answer that is not a boolean - as
+                Tk, the caller turns validation off for any of them.
+        """
+        if callable(command):
+            if _takes_an_argument(command):
+                return bool(command(percents["P"]))
+            return bool(command())
+        answer = _call_registered(self, command, percents)
+        if isinstance(answer, bool):
+            return answer
+        return bool(_tcl_boolean(self, answer))
 
     def _nested_edit(self) -> None:
         """What an edit made from inside a validation callback does to the mode.
@@ -11010,9 +11933,9 @@ class Entry(_Drawable, XView):
         wanted = _FOCUS_IN_VALIDATED if condition == "focusin" else _FOCUS_OUT_VALIDATED
         if str(self._options["validate"]) not in wanted:
             return None
-        return self._ask_validator(self._field.text)
+        return self._ask_validator(self._field.text, condition=condition)
 
-    def _validate_forced(self) -> None:
+    def _validate_forced(self, previous: str) -> None:
         """Revalidate after the ``textvariable`` was written behind our back.
 
         Tk calls this condition ``forced``, and it is the one that cannot say
@@ -11034,7 +11957,7 @@ class Entry(_Drawable, XView):
         """
         if str(self._options["validate"]) == "none":
             return
-        if not self._ask_validator(self._field.text, notify=False):
+        if not self._ask_validator(self._field.text, notify=False, current=previous):
             self._turn_validation_off()
 
     def _turn_validation_off(self) -> None:
@@ -11086,7 +12009,9 @@ class Entry(_Drawable, XView):
             return style
         return replace(style, attr=(style.attr & ~_curses.A_DIM) | _curses.A_BOLD)
 
-    def _refused(self, proposed: str = "") -> None:
+    def _refused(
+        self, proposed: str = "", percents: dict[str, str] | None = None
+    ) -> None:
         """Run the ``invalidcommand``, which is what Tk does on a refusal.
 
         The third of Tk's validation trio, and it was missing: a program could
@@ -11108,14 +12033,31 @@ class Entry(_Drawable, XView):
         if command is None:
             return
         with contextlib.suppress(Exception):
-            if _takes_an_argument(command):
+            if not callable(command):
+                _call_registered(self, command, percents or {"P": proposed})
+            elif _takes_an_argument(command):
                 command(proposed)
             else:
                 command()
 
-    def _edit(self, change: Callable[[], None], proposed: str) -> None:
-        """Apply an edit if the state and the validator both allow it."""
-        if not self._editable or not self._validated(proposed):
+    def _edit(
+        self,
+        change: Callable[[], None],
+        proposed: str,
+        *,
+        action: int,
+        index: int,
+        changed: str,
+    ) -> None:
+        """Apply an edit if the state and the validator both allow it.
+
+        ``action``, ``index`` and ``changed`` are what Tk substitutes for
+        ``%d``, ``%i`` and ``%S``: 1 for an insert or 0 for a delete, where,
+        and the text inserted or deleted.
+        """
+        if not self._editable or not self._validated(
+            proposed, action=action, index=index, changed=changed
+        ):
             return
         change()
         self._changed()
@@ -11401,10 +12343,16 @@ def _entry_keystroke(event: Event) -> str | None:
     keysym = event.keysym
 
     if keysym == "BackSpace":
-        if not field.delete_selection() and field.cursor > 0:
+        if field.selection:
+            _delete_selected(entry)
+        elif field.cursor > 0:
+            at = field.cursor - 1
             entry._edit(
-                lambda: field.delete(field.cursor - 1, field.cursor),
-                field.text[: field.cursor - 1] + field.text[field.cursor :],
+                lambda: field.delete(at, at + 1),
+                field.text[:at] + field.text[at + 1 :],
+                action=0,
+                index=at,
+                changed=field.text[at],
             )
         else:
             entry._changed()
@@ -11413,10 +12361,16 @@ def _entry_keystroke(event: Event) -> str | None:
     if keysym == "Delete" and not event.state & _TK_SHIFT:
         # Shift-Delete is <<Cut>>, and Tk lets the virtual event have it:
         # measured, it cuts the selection and deletes nothing else.
-        if not field.delete_selection():
+        if field.selection:
+            _delete_selected(entry)
+        elif field.cursor < len(field.text):
+            at = field.cursor
             entry._edit(
-                lambda: field.delete(field.cursor, field.cursor + 1),
-                field.text[: field.cursor] + field.text[field.cursor + 1 :],
+                lambda: field.delete(at, at + 1),
+                field.text[:at] + field.text[at + 1 :],
+                action=0,
+                index=at,
+                changed=field.text[at],
             )
         else:
             entry._changed()
@@ -11428,22 +12382,78 @@ def _entry_keystroke(event: Event) -> str | None:
         # through "all" rather than putting an f in the field. TkCurses-r3og.
         return None
     if event.char and event.char.isprintable():
-        selection = field.selection
-        start = selection[0] if selection else field.cursor
-        remainder = (
-            field.text[: selection[0]] + field.text[selection[1] :]
-            if selection
-            else field.text
+        # Two edits, each validated, as tk::EntryInsert makes them: the
+        # selection is deleted, then the character inserted at the cursor -
+        # even if the validator kept the selection.
+        if field.selection:
+            _delete_selected(entry)
+        at = field.cursor
+        char = event.char
+        entry._edit(
+            lambda: field.insert(at, char),
+            field.text[:at] + char + field.text[at:],
+            action=1,
+            index=at,
+            changed=char,
         )
-        proposed = remainder[:start] + event.char + remainder[start:]
-
-        def apply() -> None:
-            field.delete_selection()
-            field.insert(field.cursor, event.char)
-
-        entry._edit(apply, proposed)
         return "break"
     return None
+
+
+def _delete_selected(entry: Any) -> None:
+    """Delete an Entry's selection, as a validated edit - as Tk's
+    ``tk::EntryBackspace`` and ``tk::EntryInsert`` do, through the widget's
+    own ``delete``."""
+    field = entry._field
+    first, last = field.selection
+    text = field.text
+    entry._edit(
+        lambda: field.delete(first, last),
+        text[:first] + text[last:],
+        action=0,
+        index=first,
+        changed=text[first:last],
+    )
+
+
+def _call_registered(widget: Any, command: Any, percents: dict[str, str]) -> Any:
+    """Call a command given as tkinter gives one to Tk: a name ``register``
+    made and its arguments, as a tuple or one string, with Tk's percent codes
+    substituted in each - ``%%`` is ``%``, and a code Tk does not know is its
+    letter, as measured on Tk 9.0.2.
+
+    Raises:
+        TclError: If no command has the name.
+    """
+    words = (
+        [str(word) for word in command]
+        if isinstance(command, (list, tuple))
+        else _tcl_list(str(command))
+    )
+    if not words:
+        return None
+    func = widget.tk.commands.get(words[0])
+    if func is None:
+        raise TclError(f'invalid command name "{words[0]}"')
+    return func(*(_substituted(word, percents) for word in words[1:]))
+
+
+def _substituted(word: str, percents: dict[str, str]) -> str:
+    """``word`` with each ``%`` code replaced from ``percents``."""
+    if "%" not in word:
+        return word
+    out = []
+    at = 0
+    while at < len(word):
+        char = word[at]
+        if char == "%" and at + 1 < len(word):
+            code = word[at + 1]
+            out.append("%" if code == "%" else percents.get(code, code))
+            at += 2
+        else:
+            out.append(char)
+            at += 1
+    return "".join(out)
 
 
 def _entry_click(event: Event) -> None:
@@ -13211,7 +14221,7 @@ class Spinbox(Entry):
         state, and a readonly spinbox's arrows are the whole point of the
         readonly state. The validator still gets its say.
         """
-        if self._disabled or not self._validated(text):
+        if self._disabled or not self._validated(text, condition="forced"):
             return
         self._field.text = text
         self._field.select_clear()
@@ -13294,9 +14304,8 @@ class Spinbox(Entry):
     def bbox(self, index: Any) -> tuple[int, int, int, int]:
         """The box of the character at ``index``, as ``(x, y, width, height)``.
 
-        Differences from tkinter:
-            ``tk.Spinbox`` has this and ``tk.Entry`` does not: tkinter gives the
-            classic Entry only the grid's ``bbox``.
+        As in tkinter, the classic Entry has no ``bbox`` of its own and
+        answers with the grid's, :meth:`Misc.grid_bbox`.
         """
         # TkCurses-52q.
         return self._char_bbox(index)
@@ -21694,6 +22703,57 @@ class Listbox(_Drawable, XView, YView):
         self._redraw()
         return None
 
+    def scan_mark(self, x: Any, y: Any) -> None:
+        """Remember where a scan starts, and the view there.
+
+        Raises:
+            TclError: If ``x`` or ``y`` is not an integer, in Tk's words.
+        """
+        self._scan = (
+            _tcl_integer(None, x),
+            _tcl_integer(None, y),
+            self._left,
+            self._top,
+        )
+
+    def scan_dragto(self, x: Any, y: Any) -> None:
+        """Scroll by ten times how far ``(x, y)`` is from the mark, as Tk's
+        ``scan dragto`` does; a drag that runs into an edge starts again
+        from there, so the view moves as soon as the pointer turns back.
+
+        Differences from tkinter:
+            ``x`` and ``y`` are columns and rows, as ``event.x`` and
+            ``event.y`` are here, so a row of drag is ten items and a
+            column ten characters.
+        """
+        # Tk's ListboxScanTo, tkListbox.c: the mark is reset at an edge, to
+        # the edge, even when the edge is below nought because the list is
+        # shorter or narrower than the window.
+        x, y = _tcl_integer(None, x), _tcl_integer(None, y)
+        mark_x, mark_y, mark_left, mark_top = getattr(self, "_scan", (0, 0, 0, 0))
+        height = max(1, self._text_area().height)
+        last_top = len(self._items) - height
+        top = mark_top - 10 * (y - mark_y)
+        if top > last_top:
+            top = mark_top = last_top
+            mark_y = y
+        elif top < 0:
+            top = mark_top = 0
+            mark_y = y
+        last_left = self._widest() - self._body_width()
+        left = mark_left - 10 * (x - mark_x)
+        if left > last_left:
+            left = mark_left = last_left
+            mark_x = x
+        elif left < 0:
+            left = mark_left = 0
+            mark_x = x
+        self._scan = (mark_x, mark_y, mark_left, mark_top)
+        self._top = top
+        self._left = max(0, left)
+        self._clamp_view()
+        self._redraw()
+
     def _widest(self) -> int:
         """The longest item, in cells: what the horizontal view is a fraction of."""
         return max((cells(item) for item in self._items), default=0)
@@ -22322,6 +23382,11 @@ class PanedWindow(_Drawable):
         #: panel the proxy is drawn on, over the panes. Tk's ``Priv(sash)``.
         self._proxy_at: int | None = None
         self._proxy_panel: Any = None
+        #: What ``proxy coord`` answers: where it was last placed, kept
+        #: after ``proxy forget``, as Tk keeps it.
+        self._proxy_xy = (0, 0)
+        #: Each sash's mark, for ``sash dragto``; (0, 0) until set.
+        self._sash_marks: dict[int, tuple[int, int]] = {}
         super().__init__(master, cnf, name=name, **kw)
         self._paned = PanedLayout(str(self._options["orient"]))
         self._paned.sash = self._sash_span()
@@ -22608,26 +23673,108 @@ class PanedWindow(_Drawable):
 
     # ------------------------------------------------------------------ sashes
 
+    def _sash_index(self, index: Any) -> int:
+        """A sash's index, checked as Tk checks it."""
+        number = _tcl_integer(None, index)
+        if not 0 <= number < max(0, len(self._paned.slaves()) - 1):
+            raise TclError("invalid sash index")
+        return number
+
+    def sash(self, *args: Any) -> Any:
+        """Tk's ``sash`` command: ``coord``, ``dragto``, ``mark`` or
+        ``place``, with its arguments, as :meth:`sash_coord`,
+        :meth:`sash_mark` and :meth:`sash_place` take them.
+
+        ``sash("mark", index, x, y)`` remembers where a drag starts, and
+        ``sash("dragto", index, x, y)`` moves the sash by how far ``(x,
+        y)`` is from that mark - from where the sash is now, so two drags
+        to the same place move it twice, as in Tk.
+
+        Raises:
+            TclError: For an unknown option, the wrong number of arguments,
+                or an index that is not a sash, in Tk's words.
+        """
+        path = str(self)
+        if not args:
+            raise TclError(f'wrong # args: should be "{path} sash option ?arg ...?"')
+        option, rest = str(args[0]), args[1:]
+        shapes = {
+            "coord": ((1,), "index"),
+            "mark": ((1, 3), "index ?x y?"),
+            "dragto": ((3,), "index x y"),
+            "place": ((3,), "index x y"),
+        }
+        if option not in shapes:
+            raise TclError(
+                f'bad option "{option}": must be coord, dragto, mark, or place'
+            )
+        counts, usage = shapes[option]
+        if len(rest) not in counts:
+            raise TclError(f'wrong # args: should be "{path} sash {option} {usage}"')
+        index = self._sash_index(rest[0])
+        if option == "coord":
+            return self.sash_coord(index)
+        if option == "mark" and len(rest) == 1:
+            return self._sash_marks.get(index, (0, 0))
+        x, y = _tcl_integer(None, rest[1]), _tcl_integer(None, rest[2])
+        if option == "mark":
+            self._sash_marks[index] = (x, y)
+        elif option == "place":
+            self.sash_place(index, x, y)
+        else:
+            # Tk's PanedWindowSashCommand: the distance from the mark, added
+            # to where the sash is; the mark stays where it was.
+            mark_x, mark_y = self._sash_marks.get(index, (0, 0))
+            at_x, at_y = self.sash_coord(index)
+            if self._paned.vertical:
+                self.sash_place(index, at_x, at_y + y - mark_y)
+            else:
+                self.sash_place(index, at_x + x - mark_x, at_y)
+        # tkinter's sash() is _getints(...) or (): nothing comes back as ().
+        return ()
+
+    def sash_mark(self, index: Any) -> tuple[int, int]:
+        """Where the mark for a drag of this sash is, as ``(x, y)``: what
+        ``sash("mark", index, x, y)`` last set, ``(0, 0)`` until then.
+
+        Raises:
+            TclError: If ``index`` is not a sash, in Tk's words.
+        """
+        return self.sash("mark", index)  # type: ignore[no-any-return]
+
     def sash_coord(self, index: int) -> tuple[int, int]:
-        """Where a sash begins, in cells relative to this widget."""
+        """Where a sash begins, in cells relative to this widget.
+
+        Raises:
+            TclError: If ``index`` is not a sash, in Tk's words.
+        """
+        index = self._sash_index(index)
         area = self._content_area()
         offset = self._paned.sash_position(index) + self._sash_inset()
         if self._paned.vertical:
             return (area.x, area.y + offset)
         return (area.x + offset, area.y)
 
-    def sash_place(self, index: int, x: int, y: int) -> None:
-        """Put a sash at a position, in cells relative to this widget."""
+    def sash_place(self, index: int, x: int, y: int) -> tuple[()]:
+        """Put a sash at a position, in cells relative to this widget.
+        Answers ``()``, as tkinter's does.
+
+        Raises:
+            TclError: If ``index`` is not a sash, in Tk's words.
+        """
+        index = self._sash_index(index)
+        x, y = _tcl_integer(None, x), _tcl_integer(None, y)
         area = self._content_area()
         position = (y - area.y) if self._paned.vertical else (x - area.x)
         position -= self._sash_inset()
         self._paned.move_sash(index, position, self._screen_area())
         self._apply_panes()
+        return ()
 
-    def identify(self, x: int, y: int) -> tuple[int, str] | tuple[()]:
+    def identify(self, x: int, y: int) -> tuple[int, str] | str:
         """Which sash is at a position within this widget, if any.
 
-        Returns ``(index, "sash")`` as Tk does, or ``()`` for anywhere that
+        Returns ``(index, "sash")`` as Tk does, or ``""`` for anywhere that
         is not on one.
         """
         area = self._content_area()
@@ -22638,7 +23785,7 @@ class PanedWindow(_Drawable):
             # first pane's edge to the second's answered (0, "sash").
             if at <= offset < at + self._paned.sash:
                 return (index, "sash")
-        return ()
+        return ""
 
     def _screen_area(self) -> Rect:
         """The region the panes are laid out in, in screen cells."""
@@ -22806,6 +23953,67 @@ class PanedWindow(_Drawable):
             for row in range(rect.height):
                 for column in range(rect.width):
                     self._write_line(dispatcher, window, row, column, glyph, attribute)
+
+    def proxy(self, *args: Any) -> Any:
+        """Tk's ``proxy`` command: ``coord``, ``forget`` or ``place``, as
+        :meth:`proxy_coord`, :meth:`proxy_forget` and :meth:`proxy_place`.
+
+        Raises:
+            TclError: For an unknown option or the wrong number of
+                arguments, in Tk's words.
+        """
+        path = str(self)
+        if not args:
+            raise TclError(f'wrong # args: should be "{path} proxy option ?arg ...?"')
+        option, rest = str(args[0]), args[1:]
+        if option not in ("coord", "forget", "place"):
+            raise TclError(f'bad option "{option}": must be coord, forget, or place')
+        if option == "place":
+            if len(rest) != 2:
+                raise TclError(f'wrong # args: should be "{path} proxy place x y"')
+            self.proxy_place(rest[0], rest[1])
+            return ()
+        if rest:
+            raise TclError(f'wrong # args: should be "{path} proxy {option}"')
+        if option == "coord":
+            return self.proxy_coord()
+        self.proxy_forget()
+        return ()
+
+    def proxy_coord(self) -> tuple[int, int]:
+        """Where the proxy was last placed, as ``(x, y)`` in cells; still
+        answered once it is forgotten, as Tk answers it."""
+        return self._proxy_xy
+
+    def proxy_forget(self) -> tuple[()]:
+        """Take the proxy down. Answers ``()``, as tkinter's does."""
+        self._forget_proxy()
+        return ()
+
+    def proxy_place(self, x: Any, y: Any) -> tuple[()]:
+        """Show the proxy - the line a sash dragged with ``opaqueresize``
+        off leaves where it will go - at ``(x, y)``.
+
+        As in Tk only the position along the panes counts, kept between
+        nought and the far side less the sash; the other is the border's.
+        Answers ``()``, as tkinter's does.
+
+        Raises:
+            TclError: If ``x`` or ``y`` is not an integer, in Tk's words.
+        """
+        x, y = _tcl_integer(None, x), _tcl_integer(None, y)
+        # Tk's PanedWindowProxyCommand.
+        edge = BORDER_WIDTH if self._border_drawn else 0
+        _, _, width = self._sash_parts()
+        if self._paned.vertical:
+            y = max(0, min(y, self._rect.height - edge - width))
+            x = edge
+        else:
+            x = max(0, min(x, self._rect.width - edge - width))
+            y = edge
+        self._proxy_xy = (x, y)
+        self._place_proxy(x, y)
+        return ()
 
     def _forget_proxy(self) -> None:
         """Take the proxy down. Safe when there is none."""

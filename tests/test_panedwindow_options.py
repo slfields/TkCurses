@@ -220,8 +220,8 @@ def test_the_padding_answers_as_the_sash(root):
     first = pane(widget, 0).winfo_width()
     for x in range(first, first + 5):
         assert widget.identify(x, 1) == (0, "sash"), x
-    assert widget.identify(first + 5, 1) == ()
-    assert widget.identify(first - 1, 1) == ()
+    assert widget.identify(first + 5, 1) == ""
+    assert widget.identify(first - 1, 1) == ""
 
 
 def test_sashwidth_widens_the_sash(root):

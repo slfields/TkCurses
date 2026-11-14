@@ -500,3 +500,75 @@ def test_insstr_pushes_the_line_on_by_the_cells_it_inserts(window):
 def test_wide_text_is_clipped_to_the_window_in_cells(window):
     window.addstr(0, 16, "日本語")
     assert text(window, 0)[16:] == "日本"
+
+
+# ------------------------------------------------------ pads and putwin
+
+
+@pytest.fixture
+def screen(monkeypatch):
+    """A stand-in for the running screen: a 24x80 buffer, painted by no one."""
+    from types import SimpleNamespace
+
+    fake = SimpleNamespace(buffer=ScreenBuffer(80, 24))
+    monkeypatch.setattr(tc, "_require_screen", lambda: fake)
+    monkeypatch.setattr(tc, "doupdate", lambda: None)
+    return fake
+
+
+def _saved(window):
+    import io
+
+    file = io.BytesIO()
+    window.putwin(file)
+    return file.getvalue()
+
+
+def _version():
+    return ".".join(map(str, stdlib_curses.ncurses_version)).encode()
+
+
+def test_putwin_writes_what_ncurses_writes_for_a_plain_window(screen):
+    """Measured: the standard library's putwin, on ncurses 6.6, for a fresh
+    one-row, two-column window."""
+    window = tc.newwin(1, 2, 0, 0)
+    assert _saved(window) == (
+        b"\x88\x88\x88\x88ncurses " + _version() + b"\n_maxx=1\nflag=_idcok\n"
+        b"_delay=-1\n_bkgrnd=\\s\nrows:\n1:\\s\\s\n"
+    )
+
+
+def test_putwin_writes_what_ncurses_writes_for_a_pad(screen):
+    pad = tc.newpad(1, 2)
+    assert _saved(pad) == (
+        b"\x88\x88\x88\x88ncurses " + _version() + b"\n_maxx=1\n_flags=16\n"
+        b"flag=_idcok\n_delay=-1\n_pad._pad_y=-1\n_pad._pad_x=-1\n"
+        b"_pad._pad_top=-1\n_pad._pad_left=-1\n_pad._pad_bottom=-1\n"
+        b"_pad._pad_right=-1\n_bkgrnd=\\s\nrows:\n1:\\s\\s\n"
+    )
+
+
+def test_a_saved_pad_comes_back_a_pad(screen):
+    import io
+
+    pad = tc.newpad(3, 30)
+    pad.addstr(1, 2, "far down")
+    back = tc.getwin(io.BytesIO(_saved(pad)))
+    with pytest.raises(stdlib_curses.error, match="requires 6 arguments"):
+        back.refresh()
+    back.refresh(1, 2, 0, 0, 0, 7)
+    assert "".join(screen.buffer.cell(0, x).char for x in range(8)) == "far down"
+
+
+def test_a_pad_shows_only_what_changed_until_it_is_shown_somewhere_new(screen):
+    """As ncurses' pnoutrefresh: a second refresh to the same place copies
+    only what was written since; a refresh anywhere else copies it all."""
+    pad = tc.newpad(2, 10)
+    pad.addstr(0, 0, "abcdefghij")
+    pad.refresh(0, 0, 0, 0, 0, 9)
+    screen.buffer.write(0, 0, "XXXXXXXXXX")
+    pad.addstr(0, 1, "B")
+    pad.refresh(0, 0, 0, 0, 0, 9)
+    assert "".join(screen.buffer.cell(0, x).char for x in range(10)) == "XBXXXXXXXX"
+    pad.refresh(0, 0, 1, 0, 1, 9)
+    assert "".join(screen.buffer.cell(1, x).char for x in range(10)) == "aBcdefghij"
