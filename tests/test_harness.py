@@ -30,7 +30,7 @@ import pyte
 import pytest
 
 from tests.support import TerminalTimeout
-from tests.support.terminal import _ByteStream, _Screen
+from tests.support.terminal import TIMEOUT_SCALE, _ByteStream, _Screen
 
 pytestmark = pytest.mark.tty
 
@@ -839,3 +839,122 @@ sys.stdout.flush()
         "failed anyway - the predicate was never re-checked"
     )
     assert term.contains("the last word")
+
+
+def test_a_clean_exit_during_a_wait_says_it_had_time_to_spare(terminal, tmp_path):
+    """Most programs quit themselves after 4s against a 5s wait, so one that
+    never drew what was waited for usually exits cleanly first. The report
+    used to read as though the exit were the fault - a wrong diagnosis and
+    a CI re-run on #118. TkCurses-5aq."""
+    term = terminal(cols=40, rows=4)
+    term.run_source("import time\ntime.sleep(0.3)\n", workdir=tmp_path)
+    with pytest.raises(TerminalTimeout) as caught:
+        term.wait_for_text("never drawn", timeout=10)
+    first = str(caught.value).splitlines()[0]
+    assert first.startswith("the program exited with code 0 after ")
+    # The budget is scaled for a slow runner: 10s is 40s on CI.
+    assert f"s of a {10 * TIMEOUT_SCALE:g}s wait for text 'never drawn', with " in first
+    assert "s unused. A clean exit is usually the program's own exit timer" in first
+
+
+def test_a_failed_exit_during_a_wait_is_not_called_a_timer(terminal, tmp_path):
+    term = terminal(cols=40, rows=4)
+    term.run_source("raise SystemExit(3)\n", workdir=tmp_path)
+    with pytest.raises(TerminalTimeout) as caught:
+        term.wait_for_text("never drawn", timeout=10)
+    first = str(caught.value).splitlines()[0]
+    assert first.startswith("the program exited with code 3 after ")
+    assert "exit timer" not in first
+
+
+# ------------------------------------------------------------ OSC 4 palette
+
+#: init_color, which ncurses sends as OSC 4; then a cell in the slot. Slot 1
+#: goes out as SGR 31 and slot 100 as 38;5;100, so both forms are covered.
+INIT_COLOR = """
+import curses
+def main(stdscr):
+    curses.start_color()
+    curses.use_default_colors()
+    stdscr.addstr(0, 0, "before", curses.color_pair(0))
+    curses.init_pair(1, 100, -1)
+    stdscr.addstr(0, 10, "old100", curses.color_pair(1))
+    stdscr.refresh()
+    curses.init_color(100, 1000, 400, 0)
+    curses.init_color(1, 0, 1000, 500)
+    curses.init_pair(2, 100, 1)
+    curses.init_pair(3, 1, -1)
+    stdscr.addstr(1, 0, "slot100", curses.color_pair(2))
+    stdscr.addstr(2, 0, "slot1", curses.color_pair(3))
+    stdscr.refresh()
+    stdscr.getch()
+curses.wrapper(main)
+"""
+
+
+def test_a_redefined_palette_slot_reads_back_as_its_new_colour(terminal, tmp_path):
+    """pyte does not model OSC 4: measured, rgb:FF/66/00 through slot 100
+    read back as 878700, slot 100's original colour. TkCurses-bvu.6."""
+    term = terminal(cols=30, rows=4)
+    term.run_source(INIT_COLOR, workdir=tmp_path)
+    term.wait_for_text("slot1")
+    term.wait_for_cell(1, 0, lambda cell: cell.fg == "ff6600")
+    # 500 of ncurses' 1000 is 7f: it scales down, not to the nearest.
+    assert term.char_at(1, 0).bg == "00ff7f"
+    term.wait_for_cell(2, 0, lambda cell: cell.fg == "00ff7f")
+
+
+@pytest.mark.parametrize(
+    ("chunks", "colour"),
+    [
+        ([b"\x1b]4;100;rgb:ff/66/00\x1b\\", b"\x1b[38;5;100mX"], "ff6600"),
+        ([b"\x1b]4;100;rgb:f/6/0\x07\x1b[38;5;100mX"], "ff6600"),
+        ([b"\x1b]4;100;rgb:ffff/6666/0000\x07\x1b[38;5;100mX"], "ff6600"),
+        ([b"\x1b]4;100;rgb:ff/6", b"6/00\x1b\\\x1b[38;5;100mX"], "ff6600"),
+        ([b"\x1b]4;100;rgb:ff/66/00\x1b", b"\\\x1b[38;5;100mX"], "ff6600"),
+        ([b"\x1b", b"]4;100;rgb:ff/66/00\x07\x1b[38;5;100mX"], "ff6600"),
+        ([b"\x1b]4;3;#123456\x07\x1b[33mX"], "123456"),
+        ([b"\x1b]4;9;rgb:12/34/56\x07\x1b[91mX"], "123456"),
+        ([b"\x1b]4;100;rgb:ff/66/00\x07\x1b]104\x07\x1b[38;5;100mX"], "878700"),
+    ],
+    ids=[
+        "ST",
+        "BEL, one digit",
+        "four digits",
+        "split inside",
+        "split in ST",
+        "split after ESC",
+        "hash form",
+        "bright",
+        "reset by 104",
+    ],
+)
+def test_osc4_is_followed_however_it_arrives(chunks, colour):
+    screen = _Screen(4, 1)
+    stream = _ByteStream(screen)
+    for chunk in chunks:
+        stream.feed(chunk)
+    assert screen.buffer[0][0].data == "X"
+    assert screen.buffer[0][0].fg == colour
+
+
+def test_a_cell_drawn_before_the_redefinition_keeps_its_colour():
+    """Applied at its place in the stream, even within one read."""
+    screen = _Screen(4, 1)
+    _ByteStream(screen).feed(
+        b"\x1b[38;5;100mA\x1b]4;100;rgb:ff/66/00\x1b\\\x1b[38;5;100mB"
+    )
+    assert (screen.buffer[0][0].fg, screen.buffer[0][1].fg) == ("878700", "ff6600")
+
+
+def test_direct_colour_passes_the_palette_untouched():
+    """38;2;31;40;100 is a colour whose components happen to read as slot 1,
+    background slot 0 and bright background slot 0 - none of which it is.
+    The 45 after it does name slot 5."""
+    screen = _Screen(4, 1)
+    _ByteStream(screen).feed(
+        b"\x1b]4;0;rgb:00/00/00;1;rgb:00/00/00;5;rgb:00/00/00;8;rgb:00/00/00\x07"
+        b"\x1b[38;2;31;40;100;45mX"
+    )
+    assert screen.buffer[0][0].fg == "1f2864"
+    assert screen.buffer[0][0].bg == "000000"

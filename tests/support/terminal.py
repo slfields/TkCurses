@@ -189,6 +189,9 @@ class _Screen(pyte.Screen):
         self._dim = False
         self._dim_cells: set[tuple[int, int]] = set()
         self._last_drawn = ""
+        #: Palette slots redefined by OSC 4, as the six hex digits pyte
+        #: reports a direct colour in. See :meth:`redefine_palette`.
+        self.palette: dict[int, str] = {}
         super().__init__(*args, **kwargs)
 
     def reset(self) -> None:
@@ -209,7 +212,37 @@ class _Screen(pyte.Screen):
                 self._dim = True
             elif code in (0, 22):
                 self._dim = False
+        if self.palette:
+            attrs = _through_palette(attrs, self.palette)
         super().select_graphic_rendition(*attrs, **kwargs)
+
+    def redefine_palette(self, body: bytes) -> None:
+        """Apply one OSC 4 or OSC 104 - ``body`` is what came between
+        ``ESC ]`` and the terminator.
+
+        pyte does not model the palette, so a slot redefined with
+        ``init_color`` - which ncurses sends as ``OSC 4 ; n ; rgb:RR/GG/BB``
+        - read back as the slot's original colour: measured, ``rgb:FF/66/00``
+        through slot 100 came back as ``878700``. Here the redefinition is
+        remembered and every later SGR naming the slot is drawn as the
+        colour it now holds.
+
+        **Forwards only.** A real terminal recolours cells already drawn in
+        the slot; pyte keeps a cell's colour, not its slot, so those keep the
+        old one. ncurses programs set their colours before drawing with them.
+        """
+        fields = body.split(b";")
+        if fields[0] == b"104":
+            if len(fields) == 1 or fields[1:] == [b""]:
+                self.palette.clear()
+            for field in fields[1:]:
+                if field.isdigit():
+                    self.palette.pop(int(field), None)
+            return
+        for slot, spec in zip(fields[1::2], fields[2::2], strict=False):
+            colour = _palette_spec(spec)
+            if slot.isdigit() and colour is not None:
+                self.palette[int(slot)] = colour
 
     def draw(self, data: str) -> None:
         """Write characters, recording which cells came out dim."""
@@ -342,6 +375,90 @@ class _Screen(pyte.Screen):
 _COLON_SGR = re.compile(rb"\x1b\[([0-9:;]*:[0-9:;]*)m")
 
 
+def _exit_report(
+    code: int, message: str, waited: float | None, budget: float | None
+) -> str:
+    """The first line of a failed wait whose program exited during it."""
+    if waited is None or budget is None:
+        return f"the program exited with code {code} while waiting for {message}"
+    report = (
+        f"the program exited with code {code} after {waited:.1f}s of a "
+        f"{budget:g}s wait for {message}, with {max(budget - waited, 0):.1f}s "
+        "unused"
+    )
+    if code == 0:
+        report += (
+            ". A clean exit is usually the program's own exit timer: "
+            f"{message} had not appeared by then, and that is what to look into"
+        )
+    return report
+
+
+#: An OSC 4 or OSC 104, terminated by BEL or by ST - ncurses sends ST.
+_OSC_PALETTE = re.compile(rb"\x1b\]((?:4|104)(?:;[^\x07\x1b]*)?)(?:\x07|\x1b\\)")
+
+#: Where an OSC sequence ends, to tell a complete one from a split one.
+_OSC_END = re.compile(rb"\x07|\x1b\\")
+
+
+def _palette_spec(spec: bytes) -> str | None:
+    """``rgb:R/G/B`` with one to four hex digits a component, or ``#RRGGBB``,
+    as pyte's six lowercase hex digits; None for anything else."""
+    text = spec.decode("ascii", "replace").lower()
+    if text.startswith("#") and len(text) == 7:
+        return text[1:]
+    if not text.startswith("rgb:"):
+        return None
+    parts = text[4:].split("/")
+    if len(parts) != 3 or not all(1 <= len(part) <= 4 for part in parts):
+        return None
+    try:
+        scaled = [round(int(part, 16) * 255 / (16 ** len(part) - 1)) for part in parts]
+    except ValueError:
+        return None
+    return "".join(f"{value:02x}" for value in scaled)
+
+
+def _through_palette(
+    attrs: tuple[int, ...], palette: dict[int, str]
+) -> tuple[int, ...]:
+    """``attrs`` with every colour naming a redefined slot written as the
+    direct colour it now holds. Covers each form a slot is named in: 30-37
+    and 90-97 (and their backgrounds), and ``38;5;N`` / ``48;5;N``."""
+    out: list[int] = []
+    index = 0
+    while index < len(attrs):
+        code = attrs[index]
+        slot = None
+        background = False
+        step = 1
+        if code in (38, 48) and index + 1 < len(attrs):
+            if attrs[index + 1] == 5 and index + 2 < len(attrs):
+                slot, background, step = attrs[index + 2], code == 48, 3
+            elif attrs[index + 1] == 2:
+                # Already direct: copy it and its three components untouched.
+                out.extend(attrs[index : index + 5])
+                index += 5
+                continue
+        elif 30 <= code <= 37 or 40 <= code <= 47:
+            slot, background = code % 10, code >= 40
+        elif 90 <= code <= 97 or 100 <= code <= 107:
+            slot, background = code % 10 + 8, code >= 100
+        colour = palette.get(slot) if slot is not None else None
+        if colour is None:
+            out.extend(attrs[index : index + step])
+        else:
+            out.extend(
+                (
+                    48 if background else 38,
+                    2,
+                    *(int(colour[i : i + 2], 16) for i in (0, 2, 4)),
+                )
+            )
+        index += step
+    return tuple(out)
+
+
 def _semicolons(match: re.Match[bytes]) -> bytes:
     """Rewrite one colon-separated SGR into the form pyte understands.
 
@@ -376,9 +493,35 @@ class _ByteStream(pyte.ByteStream):
         "T": "scroll_down",
     }
 
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        #: The start of an OSC sequence whose end has not arrived yet.
+        self._held = b""
+
     def feed(self, data: bytes) -> None:
-        """Feed bytes, converting any colon-separated SGR on the way in."""
-        super().feed(_COLON_SGR.sub(_semicolons, data))
+        """Feed bytes, converting any colon-separated SGR on the way in, and
+        taking out OSC 4 and OSC 104 for the screen's palette.
+
+        An OSC split across two reads is held until its end arrives, so a
+        palette change is never lost in the gap. It is applied at its own
+        place in the stream: what was drawn before it in the same read keeps
+        the old colour.
+        """
+        data = self._held + data
+        self._held = b""
+        start = data.rfind(b"\x1b]")
+        if start != -1 and not _OSC_END.search(data, start):
+            data, self._held = data[:start], data[start:]
+        elif data.endswith(b"\x1b"):
+            data, self._held = data[:-1], b"\x1b"
+        screen = self.listener
+        position = 0
+        for match in _OSC_PALETTE.finditer(data):
+            super().feed(_COLON_SGR.sub(_semicolons, data[position : match.start()]))
+            if isinstance(screen, _Screen):
+                screen.redefine_palette(match.group(1))
+            position = match.end()
+        super().feed(_COLON_SGR.sub(_semicolons, data[position:]))
 
 
 class TerminalHarness:
@@ -900,7 +1043,12 @@ class TerminalHarness:
             # buries the reason. Checked after the predicate, not before: a
             # program that printed what was wanted and then exited has
             # succeeded, and the order is the whole difference.
-            if self._exited_without(message, predicate):
+            if self._exited_without(
+                message,
+                predicate,
+                waited=budget - (deadline - time.monotonic()),
+                budget=budget,
+            ):
                 return
             if time.monotonic() >= deadline:
                 raise TerminalTimeout(
@@ -910,7 +1058,12 @@ class TerminalHarness:
             self._drain(min(0.05, max(0.0, deadline - time.monotonic())))
 
     def _exited_without(
-        self, message: str, predicate: Callable[[TerminalHarness], bool]
+        self,
+        message: str,
+        predicate: Callable[[TerminalHarness], bool],
+        *,
+        waited: float | None = None,
+        budget: float | None = None,
     ) -> bool:
         """Whether the wait is over because the child has gone.
 
@@ -931,6 +1084,15 @@ class TerminalHarness:
 
         Same family as TkCurses-9q7, where the tail of a child's output arrived
         and nothing read it. Here it is read and then ignored.
+
+        **The report says how much of the wait was left.** Most test programs
+        end themselves with ``root.after(4000, root.quit)`` against a 5s wait,
+        so a program that never drew what was waited for usually *exits
+        cleanly first*, and "exited with code 0 while waiting" read as though
+        the exit were the fault - a wrong diagnosis and a CI re-run on #118.
+        With ``waited`` and ``budget`` it says the exit was a clean one with
+        time to spare, which points at the thing that never appeared.
+        TkCurses-5aq.
         """
         if self._pid is None:
             return False
@@ -943,8 +1105,8 @@ class TerminalHarness:
         if predicate(self):
             return True
         raise TerminalTimeout(
-            f"the program exited with code {self.exit_code} while waiting "
-            f"for {message}\n{self.describe()}"
+            f"{_exit_report(self.exit_code, message, waited, budget)}\n"
+            f"{self.describe()}"
         )
 
     def wait_for_text(self, text: str, *, timeout: float | None = None) -> None:

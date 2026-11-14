@@ -3672,6 +3672,19 @@ own and scrolled one line, by `ind`, which pyte handles. A Listbox scrolled
 three units in one callback tore every time. The library was right all
 along; a real terminal showed the scroll.
 
+**The harness follows a redefined palette** (`TkCurses-bvu.6`).
+`init_color` goes out as OSC 4, `ESC ] 4 ; n ; rgb:RR/GG/BB ST`, and pyte
+does not model it: `rgb:FF/66/00` through slot 100 read back as `878700`,
+the slot's original colour. `_ByteStream` takes OSC 4 and OSC 104 out of
+the stream at their own place in it - holding one split across two reads
+- and `_Screen` draws every later SGR naming a redefined slot (30-37,
+90-97, `38;5;N` and the backgrounds) as the direct colour it now holds.
+Forwards only: a terminal recolours cells already drawn in the slot, but
+pyte keeps a cell's colour, not its slot. Nothing in the library redefines
+a slot today; images are written as direct colour (`TkCurses-b2b`). This is
+what a widget-colour feature built on `init_color` would be tested with.
+Measured with ncurses: 500 of its 1000 goes out as `7F`, not `80`.
+
 **The tutorial is four pages read in order, and they are tested as one**
 (`TkCurses-5dli`): the introduction, core concepts, common widgets and a
 larger program, with common mistakes, how TkCurses works and a glossary

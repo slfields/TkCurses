@@ -17,7 +17,8 @@
 
 """Changing one geometry option, and what happens to the rest.
 
-What to do: press p, g, x and w to change exactly one option of one manager.
+What to do: press p, g, x and w to change exactly one option of one manager,
+and a to give the pack and grid boxes a pad on one side only.
 Press e to push all three hard against the screen's edges, f to forget them
 and add them again with nothing set, and r to put the starting options back.
 Then shrink the terminal.
@@ -107,7 +108,7 @@ def build(root, screen):
         screen.line(
             1,
             "  p pack side   g grid column   x place x   w place width"
-            "   e edges   f forget   r reset",
+            "   a one-sided pad   e edges   f forget   r reset",
         )
         for name, row in ROWS.items():
             info = getattr(boxes[name], f"{name}_info")()
@@ -125,6 +126,14 @@ def build(root, screen):
             return "break"
 
         return handler
+
+    def one_sided(event):
+        """Tk's two-value pad: padx=(0, 6) pads the right and not the left."""
+        value = 2 if boxes["pack"].pack_info()["padx"] == (0, 6) else (0, 6)
+        apply("pack", padx=value)
+        apply("grid", padx=value)
+        root.after_idle(report)
+        return "break"
 
     def forget_all(event):
         for name in START:
@@ -154,6 +163,7 @@ def build(root, screen):
     root.bind("<Key-g>", toggle("grid", "column", 3, 1))
     root.bind("<Key-x>", toggle("place", "x", 2, 20))
     root.bind("<Key-w>", toggle("place", "width", 8, 16))
+    root.bind("<Key-a>", one_sided)
     root.bind("<Key-e>", to_the_edges)
     root.bind("<Key-f>", forget_all)
     root.bind("<Key-r>", restore)

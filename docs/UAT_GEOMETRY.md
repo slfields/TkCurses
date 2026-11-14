@@ -73,8 +73,8 @@ column.
 ## 28. Geometry options — change one, keep the rest
 
 `python3 -m uat 28` · `p` pack side · `g` grid column · `x` place x ·
-`w` place width · `e` push them past the edges · `f` forget all three ·
-`r` reset
+`w` place width · `a` one-sided pad · `e` push them past the edges ·
+`f` forget all three · `r` reset
 
 Three strips, one per manager, each with a box in it. The line above each
 strip is what the manager reports — `pack_info()`, `grid_info()`,
@@ -95,6 +95,21 @@ strip is what the manager reports — `pack_info()`, `grid_info()`,
       stays where it was
 - [ ] Each line agrees with the box under it, every time
 - [ ] `r` puts all three back exactly as they started
+
+### A pad on one side only
+
+`a` gives the pack and grid boxes Tk's two-value pad, `padx=(0, 6)`: no
+pad on the left, six cells on the right. `a` again goes back to `padx=2`,
+which pads both sides by two. Read back as Tk 9.0.2 does.
+
+- [ ] Both lines report `padx=(0, 6)` — the pair, not `0`, `6` or `(0, 0)`
+- [ ] The pack box moves **two cells left**, to the strip's left edge, and
+      nothing else about it changes
+- [ ] The grid box moves **two cells left** within column 3, and the `3` and
+      `4` markers move **right** — column 3 is two cells wider, for the extra
+      pad on its right, and the `3` stays centred in it. Measured the same
+      way round in Tk 9.0.2
+- [ ] `a` again reports `padx=2` on both lines and puts both boxes back
 
 ### Where the defaults do come back, correctly
 

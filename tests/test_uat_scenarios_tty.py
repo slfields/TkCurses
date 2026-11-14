@@ -2089,3 +2089,39 @@ def test_scenario_50_a_torn_off_menu_drags_by_its_title(uat_terminal):
     )
     term.click(term.display[picture + 3].index("Hammer"), picture + 3)
     term.wait_for_text("last chosen: Hammer")
+
+
+def test_scenario_28_a_pads_one_side_only(uat_terminal):
+    """Tk's two-value pad, as UAT_GEOMETRY's checklist describes it: no pad
+    on the left, so each box moves two cells left, and six on the right, so
+    the grid's column 3 widens and the markers after it move right."""
+    term = uat_terminal(cols=110, rows=20)
+    term.run([sys.executable, "-m", "uat.scenario_28_geometry_options"])
+    shown = ("│ pack │", "│ grid │", "  3  ", "  4  ")
+    term.wait_for(
+        lambda t: "padx=2" in t.row(8) and all(t.find_text(text) for text in shown),
+        message="both boxes, the markers and the grid line",
+    )
+    before = {text: term.find_text(text) for text in shown}
+    shift = {"│ pack │": -2, "│ grid │": -2, "  3  ": 1, "  4  ": 2}
+    moved = {text: (where[0], where[1] + shift[text]) for text, where in before.items()}
+    term.send(b"a")
+    term.wait_for(
+        lambda t: (
+            "padx=(0, 6)" in t.row(3)
+            and "padx=(0, 6)" in t.row(8)
+            and all(t.find_text(text) == where for text, where in moved.items())
+        ),
+        message="both lines read (0, 6), the boxes two cells left, 3 and 4 right",
+    )
+    term.send(b"a")
+    term.wait_for(
+        lambda t: (
+            "padx=2" in t.row(3)
+            and "padx=2" in t.row(8)
+            and all(t.find_text(text) == where for text, where in before.items())
+        ),
+        message="both back at padx=2, everything where it started",
+    )
+    term.send(ESCAPE)
+    assert term.wait_for_exit() == 0
