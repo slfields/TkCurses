@@ -2548,19 +2548,27 @@ class Misc:
         Tab order is the order widgets were created within the toplevel, which
         is the order they appear in each parent's children — the same rule Tk
         uses, and the reason reordering a layout does not reorder tabbing.
+
+        The walk starts from this widget's place in that order **whether or
+        not tabbing could stop on it**, as ``tk::FocusNext`` and
+        ``tk::FocusPrev`` walk the tree from the widget itself. A clicked
+        scrollbar has the focus and is no Tab stop; looking it up among the
+        stops instead sent Tab back to the first one in the window and
+        Shift-Tab to the last.
         """
-        order = [
-            widget
-            for widget in self.winfo_toplevel()._subtree()
-            if widget._focus_ok() and widget is not self.winfo_toplevel()
-        ]
-        if not order:
-            return None
-        try:
+        toplevel = self.winfo_toplevel()
+        order = [widget for widget in toplevel._subtree() if widget is not toplevel]
+        count = len(order)
+        if self is toplevel:
+            # Before the first, or after the last.
+            index = -1 if direction > 0 else count
+        else:
             index = order.index(self)
-        except ValueError:
-            return order[0 if direction > 0 else -1]
-        return order[(index + direction) % len(order)]
+        for step in range(1, count + 1):
+            candidate = order[(index + step * direction) % count]
+            if candidate._focus_ok():
+                return candidate
+        return None
 
     def _focus_ok(self) -> bool:
         """Whether tabbing may stop on this widget.
@@ -24783,7 +24791,9 @@ class Scrollbar(_Drawable):
         is ``cursor``: the mouse pointer belongs to the terminal.
 
         Tab passes a scrollbar by unless its ``takefocus`` is true. Tk stops
-        on one, because it has key bindings.
+        on one, because it has key bindings. One that has the focus - clicked,
+        or given it with ``focus_set`` - is left by Tab and Shift-Tab for the
+        widgets either side of it, as in Tk.
 
     Sample output (activerelief):
         bar = tk.Scrollbar(root, activerelief="sunken", width=3)

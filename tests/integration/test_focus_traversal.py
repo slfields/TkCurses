@@ -122,6 +122,45 @@ def test_relaying_out_a_widget_does_not_move_it_in_the_order(form):
     assert walk(form["a"], 4) == before
 
 
+# ------------------------------------------- from a widget that is no stop
+
+
+@pytest.mark.parametrize("make", ["classic", "ttk", "label"])
+def test_tab_from_a_widget_tab_skips_moves_on_from_where_it_is(app, make):
+    """A clicked scrollbar has the focus without being a Tab stop. Measured
+    on Tk 9.0.2 with a Listbox, Entry a, a Scrollbar and Entry b: from the
+    scrollbar, Tab goes to b and Shift-Tab to a - tk::FocusNext walks the
+    tree from the widget itself. TkCurses went to the Listbox and b, the
+    first and last stops in the window."""
+    from tkcurses import ttk
+
+    top = tkcurses.Toplevel(app)
+    tkcurses.Listbox(top, name="list")
+    tkcurses.Entry(top, name="a")
+    skipped = {
+        "classic": lambda: tkcurses.Scrollbar(top),
+        "ttk": lambda: ttk.Scrollbar(top),
+        "label": lambda: tkcurses.Label(top, text="no stop"),
+    }[make]()
+    tkcurses.Entry(top, name="b")
+    assert not skipped._focus_ok()
+    skipped.focus_set()
+    assert skipped.tk_focusNext().winfo_name() == "b"
+    assert skipped.tk_focusPrev().winfo_name() == "a"
+
+
+def test_from_the_window_itself_tab_starts_at_either_end(form):
+    assert form["top"].tk_focusNext().winfo_name() == "a"
+    assert form["top"].tk_focusPrev().winfo_name() == "e"
+
+
+def test_a_window_with_no_stops_has_no_next(app):
+    top = tkcurses.Toplevel(app)
+    label = tkcurses.Label(top, text="nothing to focus")
+    assert label.tk_focusNext() is None
+    assert top.tk_focusPrev() is None
+
+
 # ------------------------------------------------------------- eligibility
 
 
