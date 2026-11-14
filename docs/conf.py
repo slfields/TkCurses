@@ -37,7 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "_ext"))
 # This checkout's library, ahead of any installed one: an editable install
 # made in another checkout otherwise wins, and the reference would describe
-# that one's docstrings - the trap CLAUDE.md records for the tests.
+# that one's docstrings - the trap CONTRIBUTING.md describes for the tests.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 project = "TkCurses"

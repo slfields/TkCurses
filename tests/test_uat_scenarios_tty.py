@@ -1039,7 +1039,7 @@ def test_scenario_42_the_entry_view_and_selection_follow_tk(uat_terminal):
     # "234567", now two cells to the right, and not on its neighbours. The
     # entry's text starts at column 3.
     # Waited for, not read straight after the readout: the readout and the
-    # entry are different cells and need not arrive in one chunk (CLAUDE.md,
+    # entry are different cells and need not arrive in one chunk (CONTRIBUTING.md,
     # "A test must wait for every cell it asserts on").
     term.wait_for(
         lambda t: (

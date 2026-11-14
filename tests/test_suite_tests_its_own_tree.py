@@ -20,7 +20,7 @@
 ``pip install -e .`` puts the checkout it was run in onto ``sys.path``, and that
 entry is there for every *other* checkout of the same repository too. A git
 worktree has no entry of its own, so without help its tests import the original
-checkout's library - and the pre-push gate in CLAUDE.md, which exists so that
+checkout's library - and the pre-push gate in CONTRIBUTING.md, which exists so that
 the working copy cannot influence a verification, was verifying the working
 copy. A commit that forgot to ``git add`` a new source file would have passed.
 
@@ -135,6 +135,6 @@ def test_a_second_checkout_runs_its_own_source(sabotaged_worktree: Path):
     assert ran.returncode != 0, (
         "a worktree's test run did not notice its own source being changed, so "
         "it was importing the library from somewhere else - the pre-push gate "
-        "in CLAUDE.md is verifying the working copy rather than the commit.\n"
+        "in CONTRIBUTING.md is verifying the working copy rather than the commit.\n"
         f"--- stdout ---\n{ran.stdout}\n--- stderr ---\n{ran.stderr}"
     )

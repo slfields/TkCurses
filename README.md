@@ -151,7 +151,8 @@ test cannot see is checked by a person: the scenarios under `uat/`, with their
 checklists in `docs/UAT_*.md`.
 
 Releases are cut by pushing a `v*` tag, which runs the release workflow. See
-[CLAUDE.md](CLAUDE.md).
+[CONTRIBUTING.md](CONTRIBUTING.md) for that, and for how the project is
+built, tested and documented.
 
 ## Documentation
 

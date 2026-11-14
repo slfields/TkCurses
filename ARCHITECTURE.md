@@ -3748,9 +3748,8 @@ fails if a claim is false.
 That check exists because 52 of them were. The whole `ttk.Treeview` identify
 family was marked ○, "adapted implementation", while `hasattr` was False for
 all six - and this document was the only place anyone would have looked, which
-is how the gap survived long enough to be found by accident. The same failure
-mode as the code graph that sat 165 commits stale while still being advertised
-as the way to navigate the library (see CLAUDE.md).
+is how the gap survived long enough to be found by accident: a description
+of the code that nothing checks drifts from it unnoticed.
 
 `☐` is the row to write when something is not there. The distinction from `✗`
 matters: `✗` is a decision that a method has no text-mode meaning, `☐` is work

@@ -81,7 +81,7 @@ THEMED = (
 #: It shrank by six on 2026-10-03 (TkCurses-xe9.3): placeholder and
 #: placeholderforeground on Entry, Spinbox and Combobox. Tk documents neither
 #: anywhere, so ARCHITECTURE.md carries the measured rules - see the Entry
-#: section and the convention in CLAUDE.md about where an uncitable
+#: section and the convention in CONTRIBUTING.md about where an uncitable
 #: measurement has to live.
 #:
 #: It shrank by five on 2026-10-03 (TkCurses-xe9.1): Progressbar's label over

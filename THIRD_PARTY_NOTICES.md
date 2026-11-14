@@ -290,5 +290,6 @@ Jansson) was **read as a reference** for the image and colour path. No code
 was taken from it. The published algorithms TkCurses uses — the sRGB transfer
 function (IEC 61966-2-1), DIN99d, median cut, Floyd–Steinberg — were
 implemented from their own published descriptions and are credited in the
-source next to the code. See "Attribution for borrowed algorithms" in
-`CLAUDE.md`.
+source next to the code. chafa's own engineering - its work cell,
+symbol-bitmap matching, colour split and scaler - was not used; taking any of
+it would make a derived work carrying its copyright and the LGPL notice.

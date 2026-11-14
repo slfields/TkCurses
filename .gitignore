@@ -75,24 +75,26 @@ Thumbs.db
 # Project specific
 *.log
 
-# Beads / Dolt files (added by bd init)
+# Local development tooling. Each maintainer's own, never part of the
+# project: the issue tracker's workspace, AI-assistant instructions and
+# settings, and the code graph those assistants read. tests/test_hygiene.py
+# fails if any of them is tracked.
+.beads/
+.claude/
+CLAUDE.md
+AGENTS.md
+.mcp.json
+graphify-out/
+tests/support/check_graph.py
+tests/test_check_graph.py
 .dolt/
 *.db
-.beads-credential-key
-
-# graphify knowledge-graph build output
-graphify-out/
 
 # LibreOffice writes a lock file beside any document it has open. One was
 # committed by a `git add -A` while a UAT checklist was being read.
 .~lock.*#
 
-# bd's audit log of field changes. Local history that every branch appends
-# to, so it conflicts on every merge; .beads/issues.jsonl is the export that
-# is meant to travel.
-.beads/interactions.jsonl
-
-# Beads workspace lock (bd 1.3.1+; bd init writes the same entry)
+# Tracker workspace locks, wherever the workspace is
 *.gate.lock*
 
 # Sphinx output

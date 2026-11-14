@@ -42,7 +42,7 @@ if str(PROJECT_ROOT) not in sys.path:
 # path wins in any OTHER checkout of the same repository - a git worktree, most
 # of all, since src/ there is never placed on sys.path by anything.
 #
-# That broke the pre-push gate in CLAUDE.md, which runs the suite in a throwaway
+# That broke the pre-push gate in CONTRIBUTING.md, which runs the suite in a throwaway
 # worktree precisely so the working copy cannot influence it: the worktree's
 # tests ran against the working copy's library. Measured - DEFAULT_EVERY = 99
 # patched into a worktree's own _core/textlayout.py and nowhere else, and the
