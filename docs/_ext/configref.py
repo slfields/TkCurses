@@ -17,12 +17,10 @@
 
 """The configuration reference: every setting, generated from the code.
 
-The settings, their environment variables and ranges come from the table
-the configuration is read through (``_FIELDS``), the allowed values from
-``_CHOICES``, the defaults from the settings dataclasses and each
-description from the ``#:`` comment on its field, so a setting added,
-removed or changed in the code is changed here too. The settings that were
-removed come from ``_REMOVED``.
+Every setting - its environment variable, range or allowed values, default
+and description - comes from the table the configuration is read through
+(``SETTINGS``), so a setting added, removed or changed in the code is
+changed here too. The settings that were removed come from ``REMOVED``.
 
 Written into the source tree when the build starts
 (``docs/reference/_configuration_settings.md``, ignored by git) and
@@ -35,8 +33,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from sphinx.pycode import ModuleAnalyzer
-
 from tkcurses._core import config
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,12 +42,7 @@ FRAGMENT = ROOT / "docs" / "reference" / "_configuration_settings.md"
 LITERAL = re.compile(r"``(.+?)``")
 
 #: The dataclass each section's settings are fields of.
-SECTIONS = {
-    "mouse": config.MouseSettings,
-    "display": config.DisplaySettings,
-    "input": config.InputSettings,
-    "clipboard": config.ClipboardSettings,
-}
+SECTIONS = config.SECTIONS
 
 
 def markdown(text: str) -> str:
@@ -59,23 +50,22 @@ def markdown(text: str) -> str:
 
 
 def descriptions() -> dict[tuple[str, str], str]:
-    """Each field's ``#:`` comment, by section and key."""
-    found = ModuleAnalyzer.for_module(config.__name__).find_attr_docs()
-    names = {cls.__name__: section for section, cls in SECTIONS.items()}
+    """Each setting's description, by section and key."""
     return {
-        (names[owner], key): " ".join(line.strip() for line in lines).strip()
-        for (owner, key), lines in found.items()
-        if owner in names
+        (setting.section, setting.key): setting.description
+        for setting in config.SETTINGS
     }
 
 
-def values(section: str, key: str, kind: str, limits: Any) -> str:
-    if kind == "bool":
+def values(setting: config.Setting) -> str:
+    if setting.kind == "bool":
         return "on or off"
-    if kind == "int":
-        low, high = limits
+    if setting.kind == "int":
+        assert setting.limits is not None
+        low, high = setting.limits
         return f"a number, {low} to {high}"
-    return ", ".join(f"`{choice}`" for choice in config._CHOICES[(section, key)])
+    assert setting.choices is not None
+    return ", ".join(f"`{choice}`" for choice in setting.choices)
 
 
 def default(value: Any) -> str:
@@ -85,22 +75,20 @@ def default(value: Any) -> str:
 
 
 def render() -> str:
-    described = descriptions()
-    defaults = config.TkCursesConfig()
     lines: list[str] = []
     current = None
-    for section, key, kind, variable, limits in config._FIELDS:
-        if section != current:
-            current = section
-            lines += [f"## `[{section}]`", ""]
+    for setting in config.SETTINGS:
+        if setting.section != current:
+            current = setting.section
+            lines += [f"## `[{current}]`", ""]
         lines += [
-            f"### `{key}`",
+            f"### `{setting.key}`",
             "",
-            f"- **Environment variable:** `{variable}`",
-            f"- **Values:** {values(section, key, kind, limits)}",
-            f"- **Default:** {default(getattr(getattr(defaults, section), key))}",
+            f"- **Environment variable:** `{setting.variable}`",
+            f"- **Values:** {values(setting)}",
+            f"- **Default:** {default(setting.default)}",
             "",
-            markdown(described[(section, key)]),
+            markdown(setting.description),
             "",
         ]
     lines += [
@@ -113,7 +101,7 @@ def render() -> str:
         "| Setting | Environment variable | Why there is nothing to set |",
         "|---|---|---|",
     ]
-    for section, key, variable, why in config._REMOVED:
+    for section, key, variable, why in config.REMOVED:
         lines.append(f"| `[{section}] {key}` | `{variable}` | {markdown(why)} |")
     return "\n".join(lines) + "\n"
 

@@ -1763,20 +1763,43 @@ primary = true
 ### Configuration Implementation
 
 `_core/config.py` holds the settings as dataclasses and one table,
-`_FIELDS`, of section, key, kind, environment variable and range: the INI
+`SETTINGS`, with a `Setting` row per setting: section, key, kind,
+environment variable, range or allowed values, and description. The INI
 reader, the environment reader and validation all walk it, so they cannot
 disagree. `Tk._start` loads it once and hands each setting to the piece it
 governs. A value that cannot be parsed falls back to its default and a
 number out of range is clamped, each recorded in `warnings`, because
 configuration is read before there is a screen to complain on.
 
-**The `#:` comment on each settings field is user-facing text**: the
-configuration reference (`docs/reference/configuration.md`) is generated
-from `_FIELDS`, `_CHOICES`, the dataclass defaults, those comments and
-`_REMOVED` by `docs/_ext/configref.py`, so it cannot list a setting the
-code lacks or miss one it has. Notes for whoever maintains a setting go in
-plain `#` comments beside it. `tests/test_configref.py` wants every
+**One parser, two policies.** `Setting.parse` is strict: it returns the
+value or raises `InvalidValue`, or `OutOfRange` carrying the clamped number.
+The loader is the lenient policy, built by catching those - clamp, or keep
+the earlier source's value - and `tkcurses-cfg` is the strict one, refusing
+what `parse` refuses. A property test (`tests/test_core_config.py`) holds
+the two together over arbitrary text, so the command can never call a value
+valid that a program would change, or the reverse (`TkCurses-kge7.1`). A
+whole number is `[+-]?[0-9]+` and no wider: `int()` also takes `1_000` and
+digits from other scripts, which a config file almost certainly means as a
+mistake. Those were accepted before `TkCurses-kge7.1` and now warn.
+
+**`TkCursesConfig.origins` records every source's say**, per setting: the
+default first, then each file and the environment in the order read, each
+an `Origin` with the raw text, the value it gave (or `None` when the text
+was refused) and the problem if any. `source(name)` is the last one that
+applied. It is what `tkcurses-cfg` shows as a setting's source chain, and it
+is filled by the same `load()` a program runs, so the command describes what
+a program would do rather than re-deriving it. It is left out of equality:
+two configurations with the same values are equal however they got them.
+
+**Each `Setting`'s description is user-facing text**: the configuration
+reference (`docs/reference/configuration.md`) is generated from `SETTINGS`,
+the dataclass defaults and `REMOVED` by `docs/_ext/configref.py`, so it
+cannot list a setting the code lacks or miss one it has; `tkcurses-cfg`
+shows the same text. Notes for whoever maintains a setting go in plain `#`
+comments beside its dataclass field. `tests/test_configref.py` wants every
 setting described in whole sentences with no tracker IDs or private names.
+The descriptions were `#:` comments on the dataclass fields until
+`TkCurses-kge7.1`, which a running program could not read.
 
 **Warnings are printed when the terminal is given back**, through the same
 held-reports path a callback's traceback takes (`Tk._held_reports`). Until
@@ -1812,7 +1835,7 @@ work and nine removed (`TkCurses-4j1h`):
 - **`mouse.enabled` off never calls `mousemask`**, so none of 1000, 1002,
   1003 or 1006 is sent.
 
-The nine removed are in `_REMOVED`, and a file or environment that still
+The nine removed are in `REMOVED`, and a file or environment that still
 sets one gets a warning that it no longer has any effect:
 `refresh_interval` (the loop redraws when idle, not on a timer),
 `poll_timeout` (internal to the loop), `keypad` (off breaks every arrow

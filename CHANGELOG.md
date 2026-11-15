@@ -6,6 +6,12 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+### Changed
+- A whole-number setting, in a file or a `TKCURSES_*` variable, is optional
+  sign and ASCII digits and nothing else. `1_000` and digits from other
+  scripts were accepted before; they now fall back to the earlier value with
+  a warning, as any other unreadable value does.
+
 ## [0.4.0] - 2026-11-14
 
 ### Added
