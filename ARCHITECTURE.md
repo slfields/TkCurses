@@ -1837,6 +1837,31 @@ the place of a commented-out line for it (`;escape_delay = 25`, as
 indented so it neither continues its neighbour nor is continued by the next
 line. Every edit is read back before it is returned.
 
+**A save is whole or not at all** (`_cfg/store.py`). A program reads the
+file when it starts and takes no lock, so the only safe write is a rename:
+the new text goes to a temporary file in the same directory, is synced,
+takes the old file's mode (and owner, as root), and replaces it with
+`os.replace`; the directory is synced after. Before the swap the old file is
+hard-linked to a temporary name and only renamed to `<file>.bak` once the
+swap has happened, so a failed save leaves the previous backup too. A copy
+stands in where the file system has no hard links (`EPERM`, `ENOTSUP`,
+`EMLINK`) and nowhere else - a full disk while linking is a failed save, not
+a reason to copy, which the failure-injection tests caught on their first
+run. SIGTERM and SIGHUP raise while a save runs, so they back out as
+Ctrl-C does, and exit 130. A file its owner made read-only is refused even
+though the rename would succeed, since only the directory needs to be
+writable for that.
+
+**Saves are serialised by `flock` on `<file>.lock`**, held for the
+read-edit-write and never while a person looks at a screen, and waited for
+up to `--lock-timeout`. The lock file stays: deleting it would let a
+process that opened the old one and one that created a new one both hold
+"the" lock. A symbolic link is written through, at its target, with the
+lock and backup beside the target, so the link and the real path share one
+lock. Measured by mutation: with the `flock` taken out, four processes
+adding one to a setting 25 times each do not all succeed, and with an
+in-place write instead of the rename, a reader sees a part-written file.
+
 **A value of the wrong type or out of range stops an edit; nothing else
 does** - an unknown or removed key is reported but left alone. The edit is
 still allowed if it is the one that fixes or removes the bad value, so a
