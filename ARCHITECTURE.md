@@ -1887,6 +1887,34 @@ still allowed if it is the one that fixes or removes the bad value, so a
 broken file can always be repaired through the command (decided with the
 user, `TkCurses-kge7`).
 
+**The interactive screen is plain curses, not a TkCurses program**
+(`_cfg/ui.py`). It is the tool for repairing a configuration that makes
+TkCurses programs misbehave, so it reads none of the settings it edits for
+its own drawing. Every rule it shows is in `_cfg/session.py`, which has no
+curses in it and is tested without a terminal; the screen draws the
+session and turns keys into calls. A batch of edits is applied with the
+ones that fix a bad value first, so saving a fix together with other
+changes is accepted, as the same edits one at a time through `set` would
+be.
+
+**The screen's IN EFFECT column runs the real loader.** Each edited file is
+written to a private temporary directory and `TkCursesConfig.load` reads
+it there, as a program would read the real one; the origins are then
+mapped back to the real paths. `ConfigParser.read_string` would have saved
+the copy but splits lines only on `\n`, where reading a file splits on
+`\r` too, so it would have previewed a different parse of the same text.
+`tests/test_cfg_session.py` holds the preview equal, value and source, to
+what the loader reads once the edits are saved, over generated edits,
+files and environments. Two mutations of the preview fail it.
+
+**A resize is applied wherever the screen reads a key.** `getmaxyx()`
+stays at the old size until `resize_term()` is given the size the terminal
+reports, the fact TkCurses' own `Screen.handle_resize` is built on; the
+first version only redrew, and kept drawing the old layout into a smaller
+terminal. The screen polls the files once a second while it waits for a
+key, reads a changed one again and keeps the pending edits on top, and
+checks again just before saving.
+
 **Warnings are printed when the terminal is given back**, through the same
 held-reports path a callback's traceback takes (`Tk._held_reports`). Until
 `TkCurses-4j1h` nothing printed them at all: a mistyped setting was

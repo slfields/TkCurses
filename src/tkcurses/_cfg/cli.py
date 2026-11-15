@@ -79,6 +79,8 @@ Inspect and change TkCurses's configuration: the settings a person at the
 terminal can give without changing a program. Each setting comes from, in
 rising order, its default, the system-wide file, your own file, and a
 TKCURSES_* environment variable.
+
+Run alone at a terminal, it opens a screen for looking and changing.
 """
 
 EXAMPLES = """\
@@ -673,6 +675,24 @@ def _subparser(parser: argparse.ArgumentParser, command: str | None) -> Any:
     return parser
 
 
+def _interactive() -> int:
+    """The screen, for ``tkcurses-cfg`` alone at a terminal."""
+    import curses
+
+    from tkcurses._cfg import ui
+
+    system, user = config_paths()
+    try:
+        return ui.run(system, user)
+    except curses.error as exc:
+        print(
+            f"{PROG}: cannot show the screen in this terminal ({exc}); give a "
+            f"command instead - {PROG} --help lists them",
+            file=sys.stderr,
+        )
+        return 2
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the command; return its exit status."""
     parser = build_parser()
@@ -685,8 +705,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if extra:
         owner.error(f"unrecognized arguments: {' '.join(extra)}")
     if args.command is None:
-        parser.print_help(sys.stderr)
-        return 2
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            parser.print_help(sys.stderr)
+            return 2
+        args.run, args.debug = lambda _args: _interactive(), False
     if getattr(args, "global_", False) and args.file is not None:
         owner.error("give --global or --file, not both")
     try:

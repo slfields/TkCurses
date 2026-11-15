@@ -14,7 +14,10 @@ All notable changes to TkCurses. The format follows
   with `--global` the system-wide one, `check` both files and the
   environment for mistakes, `path`, and `init` a starter file. Edits change
   only their own line, a file is never left half-written, and each kind of
-  failure has its own exit status.
+  failure has its own exit status. Run alone at a terminal, it opens a
+  keyboard screen of every setting: change values by type, see what a
+  program would use before saving, switch between your file and the
+  system-wide one, and fix the problems it finds.
 
 ### Changed
 - A whole-number setting, in a file or a `TKCURSES_*` variable, is optional

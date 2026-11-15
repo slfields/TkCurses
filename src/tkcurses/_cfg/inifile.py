@@ -198,6 +198,15 @@ class IniFile:
             data = path.read_bytes()
         except FileNotFoundError:
             return cls(str(path), [], [], [])
+        return cls.from_bytes(data, path)
+
+    @classmethod
+    def from_bytes(cls, data: bytes, path: Path) -> IniFile:
+        """The file whose contents are ``data``, as :meth:`read` checks it.
+
+        Raises:
+            FileSyntaxError: ``data`` cannot be read as a configuration.
+        """
         if data.startswith(b"\xef\xbb\xbf"):
             raise FileSyntaxError(
                 str(path),
