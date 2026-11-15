@@ -159,6 +159,11 @@ vulnerability.
 
 ## Documentation
 
+**[slfields.github.io/TkCurses](https://slfields.github.io/TkCurses/)** - the
+guides, a tutorial, and the API reference with a picture of what each widget
+draws. Built from `master` on every merge, and attached to every
+[release](https://github.com/slfields/TkCurses/releases) as a zip.
+
 [ARCHITECTURE.md](ARCHITECTURE.md) is the specification of record: module
 mapping, class hierarchy, rendering rules, input handling, configuration, and a
 complete tkinter-to-TkCurses API reference.
