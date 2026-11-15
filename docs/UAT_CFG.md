@@ -7,8 +7,9 @@ without fear, and understand every refusal?**
 library was accepted by invariants - `tests/test_cfg_invariants.py` - because
 that part has nothing to look at. This is the part a person uses: what it
 prints, whether a message says what to do, whether a hand-kept file survives
-an edit. This page covers the command line (`TkCurses-kge7.4`). The
-interactive screen (`TkCurses-kge7.5`) gets its own section when it lands.
+an edit. It has two parts, accepted separately: the command line
+(`TkCurses-kge7.4`) and, at the end, the interactive screen
+(`TkCurses-kge7.5`).
 
 **How to run**
 
@@ -135,3 +136,82 @@ even when it refused. That is deliberate: deleting it would let two
       JSON and nothing else.
 - [ ] `./cfg get mouse.enabled 2>/dev/null` prints only the value, even with
       `TKCURSES_MOUSE_ENABLED=1` set in front of it.
+
+## The interactive screen
+
+`./cfg` with no command, in the sandbox, opens the screen on the sandbox's
+own file. Start each check from a fresh one -
+`rm -f home/tkcurses/tkcurses.ini*` - unless it says otherwise. It wants a
+terminal at least 60 columns by 15 rows.
+
+| | |
+|---|---|
+| Terminal | |
+| Size | |
+| Date | |
+| Result | |
+
+### Looking
+
+- [ ] `./cfg` shows every setting under its section, with what your file
+      says (`-` for nothing), what a program would use, and where that
+      comes from. Numbers carry their unit.
+- [ ] Moving with the arrows changes the details under the list: the
+      setting's value and where it comes from, what it does, what it takes,
+      and its sources. The keys at the bottom change with the row: Space on
+      a true/false setting, Enter on the others.
+- [ ] `i` shows the whole description and every source, lowest first.
+      `?` lists every key, and both close with any key.
+- [ ] `TKCURSES_MOUSE_ENABLED=0 ./cfg`: `enabled` is `false` from
+      `environment`, marked out from the other rows, and the details say it
+      is from the variable in this shell.
+
+### Changing and saving
+
+- [ ] Space on `enabled` switches it, marks the row `*`, and the top line
+      counts one unsaved change. Space again undoes it: no `*`, nothing
+      unsaved.
+- [ ] Enter on `click_interval` opens a field that says it takes
+      milliseconds from 1 to 1000. Typing `5000` says it is outside the
+      range and Enter does nothing; Up brings it to 1000. Esc leaves the
+      row as it was.
+- [ ] Enter on `color_mode` lists its choices with the one in use marked;
+      choosing `256` marks the row.
+- [ ] `s` lists each change with its value before and after, and asks.
+      `n` goes back with nothing written; `s` then `y` saves, says where,
+      and `cat home/tkcurses/tkcurses.ini` afterwards holds exactly those
+      changes.
+- [ ] `u` on a setting your file holds marks it for taking out; after
+      saving, the line is gone and the value comes from the default.
+- [ ] Make a change and press `q`: it asks. Esc keeps editing, `d` quits
+      without saving, and the file is as it was.
+- [ ] Make a change and press Ctrl-C: the screen closes, the terminal is
+      as it was before, and it says one unsaved change was discarded.
+      `echo $?` is 130.
+
+### When things are not simple
+
+- [ ] `cp fixtures/bad-value.ini home/tkcurses/tkcurses.ini`, then `./cfg`.
+      The bottom says there is a problem. Switch `enabled`: the row is
+      marked `!` and the message says why it cannot be saved. `s` says
+      the same and keeps the change.
+- [ ] `p` lists the bad value with the whole message. `u` takes it out;
+      the problem goes, the `!` becomes `*`, and saving writes both.
+- [ ] `cp fixtures/duplicate-key.ini home/tkcurses/tkcurses.ini`, then
+      `./cfg`: your file is read-only, and `p` says why and how to
+      replace it.
+- [ ] Tab: the top line says the system-wide file, read-only, and that it
+      needs root. Space does nothing to it but say so. Tab again comes
+      back to your file, with any change you had made still there.
+- [ ] With the screen open, in another terminal in the sandbox:
+      `./cfg set mouse.click_interval 333`. Within a second the screen
+      says your file changed and shows 333.
+- [ ] Make a change, then in another terminal
+      `chmod 555 home/tkcurses`, and save: it says permission denied and
+      that your changes are kept. `chmod 755 home/tkcurses` and save
+      again: it saves.
+- [ ] Shrink the terminal below 60x15: the screen says how big it needs to
+      be. Grow it again: everything is back where it was. At exactly 60x15
+      the list, the details and the keys all fit.
+- [ ] `NO_COLOR=1 ./cfg`: changed and refused rows are still told apart,
+      in bold, without colour.
