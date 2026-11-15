@@ -99,6 +99,12 @@ class Interrupted(CfgError):
     exit_code = 130
 
 
+class AlreadyExists(CfgError):
+    """``init`` without ``--force`` where there is a file already."""
+
+    exit_code = 9
+
+
 class _Terminated(BaseException):
     """SIGTERM or SIGHUP, raised where the save is so it can back out."""
 
@@ -169,6 +175,47 @@ def edit(
             data = after.text.encode("utf-8")
             backup, warnings = _replace(target, data)
             return Saved(after, changed=True, backup=backup, warnings=warnings)
+
+
+def overwrite(
+    path: Path,
+    text: str,
+    *,
+    replace: bool,
+    timeout: float = 10.0,
+    admin_hint: str | None = None,
+) -> Saved:
+    """Save ``text`` as the whole file, without reading what is there.
+
+    For ``init``: what is there may be a file too broken to read, which
+    ``--force`` must still be able to replace. The lock, the swap, the
+    backup and the backout are :func:`edit`'s.
+
+    Args:
+        replace: Whether an existing file may be replaced; checked under
+            the lock, so two at once cannot both find the file absent.
+
+    Raises:
+        AlreadyExists: there is a file and ``replace`` is false.
+        CfgError: anything else that went wrong.
+    """
+    if not 0 <= timeout <= MAX_LOCK_TIMEOUT:
+        raise ValueError(f"timeout {timeout} is outside 0-{MAX_LOCK_TIMEOUT}")
+    target = target_of(path)
+    ini = IniFile.parse(text, str(target))
+    with _signals_raise(), _explained(target, admin_hint):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with _locked(lock_path(target), timeout):
+            if target.exists() and not replace:
+                raise AlreadyExists(
+                    f"{target} already exists; nothing was changed. Give "
+                    "--force to replace it - the old one is kept as "
+                    f"{target.name}.bak."
+                )
+            if target.exists() and not os.access(target, os.W_OK):
+                raise PermissionError(errno.EACCES, "not writable", str(target))
+            backup, warnings = _replace(target, text.encode("utf-8"))
+            return Saved(ini, changed=True, backup=backup, warnings=warnings)
 
 
 def _replace(target: Path, data: bytes) -> tuple[Path | None, list[str]]:

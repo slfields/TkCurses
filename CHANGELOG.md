@@ -6,6 +6,16 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+### Added
+- `tkcurses-cfg`, a command to show and change the configuration: `list`
+  every setting with the value a program would use and where it comes from
+  (`--sources` for every file and variable that offered one, `--changed`,
+  `--defaults`, `--json`), `get`, `set` and `unset` in your own file or
+  with `--global` the system-wide one, `check` both files and the
+  environment for mistakes, `path`, and `init` a starter file. Edits change
+  only their own line, a file is never left half-written, and each kind of
+  failure has its own exit status.
+
 ### Changed
 - A whole-number setting, in a file or a `TKCURSES_*` variable, is optional
   sign and ASCII digits and nothing else. `1_000` and digits from other

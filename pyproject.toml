@@ -84,6 +84,7 @@ Issues = "https://github.com/slfields/TkCurses/issues"
 
 [project.scripts]
 tkcurses-demo = "tkcurses.__main__:main"
+tkcurses-cfg = "tkcurses._cfg.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

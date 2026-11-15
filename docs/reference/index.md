@@ -12,6 +12,7 @@ images
 dialogs/index
 modules/index
 configuration
+tkcurses-cfg
 compatibility
 ```
 
@@ -22,7 +23,9 @@ every widget has](core/index.md), the [standard options](options.md), the
 [geometry managers](geometry.md), [images](images.md),
 [dialogs](dialogs/index.md) and [the other modules](modules/index.md),
 among them `curses` and `panel`. [Configuration](configuration.md) lists
-the settings a user can change without changing a program, and
+the settings a user can change without changing a program,
+[`tkcurses-cfg`](tkcurses-cfg.md) is the command that shows and changes
+them, and
 [compatibility with tkinter](compatibility.md)
 lists every class and method of tkinter's and whether TkCurses has it.
 
