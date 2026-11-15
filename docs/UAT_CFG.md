@@ -148,8 +148,12 @@ terminal at least 60 columns by 15 rows.
 |---|---|
 | Terminal | |
 | Size | |
-| Date | |
-| Result | |
+| Date | 2026-11-15 |
+| Result | **Accepted** (the screen, and paths that are not safe to write). Run by the author: "The UAT passed, record it as accepted". Terminal and size not recorded. Raised during the run and fixed before acceptance: the screen had no way to edit the system-wide file or a given one (`edit --global`, `--file`), and a security review the author asked for found six faults in how paths, the lock, reads and output were handled - see "Paths that are not safe to write". |
+
+As above, the boxes are left unticked: the acceptance was given as a whole.
+What was driven mechanically is in `tests/test_cfg_session.py`,
+`tests/test_cfg_ui_tty.py` and `tests/test_cfg_safety.py`.
 
 ### Looking
 
