@@ -6,6 +6,8 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-15
+
 ### Added
 - `tkcurses-cfg`, a command to show and change the configuration: `list`
   every setting with the value a program would use and where it comes from
@@ -16,14 +18,15 @@ All notable changes to TkCurses. The format follows
   only their own line, a file is never left half-written, and each kind of
   failure has its own exit status. `edit` - or the command alone at a
   terminal - opens a keyboard screen of every setting, on your file, the
-  system-wide one with `--global`, or another with `--file`: change values by type, see what a
-  program would use before saving, switch between your file and the
-  system-wide one, and fix the problems it finds.
+  system-wide one with `--global`, or another with `--file`: change values
+  by type, see what a program would use before saving, switch between your
+  file and the system-wide one, and fix the problems it finds. Values that
+  count something show their unit, as `200 ms`.
 
 ### Security
 - `tkcurses-cfg`'s safeguards, all in place before its first release: it
-  checks every directory, symbolic link and file
-  on the way to a file before writing it, and as root writes only where
+  checks every directory, symbolic link and file on the way to a file
+  before writing it, and as root writes only where
   root alone can change anything, so a link made by another user cannot
   steer it into their choice of file. The lock beside a file is opened
   without following a link and is readable by its owner alone. Only an
@@ -798,7 +801,8 @@ Phase 2 of the original codebase: the base widget classes, `Tk` and `Toplevel`,
 the variable classes and the panel stack. Superseded by the rebuild; it has no
 `Entry` or `Text`.
 
-[Unreleased]: https://github.com/slfields/TkCurses/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/slfields/TkCurses/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/slfields/TkCurses/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/slfields/TkCurses/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/slfields/TkCurses/compare/v0.3.0rc3...v0.3.0
 [0.3.0rc3]: https://github.com/slfields/TkCurses/compare/v0.3.0rc2...v0.3.0rc3
