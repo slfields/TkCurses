@@ -1801,6 +1801,48 @@ setting described in whole sentences with no tracker IDs or private names.
 The descriptions were `#:` comments on the dataclass fields until
 `TkCurses-kge7.1`, which a running program could not read.
 
+**Files are read without interpolation.** With `configparser`'s default,
+a `%` anywhere in a value raised `InterpolationSyntaxError` from `get()`,
+outside the loader's `try`, and the program did not start - the one way a
+configuration file could stop one, against the rule above. No setting has a
+use for `%(name)s`. `TkCurses-kge7.2`.
+
+**`tkcurses-cfg` edits a file as its lines** (`_cfg/inifile.py`), because
+`configparser` writes back a dictionary and drops every comment. Its grammar
+is a strict subset of `configparser`'s, chosen so a file it accepts is one a
+program reads identically, and a property test holds that against
+`configparser` itself over generated files on every Python CI runs
+(`tests/test_cfg_inifile.py`). Where `configparser` is lenient in ways that
+surprise, the editor refuses the file and names the line instead:
+
+- **an indented line after a setting continues that setting's value** - in
+  `configparser` a deeper indent, even after blank lines, is a
+  continuation, so `  [display]` under an option is not a section;
+- **`[DEFAULT]`'s keys appear in every section that exists**, so
+  `enabled = false` there turns the mouse off;
+- a header with text after its `]` (`configparser` takes `[mouse] x` as
+  `[mouse]`), a key with a space in it, a line with no `=` or `:`;
+- **a duplicate section, or a key set twice in a section in any case** -
+  `configparser` refuses these too, and the loader then reads *nothing* from
+  the file, which is worth a line number rather than a shrug;
+- a byte order mark (read as part of the first line) and text that is not
+  UTF-8.
+
+A `;` or `#` starts a comment only at the start of a line or after
+whitespace, as `configparser` has it: `color_mode=truecolor;x` is the value
+`truecolor;x`. An edit replaces only the value's span on its line - key
+spelling, spacing, comment and line ending stay - and a new setting takes
+the place of a commented-out line for it (`;escape_delay = 25`, as
+`tkcurses-cfg init` writes them), else follows the section's last setting,
+indented so it neither continues its neighbour nor is continued by the next
+line. Every edit is read back before it is returned.
+
+**A value of the wrong type or out of range stops an edit; nothing else
+does** - an unknown or removed key is reported but left alone. The edit is
+still allowed if it is the one that fixes or removes the bad value, so a
+broken file can always be repaired through the command (decided with the
+user, `TkCurses-kge7`).
+
 **Warnings are printed when the terminal is given back**, through the same
 held-reports path a callback's traceback takes (`Tk._held_reports`). Until
 `TkCurses-4j1h` nothing printed them at all: a mistyped setting was

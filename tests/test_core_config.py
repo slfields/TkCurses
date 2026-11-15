@@ -536,3 +536,14 @@ def test_origins_are_not_part_of_equality(tmp_path):
 def test_a_configuration_not_loaded_has_no_origins():
     with pytest.raises(KeyError):
         TkCursesConfig().source("input.escape_delay")
+
+
+def test_a_percent_sign_in_a_value_is_a_bad_value_not_a_crash(tmp_path):
+    """With configparser's default interpolation, ``50%`` raised from the
+    loader and the program never started."""
+    path = write(tmp_path, "[input]\nescape_delay = 50%\n")
+    config = TkCursesConfig.load(paths=(path,), env={})
+    assert config.input.escape_delay == 25
+    assert config.warnings == [
+        f"[input] escape_delay in {path}: '50%' is not a number, using 25"
+    ]

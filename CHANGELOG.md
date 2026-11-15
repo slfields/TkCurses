@@ -12,6 +12,11 @@ All notable changes to TkCurses. The format follows
   scripts were accepted before; they now fall back to the earlier value with
   a warning, as any other unreadable value does.
 
+### Fixed
+- A `%` in any value of a configuration file stopped every TkCurses program
+  from starting, with an `InterpolationSyntaxError`. It is now an
+  unreadable value like any other: a warning, and the earlier value.
+
 ## [0.4.0] - 2026-11-14
 
 ### Added

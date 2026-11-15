@@ -502,7 +502,12 @@ class TkCursesConfig:
         try:
             if not path.is_file():
                 return
-            parser = ConfigParser(inline_comment_prefixes=(";", "#"))
+            # No interpolation: with it, a % anywhere in a value raised from
+            # get() below - outside this try - and the program did not start.
+            # No setting has a use for %(name)s. TkCurses-kge7.2.
+            parser = ConfigParser(
+                inline_comment_prefixes=(";", "#"), interpolation=None
+            )
             parser.read(path, encoding="utf-8")
         except (OSError, ConfigParserError, UnicodeDecodeError) as exc:
             self.warnings.append(f"could not read {path}: {exc}")
