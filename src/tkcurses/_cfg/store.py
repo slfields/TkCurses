@@ -194,7 +194,10 @@ def _replace(target: Path, data: bytes) -> tuple[Path | None, list[str]]:
             os.close(fd)
         if old is not None:
             backup_temp = _hold_backup(target)
-        Path(temp).replace(target)
+        # os.replace, not Path.replace: on Python 3.10 pathlib captured
+        # os.replace at import, so a test's stand-in for it never reached
+        # the swap and the failure tests passed a save that should fail.
+        os.replace(temp, target)  # noqa: PTH105
         temp = None
     except BaseException:
         for leftover in (temp, backup_temp):
@@ -209,7 +212,7 @@ def _replace(target: Path, data: bytes) -> tuple[Path | None, list[str]]:
     if backup_temp is not None:
         backup = target.with_name(target.name + ".bak")
         try:
-            Path(backup_temp).replace(backup)
+            os.replace(backup_temp, backup)  # noqa: PTH105 - as above
         except OSError as exc:
             warnings.append(f"the previous version was not kept: {exc.strerror}")
             backup = None
