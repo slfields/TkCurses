@@ -215,3 +215,18 @@ terminal at least 60 columns by 15 rows.
       the list, the details and the keys all fit.
 - [ ] `NO_COLOR=1 ./cfg`: changed and refused rows are still told apart,
       in bold, without colour.
+
+### Choosing the file
+
+- [ ] `./cfg edit` is the same screen as `./cfg` alone. `./cfg edit --help`
+      lists `--global`, `--file` and `--lock-timeout`.
+- [ ] `./cfg edit --global` opens on the system-wide file, read-only,
+      saying it needs root.
+- [ ] `cp fixtures/hand-written.ini /tmp/mine.ini`, then
+      `./cfg edit --file /tmp/mine.ini`: the top line says the given file
+      and its path, its values show as from `file`, and saving a change
+      writes `/tmp/mine.ini` with its comments kept, leaving
+      `home/tkcurses/tkcurses.ini` alone.
+- [ ] `./cfg edit --global --file /tmp/mine.ini` is refused: give one or the
+      other. `echo $?` is 2.
+- [ ] `./cfg edit < /dev/null` says it needs a terminal. `echo $?` is 2.

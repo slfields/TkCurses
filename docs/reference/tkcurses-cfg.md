@@ -158,7 +158,10 @@ file that is there unless given `--force`, and then keeps the old one as
 
 ## The interactive screen
 
-`tkcurses-cfg` with no command opens a screen of every setting:
+`tkcurses-cfg edit` opens a screen of every setting, and so does
+`tkcurses-cfg` alone at a terminal. It starts on your own file;
+`edit --global` starts on the system-wide one, and `edit --file PATH` edits
+PATH in place of yours, as `--file` does for the other commands:
 
 ```text
  tkcurses-cfg - editing your file: ~/.config/tkcurses/tkcurses.ini  1 unsaved
@@ -247,7 +250,8 @@ settings and their spacing stay as they were.
 
 `--file PATH` uses another file in place of your own, for every command.
 `--global` makes `set`, `unset`, `init` and `path` work on the system-wide
-file instead of yours. `--lock-timeout SECONDS` sets how long `set`,
-`unset` and `init` wait for another `tkcurses-cfg`. `--debug` shows the
+file instead of yours, and `edit` start on it. `--lock-timeout SECONDS`
+sets how long `set`, `unset`, `init` and a save from `edit` wait for
+another `tkcurses-cfg`. `--debug` shows the
 traceback of an unexpected error. `tkcurses-cfg COMMAND --help` describes
 each command.

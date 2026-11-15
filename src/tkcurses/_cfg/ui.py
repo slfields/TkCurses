@@ -96,9 +96,24 @@ class _Terminated(Exception):
     """SIGTERM or SIGHUP while the screen was up."""
 
 
-def run(system: Path, user: Path) -> int:
-    """Show the screen until the person quits; return the exit status."""
-    session = Session(system, user)
+def run(
+    system: Path,
+    user: Path,
+    *,
+    scope: Scope = "user",
+    user_label: str = "user",
+    timeout: float = 10.0,
+) -> int:
+    """Show the screen until the person quits; return the exit status.
+
+    Args:
+        scope: The file it opens on: ``user``, or ``system`` for
+            ``--global``.
+        user_label: ``user``, or ``file`` when ``--file`` named the file
+            that stands in for the person's own, as the command shows it.
+        timeout: Seconds a save waits for another ``tkcurses-cfg``.
+    """
+    session = Session(system, user, scope=scope)
     os.environ.setdefault("ESCDELAY", "25")  # Escape closes a dialog at once
 
     def terminated(signum: int, _frame: Any) -> None:
@@ -108,7 +123,13 @@ def run(system: Path, user: Path) -> int:
         sig: signal.signal(sig, terminated) for sig in (signal.SIGTERM, signal.SIGHUP)
     }
     try:
-        return int(curses.wrapper(lambda stdscr: Screen(stdscr, session).loop()))
+        return int(
+            curses.wrapper(
+                lambda stdscr: Screen(
+                    stdscr, session, user_label=user_label, timeout=timeout
+                ).loop()
+            )
+        )
     except (KeyboardInterrupt, _Terminated):
         lost = len(session.changes())
         tail = f"; {lost} unsaved change{'s' * (lost != 1)} discarded" if lost else ""
@@ -128,9 +149,20 @@ class _Row:
 class Screen:
     """The main list, its details, and the dialogs over it."""
 
-    def __init__(self, stdscr: Any, session: Session) -> None:
+    def __init__(
+        self,
+        stdscr: Any,
+        session: Session,
+        *,
+        user_label: str = "user",
+        timeout: float = 10.0,
+    ) -> None:
         self.scr = stdscr
         self.session = session
+        self.user_label = user_label
+        self.timeout = timeout
+        own = "your file" if user_label == "user" else "the given file"
+        self.names: dict[Scope, str] = {"user": own, "system": SCOPE_NAMES["system"]}
         self.rows = [
             row
             for section in SECTIONS
@@ -186,7 +218,9 @@ class Screen:
             self.session.scope = "system" if self.session.scope == "user" else "user"
             why = self.session.why_read_only()
             if why:
-                self.say(f"{_titled(self.session.scope)}: read-only. {why}", bad=True)
+                self.say(
+                    f"{self._titled(self.session.scope)}: read-only. {why}", bad=True
+                )
             else:
                 self.say(f"Now editing {self._scope_title()}.")
         elif key in ENTER:
@@ -326,7 +360,7 @@ class Screen:
         for scope in moved:
             session.reload(scope)
             note = (
-                f"{_titled(scope)} changed on disk since it was read. Your changes "
+                f"{self._titled(scope)} changed on disk since it was read. Your changes "
                 "are shown against what it holds now.\n\n"
             )
         for scope in SCOPES:
@@ -346,11 +380,11 @@ class Screen:
             if not session.pending[scope]:
                 continue
             count = len(session.pending[scope])
-            self.say(f"Saving {_titled(scope).lower()}...")
+            self.say(f"Saving {self._titled(scope).lower()}...")
             self.draw()
             self.scr.refresh()
             try:
-                result = session.save(scope)
+                result = session.save(scope, self.timeout)
             except CfgError as exc:
                 self.show_text(
                     "Not saved", f"{exc}\n\nYour changes are kept; save again to retry."
@@ -606,7 +640,7 @@ class Screen:
         for change in self.session.changes():
             by_scope.setdefault(change.scope, []).append(change)
         for scope, changes in by_scope.items():
-            lines.append(f"{_titled(scope)} ({show(self.session.path(scope))}):")
+            lines.append(f"{self._titled(scope)} ({show(self.session.path(scope))}):")
             width = max(len(c.name) for c in changes)
             for change in changes:
                 lines.append(
@@ -816,7 +850,7 @@ class Screen:
         session = self.session
         state = session.files[session.scope]
         if state.ini is None:
-            return f"{_titled(session.scope)} cannot be read: p for details."
+            return f"{self._titled(session.scope)} cannot be read: p for details."
         why = session.why_read_only()
         if why:
             return f"Read-only. {why}"
@@ -834,7 +868,9 @@ class Screen:
 
     def session_label(self, origin: Origin) -> str:
         if origin.kind == "file":
-            return "system" if origin.location == str(self.session.system) else "user"
+            if origin.location == str(self.session.system):
+                return "system"
+            return self.user_label
         return origin.kind
 
     def _where(self, origin: Origin) -> str:
@@ -842,12 +878,15 @@ class Screen:
             return f"{origin.location} in this shell"
         if origin.kind == "default":
             return "the default"
-        return SCOPE_NAMES[
+        return self.names[
             "system" if origin.location == str(self.session.system) else "user"
         ]
 
     def _scope_title(self) -> str:
-        return SCOPE_NAMES[self.session.scope]
+        return self.names[self.session.scope]
+
+    def _titled(self, scope: Scope) -> str:
+        return self.names[scope][0].upper() + self.names[scope][1:]
 
     def _file_shown(self, setting: Setting) -> str:
         raw = self.session.file_value(setting)
@@ -943,7 +982,7 @@ class Screen:
                 if kept
                 else ""
             )
-            self.say(f"{_titled(scope)} changed on disk and was read again{tail}.")
+            self.say(f"{self._titled(scope)} changed on disk and was read again{tail}.")
 
 
 class _Attributes:
@@ -985,10 +1024,6 @@ def _box(scr: Any, top: int, left: int, height: int, width: int) -> None:
 def _cursor(visibility: int) -> None:
     with contextlib.suppress(curses.error):  # one that cannot hide it
         curses.curs_set(visibility)
-
-
-def _titled(scope: Scope) -> str:
-    return SCOPE_NAMES[scope][0].upper() + SCOPE_NAMES[scope][1:]
 
 
 def _value(name: str, raw: str | None) -> str:

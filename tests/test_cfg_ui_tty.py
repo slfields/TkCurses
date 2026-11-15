@@ -36,7 +36,7 @@ PROGRAM = """
 from pathlib import Path
 from tkcurses._cfg import cli
 cli.config_paths = lambda: (Path({system!r}), Path({user!r}))
-raise SystemExit(cli.main([]))
+raise SystemExit(cli.main({argv!r}))
 """
 
 
@@ -44,7 +44,7 @@ raise SystemExit(cli.main([]))
 def screen(terminal, tmp_path):
     """Start the screen on scratch files: ``screen(user=..., system=...)``."""
 
-    def start(cols=80, rows=24, *, user=None, system=None, env=None):
+    def start(cols=80, rows=24, *, user=None, system=None, env=None, argv=()):
         system_path = tmp_path / "etc" / "tkcurses.ini"
         user_path = tmp_path / "home" / "tkcurses" / "tkcurses.ini"
         system_path.parent.mkdir(exist_ok=True)
@@ -53,7 +53,11 @@ def screen(terminal, tmp_path):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text)
         term = terminal(cols, rows, env=env or {})
-        term.run_source(PROGRAM.format(system=str(system_path), user=str(user_path)))
+        term.run_source(
+            PROGRAM.format(
+                system=str(system_path), user=str(user_path), argv=list(argv)
+            )
+        )
         term.wait_for_text("SETTING")
         term.system, term.user = system_path, user_path
         return term
@@ -357,7 +361,7 @@ def test_a_bug_in_the_screen_restores_the_terminal_and_is_reported(terminal, tmp
             "from tkcurses._cfg import ui\n"
             "ui.Screen.handle = lambda self, key: 1 / 0\n"
             "raise SystemExit",
-        ).format(system=str(tmp_path / "s.ini"), user=str(tmp_path / "u.ini"))
+        ).format(system=str(tmp_path / "s.ini"), user=str(tmp_path / "u.ini"), argv=[])
     )
     term.wait_for_text("SETTING")
     term.send_keys("j")
@@ -378,6 +382,68 @@ def test_without_colour_a_change_is_marked_in_bold(screen):
     assert (attrs["fg"], attrs["bg"]) == (plain["fg"], plain["bg"])  # no colour
 
 
+def test_edit_global_opens_on_the_system_wide_file(screen):
+    term = screen(system="[mouse]\nenabled = no\n", argv=["edit", "--global"])
+    term.wait_for_text("editing the system-wide file")
+    term.send_keys("<Down>", " ", "s", "y")
+    term.wait_for_text("Saved 1 change to")
+    assert term.system.read_text() == "[mouse]\nenabled = true\n"
+    assert not term.user.exists()
+
+
+def test_edit_file_edits_that_file_in_place_of_yours(screen, tmp_path):
+    other = tmp_path / "other.ini"
+    other.write_text("[input]\nescape_delay = 60\n")
+    term = screen(user="[mouse]\nenabled = no\n", argv=["edit", "--file", str(other)])
+    term.wait_for_text("editing the given file: ")  # its path is past column 80
+    term.wait_for(showing("escape_delay", "60", "file"))
+    assert row_of(term, "enabled").split() == ["enabled", "-", "true", "default"]
+    term.send_keys("<Down>", " ", "s", "y")
+    term.wait_for_text("Saved 1 change to")
+    assert (
+        other.read_text() == "[input]\nescape_delay = 60\n\n[mouse]\nenabled = false\n"
+    )
+    assert term.user.read_text() == "[mouse]\nenabled = no\n"  # yours, untouched
+    term.send_keys("<Tab>")
+    term.wait_for_text("editing the system-wide file")
+
+
+def test_edit_refuses_global_and_file_together(screen, tmp_path):
+    with pytest.raises(AssertionError):  # it never draws the screen
+        screen(argv=["edit", "--global", "--file", str(tmp_path / "x.ini")])
+
+
+def test_edit_without_a_terminal_says_what_to_use_instead(capsys):
+    from tkcurses._cfg import cli
+
+    assert cli.main(["edit"]) == 2
+    assert "edit: needs a terminal" in capsys.readouterr().err
+
+
+def test_edit_passes_its_options_to_the_screen(monkeypatch, tmp_path):
+    from tkcurses._cfg import cli, ui
+
+    seen = {}
+    monkeypatch.setattr(ui, "run", lambda *a, **kw: seen.update(kw, paths=a) or 0)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    assert cli.main(["edit", "--global", "--lock-timeout", "3"]) == 0
+    assert (seen["scope"], seen["timeout"], seen["user_label"]) == (
+        "system",
+        3.0,
+        "user",
+    )
+    assert cli.main(["edit", "--file", str(tmp_path / "x.ini")]) == 0
+    assert (seen["scope"], seen["user_label"]) == ("user", "file")
+    assert seen["paths"][1] == tmp_path / "x.ini"
+    assert cli.main([]) == 0  # alone: the same screen, on your own file
+    assert (seen["scope"], seen["user_label"], seen["timeout"]) == (
+        "user",
+        "user",
+        10.0,
+    )
+
+
 def test_without_a_terminal_it_prints_the_help(capsys):
     from tkcurses._cfg import cli
 
@@ -388,4 +454,8 @@ def test_without_a_terminal_it_prints_the_help(capsys):
 def test_the_program_text_is_a_complete_program():
     """The template every test runs; a mistake in it fails every test the
     same way, which reads as a broken screen."""
-    compile(textwrap.dedent(PROGRAM.format(system="/s", user="/u")), "p", "exec")
+    compile(
+        textwrap.dedent(PROGRAM.format(system="/s", user="/u", argv=["edit"])),
+        "p",
+        "exec",
+    )
