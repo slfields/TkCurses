@@ -98,7 +98,14 @@ jobs:
         # CI to diagnose. The job limit was never the thing protecting against
         # a hang anyway: pytest's own 60s per-test timeout is, as the note
         # below says. This one only has to be shorter than 6 hours.
-        timeout-minutes: 20
+        #
+        # 40 and not 20, measured again on 2026-11-15: Python 3.12 runs the
+        # suite under coverage several times slower than the others - its
+        # tracer is what makes it slow, and that is left as it is - and its
+        # step had grown to 15-20 minutes. Master's run of #7 passed every
+        # test in 20:01 and failed on this limit, and the release workflow
+        # calls this file, so a release would have failed the same way.
+        timeout-minutes: 40
         env:
           # Every wait budget in the harness was chosen on a development
           # machine. A shared runner is several times slower - measured, a
