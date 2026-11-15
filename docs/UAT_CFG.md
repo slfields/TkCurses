@@ -46,6 +46,8 @@ all.
 - [ ] `./cfg get display.color_mode` prints `auto` and nothing else.
 - [ ] `./cfg --help` and `./cfg set --help` say what to type. The exit
       statuses are listed.
+- [ ] `./cfg list --def` and `./cfg list --j` are refused: an option must be
+      spelt in full. The usage shown is `list`'s, and `echo $?` is 2.
 
 ## Changing a setting
 

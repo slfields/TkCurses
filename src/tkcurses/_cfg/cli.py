@@ -529,7 +529,10 @@ def _file(text: str) -> Path:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    common = argparse.ArgumentParser(add_help=False)
+    # argparse accepts any unambiguous prefix of a long option by default, so
+    # --def meant --defaults. Off everywhere: a script that relied on a prefix
+    # would change meaning, or break, when an option sharing it was added.
+    common = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     common.add_argument(
         "--file",
         type=_file,
@@ -539,7 +542,7 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument(
         "--debug", action="store_true", help="show a traceback on an unexpected error"
     )
-    writing = argparse.ArgumentParser(add_help=False)
+    writing = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     writing.add_argument(
         "--global",
         dest="global_",
@@ -559,6 +562,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=DESCRIPTION,
         epilog=EXAMPLES + "\n" + EXIT_CODES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False,
     )
     parser.add_argument("--version", action="version", version=_version())
     commands = parser.add_subparsers(dest="command", metavar="COMMAND")
@@ -571,6 +575,7 @@ def build_parser() -> argparse.ArgumentParser:
             parents=parents,
             epilog=EXIT_CODES,
             formatter_class=argparse.RawDescriptionHelpFormatter,
+            allow_abbrev=False,
         )
         sub.set_defaults(run=run)
         return sub
@@ -660,16 +665,30 @@ def _version() -> str:
     return f"{PROG} {__version__}"
 
 
+def _subparser(parser: argparse.ArgumentParser, command: str | None) -> Any:
+    """The parser for ``command``, or ``parser`` itself for none."""
+    for action in parser._actions:
+        if command is not None and isinstance(action, argparse._SubParsersAction):
+            return action.choices[command]
+    return parser
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the command; return its exit status."""
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args, extra = parser.parse_known_args(argv)
     args.argv = list(argv) if argv is not None else None
+    # Errors found after the subcommand is known are reported by it, so the
+    # usage line shown is the one for what was typed: argparse would report
+    # leftover arguments with the top-level usage.
+    owner = _subparser(parser, args.command)
+    if extra:
+        owner.error(f"unrecognized arguments: {' '.join(extra)}")
     if args.command is None:
         parser.print_help(sys.stderr)
         return 2
     if getattr(args, "global_", False) and args.file is not None:
-        parser.error("give --global or --file, not both")
+        owner.error("give --global or --file, not both")
     try:
         return int(args.run(args))
     except CfgError as exc:

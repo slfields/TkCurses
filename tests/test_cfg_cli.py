@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import argparse
 import fcntl
 import json
 import os
@@ -169,6 +170,48 @@ def test_defaults_and_sources_together_is_a_usage_error(run):
     with pytest.raises(SystemExit) as caught:
         run("list", "--defaults", "--sources")
     assert caught.value.code == 2
+
+
+def _long_options():
+    """Every long option of the command and each subcommand, with the
+    arguments that make the rest of the line valid."""
+    parser = cli.build_parser()
+    commands = next(
+        a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
+    )
+    positional = {"get": ["mouse.enabled"], "set": ["mouse.enabled", "off"]}
+    positional["unset"] = positional["get"]
+    found = []
+    for name, sub in [(None, parser), *commands.choices.items()]:
+        for action in sub._actions:
+            for option in action.option_strings:
+                if option.startswith("--"):
+                    takes = [] if action.nargs == 0 else ["1"]
+                    found.append((name, option, takes, positional.get(name, [])))
+    return found
+
+
+@pytest.mark.parametrize(
+    ("command", "option", "takes", "rest"),
+    _long_options(),
+    ids=lambda v: v if isinstance(v, str) else None,
+)
+def test_an_option_must_be_spelt_in_full(capsys, command, option, takes, rest):
+    """argparse takes any unambiguous prefix by default - ``--def`` was
+    ``--defaults`` - which a script could come to rely on, and which would
+    change meaning when another option sharing the prefix was added."""
+    head = [command] if command else []
+    for prefix in (option[:-1], option[:3]):
+        for argv in ([prefix, *takes], [f"{prefix}={takes[0]}"] if takes else []):
+            if not argv:
+                continue
+            with pytest.raises(SystemExit) as caught:
+                cli.main([*head, *argv, *rest])
+            assert caught.value.code == 2
+            err = capsys.readouterr().err
+            assert f"unrecognized arguments: {argv[0]}" in err
+            # ...under the usage of what was typed, not the top level's
+            assert err.startswith(" ".join(["usage: tkcurses-cfg", *head]) + " [")
 
 
 # ---------------------------------------------------------------------- get
@@ -326,6 +369,7 @@ def test_global_and_file_together_is_a_usage_error(run, tmp_path):
     with pytest.raises(SystemExit) as caught:
         run("set", "--global", "--file", str(tmp_path / "x.ini"), "mouse.enabled", "1")
     assert caught.value.code == 2
+    assert run.capsys.readouterr().err.startswith("usage: tkcurses-cfg set [")
 
 
 def test_a_directory_is_not_a_file(run, tmp_path):
