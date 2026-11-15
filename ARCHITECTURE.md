@@ -1887,6 +1887,76 @@ still allowed if it is the one that fixes or removes the bad value, so a
 broken file can always be repaired through the command (decided with the
 user, `TkCurses-kge7`).
 
+**`tkcurses-cfg` is written for being run as root by someone careful,
+on paths someone else may control** (`_cfg/safety.py`). The threat is the
+classic one for a tool used through `sudo`: a link or directory another
+user made, on the way to the file being saved, steering root's write into
+a file of their choosing. A security review (`TkCurses-kge7`, at the user's
+request) found it real and carried it out against the command before the
+fix: a save through a link in a world-writable directory replaced the
+file the link named; a link planted as `<file>.lock` made a save create a
+file wherever it pointed, as root an `/etc/nologin`; a FIFO given as
+`--file` hung `check`; a value's `ESC [2J` reached the terminal raw in
+`list --sources` and on the screen; a new file under `umask 0` was mode
+666, and every lock was 644, so anyone could hold the system-wide lock.
+
+The rule for writing is `sudoedit`'s and OpenSSH's `StrictModes`:
+`trusted_target` walks the path a component at a time, with `lstat`,
+following links itself and walking `..` where the link leads, as the
+kernel does. Each directory must belong to the runner or root and not be
+writable by everyone (sticky excepted), each link must belong to either,
+the file must be regular and belong to either; as root, every directory
+must be root's and writable by root alone. Nothing on an accepted path can
+be changed by anyone else, which is what makes the check good until the
+write: there is no gap to race. The one exception is a directory still to
+be made in a sticky directory, where anyone may create the name first, so
+the path is checked again after making it. Group-writable directories are
+allowed for a user who is not root, because with user-private groups that
+group is usually the user alone; a user's own files are all such a save
+could reach.
+
+Decided, and left: reading follows any link - `list` as root shows on
+root's own terminal what root can read anyway - and a lock already
+created by someone else in a sticky directory can stop a save there,
+which is a refusal, not a write. TkCurses programs read their files as
+before; the rules are for the command that writes them. Output is escaped
+once, by wrapping standard output and error for the whole command, and on
+the screen in the one function that draws text - not at each message,
+where the one missed would be the one that mattered. The library's own
+warnings were already safe: they quote values with `repr`.
+
+Each fix has a test that fails without it, checked by taking each out in
+turn (`tests/test_cfg_safety.py`); root's rules are tested through the
+`euid` the check takes, since a test cannot become root.
+
+**The interactive screen is plain curses, not a TkCurses program**
+(`_cfg/ui.py`). It is the tool for repairing a configuration that makes
+TkCurses programs misbehave, so it reads none of the settings it edits for
+its own drawing. Every rule it shows is in `_cfg/session.py`, which has no
+curses in it and is tested without a terminal; the screen draws the
+session and turns keys into calls. A batch of edits is applied with the
+ones that fix a bad value first, so saving a fix together with other
+changes is accepted, as the same edits one at a time through `set` would
+be.
+
+**The screen's IN EFFECT column runs the real loader.** Each edited file is
+written to a private temporary directory and `TkCursesConfig.load` reads
+it there, as a program would read the real one; the origins are then
+mapped back to the real paths. `ConfigParser.read_string` would have saved
+the copy but splits lines only on `\n`, where reading a file splits on
+`\r` too, so it would have previewed a different parse of the same text.
+`tests/test_cfg_session.py` holds the preview equal, value and source, to
+what the loader reads once the edits are saved, over generated edits,
+files and environments. Two mutations of the preview fail it.
+
+**A resize is applied wherever the screen reads a key.** `getmaxyx()`
+stays at the old size until `resize_term()` is given the size the terminal
+reports, the fact TkCurses' own `Screen.handle_resize` is built on; the
+first version only redrew, and kept drawing the old layout into a smaller
+terminal. The screen polls the files once a second while it waits for a
+key, reads a changed one again and keeps the pending edits on top, and
+checks again just before saving.
+
 **Warnings are printed when the terminal is given back**, through the same
 held-reports path a callback's traceback takes (`Tk._held_reports`). Until
 `TkCurses-4j1h` nothing printed them at all: a mistyped setting was

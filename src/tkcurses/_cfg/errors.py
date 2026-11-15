@@ -62,6 +62,18 @@ class FileSyntaxError(CfgError):
         self.problem = problem
 
 
+class UnsafePath(CfgError):
+    """A save refused because someone other than the person running the
+    command could change the file or a directory or link on the way to it."""
+
+    exit_code = 6
+
+    def __init__(self, message: str, why: str | None = None) -> None:
+        super().__init__(message)
+        #: The reason alone, without the path and the advice.
+        self.why = why or message
+
+
 @dataclass(frozen=True)
 class Problem:
     """Something wrong in a file that is still readable."""

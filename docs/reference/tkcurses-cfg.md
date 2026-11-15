@@ -9,6 +9,10 @@ TkCurses.
 Every setting has a name made of its section and key, such as
 `input.escape_delay` for `escape_delay` in the `[input]` section.
 
+Run alone at a terminal, `tkcurses-cfg` opens [a screen](#the-interactive-screen)
+for looking and changing; given a command, it does that one thing and
+prints the result, for a person or a script.
+
 ## Seeing the configuration
 
 `list` shows every setting, the value a program would use, and where that
@@ -152,6 +156,65 @@ and edit the value; `set` does the same for you. `init` will not replace a
 file that is there unless given `--force`, and then keeps the old one as
 `tkcurses.ini.bak`.
 
+## The interactive screen
+
+`tkcurses-cfg edit` opens a screen of every setting, and so does
+`tkcurses-cfg` alone at a terminal. It starts on your own file;
+`edit --global` starts on the system-wide one, and `edit --file PATH` edits
+PATH in place of yours, as `--file` does for the other commands:
+
+```text
+ tkcurses-cfg - editing your file: ~/.config/tkcurses/tkcurses.ini  1 unsaved
+ SETTING            IN THIS FILE   IN EFFECT  FROM
+ mouse
+   click_interval   300 ms         300 ms     user
+   enabled          false        * false      user
+   report_motion    -              true       default
+   ...
+──────────────────────────────────────────────────────────────────────────────
+ mouse.enabled = false, from your file
+ Whether to use the mouse at all. Off leaves it to the terminal, whose own text
+ selection then works without holding Shift; the program is used from the
+ keyboard.
+ Takes true or false; default true.
+ mouse.enabled: false - not saved yet.
+ Space switch  u take out  r undo  s save  Tab other file  ? help  q quit
+```
+
+IN THIS FILE is what the file you are editing says, and `-` where it says
+nothing. IN EFFECT and FROM are what a program started now would use and
+where that comes from - with your unsaved changes counted, so you see the
+result before you save it. Below the list is everything about the setting
+under the cursor, and at the bottom the keys that do something there.
+
+| Key | Does |
+|---|---|
+| Up, Down, PgUp, PgDn, Home, End | Move. `k` and `j` too. |
+| Enter | Change the value: a list to pick from, or a field for a number, which shows the range and refuses anything outside it. |
+| Space | Switch a true/false setting. |
+| `u` | Take the setting out of this file, so it comes from the one below. |
+| `r` | Undo this row's change. |
+| Tab | Edit the other file: yours, or the system-wide one. |
+| `s` | Save: lists every change, before and after, and asks first. |
+| `p` | The problems in this file, and a fix for each. |
+| `i` | The setting's whole description and where its value comes from. |
+| `?` | Help. |
+| `q` | Quit, asking first if anything is not saved. |
+
+Nothing is written until you save, and a changed row is marked `*`. A file
+with a value that is not valid takes no other change until that value is
+fixed, as with `set`: a change it cannot take yet is marked `!`, and `p`
+lists the bad value with the fix. The system-wide file is read-only unless
+you run the screen as root. If something else changes a file while the
+screen is open, the screen reads it again and keeps your changes on top.
+If saving fails, your changes are kept.
+
+Ctrl-C quits at once and says how many changes were discarded; the exit
+status is 130. The screen needs a terminal of 60 by 15 or more, and works
+without colour; it marks changes in bold, or in colour where the terminal
+has it and `NO_COLOR` is not set. With no terminal - in a pipe or a
+script - `tkcurses-cfg` alone prints its help and exits with status 2.
+
 ## Safety
 
 A file is never left half-written. A change is written to a new file beside
@@ -166,6 +229,29 @@ finish.
 
 The edit changes only its own line. Comments, blank lines, the order of
 settings and their spacing stay as they were.
+
+Before it writes, `tkcurses-cfg` checks every step of the path to the file.
+A symbolic link is followed, so a link kept by a dotfile manager stays a
+link, but only when nothing on the way can be changed by anyone else:
+
+- each directory must belong to you or to root, and must not be writable by
+  everyone - a sticky directory such as `/tmp` excepted;
+- each symbolic link must belong to you or to root;
+- the file must be an ordinary file, belonging to you or to root.
+
+Run as root it is stricter: every directory must belong to root and be
+writable by root alone, so `sudo tkcurses-cfg` cannot be led into another
+user's files by a link they made. To change a user's file, run it as that
+user: `sudo -u USER tkcurses-cfg ...`. A path that fails is refused with
+the reason, and exit status 6.
+
+It reads only an ordinary file, of 1 MiB at most, so a `--file` naming a
+FIFO or a device is refused rather than waited on. Anything it shows from a
+file or the environment has its control characters written out - an escape
+character as `\x1b` - so a file cannot move the cursor, set the window
+title or write the clipboard of the terminal it is looked at in. A new
+file is never writable by everyone, whatever the umask, and the lock beside
+it is readable by its owner alone.
 
 ## Exit status
 
@@ -187,7 +273,8 @@ settings and their spacing stay as they were.
 
 `--file PATH` uses another file in place of your own, for every command.
 `--global` makes `set`, `unset`, `init` and `path` work on the system-wide
-file instead of yours. `--lock-timeout SECONDS` sets how long `set`,
-`unset` and `init` wait for another `tkcurses-cfg`. `--debug` shows the
+file instead of yours, and `edit` start on it. `--lock-timeout SECONDS`
+sets how long `set`, `unset`, `init` and a save from `edit` wait for
+another `tkcurses-cfg`. `--debug` shows the
 traceback of an unexpected error. `tkcurses-cfg COMMAND --help` describes
 each command.

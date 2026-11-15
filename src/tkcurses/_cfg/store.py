@@ -21,6 +21,8 @@ Two things read and write these files at once: ``tkcurses-cfg`` itself, more
 than one of which may run, and every TkCurses program, which reads the file
 when it starts and takes no lock to do so. So a save is built for both:
 
+0. **Check the path** - :func:`.safety.trusted_target` - so that nothing
+   on the way to the file can be changed by anyone else, root most of all.
 1. **Lock** - ``flock`` on ``<file>.lock`` beside the file, waited for up to
    a timeout, so two saves are one after the other and neither loses the
    other's change. The lock is held for the save alone, never while a person
@@ -29,7 +31,8 @@ when it starts and takes no lock to do so. So a save is built for both:
    as it is now, not as it was when the command started.
 3. **Write a new file beside it** - same directory, so the rename below is
    on one file system and atomic - all of it, then ``fsync``, then the old
-   file's permissions (and owner, when root).
+   file's permissions without set-ID bits, or for a new file the umask's,
+   never writable by everyone.
 4. **Keep the old one** as ``<file>.bak``: a hard link to it, made now and
    given its name only after the swap, so a failure leaves the old backup
    alone too.
@@ -39,7 +42,9 @@ A program starting at any moment reads the old file or the new one, whole.
 Any failure before the swap - an exception, a full disk, Ctrl-C, SIGTERM or
 SIGHUP - removes what was written and leaves the file and its backup exactly
 as they were, and the error says so. A symbolic link is written through, at
-its target, so a dotfile manager's link stays a link.
+its target, so a dotfile manager's link stays a link - when it, and the way
+to its target, pass the check in step 0. The lock is opened without
+following a link and is readable by its owner alone.
 """
 
 from __future__ import annotations
@@ -48,6 +53,7 @@ import errno
 import fcntl
 import os
 import signal
+import stat
 import tempfile
 import threading
 import time
@@ -56,8 +62,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from tkcurses._cfg.errors import CfgError
+from tkcurses._cfg.errors import CfgError, UnsafePath
 from tkcurses._cfg.inifile import IniFile
+from tkcurses._cfg.safety import trusted_target
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -126,7 +133,9 @@ class Saved:
 
 
 def target_of(path: Path) -> Path:
-    """The file a save of ``path`` writes: a symbolic link's target."""
+    """Where a save of ``path`` would write, followed but not checked:
+    for naming the lock and the backup. A save itself goes through
+    :func:`.safety.trusted_target`."""
     return path.resolve() if path.is_symlink() else path
 
 
@@ -162,10 +171,9 @@ def edit(
     """
     if not 0 <= timeout <= MAX_LOCK_TIMEOUT:
         raise ValueError(f"timeout {timeout} is outside 0-{MAX_LOCK_TIMEOUT}")
-    target = target_of(path)
-    with _signals_raise(), _explained(target, admin_hint):
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with _locked(lock_path(target), timeout):
+    with _signals_raise(), _explained(path, admin_hint):
+        target = _checked(path)
+        with _locked(_lock_for(target), timeout):
             before = IniFile.read(target)
             after = change(before)
             if after.text == before.text:
@@ -201,11 +209,10 @@ def overwrite(
     """
     if not 0 <= timeout <= MAX_LOCK_TIMEOUT:
         raise ValueError(f"timeout {timeout} is outside 0-{MAX_LOCK_TIMEOUT}")
-    target = target_of(path)
-    ini = IniFile.parse(text, str(target))
-    with _signals_raise(), _explained(target, admin_hint):
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with _locked(lock_path(target), timeout):
+    ini = IniFile.parse(text, str(path))
+    with _signals_raise(), _explained(path, admin_hint):
+        target = _checked(path)
+        with _locked(_lock_for(target), timeout):
             if target.exists() and not replace:
                 raise AlreadyExists(
                     f"{target} already exists; nothing was changed. Give "
@@ -232,11 +239,15 @@ def _replace(target: Path, data: bytes) -> tuple[Path | None, list[str]]:
             _write_all(fd, data)
             os.fsync(fd)
             if old is not None:
-                os.fchmod(fd, old.st_mode & 0o7777)
+                # Its permissions, but not set-user-ID, set-group-ID or
+                # sticky: those were for the old contents, not the new.
+                os.fchmod(fd, old.st_mode & 0o777)
                 if os.geteuid() == 0 and (old.st_uid, old.st_gid) != (0, 0):
                     os.fchown(fd, old.st_uid, old.st_gid)
             else:
-                os.fchmod(fd, 0o666 & ~_umask())
+                # Never writable by everyone, whatever the umask: anyone
+                # could then change the settings of whoever reads it.
+                os.fchmod(fd, 0o664 & ~_umask())
         finally:
             os.close(fd)
         if old is not None:
@@ -295,7 +306,7 @@ def _hold_backup(target: Path) -> str:
         try:
             _write_all(fd, target.read_bytes())
             os.fsync(fd)
-            os.fchmod(fd, target.stat().st_mode & 0o7777)
+            os.fchmod(fd, target.stat().st_mode & 0o777)
         finally:
             os.close(fd)
     return held
@@ -314,9 +325,65 @@ def _umask() -> int:
     return mask
 
 
+def _checked(path: Path) -> Path:
+    """:func:`.safety.trusted_target`, with the directories it needs made.
+
+    Checked again once they are: in a sticky directory such as ``/tmp``
+    anyone may create a name, and a link put where a directory was about
+    to be would otherwise lead the save somewhere the first check never
+    saw.
+    """
+    target = trusted_target(path)
+    if not target.parent.exists():
+        _make_directories(target.parent)
+        if trusted_target(path) != target:
+            raise UnsafePath(
+                f"{path}: the way to it changed while tkcurses-cfg was making "
+                "its directories. Nothing was changed."
+            )
+    return target
+
+
+def _lock_for(target: Path) -> Path:
+    return target.with_name(target.name + ".lock")
+
+
+def _make_directories(directory: Path) -> None:
+    """Make ``directory`` and any parents missing, never writable by
+    everyone: ``Path.mkdir(parents=True)`` makes the parents with the
+    default mode whatever it is asked for, and under ``umask 0`` that is a
+    directory anyone could plant a link in."""
+    missing: list[Path] = []
+    while not directory.exists():
+        missing.append(directory)
+        directory = directory.parent
+    for each in reversed(missing):
+        with suppress(FileExistsError):
+            each.mkdir(0o775 & ~_umask())  # one at a time: the mode applies
+
+
 @contextmanager
 def _locked(path: Path, timeout: float) -> Iterator[None]:
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    """Hold ``path``'s lock. It is opened without following a symbolic
+    link - one planted under its name would otherwise have this create a
+    file wherever it points - and made readable by its owner alone, since
+    anyone who can open a lock can hold it."""
+    flags = os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+    try:
+        fd = os.open(path, flags, 0o600)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise UnsafePath(
+                f"{path} is a symbolic link, so tkcurses-cfg will not use it as "
+                "a lock. Nothing was changed."
+            ) from None
+        raise
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode):
+        os.close(fd)
+        raise UnsafePath(f"{path} is not a regular file. Nothing was changed.")
+    if info.st_uid == os.geteuid() and info.st_mode & 0o077:
+        os.fchmod(fd, 0o600)
     try:
         deadline = time.monotonic() + timeout
         while True:

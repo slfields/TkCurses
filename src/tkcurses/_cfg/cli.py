@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any
 from tkcurses._cfg import store
 from tkcurses._cfg.errors import CfgError, FileSyntaxError
 from tkcurses._cfg.inifile import IniFile, describe_values, lookup, starter_text
+from tkcurses._cfg.safety import printable_output
 from tkcurses._core.config import (
     REMOVED,
     SETTINGS,
@@ -79,6 +80,9 @@ Inspect and change TkCurses's configuration: the settings a person at the
 terminal can give without changing a program. Each setting comes from, in
 rising order, its default, the system-wide file, your own file, and a
 TKCURSES_* environment variable.
+
+Run alone at a terminal, it opens a screen for looking and changing: the
+same as edit, which also takes --global and --file.
 """
 
 EXAMPLES = """\
@@ -90,6 +94,7 @@ examples:
   sudo tkcurses-cfg set --global mouse.enabled off
   tkcurses-cfg unset input.escape_delay  back to what the other files say
   tkcurses-cfg check                     find mistakes in the files
+  tkcurses-cfg edit --file ./test.ini    a screen for another file
 """
 
 
@@ -631,6 +636,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     command(
+        "edit",
+        "look and change on a screen; what tkcurses-cfg alone does at a terminal",
+        cmd_edit,
+        [common, writing],
+    )
+    command(
         "check",
         "report every mistake in the files and the environment",
         cmd_check,
@@ -673,8 +684,43 @@ def _subparser(parser: argparse.ArgumentParser, command: str | None) -> Any:
     return parser
 
 
+def cmd_edit(args: argparse.Namespace) -> int:
+    """The screen: ``edit``, and ``tkcurses-cfg`` alone at a terminal."""
+    import curses
+
+    from tkcurses._cfg import ui
+
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        print(
+            f"{PROG} edit: needs a terminal; a script uses list, get, set and unset",
+            file=sys.stderr,
+        )
+        return 2
+    files = files_for(args)
+    try:
+        return ui.run(
+            files.system,
+            files.user,
+            scope="system" if args.global_ else "user",
+            user_label=files.user_label,
+            timeout=args.lock_timeout,
+        )
+    except curses.error as exc:
+        print(
+            f"{PROG}: cannot show the screen in this terminal ({exc}); give a "
+            f"command instead - {PROG} --help lists them",
+            file=sys.stderr,
+        )
+        return 2
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the command; return its exit status."""
+    with printable_output():
+        return _main(argv)
+
+
+def _main(argv: Sequence[str] | None) -> int:
     parser = build_parser()
     args, extra = parser.parse_known_args(argv)
     args.argv = list(argv) if argv is not None else None
@@ -685,8 +731,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if extra:
         owner.error(f"unrecognized arguments: {' '.join(extra)}")
     if args.command is None:
-        parser.print_help(sys.stderr)
-        return 2
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            parser.print_help(sys.stderr)
+            return 2
+        args = parser.parse_args(["edit"])  # alone at a terminal: the screen
+        args.argv = []
     if getattr(args, "global_", False) and args.file is not None:
         owner.error("give --global or --file, not both")
     try:
