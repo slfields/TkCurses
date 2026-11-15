@@ -34,6 +34,10 @@ unicode_borders = off
 
 Settings are read once, when the program starts.
 
+[`tkcurses-cfg`](tkcurses-cfg.md) shows every setting and where its value
+comes from, changes them in either file without disturbing the rest of it,
+and checks both files for mistakes.
+
 ## Values
 
 An on-or-off setting takes `on`, `true`, `yes` or `1` for on and `off`,

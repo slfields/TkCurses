@@ -547,3 +547,18 @@ def test_a_percent_sign_in_a_value_is_a_bad_value_not_a_crash(tmp_path):
     assert config.warnings == [
         f"[input] escape_delay in {path}: '50%' is not a number, using 25"
     ]
+
+
+def test_a_quantity_is_shown_with_its_unit_and_parsed_without():
+    setting = config_module.BY_NAME["input.escape_delay"]
+    assert (setting.unit, setting.unit_name) == ("ms", "milliseconds")
+    assert setting.display(25) == "25 ms"
+    assert setting.format(25) == "25"  # what a file holds: no unit
+    assert config_module.BY_NAME["mouse.enabled"].display(False) == "false"
+
+
+def test_a_unit_without_a_name_is_refused_when_defined():
+    with pytest.raises(TypeError, match="no name for the unit"):
+        config_module.Setting(
+            "s", "k", "int", "V", "Text.", limits=(0, 1), unit="fortnights"
+        )

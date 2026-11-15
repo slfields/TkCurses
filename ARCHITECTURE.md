@@ -1862,6 +1862,25 @@ lock. Measured by mutation: with the `flock` taken out, four processes
 adding one to a setting 25 times each do not all succeed, and with an
 in-place write instead of the rename, a reader sees a part-written file.
 
+**The command line keeps standard output for what was asked** (`_cfg/cli.py`):
+`get` prints a value and nothing else, `--json` prints JSON and nothing
+else, and every note, warning and error goes to standard error, flushed
+after the output it is about. Argument errors are argparse's exit 2 - a
+`--lock-timeout` of `nan`, `inf`, negative or over an hour among them - and
+everything a person can get wrong after that has its own status, listed in
+`--help`, on the reference page, and held equal by `tests/test_docs_cfg.py`,
+which also runs every `console` example on the page in order and compares
+its output exactly. The system-wide file is moved somewhere empty for that
+run, so the page does not depend on the machine building it.
+
+**The command describes what a program would do, not what the files say**:
+`list` and `get` call `TkCursesConfig.load` and read its origins, so a value
+clamped, refused or overridden by the environment is shown as a program
+gets it. After `set` it says when something else will still win - the
+user's file over a `--global` edit, or a variable in this shell - and
+after `unset`, what the value now is and where it comes from. It sees only
+its own environment, and says so.
+
 **A value of the wrong type or out of range stops an edit; nothing else
 does** - an unknown or removed key is reported but left alone. The edit is
 still allowed if it is the one that fixes or removes the bad value, so a

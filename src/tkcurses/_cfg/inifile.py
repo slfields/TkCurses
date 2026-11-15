@@ -137,7 +137,8 @@ def describe_values(setting: Setting) -> str:
     if setting.kind == "int":
         assert setting.limits is not None
         low, high = setting.limits
-        return f"a whole number from {low} to {high}"
+        of = f" of {setting.unit_name}" if setting.unit_name else ""
+        return f"a whole number{of} from {low} to {high}"
     assert setting.choices is not None
     return "one of " + ", ".join(setting.choices)
 
