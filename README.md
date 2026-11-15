@@ -20,8 +20,8 @@ tk.Button(root, text="Quit", command=root.destroy).pack()
 root.mainloop()
 ```
 
-**Status: released.** The current release is
-[`v0.4.0`](https://github.com/slfields/TkCurses/releases). The classic and
+**Status: released** - see the
+[latest release](https://github.com/slfields/TkCurses/releases/latest). The classic and
 themed widget sets, the dialogs and the curses module are in, and are measured
 against Tk 9.0.2 rather than written from its manual. What is still missing is
 listed [below](#known-gaps). See [CHANGELOG.md](CHANGELOG.md) for what each
@@ -100,21 +100,19 @@ There are no runtime dependencies beyond the standard library.
 
 ## Installation
 
-The current release:
-
-```bash
-pip install "tkcurses @ git+https://github.com/slfields/TkCurses@v0.4.0"
-```
-
-Or download the wheel attached to the
-[release](https://github.com/slfields/TkCurses/releases) and
-`pip install` it. TkCurses is not on PyPI.
-
-The latest development version, which `-U` keeps up to date - every commit
-has its own version, taken from git:
-
 ```bash
 pip install -U git+https://github.com/slfields/TkCurses
+```
+
+That installs `master`, and `-U` keeps it up to date: every commit has its
+own version, taken from git. TkCurses is not on PyPI.
+
+To install a particular release instead, add its tag, or download the wheel
+attached to it - the [releases](https://github.com/slfields/TkCurses/releases)
+list them:
+
+```bash
+pip install "tkcurses @ git+https://github.com/slfields/TkCurses@<tag>"
 ```
 
 Then try the demo:

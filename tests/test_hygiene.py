@@ -27,6 +27,7 @@ keeps it out of a commit; this keeps it out of one made with ``git add -f``.
 
 from __future__ import annotations
 
+import re
 import subprocess
 
 import pytest
@@ -86,3 +87,15 @@ def test_gitignore_names_every_one():
     """Ignored as well as checked, so no clone adds them by accident."""
     ignored = (PROJECT_ROOT / ".gitignore").read_text().splitlines()
     assert [entry for entry in NEVER_TRACKED if entry not in ignored] == []
+
+
+#: Pages that tell a reader how to install. They outlive every release, so
+#: they must not name one: a pinned tag reads as current long after it is
+#: not, as the introduction's ``@v0.3.0`` did on the published site.
+INSTALL_PAGES = ("README.md", "docs/guide/introduction.md")
+
+
+@pytest.mark.parametrize("page", INSTALL_PAGES)
+def test_install_instructions_name_no_release(page):
+    text = (PROJECT_ROOT / page).read_text()
+    assert re.findall(r"TkCurses@v\d[\w.]*", text) == []
