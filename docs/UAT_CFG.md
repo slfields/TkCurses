@@ -31,8 +31,14 @@ all.
 |---|---|
 | Terminal | |
 | Size | |
-| Date | |
-| Result | |
+| Date | 2026-11-15 |
+| Result | **Accepted** (command line). Run by the author: "The UAT passed, record it as accepted". Terminal and size not recorded. Raised during the run and fixed before acceptance: values that count something show their unit, and an option must be spelt in full (`--def` had run as `--defaults`). |
+
+The boxes below are left unticked deliberately: the acceptance was given as a
+whole rather than item by item, and ticking them would claim a record that was
+not taken. This matches `UAT_CLIPBOARD.md`. What was driven mechanically
+is in `tests/test_cfg_cli.py`, `tests/test_docs_cfg.py` and
+`tests/test_uat_cfg_sandbox.py`.
 
 ## Seeing the configuration
 
