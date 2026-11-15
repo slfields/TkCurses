@@ -1,7 +1,12 @@
 # Contributing to TkCurses
 
-How the project is built, tested, documented and released, and the rules that
-keep it working. Most of them were learned from a failure, and the failure is
+**Changes come from the project's collaborators only.** The repository is
+public to read, fork and install from, but it takes no issues and no pull
+requests from outside: both are switched off for everyone else. To report a
+security problem, see [SECURITY.md](SECURITY.md).
+
+What follows is how the project is built, tested, documented and released,
+and the rules that keep it working. Most of them were learned from a failure, and the failure is
 given with the rule so the rule can be judged rather than only obeyed.
 
 ## Setting up

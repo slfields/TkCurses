@@ -1,12 +1,10 @@
 name: Documentation
 
 # Builds the Sphinx site with warnings as errors on every pull request, and
-# from master publishes it to GitHub Pages (TkCurses-imii). The repository
-# is private, so Read the Docs' free service cannot build it, and GitHub
-# Pages for a private repository needs a paid GitHub plan. Until Pages is
-# switched on (Settings > Pages > Source: GitHub Actions) and the
-# repository variable DOCS_PAGES is set to "true", master's site is built
-# and kept as an artifact, and the deploy is skipped rather than failed.
+# from master publishes it to GitHub Pages. Until Pages is switched on
+# (Settings > Pages > Source: GitHub Actions) and the repository variable
+# DOCS_PAGES is set to "true", master's site is built and kept as an
+# artifact, and the deploy is skipped rather than failed.
 # Every release also carries the same site as a zip - release.yml.
 
 on:
