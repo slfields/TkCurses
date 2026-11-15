@@ -40,8 +40,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from tkcurses._cfg import store
-from tkcurses._cfg.errors import CfgError, FileSyntaxError, InvalidSettingValue
+from tkcurses._cfg.errors import (
+    CfgError,
+    FileSyntaxError,
+    InvalidSettingValue,
+    UnsafePath,
+)
 from tkcurses._cfg.inifile import IniFile, describe_values, lookup
+from tkcurses._cfg.safety import read_regular, trusted_target
 from tkcurses._core.config import (
     BY_NAME,
     InvalidValue,
@@ -127,10 +133,8 @@ class Session:
         for scope in SCOPES:
             state = self.files[scope]
             try:
-                now: bytes | None = state.path.read_bytes()
-            except FileNotFoundError:
-                now = None
-            except OSError:
+                now = read_regular(state.path)
+            except (OSError, FileSyntaxError):
                 continue  # unreadable now: the save will say so
             if now != state.stamp:
                 changed.append(scope)
@@ -142,7 +146,10 @@ class Session:
         state = self.files[scope]
         if state.ini is None:
             return f"{state.error}. Fix it by hand, or replace it with init --force."
-        path = store.target_of(state.path)
+        try:
+            path = trusted_target(state.path)
+        except UnsafePath as exc:
+            return f"{exc.why[0].upper()}{exc.why[1:]}, so it is not written through."
         directory = path.parent
         while not directory.exists() and directory != directory.parent:
             directory = directory.parent
@@ -339,11 +346,13 @@ class Session:
 
 def _read(path: Path) -> FileState:
     try:
-        data = path.read_bytes()
-    except FileNotFoundError:
-        return FileState(path, IniFile(str(path), [], [], []), None, None)
+        data = read_regular(path)
+    except FileSyntaxError as exc:  # not a regular file, or far too large
+        return FileState(path, None, str(exc), None)
     except OSError as exc:
         return FileState(path, None, f"{path} cannot be read: {exc.strerror}", None)
+    if data is None:
+        return FileState(path, IniFile(str(path), [], [], []), None, None)
     try:
         return FileState(path, IniFile.from_bytes(data, path), None, data)
     except FileSyntaxError as exc:

@@ -230,6 +230,29 @@ finish.
 The edit changes only its own line. Comments, blank lines, the order of
 settings and their spacing stay as they were.
 
+Before it writes, `tkcurses-cfg` checks every step of the path to the file.
+A symbolic link is followed, so a link kept by a dotfile manager stays a
+link, but only when nothing on the way can be changed by anyone else:
+
+- each directory must belong to you or to root, and must not be writable by
+  everyone - a sticky directory such as `/tmp` excepted;
+- each symbolic link must belong to you or to root;
+- the file must be an ordinary file, belonging to you or to root.
+
+Run as root it is stricter: every directory must belong to root and be
+writable by root alone, so `sudo tkcurses-cfg` cannot be led into another
+user's files by a link they made. To change a user's file, run it as that
+user: `sudo -u USER tkcurses-cfg ...`. A path that fails is refused with
+the reason, and exit status 6.
+
+It reads only an ordinary file, of 1 MiB at most, so a `--file` naming a
+FIFO or a device is refused rather than waited on. Anything it shows from a
+file or the environment has its control characters written out - an escape
+character as `\x1b` - so a file cannot move the cursor, set the window
+title or write the clipboard of the terminal it is looked at in. A new
+file is never writable by everyone, whatever the umask, and the lock beside
+it is readable by its owner alone.
+
 ## Exit status
 
 | Status | Meaning |

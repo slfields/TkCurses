@@ -20,6 +20,17 @@ All notable changes to TkCurses. The format follows
   program would use before saving, switch between your file and the
   system-wide one, and fix the problems it finds.
 
+### Security
+- `tkcurses-cfg`'s safeguards, all in place before its first release: it
+  checks every directory, symbolic link and file
+  on the way to a file before writing it, and as root writes only where
+  root alone can change anything, so a link made by another user cannot
+  steer it into their choice of file. The lock beside a file is opened
+  without following a link and is readable by its owner alone. Only an
+  ordinary file of 1 MiB at most is read. Control characters in anything
+  shown from a file or the environment are escaped. A new file or
+  directory is never writable by everyone.
+
 ### Changed
 - A whole-number setting, in a file or a `TKCURSES_*` variable, is optional
   sign and ASCII digits and nothing else. `1_000` and digits from other

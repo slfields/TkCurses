@@ -59,6 +59,7 @@ from tkcurses._cfg.errors import (
     Problem,
     UnknownSetting,
 )
+from tkcurses._cfg.safety import read_regular
 from tkcurses._core.config import (
     BY_NAME,
     REMOVED,
@@ -194,9 +195,8 @@ class IniFile:
             FileSyntaxError: the file cannot be read as a configuration.
             OSError: it cannot be read at all.
         """
-        try:
-            data = path.read_bytes()
-        except FileNotFoundError:
+        data = read_regular(path)
+        if data is None:
             return cls(str(path), [], [], [])
         return cls.from_bytes(data, path)
 

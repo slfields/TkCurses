@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 from tkcurses._cfg.cli import show
 from tkcurses._cfg.errors import CfgError
 from tkcurses._cfg.inifile import describe_values
+from tkcurses._cfg.safety import printable
 from tkcurses._cfg.session import SCOPES, Change, Scope, Session
 from tkcurses._core.config import (
     BY_NAME,
@@ -931,7 +932,7 @@ class Screen:
         rows, cols = self.scr.getmaxyx()
         if not (0 <= y < rows and 0 <= x < cols):
             return
-        text = text[: cols - x]
+        text = printable(text)[: cols - x]  # text from a file is not trusted
         # The bottom-right cell is written, then the cursor cannot advance.
         with contextlib.suppress(curses.error):
             self.scr.addstr(y, x, text, attr)

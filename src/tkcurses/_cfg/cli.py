@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any
 from tkcurses._cfg import store
 from tkcurses._cfg.errors import CfgError, FileSyntaxError
 from tkcurses._cfg.inifile import IniFile, describe_values, lookup, starter_text
+from tkcurses._cfg.safety import printable_output
 from tkcurses._core.config import (
     REMOVED,
     SETTINGS,
@@ -715,6 +716,11 @@ def cmd_edit(args: argparse.Namespace) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the command; return its exit status."""
+    with printable_output():
+        return _main(argv)
+
+
+def _main(argv: Sequence[str] | None) -> int:
     parser = build_parser()
     args, extra = parser.parse_known_args(argv)
     args.argv = list(argv) if argv is not None else None

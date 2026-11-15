@@ -444,6 +444,13 @@ def test_edit_passes_its_options_to_the_screen(monkeypatch, tmp_path):
     )
 
 
+def test_an_escape_in_a_file_is_shown_not_obeyed(screen):
+    """``ESC [2J`` clears the screen if written raw; here it is text."""
+    term = screen(user="[mouse]\nenabled = \x1b[2Jno\n")
+    term.wait_for(showing("enabled", "\\x1b[2Jno", "true", "default"))
+    assert "SETTING" in term.row(1)  # nothing was cleared
+
+
 def test_without_a_terminal_it_prints_the_help(capsys):
     from tkcurses._cfg import cli
 

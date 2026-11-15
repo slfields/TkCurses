@@ -230,3 +230,25 @@ terminal at least 60 columns by 15 rows.
 - [ ] `./cfg edit --global --file /tmp/mine.ini` is refused: give one or the
       other. `echo $?` is 2.
 - [ ] `./cfg edit < /dev/null` says it needs a terminal. `echo $?` is 2.
+
+### Paths that are not safe to write
+
+- [ ] `mkdir open && chmod 777 open && echo precious > victim.txt &&
+      ln -s "$PWD/victim.txt" open/cfg.ini`, then
+      `./cfg init --force --file open/cfg.ini`: refused, saying anyone can
+      change `open` and nothing was changed. `echo $?` is 6, and
+      `cat victim.txt` still says `precious`.
+- [ ] `./cfg edit --file open/cfg.ini`: the screen opens read-only and its
+      bottom line says why.
+- [ ] `ln -s "$PWD/made-by-lock" fixtures/hand-written.ini.lock`, then
+      `./cfg set --file fixtures/hand-written.ini mouse.enabled off`:
+      refused, the lock is a link. `ls made-by-lock` finds nothing.
+      `rm fixtures/hand-written.ini.lock` afterwards.
+- [ ] `mkfifo pipe.ini && ./cfg check --file pipe.ini` answers at once:
+      not a regular file, `echo $?` is 5.
+- [ ] `printf '[mouse]\nenabled = \033[2Jno\n' > esc.ini`, then
+      `./cfg list --sources --file esc.ini`: the value shows as
+      `\x1b[2Jno` and the terminal is not cleared.
+- [ ] If you have sudo: `sudo ./cfg set --file /tmp/x.ini mouse.enabled
+      off` is refused - users other than root can change `/tmp` - and
+      says to use `sudo -u USER`.
