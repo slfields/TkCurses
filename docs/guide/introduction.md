@@ -165,8 +165,12 @@ You need Python 3.10 or later on Linux or macOS, and a terminal. Install
 TkCurses with `pip`:
 
 ```bash
-pip install "tkcurses @ git+https://github.com/slfields/TkCurses@v0.4.0"
+pip install git+https://github.com/slfields/TkCurses
 ```
+
+To install a particular release instead, add its tag - the
+[releases](https://github.com/slfields/TkCurses/releases) list them:
+`pip install "tkcurses @ git+https://github.com/slfields/TkCurses@<tag>"`.
 
 Every example below is a complete program. Save it to a file, say
 `hello.py`, and run it with `python3 hello.py` from a terminal. Press
