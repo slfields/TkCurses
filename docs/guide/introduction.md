@@ -165,7 +165,7 @@ You need Python 3.10 or later on Linux or macOS, and a terminal. Install
 TkCurses with `pip`:
 
 ```bash
-pip install "tkcurses @ git+https://github.com/slfields/TkCurses@v0.3.0"
+pip install "tkcurses @ git+https://github.com/slfields/TkCurses@v0.4.0"
 ```
 
 Every example below is a complete program. Save it to a file, say

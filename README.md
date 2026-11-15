@@ -21,7 +21,7 @@ root.mainloop()
 ```
 
 **Status: released.** The current release is
-[`v0.3.0`](https://github.com/slfields/TkCurses/releases). The classic and
+[`v0.4.0`](https://github.com/slfields/TkCurses/releases). The classic and
 themed widget sets, the dialogs and the curses module are in, and are measured
 against Tk 9.0.2 rather than written from its manual. What is still missing is
 listed [below](#known-gaps). See [CHANGELOG.md](CHANGELOG.md) for what each
@@ -103,7 +103,7 @@ There are no runtime dependencies beyond the standard library.
 The current release:
 
 ```bash
-pip install "tkcurses @ git+https://github.com/slfields/TkCurses@v0.3.0"
+pip install "tkcurses @ git+https://github.com/slfields/TkCurses@v0.4.0"
 ```
 
 Or download the wheel attached to the

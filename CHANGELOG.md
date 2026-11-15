@@ -6,7 +6,34 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-14
+
 ### Added
+- Menu entries draw their `image`, placed by `compound` (Tk's default,
+  `none`, shows the picture in place of the label), and a chosen check or
+  radio entry shows its `selectimage`. A picture is half-block pixels, two
+  pixel rows to a cell, so an entry with one is as tall as the picture;
+  layout, `yposition`, hit-testing, where a cascade opens and scrolling a
+  tall menu all work in rows.
+- Tear-off menus. The tear-off entry is index 0, as in Tk, drawn as a
+  dashed line; invoking it makes a `tearoffN` copy of type `tearoff` where
+  the menu was, titled by `title` or by the Menubutton or cascade it came
+  from, and calls `tearoffcommand`. The copy stays up after a choice, moves
+  when its title is dragged, and closes on Escape.
+- The classic Scrollbar takes the keyboard, with Tk's twelve bindings, and
+  lights the part under the pointer as Tk's does - on a press and release,
+  and on plain hover where the terminal reports it
+  (`TKCURSES_MOUSE_REPORT_HOVER=1`). The ttk Scrollbar and Spinbox repeat
+  while their arrows are held, on Tk's timing.
+- PRIMARY reaches the desktop: what is selected here pastes with a middle
+  click in another application, as from Tk on X11, once the selection has
+  settled. It goes the clipboard's way - OSC 52, `wl-copy --primary`,
+  `xclip` or `xsel` - and `[clipboard] primary` or
+  `TKCURSES_CLIPBOARD_PRIMARY=off` turns it off.
+- A documentation site, [slfields.github.io/TkCurses](https://slfields.github.io/TkCurses/),
+  published from `master`; every release still carries it as a zip.
+  `CONTRIBUTING.md` says how the project is built, tested and released, and
+  `SECURITY.md` how to report a vulnerability privately.
 - `tkcurses.version_info`: the library's own version as a tuple that
   compares, `(0, 3, 0, 'final', 0)`, in the shape of `sys.version_info`
   and `info_patchlevel()`, so a program can check
@@ -62,6 +89,18 @@ All notable changes to TkCurses. The format follows
   and was the one themed widget refusing an option Tk gives it.
 
 ### Changed
+- `Tk()` raises `TclError` naming `TERM` on a terminal that cannot position
+  the cursor, such as `TERM=dumb`, after giving the terminal back - where
+  tkinter raises "couldn't connect to display". It used to start, draw
+  nothing and exit cleanly.
+- A locale that is not UTF-8 is reported on stderr once the screen is given
+  back, naming the variable that chose it and what to set it to, instead of
+  drawing `café` as `caf�` and box lines as `^` without a word.
+- The Scale, Scrollbar and Menu keys follow Tk's library scripts through the
+  navigation virtual events, `<<PrevLine>>`, `<<NextChar>>` and the rest, so
+  a key `event_add`ed to one moves them too, and Control-p, n, b and f work.
+  Every arrow steps a Scale whatever its orientation; the ttk Scale steps
+  towards the pointer on button 1 instead of jumping.
 - `configure()` with no arguments answers what tkinter's does: a dictionary
   of each option's five-tuple - name, database name, database class,
   default, current value - where it gave the current values alone. A
@@ -86,6 +125,14 @@ All notable changes to TkCurses. The format follows
   Set the caption with `configure(text=...)`.
 
 ### Fixed
+- A picture no longer fills the colour-pair table, wherever it is shown -
+  a Label, Button or Menu, a Canvas, a Text or a window's
+  `backgroundimage`. A busy one used to leave every widget drawn after it in
+  the wrong colours, `#87005f` on `#0000ff` where red on blue was asked
+  for; the picture is fitted to the pairs that are left instead.
+- Tab from a widget that Tab skips - a clicked Scrollbar - moves on from
+  where it is, as Tk's `tk_focusNext` does, rather than to the first stop
+  in the window.
 - `PanedWindow.sash_coord` and `sash_place` refuse an index that is not a
   sash, in Tk's words; `identify` off a sash answers `""`, as Tk does, not `()`.
 - `tkcurses.curses`: `Window.bkgd` gives cells holding the old background
@@ -715,7 +762,8 @@ Phase 2 of the original codebase: the base widget classes, `Tk` and `Toplevel`,
 the variable classes and the panel stack. Superseded by the rebuild; it has no
 `Entry` or `Text`.
 
-[Unreleased]: https://github.com/slfields/TkCurses/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/slfields/TkCurses/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/slfields/TkCurses/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/slfields/TkCurses/compare/v0.3.0rc3...v0.3.0
 [0.3.0rc3]: https://github.com/slfields/TkCurses/compare/v0.3.0rc2...v0.3.0rc3
 [0.3.0rc2]: https://github.com/slfields/TkCurses/compare/v0.3.0rc1...v0.3.0rc2
