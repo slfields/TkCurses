@@ -113,7 +113,7 @@ def test_the_colour_table_names_every_tier():
 
 def test_every_setting_on_the_page_is_one_the_configuration_knows():
     known = {
-        (variable, section, key) for section, key, _kind, variable, _ in config._FIELDS
+        (setting.variable, setting.section, setting.key) for setting in config.SETTINGS
     }
     for row in settings():
         assert row in known

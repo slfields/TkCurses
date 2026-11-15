@@ -47,31 +47,34 @@ def page_block(language: str) -> str:
 
 
 def test_every_setting_has_a_section():
-    sections = {f.name for f in fields(config.TkCursesConfig)} - {"warnings"}
+    sections = {f.name for f in fields(config.TkCursesConfig)} - {
+        "warnings",
+        "origins",
+    }
     assert set(configref.SECTIONS) == sections
 
 
 def test_every_setting_is_on_the_page():
     text = configref.render()
-    for _section, key, _kind, variable, _limits in config._FIELDS:
-        assert f"### `{key}`" in text
-        assert f"`{variable}`" in text
-    assert text.count("### ") == len(config._FIELDS)
+    for setting in config.SETTINGS:
+        assert f"### `{setting.key}`" in text
+        assert f"`{setting.variable}`" in text
+    assert text.count("### ") == len(config.SETTINGS)
 
 
 @pytest.mark.parametrize(
-    ("section", "key"), [(section, key) for section, key, *_ in config._FIELDS]
+    ("section", "key"), [(setting.section, setting.key) for setting in config.SETTINGS]
 )
 def test_every_setting_is_described_for_a_user(section, key):
-    """The description is the ``#:`` comment on the field, so a setting
-    added without one fails here rather than appearing blank."""
+    """The description is the one on the setting's row, so a setting
+    added with a careless one fails here rather than reading badly."""
     text = configref.descriptions()[(section, key)]
     assert len(text) > 40
     assert text[0].isupper() and text.endswith("."), "whole sentences"
     assert not re.search(r"TkCurses-\w+|\b_\w+|\bDEC\b|ncurses", text), text
 
 
-@pytest.mark.parametrize("row", config._REMOVED)
+@pytest.mark.parametrize("row", config.REMOVED)
 def test_every_removed_setting_is_listed(row):
     section, key, variable, _why = row
     assert f"| `[{section}] {key}` | `{variable}` |" in configref.render()
@@ -101,7 +104,7 @@ def test_the_example_file_means_what_the_page_says(tmp_path):
 
 def test_the_example_variable_is_a_setting():
     named = re.findall(r"TKCURSES_\w+", page_block("console"))
-    variables = {variable for *_, variable, _limits in config._FIELDS}
+    variables = {setting.variable for setting in config.SETTINGS}
     assert named and set(named) <= variables
 
 

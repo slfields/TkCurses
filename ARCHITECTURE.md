@@ -1763,20 +1763,110 @@ primary = true
 ### Configuration Implementation
 
 `_core/config.py` holds the settings as dataclasses and one table,
-`_FIELDS`, of section, key, kind, environment variable and range: the INI
+`SETTINGS`, with a `Setting` row per setting: section, key, kind,
+environment variable, range or allowed values, and description. The INI
 reader, the environment reader and validation all walk it, so they cannot
 disagree. `Tk._start` loads it once and hands each setting to the piece it
 governs. A value that cannot be parsed falls back to its default and a
 number out of range is clamped, each recorded in `warnings`, because
 configuration is read before there is a screen to complain on.
 
-**The `#:` comment on each settings field is user-facing text**: the
-configuration reference (`docs/reference/configuration.md`) is generated
-from `_FIELDS`, `_CHOICES`, the dataclass defaults, those comments and
-`_REMOVED` by `docs/_ext/configref.py`, so it cannot list a setting the
-code lacks or miss one it has. Notes for whoever maintains a setting go in
-plain `#` comments beside it. `tests/test_configref.py` wants every
+**One parser, two policies.** `Setting.parse` is strict: it returns the
+value or raises `InvalidValue`, or `OutOfRange` carrying the clamped number.
+The loader is the lenient policy, built by catching those - clamp, or keep
+the earlier source's value - and `tkcurses-cfg` is the strict one, refusing
+what `parse` refuses. A property test (`tests/test_core_config.py`) holds
+the two together over arbitrary text, so the command can never call a value
+valid that a program would change, or the reverse (`TkCurses-kge7.1`). A
+whole number is `[+-]?[0-9]+` and no wider: `int()` also takes `1_000` and
+digits from other scripts, which a config file almost certainly means as a
+mistake. Those were accepted before `TkCurses-kge7.1` and now warn.
+
+**`TkCursesConfig.origins` records every source's say**, per setting: the
+default first, then each file and the environment in the order read, each
+an `Origin` with the raw text, the value it gave (or `None` when the text
+was refused) and the problem if any. `source(name)` is the last one that
+applied. It is what `tkcurses-cfg` shows as a setting's source chain, and it
+is filled by the same `load()` a program runs, so the command describes what
+a program would do rather than re-deriving it. It is left out of equality:
+two configurations with the same values are equal however they got them.
+
+**Each `Setting`'s description is user-facing text**: the configuration
+reference (`docs/reference/configuration.md`) is generated from `SETTINGS`,
+the dataclass defaults and `REMOVED` by `docs/_ext/configref.py`, so it
+cannot list a setting the code lacks or miss one it has; `tkcurses-cfg`
+shows the same text. Notes for whoever maintains a setting go in plain `#`
+comments beside its dataclass field. `tests/test_configref.py` wants every
 setting described in whole sentences with no tracker IDs or private names.
+The descriptions were `#:` comments on the dataclass fields until
+`TkCurses-kge7.1`, which a running program could not read.
+
+**Files are read without interpolation.** With `configparser`'s default,
+a `%` anywhere in a value raised `InterpolationSyntaxError` from `get()`,
+outside the loader's `try`, and the program did not start - the one way a
+configuration file could stop one, against the rule above. No setting has a
+use for `%(name)s`. `TkCurses-kge7.2`.
+
+**`tkcurses-cfg` edits a file as its lines** (`_cfg/inifile.py`), because
+`configparser` writes back a dictionary and drops every comment. Its grammar
+is a strict subset of `configparser`'s, chosen so a file it accepts is one a
+program reads identically, and a property test holds that against
+`configparser` itself over generated files on every Python CI runs
+(`tests/test_cfg_inifile.py`). Where `configparser` is lenient in ways that
+surprise, the editor refuses the file and names the line instead:
+
+- **an indented line after a setting continues that setting's value** - in
+  `configparser` a deeper indent, even after blank lines, is a
+  continuation, so `  [display]` under an option is not a section;
+- **`[DEFAULT]`'s keys appear in every section that exists**, so
+  `enabled = false` there turns the mouse off;
+- a header with text after its `]` (`configparser` takes `[mouse] x` as
+  `[mouse]`), a key with a space in it, a line with no `=` or `:`;
+- **a duplicate section, or a key set twice in a section in any case** -
+  `configparser` refuses these too, and the loader then reads *nothing* from
+  the file, which is worth a line number rather than a shrug;
+- a byte order mark (read as part of the first line) and text that is not
+  UTF-8.
+
+A `;` or `#` starts a comment only at the start of a line or after
+whitespace, as `configparser` has it: `color_mode=truecolor;x` is the value
+`truecolor;x`. An edit replaces only the value's span on its line - key
+spelling, spacing, comment and line ending stay - and a new setting takes
+the place of a commented-out line for it (`;escape_delay = 25`, as
+`tkcurses-cfg init` writes them), else follows the section's last setting,
+indented so it neither continues its neighbour nor is continued by the next
+line. Every edit is read back before it is returned.
+
+**A save is whole or not at all** (`_cfg/store.py`). A program reads the
+file when it starts and takes no lock, so the only safe write is a rename:
+the new text goes to a temporary file in the same directory, is synced,
+takes the old file's mode (and owner, as root), and replaces it with
+`os.replace`; the directory is synced after. Before the swap the old file is
+hard-linked to a temporary name and only renamed to `<file>.bak` once the
+swap has happened, so a failed save leaves the previous backup too. A copy
+stands in where the file system has no hard links (`EPERM`, `ENOTSUP`,
+`EMLINK`) and nowhere else - a full disk while linking is a failed save, not
+a reason to copy, which the failure-injection tests caught on their first
+run. SIGTERM and SIGHUP raise while a save runs, so they back out as
+Ctrl-C does, and exit 130. A file its owner made read-only is refused even
+though the rename would succeed, since only the directory needs to be
+writable for that.
+
+**Saves are serialised by `flock` on `<file>.lock`**, held for the
+read-edit-write and never while a person looks at a screen, and waited for
+up to `--lock-timeout`. The lock file stays: deleting it would let a
+process that opened the old one and one that created a new one both hold
+"the" lock. A symbolic link is written through, at its target, with the
+lock and backup beside the target, so the link and the real path share one
+lock. Measured by mutation: with the `flock` taken out, four processes
+adding one to a setting 25 times each do not all succeed, and with an
+in-place write instead of the rename, a reader sees a part-written file.
+
+**A value of the wrong type or out of range stops an edit; nothing else
+does** - an unknown or removed key is reported but left alone. The edit is
+still allowed if it is the one that fixes or removes the bad value, so a
+broken file can always be repaired through the command (decided with the
+user, `TkCurses-kge7`).
 
 **Warnings are printed when the terminal is given back**, through the same
 held-reports path a callback's traceback takes (`Tk._held_reports`). Until
@@ -1812,7 +1902,7 @@ work and nine removed (`TkCurses-4j1h`):
 - **`mouse.enabled` off never calls `mousemask`**, so none of 1000, 1002,
   1003 or 1006 is sent.
 
-The nine removed are in `_REMOVED`, and a file or environment that still
+The nine removed are in `REMOVED`, and a file or environment that still
 sets one gets a warning that it no longer has any effect:
 `refresh_interval` (the loop redraws when idle, not on a timer),
 `poll_timeout` (internal to the loop), `keypad` (off breaks every arrow

@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from tkcurses._core import config as config_module
 from tkcurses._core.config import (
@@ -260,12 +262,12 @@ def test_as_dict_covers_every_section():
 
 # --------------------------------------------------------- removed settings
 
-REMOVED = config_module._REMOVED
+REMOVED = config_module.REMOVED
 
 
 def test_every_setting_there_is_has_a_variable():
     """The table is the configuration: a row is read, and nothing else is."""
-    rows = {(section, key) for section, key, *_ in config_module._FIELDS}
+    rows = {(setting.section, setting.key) for setting in config_module.SETTINGS}
     fields = {
         (section, key)
         for section, keys in TkCursesConfig().as_dict().items()
@@ -275,7 +277,7 @@ def test_every_setting_there_is_has_a_variable():
 
 
 def test_no_removed_setting_is_still_read():
-    rows = {(section, key) for section, key, *_ in config_module._FIELDS}
+    rows = {(setting.section, setting.key) for setting in config_module.SETTINGS}
     assert not rows & {(section, key) for section, key, *_ in REMOVED}
 
 
@@ -346,8 +348,202 @@ def test_windows_paths_fall_back_when_unset(monkeypatch):
     assert "tkcurses.ini" in str(system)
 
 
-def test_an_integer_without_a_range_is_left_alone():
-    """Every field currently has a range; the guard is for ones that may not."""
-    config = TkCursesConfig()
-    assert config._as_int("99999", "where", 0, None) == 99999
-    assert config.warnings == []
+def test_a_setting_that_cannot_be_checked_is_refused_when_defined():
+    """A number with no range, or a choice of nothing, would accept
+    everything or nothing; the table refuses the row instead."""
+    with pytest.raises(TypeError, match="needs limits"):
+        config_module.Setting("s", "k", "int", "V", "Text.")
+    with pytest.raises(TypeError, match="needs choices"):
+        config_module.Setting("s", "k", "choice", "V", "Text.")
+
+
+# ------------------------------------------------- one table, strict parsing
+
+SETTINGS = config_module.SETTINGS
+Setting = config_module.Setting
+InvalidValue = config_module.InvalidValue
+OutOfRange = config_module.OutOfRange
+
+
+def test_every_setting_is_named_once():
+    names = [setting.name for setting in SETTINGS]
+    assert len(names) == len(set(names))
+    assert set(config_module.BY_NAME) == set(names)
+    assert config_module.BY_NAME["input.escape_delay"].variable == (
+        "TKCURSES_INPUT_ESCAPE_DELAY"
+    )
+
+
+@pytest.mark.parametrize("setting", SETTINGS, ids=lambda s: s.name)
+def test_every_setting_says_what_it_does(setting):
+    """The main run has no Sphinx, so the docs build's own check of the
+    descriptions is skipped there; this one is not."""
+    assert setting.description[0].isupper()
+    assert setting.description.endswith(".")
+
+
+@pytest.mark.parametrize("setting", SETTINGS, ids=lambda s: s.name)
+def test_every_default_is_a_value_of_its_setting(setting):
+    assert setting.parse(setting.format(setting.default)) == setting.default
+
+
+@pytest.mark.parametrize("setting", SETTINGS, ids=lambda s: s.name)
+def test_every_value_reads_back_as_written(setting):
+    if setting.kind == "bool":
+        values = [True, False]
+    elif setting.kind == "int":
+        low, high = setting.limits
+        values = [low, (low + high) // 2, high]
+    else:
+        values = list(setting.choices)
+    for value in values:
+        assert setting.parse(setting.format(value)) == value
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("true", True),
+        (" YES ", True),
+        ("On", True),
+        ("1", True),
+        ("false", False),
+        ("no", False),
+        ("OFF", False),
+        ("0", False),
+    ],
+)
+def test_a_boolean_is_one_of_the_spellings_in_any_case(raw, expected):
+    assert config_module.BY_NAME["mouse.enabled"].parse(raw) is expected
+
+
+@pytest.mark.parametrize("raw", ["", "y", "t", "2", "enabled", "truee"])
+def test_anything_else_is_not_a_boolean(raw):
+    with pytest.raises(InvalidValue, match="is not a boolean"):
+        config_module.BY_NAME["mouse.enabled"].parse(raw)
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("25", 25), (" 7 ", 7), ("+5", 5)])
+def test_a_number_is_ascii_digits_with_an_optional_sign(raw, expected):
+    assert config_module.BY_NAME["input.escape_delay"].parse(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["", "1_000", "2.5", "1e2", "0x10", "٣", "25ms"])
+def test_python_spellings_of_numbers_are_not_numbers(raw):
+    """``int()`` takes ``1_000`` and Arabic-Indic digits; a config file
+    meaning either is far likelier a mistake."""
+    with pytest.raises(InvalidValue, match="is not a number"):
+        config_module.BY_NAME["input.escape_delay"].parse(raw)
+
+
+@pytest.mark.parametrize(("raw", "clamped"), [("-1", 0), ("1001", 1000)])
+def test_a_number_out_of_range_says_where_it_would_be_in_range(raw, clamped):
+    with pytest.raises(OutOfRange, match="is outside 0-1000") as caught:
+        config_module.BY_NAME["input.escape_delay"].parse(raw)
+    assert caught.value.clamped == clamped
+
+
+def test_a_choice_comes_back_as_it_is_listed():
+    assert config_module.BY_NAME["display.color_mode"].parse(" TrueColor ") == (
+        "truecolor"
+    )
+    with pytest.raises(InvalidValue, match="is not one of auto, 8, 16"):
+        config_module.BY_NAME["display.color_mode"].parse("24bit")
+
+
+@given(
+    setting=st.sampled_from(SETTINGS),
+    raw=st.one_of(
+        st.text(max_size=8),
+        st.integers(-2000, 2000).map(str),
+        st.sampled_from(["true", "off", "auto", "256", "osc52", " On "]),
+    ),
+)
+def test_the_loader_and_the_parser_agree_about_every_value(setting, raw):
+    """A program keeps exactly what ``parse`` accepts, clamps exactly what it
+    calls out of range, and keeps the earlier value for everything else, so
+    ``tkcurses-cfg``'s strict check and a program cannot disagree."""
+    loaded = TkCursesConfig.load(paths=(), env={setting.variable: raw})
+    value = loaded._get(setting)
+    try:
+        expected = setting.parse(raw)
+    except OutOfRange as exc:
+        assert value == exc.clamped
+        assert len(loaded.warnings) == 1
+    except InvalidValue:
+        assert value == setting.default
+        assert len(loaded.warnings) == 1
+    else:
+        assert value == expected
+        assert loaded.warnings == []
+
+
+# ------------------------------------------------------------------ origins
+
+
+def test_each_setting_starts_at_its_default(tmp_path):
+    config = TkCursesConfig.load(paths=(), env={})
+    for setting in SETTINGS:
+        (origin,) = config.origins[setting.name]
+        assert origin == config_module.Origin(
+            "default", "built-in", None, setting.default
+        )
+        assert config.source(setting.name) is origin
+
+
+def test_every_source_is_recorded_and_the_last_one_wins(tmp_path):
+    system = write(tmp_path, "[input]\nescape_delay = 50\n", "system.ini")
+    user = write(tmp_path, "[input]\nescape_delay = 40\n", "user.ini")
+    variable = "TKCURSES_INPUT_ESCAPE_DELAY"
+    config = TkCursesConfig.load(paths=(system, user), env={variable: "10"})
+    chain = config.origins["input.escape_delay"]
+    assert [(o.kind, o.location, o.raw, o.value) for o in chain] == [
+        ("default", "built-in", None, 25),
+        ("file", str(system), "50", 50),
+        ("file", str(user), "40", 40),
+        ("environment", f"${variable}", "10", 10),
+    ]
+    assert config.source("input.escape_delay") is chain[-1]
+    assert config.input.escape_delay == 10
+    # Untouched settings still say where they came from.
+    assert config.source("mouse.enabled").kind == "default"
+
+
+def test_a_refused_value_is_recorded_and_does_not_win(tmp_path):
+    user = write(tmp_path, "[mouse]\nenabled = false\n", "user.ini")
+    config = TkCursesConfig.load(paths=(user,), env={"TKCURSES_MOUSE_ENABLED": "maybe"})
+    *_, refused = config.origins["mouse.enabled"]
+    assert refused.kind == "environment"
+    assert refused.applied is False
+    assert refused.problem == "'maybe' is not a boolean"
+    assert config.source("mouse.enabled").location == str(user)
+    assert config.mouse.enabled is False
+
+
+def test_a_clamped_value_wins_and_says_it_was_clamped(tmp_path):
+    user = write(tmp_path, "[input]\nescape_delay = 5000\n", "user.ini")
+    config = TkCursesConfig.load(paths=(user,), env={})
+    origin = config.source("input.escape_delay")
+    assert (origin.raw, origin.value) == ("5000", 1000)
+    assert origin.problem == "5000 is outside 0-1000"
+
+
+def test_origins_are_not_part_of_equality(tmp_path):
+    user = write(tmp_path, "[input]\nescape_delay = 25\n", "user.ini")
+    assert TkCursesConfig.load(paths=(user,), env={}) == TkCursesConfig()
+
+
+def test_a_configuration_not_loaded_has_no_origins():
+    with pytest.raises(KeyError):
+        TkCursesConfig().source("input.escape_delay")
+
+
+def test_a_percent_sign_in_a_value_is_a_bad_value_not_a_crash(tmp_path):
+    """With configparser's default interpolation, ``50%`` raised from the
+    loader and the program never started."""
+    path = write(tmp_path, "[input]\nescape_delay = 50%\n")
+    config = TkCursesConfig.load(paths=(path,), env={})
+    assert config.input.escape_delay == 25
+    assert config.warnings == [
+        f"[input] escape_delay in {path}: '50%' is not a number, using 25"
+    ]
