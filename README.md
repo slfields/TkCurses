@@ -27,6 +27,9 @@ against Tk 9.0.2 rather than written from its manual. What is still missing is
 listed [below](#known-gaps). See [CHANGELOG.md](CHANGELOG.md) for what each
 release contains.
 
+**Documentation: [slfields.github.io/TkCurses](https://slfields.github.io/TkCurses/)** -
+the guides, a tutorial and the API reference.
+
 ## Porting a tkinter program
 
 Change the import, and nothing else:
