@@ -63,15 +63,16 @@ def values(setting: config.Setting) -> str:
     if setting.kind == "int":
         assert setting.limits is not None
         low, high = setting.limits
-        return f"a number, {low} to {high}"
+        of = f" of {setting.unit_name}" if setting.unit_name else ""
+        return f"a number{of}, {low} to {high}"
     assert setting.choices is not None
     return ", ".join(f"`{choice}`" for choice in setting.choices)
 
 
-def default(value: Any) -> str:
+def default(value: Any, unit: str | None = None) -> str:
     if isinstance(value, bool):
         return "on" if value else "off"
-    return f"`{value}`"
+    return f"`{value}` {unit}" if unit else f"`{value}`"
 
 
 def render() -> str:
@@ -86,7 +87,7 @@ def render() -> str:
             "",
             f"- **Environment variable:** `{setting.variable}`",
             f"- **Values:** {values(setting)}",
-            f"- **Default:** {default(setting.default)}",
+            f"- **Default:** {default(setting.default, setting.unit)}",
             "",
             markdown(setting.description),
             "",

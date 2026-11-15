@@ -88,6 +88,9 @@ _FALSE = frozenset({"0", "false", "no", "off"})
 #: grammar rather than this file's.
 _INTEGER = re.compile(r"[+-]?[0-9]+")
 
+#: Each unit a setting may count in, as a sentence names it.
+_UNIT_NAMES = {"ms": "milliseconds"}
+
 
 # ------------------------------------------------------------ the settings
 
@@ -180,6 +183,9 @@ class Setting:
     limits: tuple[int, int] | None = None
     #: The values a ``choice`` accepts, in the case they are stored in.
     choices: tuple[str, ...] | None = None
+    #: What an ``int`` counts, abbreviated as it is shown beside a value
+    #: (``ms``); ``None`` for a setting that is not a quantity.
+    unit: str | None = None
 
     def __post_init__(self) -> None:
         # A row that cannot be checked would be accepted by nothing or by
@@ -188,6 +194,8 @@ class Setting:
             raise TypeError(f"{self.name}: an int setting needs limits")
         if self.kind == "choice" and not self.choices:
             raise TypeError(f"{self.name}: a choice setting needs choices")
+        if self.unit is not None and self.unit not in _UNIT_NAMES:
+            raise TypeError(f"{self.name}: no name for the unit {self.unit!r}")
 
     @property
     def name(self) -> str:
@@ -234,6 +242,16 @@ class Setting:
                 return choice
         raise InvalidValue(f"{raw!r} is not one of {', '.join(self.choices)}")
 
+    @property
+    def unit_name(self) -> str | None:
+        """:attr:`unit` in words, for a sentence: ``milliseconds``."""
+        return None if self.unit is None else _UNIT_NAMES[self.unit]
+
+    def display(self, value: Any) -> str:
+        """``value`` for a person: as a file writes it, with its unit."""
+        text = self.format(value)
+        return f"{text} {self.unit}" if self.unit else text
+
     def format(self, value: Any) -> str:
         """``value`` as a file would write it; :meth:`parse` reads it back."""
         if self.kind == "bool":
@@ -251,6 +269,7 @@ SETTINGS: tuple[Setting, ...] = (
         "How close together, in milliseconds, two clicks on the same cell must "
         "be to count as a double click, and three as a triple click.",
         limits=(1, 1000),
+        unit="ms",
     ),
     Setting(
         "mouse",
@@ -320,6 +339,7 @@ SETTINGS: tuple[Setting, ...] = (
         "key such as an arrow, which arrives as Escape and more. Raise it over "
         "a slow connection where arrow keys arrive as Escape and letters.",
         limits=(0, 1000),
+        unit="ms",
     ),
     Setting(
         "clipboard",

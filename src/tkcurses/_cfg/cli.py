@@ -140,7 +140,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     files = files_for(args)
     if args.defaults:
         rows = [
-            (s.name, s.format(s.default), describe_values(s), s.variable)
+            (s.name, s.display(s.default), describe_values(s), s.variable)
             for s in SETTINGS
         ]
         if args.json:
@@ -150,6 +150,7 @@ def cmd_list(args: argparse.Namespace) -> int:
                         {
                             "name": s.name,
                             "default": s.default,
+                            "unit": s.unit_name,
                             "takes": describe_values(s),
                             "variable": s.variable,
                             "description": s.description.replace("``", ""),
@@ -196,7 +197,7 @@ def cmd_list(args: argparse.Namespace) -> int:
         values.append(
             (
                 setting.name,
-                setting.format(config._get(setting)),
+                setting.display(config._get(setting)),
                 files.label(origin) + mark,
             )
         )
@@ -237,13 +238,11 @@ def cmd_set(args: argparse.Namespace) -> int:
     )
     entry = saved.ini.get(setting.name)
     assert entry is not None
+    shown = setting.display(setting.parse(entry.value))  # the file's text, parsed
     if saved.changed:
-        print(f"{setting.name} = {entry.value} in {show(target)}")
+        print(f"{setting.name} = {shown} in {show(target)}")
     else:
-        print(
-            f"{setting.name} is already {entry.value} in {show(target)}; "
-            "nothing changed"
-        )
+        print(f"{setting.name} is already {shown} in {show(target)}; nothing changed")
     _warn_all(saved.warnings)
     _shadowed(setting, files, target)
     return 0
@@ -271,7 +270,7 @@ def cmd_unset(args: argparse.Namespace) -> int:
     config = load(files)
     origin = config.source(setting.name)
     _note(
-        f"{setting.name} is now {setting.format(config._get(setting))}, "
+        f"{setting.name} is now {setting.display(config._get(setting))}, "
         f"from {_where(origin, files)}"
     )
     return 0
@@ -374,6 +373,7 @@ def _setting_json(
         "name": setting.name,
         "value": config._get(setting),
         "default": setting.default,
+        "unit": setting.unit_name,
         "source": files.label(origin),
         "location": origin.location,
         "environment_override": origin.kind == "environment",
@@ -393,7 +393,7 @@ def _setting_json(
 
 def _print_chain(setting: Setting, config: TkCursesConfig, files: Files) -> None:
     winner = config.source(setting.name)
-    print(f"{setting.name} = {setting.format(config._get(setting))}")
+    print(f"{setting.name} = {setting.display(config._get(setting))}")
     rows = []
     for origin in config.origins[setting.name]:
         if origin is winner:
@@ -403,7 +403,7 @@ def _print_chain(setting: Setting, config: TkCursesConfig, files: Files) -> None
         else:
             mark = "x"
         shown = (
-            setting.format(origin.value)
+            setting.display(origin.value)
             if origin.value is not None
             else (origin.raw or "").strip()
         )

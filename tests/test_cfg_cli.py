@@ -80,7 +80,9 @@ def test_list_shows_every_setting_its_value_and_source(run):
     assert lines[0].split() == ["SETTING", "VALUE", "SOURCE"]
     assert len([line for line in lines if "." in line.split(" ")[0]]) == len(SETTINGS)
     assert ["mouse.enabled", "false", "system"] in [line.split() for line in lines]
-    assert ["input.escape_delay", "40", "user"] in [line.split() for line in lines]
+    assert ["input.escape_delay", "40", "ms", "user"] in [
+        line.split() for line in lines
+    ]
     assert ["clipboard.system", "auto", "default"] in [line.split() for line in lines]
     assert "system:  /" in out
     assert "user:    ~/.config/tkcurses/tkcurses.ini" in out
@@ -98,7 +100,7 @@ def test_an_environment_override_is_flagged_and_explained(run):
     run.write(run.user, "[input]\nescape_delay = 40\n")
     run.monkeypatch.setenv("TKCURSES_INPUT_ESCAPE_DELAY", "7")
     _, out, _ = run("list", "--changed")
-    assert ["input.escape_delay", "7", "environment", "*"] in [
+    assert ["input.escape_delay", "7", "ms", "environment", "*"] in [
         line.split() for line in out.splitlines()
     ]
     assert "* Set in this shell's environment ($TKCURSES_INPUT_ESCAPE_DELAY)" in out
@@ -110,13 +112,13 @@ def test_list_sources_marks_the_winner_and_what_was_refused(run):
     run.write(run.user, "[input]\nescape_delay = soon\n")
     run.monkeypatch.setenv("TKCURSES_INPUT_ESCAPE_DELAY", "5000")
     _, out, err = run("list", "--sources", "--changed")
-    block = out.split("input.escape_delay = 1000\n")[1]
-    rows = [line.split()[:3] for line in block.splitlines() if line.strip()][:4]
+    block = out.split("input.escape_delay = 1000 ms\n")[1]
+    rows = [line.split()[:4] for line in block.splitlines() if line.strip()][:4]
     assert rows == [
-        ["default", "25"],
-        ["system", "50", str(run.system)],
-        ["x", "user", "soon"],
-        [">", "environment", "1000"],
+        ["default", "25", "ms"],
+        ["system", "50", "ms", str(run.system)],
+        ["x", "user", "soon", "~/.config/tkcurses/tkcurses.ini"],
+        [">", "environment", "1000", "ms"],
     ]
     assert "(5000 is outside 0-1000)" in block
     assert "('soon' is not a number)" in block
@@ -138,7 +140,7 @@ def test_list_defaults_says_what_each_setting_takes(run):
     _, out, _ = run("list", "--defaults")
     assert out.splitlines()[0].split() == ["SETTING", "DEFAULT", "TAKES", "VARIABLE"]
     row = next(line for line in out.splitlines() if line.startswith("input.escape"))
-    assert "25" in row and "from 0 to 1000" in row
+    assert "25 ms" in row and "of milliseconds from 0 to 1000" in row
     assert row.endswith("TKCURSES_INPUT_ESCAPE_DELAY")
 
 
@@ -150,6 +152,8 @@ def test_list_json_is_typed_and_complete(run):
     by_name = {s["name"]: s for s in data["settings"]}
     assert set(by_name) == {s.name for s in SETTINGS}
     assert by_name["mouse.click_interval"]["value"] == 300
+    assert by_name["mouse.click_interval"]["unit"] == "milliseconds"
+    assert by_name["mouse.enabled"]["unit"] is None
     assert by_name["mouse.click_interval"]["source"] == "user"
     assert by_name["mouse.click_interval"]["location"] == str(run.user)
     assert by_name["mouse.enabled"]["value"] is False
@@ -168,6 +172,23 @@ def test_defaults_and_sources_together_is_a_usage_error(run):
 
 
 # ---------------------------------------------------------------------- get
+
+
+def test_a_value_shown_to_a_person_carries_its_unit_and_one_for_a_script_not(run):
+    run.write(run.user, "[mouse]\nclick_interval = 300\n")
+    table = [line.split() for line in run("list")[1].splitlines()]
+    assert ["mouse.click_interval", "300", "ms", "user"] in table
+    assert ["mouse.enabled", "true", "default"] in table  # no unit to show
+    assert run("get", "mouse.click_interval")[1] == "300\n"
+    _, out, _ = run("set", "mouse.click_interval", "350")
+    assert out.startswith("mouse.click_interval = 350 ms in ")
+
+
+def test_set_reports_a_boolean_as_what_it_now_is(run):
+    """The message reads the file's text back; ``false`` is a non-empty
+    string, so showing it unparsed said ``true``."""
+    assert run("set", "mouse.enabled", "off")[1].startswith("mouse.enabled = false ")
+    assert "is already false" in run("set", "mouse.enabled", "no")[1]
 
 
 def test_get_prints_only_the_value(run):
@@ -219,7 +240,7 @@ def test_get_an_unknown_setting_is_status_3(run, name, words):
 def test_set_writes_your_file_and_says_so(run):
     status, out, err = run("set", "input.escape_delay", "50")
     assert (status, err) == (0, "")
-    assert out == "input.escape_delay = 50 in ~/.config/tkcurses/tkcurses.ini\n"
+    assert out == "input.escape_delay = 50 ms in ~/.config/tkcurses/tkcurses.ini\n"
     assert run.user.read_text() == "[input]\nescape_delay = 50\n"
     assert run("get", "input.escape_delay")[1] == "50\n"
 
@@ -237,7 +258,7 @@ def test_set_a_value_the_setting_does_not_take_is_status_4(run):
     run.write(run.user, "[input]\nescape_delay = 40\n")
     status, out, err = run("set", "input.escape_delay", "-5")
     assert (status, out) == (4, "")
-    assert "-5 is outside 0-1000; it takes a whole number from 0 to 1000" in err
+    assert "-5 is outside 0-1000; it takes a whole number of milliseconds" in err
     assert run.user.read_text() == "[input]\nescape_delay = 40\n"
 
 
@@ -320,7 +341,7 @@ def test_file_stands_in_for_your_own(run, tmp_path):
     assert other.read_text() == "[input]\nescape_delay = 60\n"
     assert not run.user.exists()
     _, out, _ = run("list", "--changed", "--file", str(other))
-    assert ["input.escape_delay", "60", "file"] in [
+    assert ["input.escape_delay", "60", "ms", "file"] in [
         line.split() for line in out.splitlines()
     ]
 
@@ -334,7 +355,7 @@ def test_unset_removes_the_line_and_says_what_wins_now(run):
     status, out, err = run("unset", "input.escape_delay")
     assert status == 0
     assert out == "input.escape_delay removed from ~/.config/tkcurses/tkcurses.ini\n"
-    assert f"now 50, from system ({run.system})" in err
+    assert f"now 50 ms, from system ({run.system})" in err
     assert run.user.read_text() == "; keep me\n[input]\n"
 
 
