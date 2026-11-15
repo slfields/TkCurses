@@ -133,6 +133,13 @@ escape delay, mouse reporting, Unicode or ASCII borders, the clipboard route and
 debug logging. Every setting is in [ARCHITECTURE.md](ARCHITECTURE.md) under
 *Runtime Configuration*.
 
+The `tkcurses-cfg` command, installed with the package, shows every setting
+and where its value comes from, changes them in either file without
+disturbing the rest of it, and checks both files and the environment for
+mistakes - from the command line, or on a keyboard screen with
+`tkcurses-cfg` alone. See
+[its reference](https://slfields.github.io/TkCurses/reference/tkcurses-cfg.html).
+
 ## Development
 
 ```bash
