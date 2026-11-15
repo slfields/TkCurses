@@ -20,8 +20,8 @@ tk.Button(root, text="Quit", command=root.destroy).pack()
 root.mainloop()
 ```
 
-**Status: release candidate.** The first release candidate is
-[`v0.3.0rc1`](https://github.com/slfields/TkCurses/releases). The classic and
+**Status: released.** The current release is
+[`v0.3.0`](https://github.com/slfields/TkCurses/releases). The classic and
 themed widget sets, the dialogs and the curses module are in, and are measured
 against Tk 9.0.2 rather than written from its manual. What is still missing is
 listed [below](#known-gaps). See [CHANGELOG.md](CHANGELOG.md) for what each
@@ -100,10 +100,10 @@ There are no runtime dependencies beyond the standard library.
 
 ## Installation
 
-The release candidate:
+The current release:
 
 ```bash
-pip install "tkcurses @ git+https://github.com/slfields/TkCurses@v0.3.0rc1"
+pip install "tkcurses @ git+https://github.com/slfields/TkCurses@v0.3.0"
 ```
 
 Or download the wheel attached to the
@@ -150,11 +150,19 @@ character grid back through [pyte](https://github.com/selectel/pyte). What a
 test cannot see is checked by a person: the scenarios under `uat/`, with their
 checklists in `docs/UAT_*.md`.
 
-Releases are cut by pushing a `v*` tag, which runs the release workflow. See
+Changes are made by the project's collaborators only: the repository takes
+no issues and no pull requests from outside it. Releases are cut by pushing a
+`v*` tag, which runs the release workflow. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for that, and for how the project is
-built, tested and documented.
+built, tested and documented, and [SECURITY.md](SECURITY.md) to report a
+vulnerability.
 
 ## Documentation
+
+**[slfields.github.io/TkCurses](https://slfields.github.io/TkCurses/)** - the
+guides, a tutorial, and the API reference with a picture of what each widget
+draws. Built from `master` on every merge, and attached to every
+[release](https://github.com/slfields/TkCurses/releases) as a zip.
 
 [ARCHITECTURE.md](ARCHITECTURE.md) is the specification of record: module
 mapping, class hierarchy, rendering rules, input handling, configuration, and a

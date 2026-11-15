@@ -21,9 +21,8 @@ Pages are Markdown, read by MyST; the API reference comes from the
 docstrings through autodoc, with napoleon reading their Google-style
 ``Args:`` and ``Raises:`` sections. Built by GitHub Actions with warnings as
 errors (.github/workflows/docs.yml), and published from GitHub - Pages and a
-zip on every release - rather than by Read the Docs, because the repository
-is private and Read the Docs' free service builds only public ones. Decided
-with the user, 2026-11-05.
+zip on every release - rather than by Read the Docs. Decided while the
+repository was still private, 2026-11-05.
 """
 
 from __future__ import annotations
@@ -108,5 +107,7 @@ html_theme_options = {
 
 linkcheck_retries = 3
 linkcheck_timeout = 30
-# The repository is private, so its own pages answer 404 to the checker.
+# Links into this repository name files on master, which a pull request that
+# adds the file cannot show yet, so the checker would fail the very change
+# that makes the link good.
 linkcheck_ignore = [r"https://github\.com/slfields/TkCurses(/.*)?"]
