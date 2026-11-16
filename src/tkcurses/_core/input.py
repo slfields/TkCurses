@@ -33,6 +33,7 @@ from __future__ import annotations
 import contextlib
 import curses
 import os
+import re
 import select
 import sys
 import termios
@@ -138,6 +139,22 @@ def decode_modifiers(bstate: int) -> int:
         if mask and bstate & mask:
             modifiers |= flag
     return modifiers
+
+
+#: How long after an unanswered query its answer is still looked for.
+LATE_REPLY_WINDOW = 10.0
+
+#: How long to wait for the rest of a reply that has started arriving.
+_REPLY_GAP_MS = 50
+
+#: What follows the Escape of either answer to the OSC 52 query: XTGETTCAP's
+#: DCS, ``P 1 + r 4d73=... ESC \``, and the DA1 fence, ``[ ? 62;22 c``.
+_REPLY = re.compile(rb"P[01]\+r[0-9A-Fa-f]*(?:=[0-9A-Fa-f]*)?\x1b\\|\[\?[0-9;]*c")
+#: The beginnings of one, still worth reading on from.
+_REPLY_PREFIX = re.compile(
+    rb"P(?:[01](?:\+(?:r[0-9A-Fa-f]*(?:=[0-9A-Fa-f]*)?\x1b?)?)?)?|\[(?:\?[0-9;]*)?"
+)
+_REPLY_STARTS = (ord("P"), ord("["))
 
 
 class MouseDecoder:
@@ -316,6 +333,11 @@ class InputHandler:
         #: True when the last :meth:`poll` stopped at its limit, so input may
         #: be waiting that the descriptor no longer shows.
         self.more_pending = False
+        #: Codes read ahead while matching a late reply, given back to the
+        #: next read when they turned out not to be one.
+        self._pushback: list[int] = []
+        #: Until when a terminal's late answer to a query is dropped.
+        self._late_reply_until: float | None = None
         self._configure()
 
     def _configure(self) -> None:
@@ -584,11 +606,15 @@ class InputHandler:
             if limit is not None and len(events) >= limit:
                 self.more_pending = True
                 break
-            code = self._dispatcher.call(self._stdscr.getch)
+            code = self._next()
             if code == curses.ERR:
                 break
             if code == _ESCAPE:
-                following = self._dispatcher.call(self._stdscr.getch)
+                following = self._next()
+                if following in _REPLY_STARTS and self._late_reply_due():
+                    if self._drop_late_reply(following):
+                        continue
+                    following = self._next()
                 if following not in (curses.ERR, curses.KEY_MOUSE, curses.KEY_RESIZE):
                     events.append(self._alt_key(following))
                     continue
@@ -598,6 +624,59 @@ class InputHandler:
                 code = following
             events.extend(self._translate(code))
         return events
+
+    def expect_late_reply(self, window: float = LATE_REPLY_WINDOW) -> None:
+        """Drop a terminal's answer to a query, should it arrive in the next
+        ``window`` seconds.
+
+        The OSC 52 question is asked before curses starts and waits half a
+        second; over a slow link the answer comes after, and curses read it
+        as typing - ``1+r4d73=...?62;22c`` into whatever had the focus.
+        Only the two answers that question gets are dropped, byte for byte:
+        ``ESC P 0|1 + r <hex>[=<hex>] ESC \\`` and ``ESC [ ? <digits;> c``.
+        Anything that stops matching part way is read as it was typed. The
+        second is the fence, always sent last, so dropping it ends the wait.
+        """
+        self._late_reply_until = time.monotonic() + window
+
+    def _late_reply_due(self) -> bool:
+        until = self._late_reply_until
+        if until is not None and time.monotonic() > until:
+            self._late_reply_until = until = None
+        return until is not None
+
+    def _next(self) -> int:
+        """The next code: one read ahead and given back, or curses' own."""
+        if self._pushback:
+            return self._pushback.pop(0)
+        code: int = self._dispatcher.call(self._stdscr.getch)
+        return code
+
+    def _drop_late_reply(self, first: int) -> bool:
+        """Read on from ``first``, just after an Escape, for as long as it
+        could be a late reply. True if it was one, and is gone; otherwise
+        everything read is given back, ``first`` included."""
+        read = [first]
+        while True:
+            seen = bytes(read) if all(0 <= code < 256 for code in read) else None
+            if seen is not None and _REPLY.fullmatch(seen):
+                if seen.startswith(b"["):
+                    # The fence: nothing more is coming.
+                    self._late_reply_until = None
+                return True
+            if seen is None or not _REPLY_PREFIX.fullmatch(seen):
+                break
+            code = self._next()
+            if code == curses.ERR:
+                # The rest of a reply split across reads is on its way.
+                if not self.wait_for_input(_REPLY_GAP_MS):
+                    break
+                code = self._next()
+                if code == curses.ERR:
+                    break
+            read.append(code)
+        self._pushback[:0] = read
+        return False
 
     def _alt_key(self, code: int) -> KeyEvent:
         """A key pressed with Alt, which a terminal sends as Escape and then

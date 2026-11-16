@@ -7432,10 +7432,13 @@ class Tk(_Backdrop, BaseWidget, Wm):
         # Before curses starts: deciding on OSC 52 asks the terminal a
         # question, and curses would read the answer as keystrokes.
         settings = TkCursesConfig.load()
+        unanswered: list[bool] = []
         route = choose_route(
             settings.clipboard.system,
             os.environ,
-            ask_terminal=ask_terminal_for_osc52,
+            ask_terminal=lambda: ask_terminal_for_osc52(
+                unanswered=lambda: unanswered.append(True)
+            ),
         )
         if not settings.clipboard.primary:
             route.primary = None
@@ -7478,6 +7481,10 @@ class Tk(_Backdrop, BaseWidget, Wm):
                 report_hover=mouse.report_hover,
                 mouse=mouse.enabled,
             )
+            if unanswered:
+                # The answer may yet come, over a slow link, and curses
+                # would read it as typing. TkCurses-tcbj.24.
+                self._input.expect_late_reply()
             # Bindings are almost always made before mainloop(), so the
             # terminal has to be told what they wanted once it exists.
             self.tk.input = self._input

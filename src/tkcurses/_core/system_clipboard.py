@@ -350,12 +350,22 @@ def parse_osc52_answer(reply: bytes) -> bool | None:
     return None
 
 
-def ask_terminal_for_osc52(fd: int = 0, timeout: float = QUERY_TIMEOUT) -> bool | None:
+def ask_terminal_for_osc52(
+    fd: int = 0,
+    timeout: float = QUERY_TIMEOUT,
+    *,
+    unanswered: Callable[[], None] | None = None,
+) -> bool | None:
     """Ask the terminal on ``fd`` whether it supports OSC 52.
 
     Must run before curses starts, which would otherwise read the reply as
     keystrokes. Waits only until the DA1 fence comes back, so a terminal that
     answers costs a round trip, and one that never does costs ``timeout``.
+
+    ``unanswered`` is called when the question was asked and the fence did
+    not come back in time: a slow link may still deliver the reply, after
+    curses has started, and the input reader can then drop it - see
+    :meth:`~tkcurses._core.input.InputHandler.expect_late_reply`.
     """
     try:
         if not os.isatty(fd):
@@ -382,6 +392,8 @@ def ask_terminal_for_osc52(fd: int = 0, timeout: float = QUERY_TIMEOUT) -> bool 
     finally:
         with contextlib.suppress(OSError, termios.error):
             termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+    if unanswered is not None and not _fenced(reply):
+        unanswered()
     return parse_osc52_answer(reply)
 
 

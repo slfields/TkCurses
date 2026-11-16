@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -112,3 +114,38 @@ def test_an_existing_directory_with_files_is_refused(tmp_path, capsys):
     (tmp_path / "x").write_text("mine")
     assert cfg_sandbox.main([str(tmp_path)]) == 2
     assert (tmp_path / "x").read_text() == "mine"
+
+
+# ------------------------------------ paths in the scripts, TkCurses-tcbj.25
+
+
+def test_hold_lock_runs_with_an_interpreter_whose_path_has_a_space(
+    tmp_path, monkeypatch
+):
+    """A #! line cannot be quoted; hold-lock runs Python through sh, where
+    the path is."""
+    spaced = tmp_path / "a python"
+    spaced.mkdir()
+    (spaced / "python3").symlink_to(sys.executable)
+    monkeypatch.setattr(sys, "executable", str(spaced / "python3"))
+    sandbox = cfg_sandbox.make(tmp_path / "sandbox")
+    done = subprocess.run(
+        [str(sandbox / "hold-lock"), str(sandbox / "held.ini"), "0"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.startswith("holding ")
+    assert (sandbox / "held.ini.lock").exists()
+
+
+def test_a_line_break_in_the_checkouts_path_stays_in_the_comment(tmp_path, monkeypatch):
+    monkeypatch.setattr(cfg_sandbox, "REPO", Path("/tmp/x\ntouch /tmp/owned"))
+    sandbox = cfg_sandbox.make(tmp_path / "sandbox")
+    text = (sandbox / "cfg").read_text()
+    comment = text.splitlines()[1]
+    assert comment.startswith("#") and "touch /tmp/owned" in comment
+    # Elsewhere the path is quoted, and sh reads it back whole.
+    words = shlex.split(text.split("\n", 3)[3], comments=True)
+    assert "PYTHONPATH=/tmp/x\ntouch /tmp/owned/src" in words

@@ -579,3 +579,44 @@ def test_the_loop_reads_again_at_once_after_a_read_stopped_short(more_pending):
     )
     tkcurses.Tk._read_input(loop)
     assert loop._input.waited is not more_pending
+
+
+# --------------------------------- a late answer to a query, TkCurses-tcbj.24
+
+#: What a terminal with OSC 52 answers, then the DA1 fence.
+_LATE = b"\x1bP1+r4d73=1b5d\x1b\\" + b"\x1b[?62;22c"
+
+
+def test_a_late_reply_is_dropped_and_typing_around_it_is_not(curses_stub):
+    handler = make_handler(FakeScreen([ord("a"), *_LATE, ord("b")]))
+    handler.expect_late_reply()
+    assert [e.keysym for e in handler.poll()] == ["a", "b"]
+    # The fence came, so nothing more is looked for.
+    assert handler._late_reply_until is None
+
+
+def test_a_late_reply_is_typing_when_none_was_expected(curses_stub):
+    """As before the fix: the reason it is only dropped after a query that
+    went unanswered."""
+    handler = make_handler(FakeScreen(list(_LATE)))
+    assert "".join(e.char for e in handler.poll()).endswith("?62;22c")
+
+
+def test_a_late_reply_is_typing_once_the_window_has_passed(curses_stub):
+    handler = make_handler(FakeScreen(list(_LATE)))
+    handler.expect_late_reply(window=-1)
+    assert len(handler.poll()) > 2
+
+
+@pytest.mark.parametrize(
+    ("sent", "keys"),
+    [
+        (b"\x1b[x", [("[", MOD_ALT), ("x", 0)]),
+        (b"\x1bPq", [("P", MOD_ALT), ("q", 0)]),
+        (b"\x1bP1+z", [("P", MOD_ALT), ("1", 0), ("+", 0), ("z", 0)]),
+    ],
+)
+def test_what_stops_looking_like_a_reply_is_read_as_typed(curses_stub, sent, keys):
+    handler = make_handler(FakeScreen(list(sent)))
+    handler.expect_late_reply()
+    assert [(e.keysym, e.modifiers) for e in handler.poll()] == keys
