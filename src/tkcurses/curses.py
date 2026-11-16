@@ -47,6 +47,17 @@ order.
 Every constant - ``A_BOLD``, ``KEY_UP``, ``COLOR_RED``, ``ACS_HLINE``,
 ``error`` - is the standard library's, under the same name.
 
+Text is written as given, as curses writes it. A control character is
+shown as curses shows it, ``^[`` for Escape, so no escape sequence
+reaches the terminal. A Unicode format character is passed on, though,
+the bidirectional controls among them: after U+202E, a terminal that
+honours it shows the rest of the line right to left, so what appears is
+not what was written. Text from outside the program - a file name, a
+message from the network - can be filtered before it is drawn, for
+instance by leaving out each character whose
+``unicodedata.category(char)`` is ``"Cf"``. The widgets do this for the
+text they draw.
+
 Differences from curses:
     A function not listed here is the standard library's own, and acts
     on the terminal directly rather than through this library. The ones
