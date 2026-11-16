@@ -78,3 +78,39 @@ def test_the_root_never_reads_a_profile_by_itself(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     (tmp_path / ".Tk.py").write_text("raise SystemExit('profile ran')\n")
     tkcurses.Tk(useTk=False).destroy()
+
+
+# --------------------------------------- which profiles are run, TkCurses-tcbj.18
+
+
+def test_with_no_home_nothing_is_run_not_the_current_directory(
+    root, tmp_path, monkeypatch
+):
+    """tkinter falls back to the current directory; a folder someone else
+    made - a download, a clone - could then run code in the program."""
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".Tk.py").write_text("raise SystemExit('profile ran from the cwd')\n")
+    root.readprofile("demo", "Tk")
+
+
+@pytest.mark.parametrize("mode", [0o664, 0o646])
+def test_a_profile_others_may_write_is_not_run(root, tmp_path, monkeypatch, mode):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    profile = tmp_path / ".Tk.py"
+    profile.write_text("raise SystemExit('a writable profile ran')\n")
+    profile.chmod(mode)
+    root.readprofile("demo", "Tk")
+
+
+def test_a_profile_belonging_to_someone_else_is_not_run(root, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".Tk.py").write_text("raise SystemExit('someone else's profile ran')\n")
+    monkeypatch.setattr(tkcurses.os, "getuid", lambda: 4242 + 1000)
+    root.readprofile("demo", "Tk")
+
+
+def test_a_directory_named_like_a_profile_is_not_run(root, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".Tk.py").mkdir()
+    root.readprofile("demo", "Tk")

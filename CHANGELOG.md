@@ -27,6 +27,20 @@ All notable changes to TkCurses. The format follows
 - A message printed as a program exits - the locale report, a
   configuration warning naming a path - escapes control characters, so a
   locale name or an `XDG_CONFIG_HOME` path cannot drive the terminal.
+- Releases are built and published by separate jobs: the build and the
+  documentation run with a read-only token, and the one job that can write
+  installs nothing, checks the files against the checksums written when
+  they were built, attests their provenance and publishes them. A release
+  carries `SHA256SUMS`, and each file can be checked with
+  `gh attestation verify`. A tag on a commit that is not on `master` is
+  refused.
+- CI, the documentation and the release install their tools from lock
+  files with every hash pinned, the workflows pin each action to a commit,
+  no job keeps the checkout's credentials, and a new security job runs
+  bandit and audits every lock with pip-audit. `Tk.readprofile` runs
+  nothing when `HOME` is unset, where tkinter would look in the current
+  directory, and skips a profile that is not the user's own or that others
+  can write to.
 
 ### Fixed
 - With no home directory to be found - `HOME` and `XDG_CONFIG_HOME` unset

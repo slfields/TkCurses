@@ -57,6 +57,7 @@ import math
 import os
 import re
 import signal
+import stat
 import sys
 import threading
 import time
@@ -7391,18 +7392,28 @@ class Tk(_Backdrop, BaseWidget, Wm):
         ``tkcurses`` imported, as tkinter imports itself. The ``.tcl`` files
         tkinter would source beside them are skipped: there is no Tcl.
 
-        Unlike tkinter, ``Tk()`` never calls this itself. tkinter's
-        constructor does, unless Python was started with ``-E``, which means
-        any program would run code from the home directory without asking.
-        A program that wants it calls it.
+        Differences from tkinter:
+            ``Tk()`` never calls this itself. tkinter's constructor does,
+            unless Python was started with ``-E``, which means any program
+            would run code from the home directory without asking. A
+            program that wants it calls it.
+
+            With ``HOME`` unset nothing is run; tkinter looks in the current
+            directory instead, which runs whatever a downloaded folder holds.
+            A profile that is not the user's own, or that someone else may
+            write to, is skipped, as OpenSSH treats its own files.
         """
-        home = Path(os.environ.get("HOME", os.curdir))
+        home = os.environ.get("HOME")
+        if not home:
+            return
         namespace: dict[str, Any] = {"self": self}
-        exec("from tkcurses import *", namespace)
+        namespace.update((name, globals()[name]) for name in __all__)
         for name in (className, baseName):
-            path = home / f".{name}.py"
-            if path.is_file():
-                exec(path.read_text(encoding="utf-8"), namespace)
+            path = Path(home) / f".{name}.py"
+            if _a_profile_to_trust(path):
+                # Running the user's own profile is what this is for; the
+                # file was checked to be theirs and writable by them alone.
+                exec(path.read_text(encoding="utf-8"), namespace)  # nosec B102
 
     def _start(self) -> None:
         """Initialise curses and hang the screen-dependent pieces off it.
@@ -8357,6 +8368,21 @@ def _stderr_is_a_terminal() -> bool:
         return bool(stream is not None and stream.isatty())
     except (OSError, ValueError):
         return False
+
+
+def _a_profile_to_trust(path: Path) -> bool:
+    """Whether ``path`` is a regular file the user owns and no one else may
+    write to. Followed if it is a link, as tkinter's ``isfile`` follows it:
+    what is checked is the file that would be run."""
+    try:
+        info = path.stat()
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(info.st_mode)
+        and info.st_uid == os.getuid()
+        and not info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    )
 
 
 def _write_to_stderr(text: str) -> None:

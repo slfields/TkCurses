@@ -16,6 +16,20 @@ pip install -e ".[dev]"     # the library, editable, with the test tools
 pip install -e ".[docs]"    # the documentation toolchain, if you build the site
 ```
 
+CI installs the same tools from the lock files under `requirements/`, which
+pin every package to an exact version with its hashes, so a run cannot pick
+up a release published since the lock was made:
+
+```bash
+pip install --require-hashes -r requirements/dev.txt
+pip install --no-deps --no-build-isolation -e .
+```
+
+After changing a dependency in `pyproject.toml`, or to take newer versions,
+regenerate them with `sh requirements/lock.sh` (it needs
+[uv](https://docs.astral.sh/uv/)) and commit the result. CI's security job
+audits every lock for known vulnerabilities on each run.
+
 ## The checks CI runs
 
 ```bash
@@ -218,10 +232,14 @@ python3 tests/support/check_upgrade.py  # install, commit, upgrade: CI's build j
 
 **Releasing is pushing a tag**, and only the maintainer decides when. An
 annotated tag such as `v0.3.0rc1` on a `master` commit runs
-`.github/workflows/release.yml`: the whole CI suite, a build that must be
-exactly the tag's version, a smoke install of the wheel, then a GitHub release
-with the sdist, the wheel and the documentation - a pre-release for an rc,
-alpha or beta, with the CHANGELOG's section for that version as its text. Run
+`.github/workflows/release.yml`: the whole CI suite, a check that the tagged
+commit is on `master`, a build that must be exactly the tag's version, a
+smoke install of the wheel, then a GitHub release with the sdist, the wheel,
+the documentation and a `SHA256SUMS` of the three - a pre-release for an rc,
+alpha or beta, with the CHANGELOG's section for that version as its text.
+Each file carries a signed build-provenance attestation:
+`gh attestation verify <file> -R slfields/TkCurses` checks that it was
+built by this workflow from this repository. Run
 the workflow from the Actions tab to rehearse without publishing. Its
 decisions are in `.github/scripts/release.py`, tested by
 `tests/test_release_script.py`.

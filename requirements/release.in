@@ -1,0 +1,11 @@
+# What the release workflow builds with: the build frontend, the metadata
+# checker, and the build backend itself, so that `python -m build
+# --no-isolation` uses these pinned versions rather than whatever setuptools
+# is newest on the day. Keep the backend in step with [build-system] in
+# pyproject.toml.
+build
+twine
+packaging
+setuptools>=77.0
+setuptools-scm>=8
+wheel
