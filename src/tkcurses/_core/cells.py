@@ -58,6 +58,7 @@ __all__ = [
     "clip_cells",
     "is_embedded",
     "pad_cells",
+    "printable",
     "skip_cells",
 ]
 
@@ -167,3 +168,25 @@ def skip_cells(text: str, count: int) -> tuple[str, int]:
             return text[index:], used - count
         used += char_cells(character)
     return "", max(0, used - count)
+
+
+# ------------------------------------------- text bound for the terminal
+
+_CONTROLS = [*range(0x20), 0x7F, *range(0x80, 0xA0)]
+#: Bidirectional controls, which reorder what is shown around them.
+_BIDI = [0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A)]
+_ESCAPED = {c: f"\\x{c:02x}" for c in _CONTROLS if c not in (0x09, 0x0A)}
+_ESCAPED.update({c: f"\\u{c:04x}" for c in _BIDI})
+
+
+def printable(text: str) -> str:
+    """``text`` with every control character written out as an escape, so
+    showing it cannot move the cursor, set a title, write the clipboard or
+    reorder the line. A newline and a tab are kept.
+
+    For text written straight to the terminal, outside the screen: a
+    report on the way out, a message from ``tkcurses-cfg``. What a widget
+    draws goes through its own cell rules instead, which show a control
+    character as ``?``.
+    """
+    return text.translate(_ESCAPED)

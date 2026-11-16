@@ -105,6 +105,7 @@ from tkcurses._core.cells import (
     clip_cells,
     is_embedded,
     pad_cells,
+    printable,
     skip_cells,
 )
 from tkcurses._core.clipboard import CLIPBOARD, PRIMARY
@@ -8368,7 +8369,10 @@ def _write_to_stderr(text: str) -> None:
     waits until curses has given the terminal back.
     """
     with contextlib.suppress(OSError, ValueError):
-        sys.stderr.write(text)
+        # A report can quote the environment - a locale name, a path under
+        # XDG_CONFIG_HOME - and a value there is not ours to trust: an
+        # escape sequence in it would otherwise drive the terminal.
+        sys.stderr.write(printable(text))
         sys.stderr.flush()
 
 
@@ -11783,7 +11787,11 @@ class Entry(_Drawable, XView):
         if selection is None:
             raise TclError(f"{PRIMARY} selection doesn't exist or form unknown")
         first, last = selection
-        return self._field.text[first:last]
+        # What is shown, not what is held: a field with ``show="*"`` hands
+        # out asterisks, as Tk's EntryFetchSelection does and as <<Copy>>
+        # here already did - a password selected by a stray double-click
+        # would otherwise be on every desktop application's PRIMARY.
+        return str(self._displayed()[first:last])
 
     def selection_range(self, start: Any, end: Any) -> None:
         """Select from ``start`` to ``end``, leaving the anchor where it is.

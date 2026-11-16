@@ -30,7 +30,7 @@ else controls can be steered into any file on the machine. So:
   between the check and the write.
 - :func:`read_regular` reads only a regular file, and only a small one: a
   FIFO given as ``--file`` would hang the command, a device exhaust it.
-- :func:`printable` escapes control characters in anything shown, because
+- :func:`~tkcurses._core.cells.printable` escapes control characters in anything shown, because
   a configuration file is text from somewhere else, and an escape sequence
   in it would otherwise drive the person's terminal.
 """
@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TextIO
 
 from tkcurses._cfg.errors import FileSyntaxError, UnsafePath
+from tkcurses._core.cells import printable
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -56,19 +57,6 @@ MAX_SIZE = 1 << 20
 
 #: How many symbolic links one path may pass through, as Linux allows.
 MAX_LINKS = 40
-
-_CONTROLS = [*range(0x20), 0x7F, *range(0x80, 0xA0)]
-#: Bidirectional controls, which reorder what is shown around them.
-_BIDI = [0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A)]
-_ESCAPED = {c: f"\\x{c:02x}" for c in _CONTROLS if c not in (0x09, 0x0A)}
-_ESCAPED.update({c: f"\\u{c:04x}" for c in _BIDI})
-
-
-def printable(text: str) -> str:
-    """``text`` with every control character written out as an escape, so
-    showing it cannot move the cursor, set a title, write the clipboard or
-    reorder the line. A newline and a tab are kept."""
-    return text.translate(_ESCAPED)
 
 
 class _Printable:

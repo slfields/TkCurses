@@ -37,8 +37,9 @@ import pytest
 
 from tkcurses._cfg import cli, store
 from tkcurses._cfg.errors import FileSyntaxError, UnsafePath
-from tkcurses._cfg.safety import MAX_SIZE, printable, read_regular, trusted_target
+from tkcurses._cfg.safety import MAX_SIZE, read_regular, trusted_target
 from tkcurses._cfg.session import Session
+from tkcurses._core.cells import printable
 
 ME = os.geteuid()
 SOMEONE_ELSE = ME + 4242

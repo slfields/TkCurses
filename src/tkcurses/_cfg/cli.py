@@ -121,7 +121,13 @@ class Files:
 
 
 def files_for(args: argparse.Namespace) -> Files:
-    system, user = config_paths()
+    try:
+        system, user = config_paths()
+    except RuntimeError:
+        raise CfgError(
+            "there is no home directory, so no file of yours to use: set HOME "
+            "or XDG_CONFIG_HOME, or name a file with --file"
+        ) from None
     if args.file is not None:
         return Files(system, args.file, "file")
     return Files(system, user, "user")

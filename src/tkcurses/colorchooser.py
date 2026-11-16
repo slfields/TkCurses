@@ -328,7 +328,7 @@ class Chooser(Dialog):
             text = self._entries[channel].get().strip()
             try:
                 value = int(float(text))
-            except ValueError:
+            except (ValueError, OverflowError):  # OverflowError: inf, 1e999
                 # Tk's rule for an entry that will not read as a number: put
                 # it back to zero rather than refusing or complaining.
                 value = 0

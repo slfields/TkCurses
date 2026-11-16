@@ -38,8 +38,8 @@ from typing import TYPE_CHECKING, Any
 from tkcurses._cfg.cli import show
 from tkcurses._cfg.errors import CfgError
 from tkcurses._cfg.inifile import describe_values
-from tkcurses._cfg.safety import printable
 from tkcurses._cfg.session import SCOPES, Change, Scope, Session
+from tkcurses._core.cells import printable
 from tkcurses._core.config import (
     BY_NAME,
     SECTIONS,
