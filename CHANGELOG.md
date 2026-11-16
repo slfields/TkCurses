@@ -6,6 +6,17 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+### Security
+- An image file is no longer trusted to say how big it is. A 66-byte PNG
+  could make the decoder allocate a gigabyte, a PNG's pixel data inflated
+  without limit, and a GIF's could run far past its declared size. Now an
+  image declaring more than 4096 by 4096 pixels is refused before
+  anything is decoded, and pixel data is inflated only as far as the
+  header declares. A malformed image or bitmap file raises `TclError`, as
+  it does in Tk, where a truncated GIF raised `IndexError` and a bitmap
+  file with a bad number or bytes that are not UTF-8 raised `ValueError`
+  or `UnicodeDecodeError`.
+
 ## [0.4.1] - 2026-11-15
 
 ### Added

@@ -661,7 +661,10 @@ class PhotoImage(Image):
         A pixel made transparent forgets its colour, so :meth:`data`
         reports it as ``#000000``; Tk keeps the colour and reports that.
         Tk's ``palette`` sets how many colours a display may use; here it is
-        the character art's key. Tk's ``gamma`` is not taken.
+        the character art's key. Tk's ``gamma`` is not taken. An image
+        file declaring more than 4096 by 4096 pixels is refused with a
+        :class:`TclError` before anything is decoded, so a small hostile
+        file cannot ask for gigabytes; Tk tries to read it.
 
     TkCurses extension:
         Character art: with a ``palette``, rows of characters each stand
@@ -2063,6 +2066,8 @@ class BitmapImage(Image):
                     f'couldn\'t read bitmap file "{path}": '
                     f"{exc.strerror or 'no such file or directory'}"
                 ) from None
+            except UnicodeDecodeError:
+                raise TclError("format error in bitmap data") from None
         elif options.get("data"):
             # A list of rows is as legitimate as a string here, and str() on
             # one would have quietly drawn its repr - brackets, quotes and
@@ -2109,13 +2114,16 @@ def _parse_xbm(source: str) -> list[list[int]]:
             way Tk reports it: ``format error in bitmap data``.
     """
     width = height = None
-    for line in source.splitlines():
-        parts = line.split()
-        if len(parts) >= 3 and parts[0] == "#define":
-            if parts[1].endswith("_width"):
-                width = int(parts[2])
-            elif parts[1].endswith("_height"):
-                height = int(parts[2])
+    try:
+        for line in source.splitlines():
+            parts = line.split()
+            if len(parts) >= 3 and parts[0] == "#define":
+                if parts[1].endswith("_width"):
+                    width = int(parts[2])
+                elif parts[1].endswith("_height"):
+                    height = int(parts[2])
+    except ValueError:
+        raise TclError("format error in bitmap data") from None
     start = source.find("{")
     end = source.rfind("}")
     if width is None or height is None or start < 0 or end < 0:

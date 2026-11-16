@@ -6810,6 +6810,21 @@ tkinter code.
 | PGM / PPM | ○ | ○ | Read: P1-P6, any maxval, comments anywhere in the header. Written P6, holes black |
 | XBM | ○ | | Via BitmapImage, as in tkinter |
 
+**An image file is not trusted to say how big it is** (`TkCurses-tcbj`,
+the security review of 2026-11-16). Before it, measured: a 66-byte
+interlaced PNG declaring 16384x16384 made the decoder allocate 1 GB
+before it found the data short; a 2 MB PNG declaring one pixel inflated
+to 2 GB; a 50 KB GIF decoded for 38 s into 2 GB. Now `MAX_PIXELS` (4096 x
+4096, far past anything a terminal shows) is checked from the header
+before anything is allocated, PNG data is inflated with
+`decompressobj().decompress(data, expected)` - no further than the header
+declares, for interlaced images the sum of the seven passes - and the GIF
+decoder stops at the declared size. Tk has no such limit; this is a
+deliberate divergence, stated on `PhotoImage`. A file broken in a way no
+check foresaw becomes `TclError` in `decode()`, because that is what a
+program reading images catches. `tests/test_image_hostile.py` holds each
+of these, every test checked to fail without its fix.
+
 **Adam7 interlacing is read.** The image is stored as seven passes over a
 lattice, and each pass is its own little image — its own width, its own
 filter bytes, its own row above for the predictors — so the row filters are
