@@ -25,6 +25,7 @@ its decisions in .github/scripts/release.py and these test them. TkCurses-2q6o.5
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -142,15 +143,98 @@ def test_a_version_is_not_matched_by_its_prefix(tmp_path):
 # --------------------------------------------------------------- workflow
 
 
+def _jobs(text: str) -> dict[str, str]:
+    """Each job's block of a workflow, by its id: enough structure to ask
+    about without a YAML parser, which the test environment does not have."""
+    body = text[text.index("\njobs:\n") :]
+    starts = [
+        (match.group(1), match.start())
+        for match in re.finditer(r"^  ([A-Za-z_-]+):\n", body, re.MULTILINE)
+    ]
+    return {
+        name: body[start : (starts[i + 1][1] if i + 1 < len(starts) else len(body))]
+        for i, (name, start) in enumerate(starts)
+    }
+
+
 def test_the_workflow_releases_only_from_a_tag_push():
     """A rehearsal from the Actions tab builds and checks and publishes
     nothing; the release and the version check are the push's alone."""
     text = WORKFLOW.read_text(encoding="utf-8")
     assert 'tags: ["v*"]' in text
-    create = text.index("- name: Create the GitHub release")
-    assert "if: github.event_name == 'push'" in text[create : create + 120]
+    publish = _jobs(text)["publish"]
+    assert "if: github.event_name == 'push'" in publish.split("steps:")[0]
+    assert "- name: Create the GitHub release" in publish
     assert "needs: ci" in text
     assert "pypi" not in text.lower().replace("not pypi", "")
+
+
+def test_only_the_publishing_job_can_write_and_it_installs_nothing():
+    """Third-party code - build backends, Sphinx - runs where the token is
+    read-only; the job that can write only downloads, checks, attests and
+    uploads. Security review TkCurses-tcbj.7."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "\npermissions:\n  contents: read\n" in text
+    jobs = _jobs(text)
+    writers = [name for name, block in jobs.items() if "contents: write" in block]
+    assert writers == ["publish"]
+    publish = jobs["publish"]
+    for forbidden in (
+        "pip install",
+        "python -m",
+        "actions/checkout",
+        "actions/setup-python",
+    ):
+        assert forbidden not in publish, forbidden
+    assert "sha256sum --strict -c" in publish
+    assert "actions/attest-build-provenance@" in publish
+    assert "SHA256SUMS" in publish
+
+
+def test_a_tag_off_master_is_refused_before_anything_is_built():
+    build = _jobs(WORKFLOW.read_text(encoding="utf-8"))["build"]
+    check = build.index("git merge-base --is-ancestor")
+    assert check < build.index("python -m build")
+
+
+WORKFLOWS = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS, ids=lambda path: path.name)
+def test_every_action_is_pinned_to_a_commit(workflow):
+    """A tag can be moved to other code; a commit cannot. TkCurses-tcbj.9."""
+    for line in workflow.read_text(encoding="utf-8").splitlines():
+        match = re.search(r"uses:\s*(\S+)", line)
+        if match and not match.group(1).startswith("./"):
+            assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", match.group(1)), line
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS, ids=lambda path: path.name)
+def test_no_checkout_keeps_its_credentials(workflow):
+    text = workflow.read_text(encoding="utf-8")
+    assert text.count("actions/checkout@") == text.count("persist-credentials: false")
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS, ids=lambda path: path.name)
+def test_every_workflow_reads_only_unless_a_job_says_otherwise(workflow):
+    """TkCurses-tcbj.10: ci.yml had no permissions of its own."""
+    assert "\npermissions:\n  contents: read\n" in workflow.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS, ids=lambda path: path.name)
+def test_everything_installed_comes_from_a_hashed_lock(workflow):
+    """TkCurses-tcbj.8. The project itself is installed with no dependencies
+    and no build isolation, so nothing is fetched that the lock did not name;
+    the smoke install of the built wheel is the one exception, and it has no
+    dependencies to fetch."""
+    for line in workflow.read_text(encoding="utf-8").splitlines():
+        if "pip install" not in line or line.lstrip().startswith("#"):
+            continue
+        assert (
+            "--require-hashes -r requirements/" in line
+            or "--no-deps --no-build-isolation" in line
+            or "dist/*.whl" in line
+        ), line
 
 
 def test_ci_can_be_called_by_the_release():

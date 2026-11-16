@@ -1,0 +1,3 @@
+# CI's security checks: the static analyser and the dependency auditor.
+bandit
+pip-audit

@@ -1,0 +1,16 @@
+# Keeps the actions the workflows pin by commit SHA up to date: a pull
+# request each week for any that has a newer release, with the SHA and its
+# version comment both changed. Security review TkCurses-tcbj.9.
+#
+# The Python lock files under requirements/ are refreshed by hand with
+# requirements/lock.sh; CI's security job audits them on every run, so a
+# known vulnerability in a locked version fails it.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
