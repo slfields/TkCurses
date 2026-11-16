@@ -16,6 +16,26 @@ All notable changes to TkCurses. The format follows
   it does in Tk, where a truncated GIF raised `IndexError` and a bitmap
   file with a bad number or bytes that are not UTF-8 raised `ValueError`
   or `UnicodeDecodeError`.
+- Selecting text in a password field (`show="*"`) no longer puts the
+  password itself on the PRIMARY selection, where every desktop
+  application could read it; it puts the asterisks, as Tk does and as
+  copying already did. This covers `Entry`, `ttk.Entry` and the widgets
+  built on them.
+- A number too long to convert in a `TKCURSES_*` variable or a
+  configuration file no longer stops every TkCurses program from starting:
+  it is an unreadable value, with a warning, like any other.
+- A message printed as a program exits - the locale report, a
+  configuration warning naming a path - escapes control characters, so a
+  locale name or an `XDG_CONFIG_HOME` path cannot drive the terminal.
+
+### Fixed
+- With no home directory to be found - `HOME` and `XDG_CONFIG_HOME` unset
+  and no account entry, as in some containers - a program starts, reading
+  the system-wide file and the environment, where it stopped with
+  `RuntimeError`. `tkcurses-cfg` says to set one or name a file.
+- Typing `inf` or `1e999` into a colour chooser's channel sets it to 0, as
+  any other value that is not a number does, where it raised
+  `OverflowError`.
 
 ## [0.4.1] - 2026-11-15
 

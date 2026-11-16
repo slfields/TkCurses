@@ -505,3 +505,14 @@ def test_dragging_in_a_text_takes_primary_from_an_entry(three):
     t._handle(MouseEvent(button=0, state="drag", x=area.x + 4, y=area.y))
     assert t.selection_get() == "line"
     assert selected(a) is None
+
+
+@pytest.mark.parametrize("make", [Entry, ttk.Entry], ids=["Entry", "ttk.Entry"])
+def test_a_password_field_puts_its_mask_on_primary_not_the_password(root, make):
+    """Tk's EntryFetchSelection reads what is displayed. The cleartext here
+    once reached PRIMARY - every desktop application's - from a selection
+    made by a stray double-click. Security review TkCurses-tcbj.4."""
+    widget = placed(make(root, name="p", show="*"))
+    widget.insert(0, "hunter2")
+    widget.selection_range(0, "end")
+    assert widget.selection_get() == "*******"

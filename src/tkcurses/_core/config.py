@@ -228,7 +228,12 @@ class Setting:
         if self.kind == "int":
             if not _INTEGER.fullmatch(text):
                 raise InvalidValue(f"{raw!r} is not a number")
-            value = int(text)
+            try:
+                value = int(text)
+            except ValueError:  # past Python's limit on digits converted
+                raise InvalidValue(
+                    f"a number of {len(text)} digits is not a usable value"
+                ) from None
             assert self.limits is not None
             low, high = self.limits
             if not low <= value <= high:
@@ -430,15 +435,25 @@ REMOVED: tuple[RemovedSetting, ...] = (
 )
 
 
+#: The system-wide file, read first, on every platform but Windows.
+_SYSTEM_PATH = Path("/etc/tkcurses/tkcurses.ini")
+
+
 def config_paths() -> tuple[Path, Path]:
-    """Return the system-wide and user configuration paths for this platform."""
+    """Return the system-wide and user configuration paths for this platform.
+
+    Raises:
+        RuntimeError: There is no ``XDG_CONFIG_HOME``, and no home directory
+            to be found - ``HOME`` unset and no account entry, as in some
+            containers - so there is no user file to name.
+    """
     if sys.platform == "win32":
         program_data = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
         local_app_data = os.environ.get("LOCALAPPDATA", "")
         system = Path(program_data) / "tkcurses" / "tkcurses.ini"
         user = Path(local_app_data) / "tkcurses" / "tkcurses.ini"
         return system, user
-    system = Path("/etc/tkcurses/tkcurses.ini")
+    system = _SYSTEM_PATH
     config_home = os.environ.get("XDG_CONFIG_HOME")
     base = Path(config_home) if config_home else Path.home() / ".config"
     return system, base / "tkcurses" / "tkcurses.ini"
@@ -511,7 +526,15 @@ class TkCursesConfig:
                 Origin("default", "built-in", None, config._get(setting))
             ]
         if paths is None:
-            paths = config_paths()
+            try:
+                paths = config_paths()
+            except RuntimeError:
+                # No home directory: the user file has nowhere to be, which
+                # is a reason to read the rest, not to stop the program.
+                paths = (_SYSTEM_PATH,)
+                config.warnings.append(
+                    "no home directory, so no user configuration file is read"
+                )
         for path in paths:
             config._read_file(path)
         config._read_env(os.environ if env is None else env)
