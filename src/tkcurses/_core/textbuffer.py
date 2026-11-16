@@ -65,9 +65,12 @@ marks too, so the window grows and shrinks with edits as Tk's does.
 
 from __future__ import annotations
 
+import bisect
 import contextlib
 import itertools
+import operator
 import re
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -871,11 +874,12 @@ class TextBuffer:
         times per repaint even once the split itself was cached.
         """
         if self._starts is None:
-            starts, at = [], 0
-            for line in self.lines:
-                starts.append(at)
-                at += len(line) + 1
-            self._starts = starts
+            # Line n starts after the lengths of the n - 1 lines before it
+            # and their newlines: summed by itertools, not a Python loop,
+            # since every edit to the text throws the list away.
+            lines = self.lines
+            lengths = itertools.accumulate(map(len, lines), initial=0)
+            self._starts = list(map(operator.add, lengths, range(len(lines))))
         return self._starts
 
     def offset_of(self, index: Index) -> int:
@@ -1718,7 +1722,7 @@ class TextBuffer:
             self._store.tags.setdefault(key, [])
             return
         span = (self._global(start), self._global(stop))
-        self._store.tags[key] = _merge([*self._store.tags.get(key, []), span])
+        self._store.tags[key] = _merged_with(self._store.tags.get(key, []), span)
 
     def tag_remove(
         self, name: str, first: Index | str, last: Index | str | None = None
@@ -1755,6 +1759,33 @@ class TextBuffer:
             if any(start <= at < stop for start, stop in self._local_ranges(name))
         )
 
+    def tag_spans(
+        self, name: str, line: int, start: int, stop: int
+    ) -> list[tuple[int, int]]:
+        """The parts of characters ``start`` to ``stop`` of a line that a tag
+        covers, as ``(start, stop)`` character offsets in the line, in order.
+
+        For drawing a row, which asked :meth:`tag_names` of every cell: that
+        looks through every range of every tag, so a row of sixty cells in a
+        text of ten thousand tag ranges made six hundred thousand
+        comparisons, and one paint took seconds. A tag's ranges are kept
+        sorted and apart, so the first one that can reach the row is found
+        by bisecting and the walk stops at the first one past it.
+        """
+        lo, hi = self._window()
+        base = self._global(self.offset_of(Index(line, 0)))
+        first, last = max(base + start, lo), min(base + stop, hi)
+        ranges = self._store.tags.get(self._tag_key(name), [])
+        # The last range starting at or before ``first`` may still cover it.
+        at = max(0, bisect.bisect_right(ranges, (first, first)) - 1)
+        out: list[tuple[int, int]] = []
+        while at < len(ranges) and ranges[at][0] < last:
+            begin, end = max(ranges[at][0], first), min(ranges[at][1], last)
+            if begin < end:
+                out.append((begin - base, end - base))
+            at += 1
+        return out
+
     def tag_ranges(self, name: str) -> list[Index]:
         """Every range of a tag, as a flat list of start and end indices.
 
@@ -1788,6 +1819,33 @@ class TextBuffer:
             if start < at and stop > limit:
                 return (self.index_of(start), self.index_of(min(stop, at)))
         return None
+
+
+def _merged_with(
+    ranges: list[tuple[int, int]], span: tuple[int, int]
+) -> list[tuple[int, int]]:
+    """``ranges``, sorted and apart, with ``span`` added: what :func:`_merge`
+    of the two gives, without sorting them all again.
+
+    Only the ranges that touch or overlap ``span`` can change, and they lie
+    together: found by bisecting, joined to it, and the rest copied round
+    them. Merging the whole list made tagging every line of a text
+    quadratic - 16,000 ``tag_add`` calls took 14 seconds. A new list, not
+    the old one changed, as before: nothing that holds the old one sees it
+    move.
+    """
+    start, stop = span
+    # The first range that can touch span is the one before the first that
+    # starts after its start, if that one reaches it; the last is the last
+    # that starts at or before its stop.
+    first = bisect.bisect_right(ranges, (start, sys.maxsize))
+    if first > 0 and ranges[first - 1][1] >= start:
+        first -= 1
+    last = bisect.bisect_right(ranges, (stop, sys.maxsize))
+    if first < last:
+        start = min(start, ranges[first][0])
+        stop = max(stop, ranges[last - 1][1])
+    return [*ranges[:first], (start, stop), *ranges[last:]]
 
 
 def _merge(ranges: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:

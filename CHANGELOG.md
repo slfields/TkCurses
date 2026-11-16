@@ -6,6 +6,16 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- A long Text no longer slows down as it grows. Typing laid out every line
+  of the text twice a key: 2.6 ms a key at 2,000 lines and 26 ms at 20,000,
+  now 0.45 ms and 3.3 ms, as only the line typed into is laid out again.
+  Drawing asked, for every cell, every range of every tag, so a text with
+  its words coloured took seconds to repaint - 4.6 seconds for 2,000 lines
+  and 10,000 tag ranges, now 1.7 ms whatever the size. And tagging every
+  line of a file was quadratic: 16,000 `tag_add` calls took 14 seconds, now
+  half a second.
+
 ### Removed
 - Python 3.10 is no longer supported: it reached the end of its life in
   October 2026. TkCurses needs Python 3.11 or later, and is tested on 3.11

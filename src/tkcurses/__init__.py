@@ -54,6 +54,7 @@ import importlib.metadata
 import inspect
 import itertools
 import math
+import operator
 import os
 import re
 import signal
@@ -14937,6 +14938,26 @@ def _spinbox_triple(event: Event) -> None:
 _MARGIN_OPTIONS = frozenset({"lmargin1", "lmargin2", "rmargin"})
 
 
+def _common_head(old: list[str], new: list[str]) -> int:
+    """How many lines at the start of ``old`` and ``new`` are the same.
+
+    The first position where they differ, found by itertools and operator
+    rather than a Python loop: one pass, stopping there. Typing into line n
+    of thousands compares n lines.
+    """
+    unequal = map(operator.ne, old, new)
+    return next(itertools.compress(itertools.count(), unequal), min(len(old), len(new)))
+
+
+def _common_tail(old: list[str], new: list[str], limit: int) -> int:
+    """How many lines at the end of ``old`` and ``new``, at most ``limit``,
+    are the same; as :func:`_common_head`, from the end."""
+    unequal = map(operator.ne, reversed(old), reversed(new))
+    limit = max(0, limit)
+    found = itertools.compress(itertools.count(), itertools.islice(unequal, limit))
+    return next(found, limit)
+
+
 def _spaced(
     rows: list[tuple[int, int, int]], above: int, between: int, below: int
 ) -> list[tuple[int, int, int]]:
@@ -15309,6 +15330,14 @@ class Text(_Drawable, XView, YView):
         self._top_key: tuple[Any, ...] | None = None
         self._left_value = 0
         self._left_key: tuple[Any, ...] | None = None
+        # The display rows last worked out (see _display_lines): the view
+        # key they were made under, the rows, the buffer lines they were
+        # made from, each line's own rows, and the row each line starts on.
+        self._rows_key: tuple[Any, ...] | None = None
+        self._rows: list[tuple[int, int, int]] = []
+        self._rows_lines: list[str] = []
+        self._line_rows: list[list[tuple[int, int, int]]] = []
+        self._line_first: list[int] = []
         self._anchor: Index | None = None
         # tk::TextUpDownLine's Priv(prevPos) and Priv(textPosOrig): where Up
         # or Down last left the cursor, and the index whose column they keep.
@@ -17416,7 +17445,21 @@ class Text(_Drawable, XView, YView):
         One entry per line on screen rather than per line in the buffer: with
         wrapping on, one is many of the other, and everything about scrolling
         and about Up and Down is counted in these.
+
+        The list is shared until the text or its layout changes, so it must
+        not be changed by the caller. Worked out again, a line whose text and
+        place are as they were keeps its rows: typing re-wraps one line, not
+        the whole text. Measured before: each key in a Text of 2000 lines
+        wrapped all of them twice, 2.6 ms a key, where one line of 5000
+        characters cost 0.16 ms. Margins and embedded windows are worked out
+        afresh every time, as they depend on tag ranges and on other widgets'
+        sizes, which nothing here follows.
         """
+        key = self._view_key()
+        embedding = bool(self._buffer._store.embeds)
+        cacheable = not self._margined and not embedding
+        if cacheable and key == self._rows_key:
+            return self._rows
         width = self._view_size()[0]
         mode = self._wrap_mode()
         above, between, below = (
@@ -17424,16 +17467,64 @@ class Text(_Drawable, XView, YView):
             for name in ("spacing1", "spacing2", "spacing3")
         )
         spaced = above > 0 or between > 0 or below > 0
-        rows: list[tuple[int, int, int]] = []
-        embedding = bool(self._buffer._store.embeds)
-        for number, line in enumerate(self._buffer.lines, start=1):
+
+        def lay(number: int, line: str) -> list[tuple[int, int, int]]:
             wrapped = self._wrap_line(number, line, width, mode)
             if embedding and not line.isascii():
                 wrapped = self._embed_rows(wrapped, line)
             if spaced:
                 wrapped = _spaced(wrapped, above, between, below)
-            rows.extend(wrapped)
-        return rows or [(1, 0, 0)]
+            return wrapped
+
+        lines = self._buffer.lines
+        old = self._rows_lines
+        if cacheable and self._rows_key is not None and key[1:] == self._rows_key[1:]:
+            # The same layout, and only the text changed: the lines the
+            # edit left alone at either end keep their rows, and those after
+            # it are renumbered if it added or took away lines. A spacing
+            # row's line is negated, so it moves the other way.
+            head = _common_head(old, lines)
+            tail = _common_tail(old, lines, min(len(old), len(lines)) - head)
+            delta = len(lines) - len(old)
+            middle = [
+                lay(number, lines[number - 1])
+                for number in range(head + 1, len(lines) - tail + 1)
+            ]
+            kept = self._line_rows[len(old) - tail :]
+            first = self._line_first
+            if delta:
+                kept = [
+                    [
+                        (line + delta if line > 0 else line - delta, start, stop)
+                        for line, start, stop in group
+                    ]
+                    for group in kept
+                ]
+                after = list(itertools.chain.from_iterable(kept))
+            else:
+                after = self._rows[first[len(old) - tail] :]
+            line_rows = self._line_rows[:head] + middle + kept
+            rows = (
+                self._rows[: first[head]]
+                + list(itertools.chain.from_iterable(middle))
+                + after
+            )
+        else:
+            line_rows = [lay(number, line) for number, line in enumerate(lines, 1)]
+            rows = list(itertools.chain.from_iterable(line_rows))
+        if not rows:
+            rows = [(1, 0, 0)]
+            cacheable = False
+        if cacheable:
+            self._rows_key, self._rows = key, rows
+            self._rows_lines, self._line_rows = lines, line_rows
+            self._line_first = list(
+                itertools.accumulate(map(len, line_rows), initial=0)
+            )
+        else:
+            self._rows_key, self._rows = None, []
+            self._rows_lines, self._line_rows, self._line_first = [], [], []
+        return rows
 
     def _embed_rows(
         self, wrapped: list[tuple[int, int, int]], line: str
@@ -17551,16 +17642,23 @@ class Text(_Drawable, XView, YView):
     ) -> tuple[int, int]:
         """Where an index sits, as ``(row, column within that row)``."""
         rows = self._display_lines() if rows is None else rows
+        # Only the line's own rows can hold it, and the cached rows say where
+        # those are; any other list is searched from the top.
+        low, high = 0, len(rows)
+        if rows is self._rows and 0 < index.line < len(self._line_first):
+            low, high = self._line_first[index.line - 1], self._line_first[index.line]
         # A wrap boundary belongs to both rows: it is the end of one and the
         # start of the next. It has to resolve to the *later* one, or the
         # cursor is drawn one cell past the end of the row above - painting
         # the first character of the next row there into the bargain.
-        for row, (line, start, stop) in enumerate(rows):
+        for row in range(low, high):
+            line, start, stop = rows[row]
             if line == index.line and start <= index.char < stop:
                 return row, self._column_in(line, start, stop, index.char)
         # Nothing contains it, so it is at the end of a line: the last row of
         # that line is where it goes.
-        for row, (line, start, stop) in enumerate(rows):
+        for row in range(low, high):
+            line, start, stop = rows[row]
             if line == index.line and index.char == stop:
                 return row, self._column_in(line, start, stop, index.char)
         # `end` on a buffer whose last line has text is a line past every
@@ -18116,12 +18214,20 @@ class Text(_Drawable, XView, YView):
         if tagged is None:
             return
         shown, owners = visible
+        # The characters of this row the tag covers, asked once for the row
+        # rather than of every cell: see TextBuffer.tag_spans.
+        covered = {
+            char
+            for begin, end in self._buffer.tag_spans(name, line, start, span[2] + 1)
+            for char in range(begin, end)
+        }
+        if not covered:
+            return
         for column, character in enumerate(shown):
             owner = owners[column]
             if owner is None or character == "":
                 continue
-            at = Index(line, start + owner)
-            if name not in self._buffer.tag_names(at):
+            if start + owner not in covered:
                 continue
             self._write_line(
                 dispatcher,
