@@ -57,6 +57,12 @@ All notable changes to TkCurses. The format follows
   changed it, as Tk's text widget repaints when idle: typing 1000
   characters onto one line took nearly four seconds and takes a third of
   one.
+- A terminal's answer to the start-up question about OSC 52, arriving
+  after the program stopped waiting for it - over a slow link - is no
+  longer typed into the widget with the focus, as
+  `1+r4d73=...?62;22c`. For ten seconds after a question goes
+  unanswered, input that is exactly such an answer is dropped; anything
+  else is read as typed.
 
 ### Fixed
 - With no home directory to be found - `HOME` and `XDG_CONFIG_HOME` unset

@@ -132,3 +132,52 @@ def test_a_burst_of_typing_paints_the_text_once_a_pass(terminal):
     # 600 keys arrive in a few passes of the loop; before, 1200 paints.
     assert int(found.group(1)) < 30
     term.wait_for_cell(5, 1, lambda cell: cell.data == "x")
+
+
+# --------------------------------- a late answer to a query, TkCurses-tcbj.24
+
+LATE = """
+import tkcurses as tk
+
+root = tk.Tk()
+entry = tk.Entry(root, width=60)
+entry.pack()
+entry.focus_set()
+status = tk.Label(root, text="ready")
+status.pack()
+
+def report(event):
+    status["text"] = "entry=%r" % entry.get()
+    return "break"
+
+entry.bind("<Key-Return>", report)
+root.after(20000, root.quit)
+root.mainloop()
+"""
+
+
+def test_an_answer_to_the_osc52_query_after_curses_started_is_not_typed(terminal):
+    """Over a slow link the terminal answers after the query stopped
+    waiting, and curses read the answer as typing into the focus."""
+    from tests.support.terminal import TerminalHarness
+
+    held: list[bytes] = []
+
+    class SlowTerminal(TerminalHarness):
+        def _answer_queries(self, data: bytes) -> None:
+            if b"\x1b[c" in data:
+                held.append(data)
+
+    term = SlowTerminal(80, 6, osc52=True, env={"TKCURSES_CLIPBOARD_SYSTEM": "auto"})
+    try:
+        term.run_source(LATE)
+        term.wait_for_text("ready")
+        assert held, "the program asked the terminal nothing"
+        term.send(b"before ")
+        # Now the answer, after the query has stopped waiting for it.
+        TerminalHarness._answer_queries(term, held[0])
+        term.send(b"after\r")
+        term.wait_for(lambda t: "entry=" in "".join(t.display), timeout=30)
+        assert "entry='before after'" in "".join(term.display)
+    finally:
+        term.close()
