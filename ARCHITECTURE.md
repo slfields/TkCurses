@@ -39,7 +39,7 @@
 - **Drop-in Potential**: Existing tkinter code can be adapted with minimal changes to run in terminal
 
 ### Target Environment
-- **Python**: 3.10+
+- **Python**: 3.11+
 - **Runtime**: Terminal/TTY (no X11/Wayland/GUI required)
 - **Core Dependencies**: curses, curses.panel (standard library on Unix)
 

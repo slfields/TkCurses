@@ -553,7 +553,7 @@ def _modifiers_of(state: int) -> int:
     return modifiers
 
 
-class EventType(str, enum.Enum):
+class EventType(enum.StrEnum):
     """What kind of event an :class:`Event` is: its ``type`` field.
 
     tkinter's names and values, which are X11's event numbers as strings, so
@@ -605,12 +605,6 @@ class EventType(str, enum.Enum):
     Activate = "36"
     Deactivate = "37"
     MouseWheel = "38"
-
-    # tkinter's is a StrEnum from 3.11, whose str() is the value; a plain
-    # str-mixin Enum's is "EventType.KeyPress". format() follows str() once
-    # __str__ is overridden, on every version CI runs.
-    def __str__(self) -> str:
-        return str(self.value)
 
 
 def _event_type(pattern_type: str) -> EventType:
