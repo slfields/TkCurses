@@ -76,6 +76,12 @@ CANVAS_BUDGET_MS = 120 * _SCALE
 #: cannot hide.
 IMAGE_BUDGET_MS = 20 * _SCALE
 
+#: A Text whose words are coloured, as an editor colours code: 2,000 lines
+#: and 10,000 tag ranges. Each tag asked, of every cell it might cover,
+#: every range of every tag, and one repaint took 4.6 seconds; it takes
+#: 1.7ms asking each tag once a row for the part of the row it covers.
+TAGGED_BUDGET_MS = 25 * _SCALE
+
 TIMED = """
 import time
 import tkcurses
@@ -102,6 +108,16 @@ for index in range(500):
     canvas.create_rectangle(
         index % 50, index % 28, index % 50 + 5, index % 28 + 3, fill='white')
 
+tagged = tkcurses.Text(root, name='tg')
+tagged.place(x=60, y=0, width=58, height=36)
+tagged.insert('end', '\\n'.join('alpha beta gamma delta ' * 3 for _ in range(2000)))
+for name, colour in (('kw', 'red'), ('str', 'green'), ('com', 'blue')):
+    tagged.tag_configure(name, foreground=colour)
+for line in range(1, 2001):
+    for n, start in enumerate(range(0, 60, 12)):
+        tagged.tag_add(('kw', 'str', 'com')[n % 3], '%d.%d' % (line, start),
+                       '%d.%d' % (line, start + 5))
+
 root.update_layout()
 
 
@@ -124,9 +140,9 @@ buffer.write(
     37,
     0,
     (
-        'text=%.2f canvas=%.2f image=%.2f'
-        % (cost(text, 5), cost(canvas, 3), cost(shown, 5))
-    ).ljust(48),
+        'text=%.2f canvas=%.2f image=%.2f tagged=%.2f'
+        % (cost(text, 5), cost(canvas, 3), cost(shown, 5), cost(tagged, 5))
+    ).ljust(64),
 )
 buffer.write(38, 0, 'measured'.ljust(12))
 root.tk.screen.refresh()
@@ -168,3 +184,12 @@ def test_an_image_repaints_in_time_with_its_window_not_its_content(costs):
     did not exist when g9w was closed.
     """
     assert costs["image"] < IMAGE_BUDGET_MS, costs
+
+
+def test_a_text_full_of_tags_repaints_in_time_with_its_window(costs):
+    """Coloured words throughout a long text: what an editor shows.
+
+    A repaint follows the rows on screen, not the tags in the text - each
+    tag is asked once a row for the part of the row it covers.
+    """
+    assert costs["tagged"] < TAGGED_BUDGET_MS, costs
