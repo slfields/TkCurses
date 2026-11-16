@@ -240,3 +240,13 @@ def test_everything_installed_comes_from_a_hashed_lock(workflow):
 def test_ci_can_be_called_by_the_release():
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "\n  workflow_call:\n" in ci
+
+
+def test_publishing_waits_for_the_release_environment():
+    """Its required reviewer approves each release before the write token
+    is handed out. Security review TkCurses-tcbj.11."""
+    publish = _jobs(WORKFLOW.read_text(encoding="utf-8"))["publish"]
+    assert "\n    environment: release\n" in publish.split("steps:")[0]
+    for name, job in _jobs(WORKFLOW.read_text(encoding="utf-8")).items():
+        if name != "publish":
+            assert "environment:" not in job, name

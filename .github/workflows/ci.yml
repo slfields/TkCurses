@@ -1,23 +1,15 @@
 name: CI
 
 on:
-  # Not for a change to documentation alone: the code checks have nothing to
-  # say about it, and docs.yml builds the site (decided with the user,
-  # TkCurses-imii). A call from the release workflow ignores these filters,
-  # so a release always runs everything.
+  # Every pull request, so the checks the master ruleset requires always
+  # report. A change to documentation alone still runs no code checks
+  # (decided with the user, TkCurses-imii): the "changes" job says so and
+  # the code jobs are skipped, which counts as passing. paths-ignore did
+  # this before, and a required check from a workflow that never started
+  # would have kept such a pull request waiting for ever. TkCurses-tcbj.12.
   push:
     branches: [master]
-    paths-ignore:
-      - "docs/**"
-      - "**.md"
-      - ".github/workflows/docs.yml"
-      - ".github/workflows/docs-links.yml"
   pull_request:
-    paths-ignore:
-      - "docs/**"
-      - "**.md"
-      - ".github/workflows/docs.yml"
-      - ".github/workflows/docs-links.yml"
   # The release workflow runs all of this before it builds a release.
   workflow_call:
 
@@ -31,8 +23,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: diff
+        # Through the environment, never as text in the script: a fork's
+        # pull request writes some of these values.
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.sha }}
+        run: python3 .github/scripts/code_changed.py >> "$GITHUB_OUTPUT"
+
   lint:
     name: Lint and type-check
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -58,6 +72,8 @@ jobs:
 
   test:
     name: Test on Python ${{ matrix.python-version }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -129,6 +145,8 @@ jobs:
 
   build:
     name: Build distributions
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -157,6 +175,8 @@ jobs:
 
   security:
     name: Security checks
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     # Static analysis of the library, and every lock file checked against
     # the advisories pip-audit knows. Security review TkCurses-tcbj.14.
     runs-on: ubuntu-latest
@@ -185,3 +205,24 @@ jobs:
             echo "::endgroup::"
           done
           exit "$status"
+
+  passed:
+    # The one check the master ruleset requires from this workflow: every
+    # job above passed, or had nothing to check. Named once here, so a new
+    # job or Python version needs no change to the ruleset.
+    name: CI passed
+    if: always()
+    needs: [changes, lint, test, build, security]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success | skipped) ;;
+              *) exit 1 ;;
+            esac
+          done

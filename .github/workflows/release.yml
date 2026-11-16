@@ -137,6 +137,10 @@ jobs:
     name: Publish the release
     needs: [build, docs]
     if: github.event_name == 'push'
+    # Waits for the maintainer to approve it, in the repository's "release"
+    # environment, which only a v* tag may deploy to: the one job holding a
+    # write token runs on no one's say-so but theirs. TkCurses-tcbj.11.
+    environment: release
     runs-on: ubuntu-latest
     permissions:
       # Creating the release and uploading its files.

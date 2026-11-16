@@ -63,6 +63,10 @@ All notable changes to TkCurses. The format follows
   `1+r4d73=...?62;22c`. For ten seconds after a question goes
   unanswered, input that is exactly such an answer is dropped; anything
   else is read as typed.
+- A pull request reaches `master` only when its checks pass, and a release
+  is published only once the maintainer approves the run: the publishing
+  job, the one with a write token, is in a `release` environment that only
+  a `v*` tag may deploy to.
 
 ### Fixed
 - With no home directory to be found - `HOME` and `XDG_CONFIG_HOME` unset

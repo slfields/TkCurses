@@ -85,8 +85,15 @@ been linted. And do not filter the evidence out of your own check: a
 output meant to show the commit was clean.
 
 **A pull request that changes only documentation runs no code checks.**
-`ci.yml` ignores `docs/**`, Markdown files and the docs workflows. A release
-still runs everything.
+`ci.yml` still runs on it, because `master` requires its `CI passed` check,
+but its first job sees nothing changed outside `docs/**`, Markdown files and
+the docs workflows, and the code jobs are skipped. A release still runs
+everything.
+
+**`master` takes a pull request only when its checks pass**: `CI passed`,
+which is green when every job in `ci.yml` passed or was skipped, and
+`Build the site`. No approval is required - the maintainer cannot approve
+their own pull request.
 
 ## Documentation
 
@@ -234,7 +241,9 @@ python3 tests/support/check_upgrade.py  # install, commit, upgrade: CI's build j
 annotated tag such as `v0.3.0rc1` on a `master` commit runs
 `.github/workflows/release.yml`: the whole CI suite, a check that the tagged
 commit is on `master`, a build that must be exactly the tag's version, a
-smoke install of the wheel, then a GitHub release with the sdist, the wheel,
+smoke install of the wheel, the maintainer's approval of the run (the
+publishing job is in the `release` environment, which only a `v*` tag may
+deploy to), then a GitHub release with the sdist, the wheel,
 the documentation and a `SHA256SUMS` of the three - a pre-release for an rc,
 alpha or beta, with the CHANGELOG's section for that version as its text.
 Each file carries a signed build-provenance attestation:
