@@ -41,6 +41,13 @@ All notable changes to TkCurses. The format follows
   nothing when `HOME` is unset, where tkinter would look in the current
   directory, and skips a profile that is not the user's own or that others
   can write to.
+- The desktop's clipboard tool is run by the absolute path found on
+  `PATH`, never by its bare name, and one found only through a relative
+  `PATH` entry such as `.` is not used, so a `wl-copy` planted in the
+  current directory cannot run. A paste asks `wl-paste` for text, not
+  whatever the copier offered first, and reads at most 16 MiB: a larger
+  clipboard is read as holding nothing, where a 1.5 GB one used to take
+  2.9 GB of memory and freeze the program while it was read.
 
 ### Fixed
 - With no home directory to be found - `HOME` and `XDG_CONFIG_HOME` unset
