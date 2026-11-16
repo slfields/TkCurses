@@ -1123,6 +1123,38 @@ Use `select.select()` to wait for input with timeout, enabling efficient idle wa
 └──────────────────────────┘        └──────────────────────────┘
 ```
 
+#### Input faster than it is handled
+
+A terminal can send faster than a program handles what it sends: a mouse
+dragged over a large screen, a long paste. Three things keep that from
+stopping everything else (security review, `TkCurses-tcbj.21`), each measured
+in a pseudo-terminal before and after:
+
+- **A pass reads at most `_INPUT_BATCH` (256) events.** `poll()` used to
+  read until curses had nothing left, so a flood held the loop in input for
+  as long as it lasted: 200,000 drag reports in three seconds ran a 10 ms
+  timer **once**, and a key sent after them waited 4.3 s. Now 256 ticks,
+  and 0.05 s. When a read stops at the limit the next pass reads again
+  without waiting, since what is left may be inside ncurses' own buffer,
+  where `select()` cannot see it.
+- **A run of motion in one window arrives as its last report**, as in Tk:
+  `Tk_QueueWindowEvent` (`tkEvent.c`, Tk 9.0) holds a `MotionNotify` back,
+  replaces it with the next one *in the same window*, and sends it on
+  before any other event. The window is the widget under the pointer, or
+  under a drag the one pressed. A change of modifiers also ends a run,
+  standing in for the key event X would put between them. Handler calls in
+  the flood above went from 200,000 to 766.
+- **A Text repaints once before the screen is shown**, not on each edit.
+  Every key used to repaint it twice - the edit, then `see("insert")` - and
+  a repaint costs the length of the lines in view: 1000 characters typed
+  onto one line took 3.8 s, and 2,001 paints. Tk does the same thing for
+  the same reason: `TextChanged` (`tkTextDisp.c`) sets `REDRAW_PENDING`
+  and schedules `DisplayText` with `Tcl_DoWhenIdle`. The widget is put in
+  `tk.repaint_due`, which `Tk._update_display` empties first; the
+  terminal's cursor, which painting places, is read after that. 1000
+  characters now take 0.36 s and three paints. What is left is the layout
+  of the line, which `see` still works out on every key.
+
 #### InputHandler Implementation
 
 ```python

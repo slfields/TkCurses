@@ -28,7 +28,7 @@ import os
 
 import pytest
 
-from tkcurses._core.events import MOD_ALT, MOD_CTRL, MOD_SHIFT
+from tkcurses._core.events import MOD_ALT, MOD_CTRL, MOD_SHIFT, KeyEvent, MouseEvent
 from tkcurses._core.input import (
     DEFAULT_CLICK_INTERVAL,
     MouseDecoder,
@@ -479,3 +479,103 @@ def test_a_press_after_a_release_is_a_press_again(curses_stub):
     decoder.decode(1, 1, curses.BUTTON1_RELEASED)
     events = decoder.decode(2, 2, curses.BUTTON1_PRESSED | curses.REPORT_MOUSE_POSITION)
     assert [event.state for event in events] == ["pressed"]
+
+
+# ------------------------------------------- a flood of input, TkCurses-tcbj.21
+
+
+def test_poll_stops_at_its_limit_and_says_more_is_waiting(curses_stub):
+    handler = make_handler(FakeScreen([ord(c) for c in "abcde"]))
+    assert [event.char for event in handler.poll(3)] == ["a", "b", "c"]
+    assert handler.more_pending is True
+    assert [event.char for event in handler.poll(3)] == ["d", "e"]
+    assert handler.more_pending is False
+
+
+def test_poll_without_a_limit_reads_everything_and_nothing_is_waiting(curses_stub):
+    handler = make_handler(FakeScreen([ord("a")] * 1000))
+    assert len(handler.poll()) == 1000
+    assert handler.more_pending is False
+
+
+def test_a_limit_does_not_split_an_alt_key(curses_stub):
+    """Escape and the key after it are read together or not at all."""
+    handler = make_handler(FakeScreen([ord("a"), 27, ord("e"), ord("b")]))
+    first = handler.poll(1)
+    second = handler.poll(1)
+    assert [e.keysym for e in first] == ["a"]
+    assert [(e.keysym, e.modifiers) for e in second] == [("e", MOD_ALT)]
+    assert [e.keysym for e in handler.poll(1)] == ["b"]
+
+
+def _collapse(events, widget_at=lambda x, y: "root"):
+    """Tk._collapse_motion, with ``widget_at`` deciding the window."""
+    import tkcurses
+
+    class Stub:
+        _widget_at = staticmethod(widget_at)
+
+    return tkcurses.Tk._collapse_motion(Stub(), events)
+
+
+def _moved(x, state="drag", button=1, modifiers=0):
+    return MouseEvent(x=x, y=0, button=button, state=state, modifiers=modifiers)
+
+
+def test_a_run_of_drag_reports_is_cut_to_its_last():
+    events = [_moved(x) for x in range(100)]
+    assert [e.x for e in _collapse(events)] == [99]
+
+
+def test_motion_is_kept_apart_by_what_comes_between():
+    press = MouseEvent(x=5, y=0, button=1, state="pressed")
+    key = KeyEvent(keysym="a", char="a")
+    events = [_moved(1), _moved(2), press, _moved(3), _moved(4), key, _moved(5)]
+    kept = [events[1], press, events[4], key, events[6]]
+    assert [id(e) for e in _collapse(events)] == [id(e) for e in kept]
+
+
+def test_a_change_of_modifier_ends_a_run():
+    events = [_moved(1), _moved(2), _moved(3, modifiers=MOD_SHIFT), _moved(4)]
+    assert [e.x for e in _collapse(events)] == [2, 3, 4]
+
+
+def test_hover_motion_collapses_only_within_one_widget():
+    """Tk_QueueWindowEvent replaces a held motion event only with one in the
+    same window; crossing into another sends the first on."""
+    events = [_moved(x, state="motion", button=0) for x in range(6)]
+    collapsed = _collapse(events, lambda x, y: "left" if x < 3 else "right")
+    assert [e.x for e in collapsed] == [2, 5]
+
+
+class _Input:
+    """An InputHandler that records whether the loop waited on it."""
+
+    def __init__(self, more_pending):
+        self.more_pending = more_pending
+        self.waited = False
+
+    def wait_for_input(self, timeout_ms):
+        self.waited = True
+
+    def poll(self, limit=None):
+        return []
+
+
+@pytest.mark.parametrize("more_pending", [True, False])
+def test_the_loop_reads_again_at_once_after_a_read_stopped_short(more_pending):
+    """What is left may be inside curses, where select() cannot see it, and
+    a wait there would stall the rest of a paste for its whole timeout."""
+    import types
+
+    import tkcurses
+
+    loop = types.SimpleNamespace(
+        _input=_Input(more_pending),
+        _motion_asserted=True,
+        tk=types.SimpleNamespace(timers=types.SimpleNamespace(next_delay=lambda: None)),
+        _collapse_motion=lambda events: events,
+        _guard=lambda *call: None,
+    )
+    tkcurses.Tk._read_input(loop)
+    assert loop._input.waited is not more_pending

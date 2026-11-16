@@ -41,6 +41,22 @@ All notable changes to TkCurses. The format follows
   nothing when `HOME` is unset, where tkinter would look in the current
   directory, and skips a profile that is not the user's own or that others
   can write to.
+- The desktop's clipboard tool is run by the absolute path found on
+  `PATH`, never by its bare name, and one found only through a relative
+  `PATH` entry such as `.` is not used, so a `wl-copy` planted in the
+  current directory cannot run. A paste asks `wl-paste` for text, not
+  whatever the copier offered first, and reads at most 16 MiB: a larger
+  clipboard is read as holding nothing, where a 1.5 GB one used to take
+  2.9 GB of memory and freeze the program while it was read.
+- A terminal sending faster than the program could keep up no longer
+  stops everything else. The loop handles at most 256 input events at a
+  time, so timers and the screen get their turn, where a 10 ms timer ran
+  once in seven seconds of drag reports. A run of mouse motion in one
+  widget arrives as its last report, as Tk collapses motion events, and a
+  Text is repainted once before the screen is shown, however many keys
+  changed it, as Tk's text widget repaints when idle: typing 1000
+  characters onto one line took nearly four seconds and takes a third of
+  one.
 
 ### Fixed
 - With no home directory to be found - `HOME` and `XDG_CONFIG_HOME` unset

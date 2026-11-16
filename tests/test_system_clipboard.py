@@ -27,6 +27,7 @@ from __future__ import annotations
 import base64
 import os
 import subprocess
+import sys
 import threading
 import time
 
@@ -35,10 +36,12 @@ import pytest
 from tkcurses._core.clipboard import CLIPBOARD, PRIMARY, PRIMARY_SETTLE, Selections
 from tkcurses._core.errors import TclError
 from tkcurses._core.system_clipboard import (
+    MAX_PASTE,
     CommandClipboard,
     CommandPush,
     Osc52Clipboard,
     Route,
+    _run_bounded,
     ask_terminal_for_osc52,
     choose_route,
     parse_osc52_answer,
@@ -395,7 +398,8 @@ def test_the_desktop_tool_sets_primary_too(environ, installed, command):
         "auto", environ, ask_terminal=lambda: False, which=tools(*installed)
     )
     assert isinstance(route.primary, CommandPush)
-    assert route.primary._command == command
+    # By the path found, not the name: TkCurses-tcbj.15.
+    assert route.primary._command == [f"/usr/bin/{command[0]}", *command[1:]]
 
 
 @pytest.mark.parametrize("setting", ["auto", "osc52"])
@@ -533,3 +537,94 @@ def test_without_an_owner_or_a_route_primary_is_not_looked_at():
     for step in range(3):
         selections.push_primary(step * PRIMARY_SETTLE)
     assert writer.sent == []
+
+
+# ------------------------------------------- what is not trusted, TkCurses-tcbj
+
+
+@pytest.mark.parametrize("found", ["wl-copy", "./wl-copy", "bin/wl-copy"])
+def test_a_tool_found_by_a_relative_path_is_not_run(found):
+    """``PATH=.:...`` finds a ``wl-copy`` planted in the current directory;
+    shutil.which then answers with a relative path, and it is refused."""
+    route = choose_route(
+        "command",
+        {"WAYLAND_DISPLAY": "wayland-0"},
+        ask_terminal=lambda: False,
+        which=lambda name: found if name == "wl-copy" else f"/usr/bin/{name}",
+    )
+    assert route.writer is None and route.reader is None
+
+
+def test_the_tool_runs_by_the_path_found_at_the_start():
+    route = choose_route(
+        "command",
+        WAYLAND,
+        ask_terminal=lambda: False,
+        which=tools("wl-copy", "wl-paste"),
+    )
+    assert route.writer._copy == ["/usr/bin/wl-copy"]
+    assert route.reader._paste[0] == "/usr/bin/wl-paste"
+
+
+def test_wl_paste_is_asked_for_text_not_whatever_was_offered_first():
+    route = choose_route(
+        "command",
+        WAYLAND,
+        ask_terminal=lambda: False,
+        which=tools("wl-copy", "wl-paste"),
+    )
+    assert route.reader._paste[-2:] == ["--type", "text"]
+
+
+def test_a_paste_larger_than_the_limit_is_nothing():
+    run = fake_run(stdout=b"x" * (MAX_PASTE + 1))
+    tool = CommandClipboard("wl-copy", ["wl-copy"], ["wl-paste"], run)
+    assert tool.paste() is None
+    assert CommandClipboard(
+        "w", ["c"], ["p"], fake_run(stdout=b"x" * MAX_PASTE)
+    ).paste()
+
+
+def _python(code):
+    return [sys.executable, "-I", "-c", code]
+
+
+def test_the_bounded_reader_stops_a_tool_that_never_stops_writing():
+    endless = _python("import sys\nwhile True: sys.stdout.buffer.write(b'x' * 65536)")
+    start = time.monotonic()
+    done = _run_bounded(endless, timeout=10, limit=100_000)
+    assert len(done.stdout) == 100_001
+    assert done.returncode != 0
+    assert time.monotonic() - start < 5
+
+
+def test_the_bounded_reader_returns_what_a_tool_wrote():
+    done = _run_bounded(_python("print('héllo', end='')"), timeout=10)
+    assert (done.returncode, done.stdout) == (0, "héllo".encode())
+
+
+def test_the_bounded_reader_gives_up_on_a_tool_that_hangs():
+    with pytest.raises(subprocess.TimeoutExpired):
+        _run_bounded(_python("import time; time.sleep(30)"), timeout=0.5)
+
+
+def test_a_real_tool_is_read_through_the_bounded_reader():
+    tool = CommandClipboard("py", ["true"], _python("print('copied', end='')"))
+    assert tool.paste() == "copied"
+
+
+def test_the_bounded_reader_kills_a_tool_that_outlives_its_pipe():
+    """Closing the pipe ends an ordinary writer; one that ignores SIGPIPE
+    and carries on would keep the paste waiting, so it is killed."""
+    stubborn = _python(
+        "import signal, sys, time\n"
+        "signal.signal(signal.SIGPIPE, signal.SIG_IGN)\n"
+        "try:\n"
+        "    while True: sys.stdout.buffer.write(b'x' * 65536); sys.stdout.flush()\n"
+        "except OSError:\n"
+        "    time.sleep(30)"
+    )
+    start = time.monotonic()
+    done = _run_bounded(stubborn, timeout=10, limit=100_000)
+    assert len(done.stdout) == 100_001
+    assert time.monotonic() - start < 5

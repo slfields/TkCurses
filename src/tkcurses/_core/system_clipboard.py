@@ -39,6 +39,14 @@ would fill the *remote* machine's clipboard, so it is not used there.
 Reading through OSC 52 is not attempted. Terminals restrict it, or prompt,
 for the reason VTE refused the sequence altogether: a program reading what
 was copied elsewhere.
+
+**What another application copied is not trusted.** The tool is found once,
+on ``PATH``, and run by the absolute path found then: a ``PATH`` with a
+relative entry such as ``.`` would otherwise run whatever ``wl-copy`` the
+current directory holds, so a tool found only there is not used. A paste
+asks for text, not whatever type the copier offered first, and reads at most
+:data:`MAX_PASTE` bytes of it; more than that, and the paste is of nothing
+from outside.
 """
 
 from __future__ import annotations
@@ -53,6 +61,7 @@ import termios
 import time
 import tty
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -161,8 +170,65 @@ class CommandPush:
                 process.wait(timeout=self.TIMEOUT)
 
 
+#: The most a paste reads from the desktop's tool, in bytes: 16 MiB. A
+#: clipboard holding more is read as holding nothing this program can use.
+MAX_PASTE = 16 << 20
+
+
+def _run_bounded(
+    argv: list[str], *, timeout: float, limit: int = MAX_PASTE, **_: object
+) -> subprocess.CompletedProcess[bytes]:
+    """``subprocess.run`` for a paste, reading no more than ``limit + 1``
+    bytes of what the tool writes before it is killed.
+
+    Takes ``subprocess.run``'s keywords and ignores the others: standard
+    input and error are always closed, and output is always captured.
+
+    Raises:
+        OSError: If the tool cannot be started.
+        subprocess.TimeoutExpired: If it has not finished in ``timeout``.
+    """
+    process = subprocess.Popen(
+        argv,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    assert process.stdout is not None
+    out = bytearray()
+    deadline = time.monotonic() + timeout
+    try:
+        fd = process.stdout.fileno()
+        while len(out) <= limit:
+            remaining = deadline - time.monotonic()
+            ready = select.select([fd], [], [], max(remaining, 0))[0]
+            if not ready:
+                raise subprocess.TimeoutExpired(argv, timeout)
+            chunk = os.read(fd, min(1 << 16, limit + 1 - len(out)))
+            if not chunk:
+                break
+            out += chunk
+    finally:
+        process.stdout.close()
+        if process.poll() is None and len(out) > limit:
+            with contextlib.suppress(OSError):
+                process.kill()
+        try:
+            process.wait(timeout=max(deadline - time.monotonic(), 0.1))
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(OSError):
+                process.kill()
+            process.wait()
+            raise
+    return subprocess.CompletedProcess(argv, process.returncode, bytes(out), b"")
+
+
 class CommandClipboard:
-    """Copy and paste through the desktop's clipboard tool."""
+    """Copy and paste through the desktop's clipboard tool.
+
+    ``run`` starts the copy, ``paste_run`` the paste; tests replace them.
+    """
 
     def __init__(
         self,
@@ -171,11 +237,16 @@ class CommandClipboard:
         paste_command: list[str],
         run: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
         primary_command: list[str] | None = None,
+        paste_run: Callable[..., subprocess.CompletedProcess[bytes]] | None = None,
     ) -> None:
         self.name = name
         self._copy = copy_command
         self._paste = paste_command
         self._run = run
+        # A test's fake ``run`` answers pastes too, unless it names its own.
+        self._paste_run = paste_run or (
+            run if run is not subprocess.run else _run_bounded
+        )
         #: Sets the primary selection, when the tool can.
         self.primary = (
             CommandPush(name, primary_command) if primary_command is not None else None
@@ -203,7 +274,7 @@ class CommandClipboard:
         the caller treats as "nothing to add to what this program has".
         """
         try:
-            done = self._run(
+            done = self._paste_run(
                 self._paste,
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
@@ -212,7 +283,7 @@ class CommandClipboard:
             )
         except (OSError, subprocess.SubprocessError):
             return None
-        if done.returncode != 0:
+        if done.returncode != 0 or len(done.stdout) > MAX_PASTE:
             return None
         return done.stdout.decode("utf-8", errors="replace")
 
@@ -220,7 +291,14 @@ class CommandClipboard:
 #: The desktop tools, in the order they are tried for each kind of session:
 #: name, copy, paste, and setting the primary selection.
 _WAYLAND_TOOLS = (
-    ("wl-copy", ["wl-copy"], ["wl-paste", "--no-newline"], ["wl-copy", "--primary"]),
+    (
+        "wl-copy",
+        ["wl-copy"],
+        # Text only: with no type, wl-paste gives whatever the copier offered
+        # first, which may be an image.
+        ["wl-paste", "--no-newline", "--type", "text"],
+        ["wl-copy", "--primary"],
+    ),
 )
 _X11_TOOLS = (
     (
@@ -376,9 +454,25 @@ def _desktop_tool(
     if environ.get("DISPLAY"):
         tools += _X11_TOOLS
     for name, copy, paste, primary in tools:
-        if which(copy[0]) and which(paste[0]):
-            return CommandClipboard(name, copy, paste, primary_command=primary)
+        found = {program: which(program) for program in {copy[0], paste[0], primary[0]}}
+        resolved = {
+            program: path
+            for program, path in found.items()
+            if path and Path(path).is_absolute()
+        }
+        if len(resolved) == len(found):
+            return CommandClipboard(
+                name,
+                _absolute(copy, resolved),
+                _absolute(paste, resolved),
+                primary_command=_absolute(primary, resolved),
+            )
     return None
+
+
+def _absolute(command: list[str], paths: Mapping[str, str]) -> list[str]:
+    """``command`` with its program replaced by the absolute path found."""
+    return [paths[command[0]], *command[1:]]
 
 
 def _no_tool_reason(environ: Mapping[str, str]) -> str:

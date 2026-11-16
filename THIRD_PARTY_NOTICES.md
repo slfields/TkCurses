@@ -43,7 +43,8 @@ it. The scripts, as installed with Tcl 9.0.2 and Tk 9.0.2:
 | Tk `generic/tkBind.c` (C) | `Tk_BindEvent`, `MatchPatterns`, the promotion lists, `IsBetterMatch`, `CountSpecialized` | multi-event binding sequences and how matches are ranked (`_core/bindings.py`) |
 | Tk `generic/tkText.c` (C) | `DeleteIndexRange`, `TextPushUndoAction`, the autoseparator test in `TextInsertCmd` and `TextDeleteCmd`; `TextReplaceCmd` and the `replace` subcommand's insertion-cursor rule | where a Text's view goes when text is deleted, a deletion to the end taking whole lines, where undo and redo put the cursor, when an edit starts a new undo group, and how `replace` groups its edits and keeps the cursor (`_core/textbuffer.py`, `__init__.py`) |
 | Tk `generic/tkTextTag.c` (C) | `TkTextBindProc`, `TkTextPickCurrent`, `TagBindEvent` | which tags a Text's tag bindings reach, when the character under the pointer is picked, and the `<Enter>` and `<Leave>` a tag hears (`__init__.py`) |
-| Tk `generic/tkTextDisp.c` (C) | `TkTextScanCmd` | a Text's `scan_dragto` (`__init__.py`) |
+| Tk `generic/tkTextDisp.c` (C) | `TkTextScanCmd`; `TextChanged`'s scheduling of `DisplayText` when idle | a Text's `scan_dragto`, and its repainting once before the screen is shown however many edits asked (`__init__.py`) |
+| Tk `generic/tkEvent.c` (C) | `Tk_QueueWindowEvent`'s collapsing of motion events (`Tk_CollapseMotionEvents`) | a run of mouse motion in one window delivered as its last report (`__init__.py`) |
 | Tk `generic/tkCanvas.c` (C) | the `find closest` search; the `scan` subcommand | a Canvas's `find_closest` with `halo` and `start`, and its `scan_dragto` (`__init__.py`) |
 | Tk `generic/tkCanvWind.c` (C) | `DisplayWinItem` | when a Canvas's embedded window is unmapped (`__init__.py`) |
 | Tk `generic/tkCmds.c` (C) | `ScalingCmd` | what `tk scaling` reads back once it has been set (`_core/application.py`) |

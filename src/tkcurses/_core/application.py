@@ -494,6 +494,10 @@ class Application:
         #: See :mod:`tkcurses._core.direct`.
         self.painter: DirectPainter | None = None
 
+        #: Widgets to repaint before the screen is next shown, each once
+        #: however many changes asked: a dict for its order, values unused.
+        self.repaint_due: dict[Misc, None] = {}
+
         #: Widget holding the input grab, and whether it is global. A grab
         #: diverts events away from the rest of the application, which is how
         #: a modal dialog stays modal.

@@ -313,6 +313,9 @@ class InputHandler:
         self._saved_termios: tuple[int, list[Any]] | None = None
         #: Keysyms taken back from the tty's signal handling, by request.
         self._signal_keys: set[str] = set()
+        #: True when the last :meth:`poll` stopped at its limit, so input may
+        #: be waiting that the descriptor no longer shows.
+        self.more_pending = False
         self._configure()
 
     def _configure(self) -> None:
@@ -560,27 +563,40 @@ class InputHandler:
             return False
         return bool(readable)
 
-    def poll(self) -> list[Event]:
-        """Read every event currently available, without blocking.
+    def poll(self, limit: int | None = None) -> list[Event]:
+        """Read the events currently available, without blocking.
 
         Always a list: one curses report can describe several buttons, and a
         caller that has to handle both a single event and a list of them gets
         the distinction wrong eventually.
+
+        Every event, unless ``limit`` says how many to stop at. A terminal
+        can send faster than a program handles - a mouse dragged over a large
+        screen, a long paste - and a loop that reads until nothing is left
+        does nothing else while it lasts, its timers included. Stopping at
+        ``limit`` leaves the rest for the next call and sets
+        :attr:`more_pending`, since what is left may already be inside
+        curses, where waiting on the descriptor cannot see it.
         """
         events: list[Event] = []
-        code = self._dispatcher.call(self._stdscr.getch)
-        while code != curses.ERR:
-            following = curses.ERR
+        self.more_pending = False
+        while True:
+            if limit is not None and len(events) >= limit:
+                self.more_pending = True
+                break
+            code = self._dispatcher.call(self._stdscr.getch)
+            if code == curses.ERR:
+                break
             if code == _ESCAPE:
                 following = self._dispatcher.call(self._stdscr.getch)
                 if following not in (curses.ERR, curses.KEY_MOUSE, curses.KEY_RESIZE):
                     events.append(self._alt_key(following))
-                    code = self._dispatcher.call(self._stdscr.getch)
                     continue
+                events.extend(self._translate(code))
+                if following == curses.ERR:
+                    break
+                code = following
             events.extend(self._translate(code))
-            if following == curses.ERR:
-                following = self._dispatcher.call(self._stdscr.getch)
-            code = following
         return events
 
     def _alt_key(self, code: int) -> KeyEvent:
