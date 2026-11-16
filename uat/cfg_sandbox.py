@@ -76,16 +76,22 @@ XDG_CONFIG_HOME={home} PYTHONPATH={src} exec {python} -c \
     'import sys; from tkcurses._cfg.cli import main; sys.exit(main())' "$@"
 """
 
+# Run through sh, not as "#!{python}": a #! line cannot be quoted, so an
+# interpreter whose path has a space in it would not have run.
 HOLD_LOCK = """\
-#!{python}
+#!/bin/sh
 # hold-lock FILE SECONDS: take FILE's save lock, as a tkcurses-cfg mid-save
 # would, and keep it.
+exec {python} {script} "$@"
+"""
+
+HOLD_LOCK_SCRIPT = """\
 import fcntl, os, sys, time
 path = sys.argv[1] + ".lock"
 os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
 fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
 fcntl.flock(fd, fcntl.LOCK_EX)
-print(f"holding {{path}} for {{sys.argv[2]}}s", flush=True)
+print(f"holding {path} for {sys.argv[2]}s", flush=True)
 time.sleep(float(sys.argv[2]))
 """
 
@@ -102,7 +108,8 @@ def make(directory: Path) -> Path:
     cfg = directory / "cfg"
     cfg.write_text(
         CFG.format(
-            repo=REPO,
+            # In a comment, where only a line break could do harm.
+            repo=" ".join(str(REPO).splitlines()),
             home=shlex.quote(str(home)),
             python=shlex.quote(sys.executable),
             src=shlex.quote(str(REPO / "src")),
@@ -110,7 +117,13 @@ def make(directory: Path) -> Path:
     )
     cfg.chmod(0o755)
     hold = directory / "hold-lock"
-    hold.write_text(HOLD_LOCK.format(python=sys.executable))
+    script = directory / "hold-lock.py"
+    script.write_text(HOLD_LOCK_SCRIPT)
+    hold.write_text(
+        HOLD_LOCK.format(
+            python=shlex.quote(sys.executable), script=shlex.quote(str(script))
+        )
+    )
     hold.chmod(0o755)
     return directory
 
