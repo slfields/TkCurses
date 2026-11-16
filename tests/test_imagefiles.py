@@ -454,7 +454,7 @@ def test_an_interlaced_png_that_ends_early_says_so():
         + png_chunk(b"IDAT", zlib.compress(payload[: len(payload) // 2]))
         + png_chunk(b"IEND", b"")
     )
-    with pytest.raises(TclError, match="where a pass needs"):
+    with pytest.raises(TclError, match=r"bytes of pixel data where .* were declared"):
         decode(truncated, "short.png")
 
 
@@ -769,4 +769,4 @@ def test_lzw_handles_a_code_defined_by_the_run_that_uses_it():
             bit_count -= 8
     if bit_count:
         stream.append(held & 0xFF)
-    assert _gif_lzw(bytes(stream), 2, 8, "k.gif") == [0, 0, 0]
+    assert list(_gif_lzw(bytes(stream), 2, 8, "k.gif")) == [0, 0, 0]

@@ -38,6 +38,16 @@ bytes. A file whose name says one thing and whose content says another is
 read as its content, and the error when nothing matches is worded as Tk
 words it.
 
+**A file is not trusted.** An image's header says how big it is, and a
+few dozen bytes can claim billions of pixels; a compressed stream can
+inflate a thousandfold. So no image larger than :data:`MAX_PIXELS` is
+decoded, the size is checked before anything is allocated or inflated, and
+inflating stops at the size the header declared. Tk has no such limit; it
+is the one place a file this library would read is refused where Tk would
+try. Anything else wrong with a file - a truncated header, a number that
+is not one - is a :class:`TclError`, never another exception, because a
+program reading images catches that one.
+
 What is deliberately not supported, and says so rather than guessing: PNG
 bit depths other than 8, and animation beyond a GIF's first frame. Adam7
 interlacing *is* read - it was refused for a while, and Tk 9.0.2 reads
@@ -75,6 +85,12 @@ _NETPBM_MAGICS = (b"P1", b"P2", b"P3", b"P4", b"P5", b"P6")
 #: Halfway is the only defensible place to put it.
 ALPHA_THRESHOLD = 128
 
+#: The most pixels an image file may declare: 4096 by 4096. Far more than a
+#: terminal shows - a photograph is subsampled to a few hundred cells - and
+#: little enough that a hostile header cannot ask for gigabytes: decoding
+#: holds a reference per pixel, eight bytes each.
+MAX_PIXELS = 4096 * 4096
+
 
 def sniff(data: bytes) -> str | None:
     """The format ``data`` is in, or None if it is not one we read."""
@@ -99,13 +115,31 @@ def decode(data: bytes, path: str = "") -> Rows:
             a variant we do not. Worded as Tk words it.
     """
     kind = sniff(data)
-    if kind == "netpbm":
-        return _decode_netpbm(data, path)
-    if kind == "png":
-        return _decode_png(data, path)
-    if kind == "gif":
-        return _decode_gif(data, path)
-    raise TclError(f'couldn\'t recognize data in image file "{path}"')
+    decoder = {"netpbm": _decode_netpbm, "png": _decode_png, "gif": _decode_gif}
+    if kind is None:
+        raise TclError(f'couldn\'t recognize data in image file "{path}"')
+    try:
+        return decoder[kind](data, path)
+    except TclError:
+        raise
+    except (IndexError, ValueError, OverflowError, MemoryError, zlib.error) as exc:
+        # A file broken in a way no check above foresaw is still a broken
+        # file, and the caller is catching TclError for exactly that.
+        raise _unreadable(
+            path, f"the file is malformed ({type(exc).__name__})"
+        ) from None
+
+
+def _check_size(width: int, height: int, path: str) -> None:
+    """Refuse an image with no pixels, or more than :data:`MAX_PIXELS`."""
+    if width <= 0 or height <= 0:
+        raise _unreadable(path, f"a {width}x{height} image has no pixels")
+    if width * height > MAX_PIXELS:
+        raise _unreadable(
+            path,
+            f"a {width}x{height} image is larger than this reads "
+            f"({MAX_PIXELS} pixels at most)",
+        )
 
 
 def _unreadable(path: str, because: str) -> TclError:
@@ -188,8 +222,7 @@ def _decode_netpbm(data: bytes, path: str) -> Rows:
         maxval = int(tokens[2]) if wanted == 4 else 1
     except ValueError:
         raise _unreadable(path, "the header is not numbers") from None
-    if width <= 0 or height <= 0:
-        raise _unreadable(path, f"a {width}x{height} image has no pixels")
+    _check_size(width, height, path)
     if maxval <= 0 or maxval > 65535:
         raise _unreadable(path, f"maxval {maxval} is out of range")
 
@@ -498,8 +531,7 @@ def _decode_png(data: bytes, path: str) -> Rows:
             break
     if not seen_header:
         raise _unreadable(path, "there is no IHDR chunk")
-    if width <= 0 or height <= 0:
-        raise _unreadable(path, f"a {width}x{height} image has no pixels")
+    _check_size(width, height, path)
     if interlace not in (0, 1):
         raise _unreadable(path, f"interlace method {interlace} is not one")
     if depth != 8:
@@ -511,15 +543,29 @@ def _decode_png(data: bytes, path: str) -> Rows:
     if not compressed:
         raise _unreadable(path, "there is no IDAT chunk")
 
+    step = _PNG_CHANNELS[colour_type]
+    stride = width * step
+    if interlace:
+        expected = 0
+        for spread in _ADAM7:
+            across, down = _pass_size(width, height, spread)
+            if across and down:
+                expected += down * (across * step + 1)
+    else:
+        expected = height * (stride + 1)
     try:
-        raw = zlib.decompress(bytes(compressed))
+        # Inflated no further than the header declared: a stream that would
+        # go on is a decompression bomb, or garbage, and either way the
+        # pixels it was meant to hold are all in the first ``expected``.
+        raw = zlib.decompressobj().decompress(bytes(compressed), expected)
     except zlib.error as exc:
         raise _unreadable(
             path, f"the compressed data will not inflate: {exc}"
         ) from None
-
-    step = _PNG_CHANNELS[colour_type]
-    stride = width * step
+    if len(raw) < expected:
+        raise _unreadable(
+            path, f"{len(raw)} bytes of pixel data where {expected} were declared"
+        )
     if interlace:
         flat = _png_deinterlace(raw, width, height, step, path)
     else:
@@ -588,7 +634,7 @@ def _gif_blocks(data: bytes, start: int) -> tuple[bytes, int]:
     return bytes(out), position
 
 
-def _gif_lzw(data: bytes, minimum: int, expected: int, path: str) -> list[int]:
+def _gif_lzw(data: bytes, minimum: int, expected: int, path: str) -> bytearray:
     """GIF's variable-width LZW, returning colour indices.
 
     The width grows from ``minimum + 1`` as the table fills and resets on a
@@ -600,17 +646,18 @@ def _gif_lzw(data: bytes, minimum: int, expected: int, path: str) -> list[int]:
         raise _unreadable(path, f"an LZW minimum code size of {minimum} is impossible")
     clear = 1 << minimum
     end = clear + 1
-    table: list[list[int]] = [[index] for index in range(clear)] + [[], []]
+    fresh: list[bytes] = [bytes((index,)) for index in range(clear)] + [b"", b""]
+    table = list(fresh)
     width = minimum + 1
-    out: list[int] = []
-    previous: list[int] | None = None
+    out = bytearray()
+    previous: bytes | None = None
     bits = 0
     held = 0
     position = 0
     while len(out) < expected:
         while bits < width:
             if position >= len(data):
-                return out
+                return out[:expected]
             held |= data[position] << bits
             bits += 8
             position += 1
@@ -618,7 +665,7 @@ def _gif_lzw(data: bytes, minimum: int, expected: int, path: str) -> list[int]:
         held >>= width
         bits -= width
         if code == clear:
-            table = [[index] for index in range(clear)] + [[], []]
+            table = list(fresh)
             width = minimum + 1
             previous = None
             continue
@@ -629,16 +676,16 @@ def _gif_lzw(data: bytes, minimum: int, expected: int, path: str) -> list[int]:
         elif previous is not None and code == len(table):
             # The encoder may name a sequence in the same step that defines
             # it. Legal, common, and the usual place a decoder goes wrong.
-            entry = [*previous, previous[0]]
+            entry = previous + previous[:1]
         else:
             raise _unreadable(path, f"code {code} is not in the table yet")
         out += entry
         if previous is not None and len(table) < 4096:
-            table.append([*previous, entry[0]])
+            table.append(previous + entry[:1])
             if len(table) == (1 << width) and width < 12:
                 width += 1
         previous = entry
-    return out
+    return out[:expected]
 
 
 def _decode_gif(data: bytes, path: str) -> Rows:
@@ -655,10 +702,12 @@ def _decode_gif(data: bytes, path: str) -> Rows:
     while position < len(data):
         marker = data[position]
         if marker == 0x21:  # extension
+            if position + 1 >= len(data):
+                raise _unreadable(path, "the file ends inside an extension")
             label = data[position + 1]
             if label == 0xF9:  # graphic control
                 block, position = _gif_blocks(data, position + 2)
-                if block and block[0] & 0x01:
+                if len(block) >= 4 and block[0] & 0x01:
                     transparent = block[3]
             else:
                 _, position = _gif_blocks(data, position + 2)
@@ -669,6 +718,8 @@ def _decode_gif(data: bytes, path: str) -> Rows:
             raise _unreadable(path, f"0x{marker:02x} is not a block this reads")
 
         # Image descriptor: position, size, then the local table flags.
+        if position + 10 > len(data):
+            raise _unreadable(path, "the file ends inside an image descriptor")
         width = int.from_bytes(data[position + 5 : position + 7], "little")
         height = int.from_bytes(data[position + 7 : position + 9], "little")
         local = data[position + 9]
@@ -679,10 +730,11 @@ def _decode_gif(data: bytes, path: str) -> Rows:
             table = data[position : position + local_size * 3]
             position += local_size * 3
         interlaced = bool(local & 0x40)
-        if width <= 0 or height <= 0:
-            raise _unreadable(path, f"a {width}x{height} image has no pixels")
+        _check_size(width, height, path)
         if not table:
             raise _unreadable(path, "the image names no colour table")
+        if position >= len(data):
+            raise _unreadable(path, "the file ends before its pixel data")
 
         minimum = data[position]
         compressed, _ = _gif_blocks(data, position + 1)
