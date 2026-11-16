@@ -6,7 +6,18 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+### Added
+- TkCurses asks the terminal to mark what is pasted into it (bracketed
+  paste, DEC mode 2004), and gives the mode back on exit and on Ctrl-Z. A
+  paste still reaches widgets as the keys it was. `TKCURSES_INPUT_BRACKETED_PASTE=0`, or
+  `bracketed_paste = off` under `[input]`, turns it off for a terminal that
+  shows `200~` around pastes.
+
 ### Fixed
+- After Ctrl-Z and `fg`, dragging with the mouse did nothing: the suspend
+  left the mouse's motion reporting on in the shell, and the return asked
+  only for clicks. Both modes now go off when the program stops and come
+  back when it continues.
 - Typing a character outside ASCII - é, ß, 界, an emoji - put nothing at
   all into an Entry or a Text: the terminal sends it as several bytes, and
   each was read as a key with no character. It is one key now, with the

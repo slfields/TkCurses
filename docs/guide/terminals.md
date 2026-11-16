@@ -119,6 +119,11 @@ apart arrive as the same bytes:
   by waiting 25 milliseconds for more. Over a slow connection a sequence
   can be split, and arrow keys arrive as Escape and letters; set
   `TKCURSES_INPUT_ESCAPE_DELAY` to more, in milliseconds.
+- **A paste** arrives as bytes too, the same as typing it. TkCurses asks
+  the terminal to mark the start and end of what is pasted (bracketed
+  paste), which almost every terminal does. One that does not understand
+  the request may show `200~` and `201~` around every paste; set
+  `TKCURSES_INPUT_BRACKETED_PASTE=0` for it.
 
 Some keys never reach the program because something else takes them first:
 
@@ -235,8 +240,9 @@ exception, whose traceback is printed after the terminal is restored so
 that it can be read.
 
 **Ctrl-Z** suspends the program, as in any terminal program: the shell
-comes back as it was, and `fg` brings the program back, redrawn, with the
-keyboard working as before. A program that binds `<Control-z>` gets the key
+comes back as it was, without mouse reports or marked pastes, and `fg`
+brings the program back, redrawn, with the keyboard and the mouse working
+as before. A program that binds `<Control-z>` gets the key
 instead, and so does a Text with `undo=True` while it has the focus, which
 undoes.
 
@@ -274,6 +280,7 @@ system = command
 | `TKCURSES_DISPLAY_COLOR_MODE` | `[display] color_mode` | `auto` |
 | `TKCURSES_DISPLAY_UNICODE` | `[display] unicode_borders` | on |
 | `TKCURSES_INPUT_ESCAPE_DELAY` | `[input] escape_delay` | 25 |
+| `TKCURSES_INPUT_BRACKETED_PASTE` | `[input] bracketed_paste` | on |
 | `TKCURSES_MOUSE_ENABLED` | `[mouse] enabled` | on |
 | `TKCURSES_MOUSE_CLICK_INTERVAL` | `[mouse] click_interval` | 200 |
 | `TKCURSES_MOUSE_REPORT_MOTION` | `[mouse] report_motion` | on |

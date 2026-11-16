@@ -1459,6 +1459,43 @@ One difference kept on purpose: a bare `é` as a sequence. Through tkinter,
 Tk 9.0.2 stores it as `<Key-Ã><Key-©>`, two keys, one per byte of its
 UTF-8, which nothing typed can match. Here it is the one key.
 
+#### Bracketed paste, and handing the terminal back on Ctrl-Z
+
+**A paste is asked to be marked**: `ESC [ ? 2004 h` at start-up, unless
+`[input] bracketed_paste` is off, and the terminal then wraps what is
+pasted in `ESC [ 200 ~` and `ESC [ 201 ~`. ncurses knows neither, and
+hands each over as its bytes; `InputHandler.poll` reads the start marker
+after an Escape the way it reads a late reply, and everything to the end
+marker becomes one `PasteEvent` - at most 16 MiB of it kept, the rest read
+and dropped so that it is not typed, and ended unfinished after half a
+second with nothing. Anything ncurses decoded inside a paste is not text:
+a resize or mouse report is delivered after it, any other key code
+dropped. The loop gives a paste to the focus as the keys it would have
+been, so marking it changes nothing yet; what a widget makes of one is
+`TkCurses-tcbj.22`'s second half.
+
+**Ctrl-Z is answered by the loop, not by ncurses.** ncurses' own SIGTSTP
+handler runs `endwin()` inside the signal and, measured, sends only what
+ncurses itself set: `ESC [ ? 1006 ; 1000 l` going, `ESC [ ? 1006 ; 1000 h`
+coming back. The motion mode, 1002, which this library sets past ncurses
+(see `_enable_motion`), stayed on in the shell, and the return's 1000
+replaced it, so after `fg` the mouse clicked but never dragged; 2004
+would have stayed on in the shell too. So `Tk` takes SIGTSTP while it
+holds the screen - only from the main thread, and only when the handler
+there is ncurses' or the default, never a program's own - and the handler
+only notes it, as SIGINT's does. Between passes the loop turns both modes
+off and gives the tty its own keys back (`InputHandler.pause`), calls
+`endwin()`, and stops with the default action; on `fg` it lays the screen
+out again at whatever size the terminal now is and sets the modes and
+keys again (`resume`). The tty's keys need it because ncurses' return
+sets back the terminal state it saved at `initscr()`, from before the
+input handler took Control-S and Control-Q.
+
+The pty harness cannot send a real Ctrl-Z to its child: the child leads an
+orphaned process group, and the kernel drops a terminal's stop signals to
+one. `test_bracketed_paste_tty.py` runs the program under `bash -i`, which
+has job control, for the real thing.
+
 #### Modifier Constants
 
 ```python

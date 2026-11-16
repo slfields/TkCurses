@@ -134,6 +134,7 @@ from tkcurses._core.events import (
     MOD_SHIFT,
     KeyEvent,
     MouseEvent,
+    PasteEvent,
     ResizeEvent,
     char_for_keysym,
 )
@@ -7353,6 +7354,10 @@ class Tk(_Backdrop, BaseWidget, Wm):
         self._motion_asserted = False
         #: A Ctrl-C the loop has yet to answer; see :meth:`_catch_interrupts`.
         self._interrupt_pending = False
+        #: A suspend the loop has yet to carry out; see :meth:`_catch_suspend`.
+        self._suspend_pending = False
+        #: What puts SIGTSTP back, while this root has it.
+        self._release_suspend: Callable[[], None] | None = None
         #: Set while a wait runs before mainloop: a Ctrl-C then cancels the
         #: dialog, as Escape does, instead of closing everything. Inside
         #: mainloop a held grab says the same; see :meth:`_answer_interrupt`.
@@ -7487,6 +7492,7 @@ class Tk(_Backdrop, BaseWidget, Wm):
                 report_motion=mouse.report_motion,
                 report_hover=mouse.report_hover,
                 mouse=mouse.enabled,
+                bracketed_paste=settings.input.bracketed_paste,
             )
             if unanswered:
                 # The answer may yet come, over a slow link, and curses
@@ -7552,6 +7558,7 @@ class Tk(_Backdrop, BaseWidget, Wm):
             self._mapped = True
             self._started = True
             self._paint_background()
+            self._release_suspend = self._catch_suspend()
         except BaseException:
             self._screen.stop()
             self._flush_held_reports()
@@ -7822,6 +7829,70 @@ class Tk(_Backdrop, BaseWidget, Wm):
         self._update_display()
         # Last, between passes, where a callback cannot be cut in half.
         self._answer_interrupt()
+        self._answer_suspend()
+
+    def _catch_suspend(self) -> Callable[[], None] | None:
+        """Take the suspend key, Control-Z, as something the loop does
+        between passes.
+
+        curses' own handler suspends from inside the signal, wherever the
+        program is, and knows only what curses set: the mouse motion and
+        paste modes stayed on in the shell, and came back without motion -
+        its return asks for clicks alone, so dragging stopped working after
+        ``fg``. Left alone when the program has a handler of its own, and
+        outside the main thread, where none can be set.
+
+        Returns:
+            What puts the signal back, or None if it was left alone.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            return None
+        if not hasattr(signal, "SIGTSTP"):
+            return None
+        # None is a handler set outside Python: curses' own.
+        if signal.getsignal(signal.SIGTSTP) not in (None, signal.SIG_DFL):
+            return None
+        self._suspend_pending = False
+
+        def noted(signum: int, frame: Any) -> None:
+            del signum, frame
+            self._suspend_pending = True
+
+        signal.signal(signal.SIGTSTP, noted)
+
+        def release() -> None:
+            signal.signal(signal.SIGTSTP, signal.SIG_DFL)
+            self._suspend_pending = False
+
+        return release
+
+    def _answer_suspend(self) -> None:
+        """Suspend, for a Control-Z noted since the last pass, and come back
+        when the shell continues the program.
+
+        The terminal is handed back as it was found - curses ended, the
+        modes off, the tty's keys its own - and the process stops itself
+        with the signal's default action. ``fg`` returns here, and the
+        screen is taken again and painted from scratch, at whatever size
+        the terminal is by then.
+        """
+        if not self._suspend_pending:
+            return
+        self._suspend_pending = False
+        if self._input is None or not self._started:
+            return
+        handler = signal.getsignal(signal.SIGTSTP)
+        self._input.pause()
+        with contextlib.suppress(Exception):
+            CursesDispatcher.get().call(_curses.endwin)
+        signal.signal(signal.SIGTSTP, signal.SIG_DFL)
+        try:
+            os.kill(os.getpid(), signal.SIGTSTP)
+        finally:
+            signal.signal(signal.SIGTSTP, handler)
+            with contextlib.suppress(Exception):
+                self._handle_resize()
+            self._input.resume()
 
     def _announce_mapped(self) -> None:
         """Tell the root's bindings it is on screen, once: ``<Configure>``
@@ -7966,6 +8037,13 @@ class Tk(_Backdrop, BaseWidget, Wm):
         """
         if isinstance(event, ResizeEvent):
             self._handle_resize()
+            return
+        if isinstance(event, PasteEvent):
+            # As the keys it would have been before the terminal marked it,
+            # each to whatever has the focus by then.
+            if self._input is not None:
+                for key in self._input.keys_for(event.text):
+                    self._route(key)
             return
         if isinstance(event, MouseEvent):
             if event.state in _PRESSES and self.tk.repeat is not None:
@@ -8300,6 +8378,9 @@ class Tk(_Backdrop, BaseWidget, Wm):
         if not self._started:
             return
         self._started = False
+        if self._release_suspend is not None:
+            self._release_suspend()
+            self._release_suspend = None
         self.tk.layout.clear()
         with contextlib.suppress(Exception):
             if self.tk.panels is not None:

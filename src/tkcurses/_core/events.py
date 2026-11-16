@@ -51,6 +51,7 @@ __all__ = [
     "KeyEvent",
     "MouseEvent",
     "MouseState",
+    "PasteEvent",
     "ResizeEvent",
     "canonical_keysym",
     "char_for_keysym",
@@ -193,6 +194,26 @@ class ResizeEvent(Event):
     def size(self) -> tuple[int, int]:
         """New size as ``(width, height)``."""
         return self.width, self.height
+
+
+@dataclass
+class PasteEvent(Event):
+    """Text pasted into the terminal, which the terminal marked as a paste.
+
+    A terminal in bracketed-paste mode (DEC 2004) wraps what is pasted in
+    ``ESC [ 200 ~`` and ``ESC [ 201 ~``, so that it arrives as one piece of
+    text rather than as keys - a pasted line break is not Return.
+
+    Attributes:
+        text: What was pasted, as the terminal sent it: line breaks are
+            usually carriage returns.
+        complete: False when the paste was cut short - longer than the
+            handler keeps, or its end never arrived.
+    """
+
+    type: str = "paste"
+    text: str = ""
+    complete: bool = True
 
 
 # --------------------------------------------------------------------------
