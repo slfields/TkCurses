@@ -29,6 +29,8 @@ tested directly and reused by anything that has a key code in hand.
 from __future__ import annotations
 
 import curses
+import re
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import Literal
@@ -53,6 +55,7 @@ __all__ = [
     "canonical_keysym",
     "char_for_keysym",
     "keysym_for",
+    "keysym_for_char",
     "modified_key",
     "modifier_names",
     "shift_held",
@@ -120,7 +123,8 @@ class KeyEvent(Event):
     """A key press.
 
     Attributes:
-        keycode: The raw value returned by ``getch()``.
+        keycode: The raw value returned by ``getch()``, or the code point
+            of a character beyond ASCII, which arrives as several.
         keysym: tkinter-style name, such as ``Up``, ``Return``, or ``a``.
         char: The printable character, empty for keys that produce none.
         modifiers: Bitwise OR of the ``MOD_*`` flags.
@@ -266,11 +270,15 @@ def canonical_keysym(name: str) -> str:
 
     ``period`` and ``.`` are the same key, and a binding may be written
     either way; both end up as ``.`` so they match the same event. Space
-    stays ``space``, as it does in Tk.
+    stays ``space``, as it does in Tk. The same goes for the keys beyond
+    ASCII: ``eacute``, ``U00E9`` and ``é`` are one key, stored as ``é``.
     """
     if name == "space":
         return "space"
-    return PUNCTUATION_KEYSYMS.get(name, name)
+    if name in PUNCTUATION_KEYSYMS:
+        return PUNCTUATION_KEYSYMS[name]
+    char = _named_char(name)
+    return keysym_for_char(char) if char else name
 
 
 #: The character the named control keys carry, as Tk 9.0.2 reports for a
@@ -290,7 +298,161 @@ def char_for_keysym(keysym: str) -> str:
     types none - an arrow, a function key."""
     if len(keysym) == 1:
         return keysym
-    return PUNCTUATION_KEYSYMS.get(keysym) or _CONTROL_CHARS.get(keysym, "")
+    return (
+        PUNCTUATION_KEYSYMS.get(keysym)
+        or _CONTROL_CHARS.get(keysym)
+        or _named_char(keysym)
+    )
+
+
+#: X11's names for the Latin-1 keys, U+00A0 to U+00FF in order. Tk accepts
+#: each in a binding and stores it as the character itself - ``<Key-eacute>``
+#: reads back from ``bind`` as ``<Key-é>`` - so they are resolved to it here
+#: too. Checked one by one against Tk 9.0.2.
+_LATIN1_NAMES = [
+    "nobreakspace",
+    "exclamdown",
+    "cent",
+    "sterling",
+    "currency",
+    "yen",
+    "brokenbar",
+    "section",
+    "diaeresis",
+    "copyright",
+    "ordfeminine",
+    "guillemotleft",
+    "notsign",
+    "hyphen",
+    "registered",
+    "macron",
+    "degree",
+    "plusminus",
+    "twosuperior",
+    "threesuperior",
+    "acute",
+    "mu",
+    "paragraph",
+    "periodcentered",
+    "cedilla",
+    "onesuperior",
+    "masculine",
+    "guillemotright",
+    "onequarter",
+    "onehalf",
+    "threequarters",
+    "questiondown",
+    "Agrave",
+    "Aacute",
+    "Acircumflex",
+    "Atilde",
+    "Adiaeresis",
+    "Aring",
+    "AE",
+    "Ccedilla",
+    "Egrave",
+    "Eacute",
+    "Ecircumflex",
+    "Ediaeresis",
+    "Igrave",
+    "Iacute",
+    "Icircumflex",
+    "Idiaeresis",
+    "ETH",
+    "Ntilde",
+    "Ograve",
+    "Oacute",
+    "Ocircumflex",
+    "Otilde",
+    "Odiaeresis",
+    "multiply",
+    "Oslash",
+    "Ugrave",
+    "Uacute",
+    "Ucircumflex",
+    "Udiaeresis",
+    "Yacute",
+    "THORN",
+    "ssharp",
+    "agrave",
+    "aacute",
+    "acircumflex",
+    "atilde",
+    "adiaeresis",
+    "aring",
+    "ae",
+    "ccedilla",
+    "egrave",
+    "eacute",
+    "ecircumflex",
+    "ediaeresis",
+    "igrave",
+    "iacute",
+    "icircumflex",
+    "idiaeresis",
+    "eth",
+    "ntilde",
+    "ograve",
+    "oacute",
+    "ocircumflex",
+    "otilde",
+    "odiaeresis",
+    "division",
+    "oslash",
+    "ugrave",
+    "uacute",
+    "ucircumflex",
+    "udiaeresis",
+    "yacute",
+    "thorn",
+    "ydiaeresis",
+]
+
+#: Every name above, the later spellings X11 gives some of them, and the
+#: euro sign, which is the one key outside Latin-1 a keyboard commonly has.
+_NAMED_CHARS: dict[str, str] = {
+    **{name: chr(0xA0 + offset) for offset, name in enumerate(_LATIN1_NAMES)},
+    "guillemetleft": "\u00ab",
+    "guillemetright": "\u00bb",
+    "ordmasculine": "\u00ba",
+    "Ooblique": "\u00d8",
+    "ooblique": "\u00f8",
+    "Eth": "\u00d0",
+    "Thorn": "\u00de",
+    "EuroSign": "\u20ac",
+}
+
+#: X11's form for any other character: ``U`` and its code point in hex.
+_UNICODE_KEYSYM = re.compile(r"U([0-9A-Fa-f]{4,6})")
+
+
+def _named_char(name: str) -> str:
+    """The character an X11 keysym name stands for, or ``""``."""
+    if name in _NAMED_CHARS:
+        return _NAMED_CHARS[name]
+    match = _UNICODE_KEYSYM.fullmatch(name)
+    if match is None:
+        return ""
+    code = int(match.group(1), 16)
+    return chr(code) if code <= sys.maxunicode else ""
+
+
+def keysym_for_char(char: str) -> str:
+    """The keysym of a key that types ``char``, as Tk 9.0.2 names it.
+
+    A character that prints is its own keysym, as ASCII's are: Tk reads
+    ``<Key-U754C>`` back as ``<Key-界>``. Space and no-break space keep
+    their names, ``space`` and ``nobreakspace``, and anything else that does
+    not print - a soft hyphen, a control character - is named by its code
+    point, ``U00AD``, as Tk names it.
+    """
+    if char == " ":
+        return "space"
+    if char == "\u00a0":
+        return "nobreakspace"
+    if char.isprintable():
+        return char
+    return f"U{ord(char):04X}"
 
 
 #: Curses key codes that map to a named tkinter keysym.

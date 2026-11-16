@@ -7,6 +7,11 @@ All notable changes to TkCurses. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Typing a character outside ASCII - é, ß, 界, an emoji - put nothing at
+  all into an Entry or a Text: the terminal sends it as several bytes, and
+  each was read as a key with no character. It is one key now, with the
+  character as its keysym, as in Tk 9, so `<Key-eacute>`, `<Key-U00E9>` and
+  `<Key-é>` all bind it.
 - A long Text no longer slows down as it grows. Typing laid out every line
   of the text twice a key: 2.6 ms a key at 2,000 lines and 26 ms at 20,000,
   now 0.45 ms and 3.3 ms, as only the line typed into is laid out again.

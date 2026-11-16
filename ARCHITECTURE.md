@@ -1425,6 +1425,40 @@ character, then the rest, where it arrived as Escape and then the rest;
 Escape closed whatever dialog or menu was open, Alt with `[` or `O` does
 nothing.
 
+#### Characters beyond ASCII
+
+**`getch()` hands a UTF-8 character over a byte at a time**, é as 195
+then 169, and `InputHandler._read_char` puts them back together into one
+key. Until `TkCurses-w9kd` each byte was a key with no character, so
+nothing outside ASCII could be typed into an Entry or a Text at all. The
+rest of a character split across reads is waited for for 50 ms, as a late
+reply's is. Bytes that make no character - a continuation byte on its own,
+a sequence cut short, an overlong form, a surrogate - are given back and
+read as the keys with no character they always were. `get_wch()` would
+decode for us, but it is a second read path for every key, mouse report
+and resize, for the sake of a few lines.
+
+**The keysym is the character itself**, which is what Tk 9.0.2 does and
+its manual does not say. Measured by binding names and reading `bind`
+back: `<Key-eacute>`, `<Key-U00E9>` and `<Key-é>` all read back as
+`<Key-é>`; `<Key-U754C>` as `<Key-界>`; `<Key-EuroSign>` as `<Key-€>`;
+`<Key-U0041>` as `A` - the same thing Tk does with `period` and `.`. The
+exceptions are the characters that do not print: no-break space stays
+`nobreakspace`, and the soft hyphen, X11's `hyphen`, comes back as
+`U00AD`. So `canonical_keysym` resolves every Latin-1 name, X11's later
+spellings of some of them (`guillemetleft`, `ordmasculine`, `Ooblique`),
+`EuroSign` and any `U` + hex to the character, and a binding written any
+of those ways meets the typed key. What `event.keysym` is for a key
+actually typed under Tk could not be read on the machine measured - an
+XWayland display, where `event_generate` with a non-ASCII keysym delivers
+`??` - and is taken to be the stored form, as it is for ASCII.
+`keysym_num` follows X11: Latin-1 is its code point, anything else its code
+point plus 0x1000000.
+
+One difference kept on purpose: a bare `é` as a sequence. Through tkinter,
+Tk 9.0.2 stores it as `<Key-Ã><Key-©>`, two keys, one per byte of its
+UTF-8, which nothing typed can match. Here it is the one key.
+
 #### Modifier Constants
 
 ```python

@@ -620,3 +620,85 @@ def test_what_stops_looking_like_a_reply_is_read_as_typed(curses_stub, sent, key
     handler = make_handler(FakeScreen(list(sent)))
     handler.expect_late_reply()
     assert [(e.keysym, e.modifiers) for e in handler.poll()] == keys
+
+
+# ------------------------------------- typing beyond ASCII, TkCurses-w9kd
+
+
+def typed(text: str) -> list[int]:
+    """What getch() returns for ``text``: a code per UTF-8 byte."""
+    return list(text.encode())
+
+
+def test_a_character_beyond_ascii_is_one_key(curses_stub):
+    handler = make_handler(FakeScreen(typed("aé界😀b")))
+    events = handler.poll()
+    assert [(e.keysym, e.char) for e in events] == [
+        ("a", "a"),
+        ("é", "é"),
+        ("界", "界"),
+        ("😀", "😀"),
+        ("b", "b"),
+    ]
+    assert [e.keycode for e in events[1:4]] == [0xE9, 0x754C, 0x1F600]
+    assert not any(e.modifiers for e in events)
+
+
+def test_a_character_beyond_ascii_can_be_typed_with_alt(curses_stub):
+    handler = make_handler(FakeScreen([27, *typed("é")]))
+    assert [(e.keysym, e.char, e.modifiers) for e in handler.poll()] == [
+        ("é", "é", MOD_ALT)
+    ]
+
+
+@pytest.mark.parametrize(
+    "sent",
+    [
+        b"\xa9",  # a continuation byte with nothing before it
+        b"\xe7\x95",  # a character cut short
+        b"\xe0\x80\x80",  # an overlong form
+        b"\xed\xa0\x80",  # a surrogate
+        b"\xc0\xaf",  # a lead no character uses
+        b"\xff",
+    ],
+)
+def test_bytes_that_make_no_character_are_not_text(curses_stub, sent):
+    handler = make_handler(FakeScreen([*sent, ord("b")]))
+    events = handler.poll()
+    assert [e.keycode for e in events] == [*sent, ord("b")]
+    assert [e.char for e in events] == [""] * len(sent) + ["b"]
+
+
+def test_a_character_cut_short_by_another_key_keeps_the_key(curses_stub):
+    handler = make_handler(FakeScreen([0xC3, 27, ord("x")]))
+    events = handler.poll()
+    assert [(e.keysym, e.char, e.modifiers) for e in events] == [
+        ("keycode-195", "", 0),
+        ("x", "x", MOD_ALT),
+    ]
+
+
+def test_the_rest_of_a_character_is_waited_for(curses_stub, monkeypatch):
+    """A character split across two reads: getch() runs dry after its first
+    byte, and the rest arrives during the wait."""
+    first, *rest = typed("界")
+    handler = make_handler(FakeScreen([first, curses.ERR, *rest]))
+    waits = []
+    monkeypatch.setattr(
+        handler, "wait_for_input", lambda ms: bool(waits.append(ms)) or True
+    )
+    assert [e.char for e in handler.poll()] == ["界"]
+    assert waits == [50]
+
+
+def test_a_character_that_never_finishes_is_not_text(curses_stub, monkeypatch):
+    handler = make_handler(FakeScreen([0xE7, 0x95]))
+    monkeypatch.setattr(handler, "wait_for_input", lambda ms: False)
+    assert [e.char for e in handler.poll()] == ["", ""]
+
+
+def test_a_limit_does_not_split_a_character(curses_stub):
+    handler = make_handler(FakeScreen(typed("a界b")))
+    assert [e.char for e in handler.poll(limit=2)] == ["a", "界"]
+    assert handler.more_pending
+    assert [e.char for e in handler.poll()] == ["b"]

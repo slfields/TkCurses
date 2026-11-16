@@ -514,6 +514,18 @@ _TK_ALT_OR_META = _TK_MOD1 | _TK_ALT_MASK | _TK_META_MASK
 _TK_BUTTONS = {MOD_BUTTONS[n]: 0x80 << n for n in range(1, 6)}
 
 
+def _keysym_num(char: str) -> int:
+    """The number of the keysym a key typing ``char`` has, 0 for none.
+
+    X11's: Latin-1 is its own code point, and every other character is its
+    code point plus 0x1000000, so 界 is 0x100754C.
+    """
+    if len(char) != 1:
+        return 0
+    code = ord(char)
+    return code if code < 0x100 else 0x1000000 + code
+
+
 def _tk_state(modifiers: int, *, generated: bool = False) -> int:
     """Tk's state number for our modifier bits.
 
@@ -710,7 +722,7 @@ class Event:
             event.keysym = core.keysym
             event.char = core.char
             event.state = _tk_state(core.modifiers)
-            event.keysym_num = ord(core.char) if len(core.char) == 1 else 0
+            event.keysym_num = _keysym_num(core.char)
             event.x_root, event.y_root = widget.tk.pointer
         elif isinstance(core, MouseEvent):
             event.type = _MOUSE_EVENT_TYPES[core.state]
