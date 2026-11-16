@@ -174,7 +174,14 @@ jobs:
         # read in the review and is not a finding.
         run: bandit -r src --severity-level medium --quiet
       - name: Known vulnerabilities in what CI and the release install
-        run: >-
-          pip-audit --require-hashes --disable-pip --progress-spinner off
-          -r requirements/dev.txt -r requirements/docs.txt
-          -r requirements/release.txt -r requirements/security.txt
+        # One file at a time: given several, pip-audit refuses a package
+        # pinned in more than one of them, and the locks share many.
+        run: |
+          status=0
+          for lock in requirements/*.txt; do
+            echo "::group::$lock"
+            pip-audit --require-hashes --disable-pip --progress-spinner off \
+              -r "$lock" || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
