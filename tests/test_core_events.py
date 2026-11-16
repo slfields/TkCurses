@@ -280,3 +280,78 @@ def test_an_unnamed_key_is_not_remembered_as_unnamed(monkeypatch):
     assert modified_key(4242) is None
     monkeypatch.setattr(curses, "keyname", lambda code: b"kDN5")
     assert modified_key(4242) == ("Down", MOD_CTRL)
+
+
+# ------------------------------------- keys beyond ASCII, TkCurses-w9kd
+
+#: Read from Tk 9.0.2: what ``bind`` gives back for ``<Key-name>``.
+TK_CANONICAL = {
+    "eacute": "é",
+    "Eacute": "É",
+    "U00E9": "é",
+    "U754C": "界",
+    "EuroSign": "€",
+    "U20AC": "€",
+    "guillemotleft": "«",
+    "guillemetleft": "«",
+    "masculine": "º",
+    "ordmasculine": "º",
+    "Ooblique": "Ø",
+    "ssharp": "ß",
+    "ydiaeresis": "ÿ",
+    "nobreakspace": "nobreakspace",
+    "U00A0": "nobreakspace",
+    "hyphen": "U00AD",
+    "U0041": "A",
+    "U0020": "space",
+    "é": "é",
+}
+
+
+@pytest.mark.parametrize(("name", "stored"), TK_CANONICAL.items())
+def test_a_key_beyond_ascii_is_stored_as_tk_stores_it(name, stored):
+    assert events.canonical_keysym(name) == stored
+
+
+def test_every_latin1_name_is_its_character():
+    named = {name: events.canonical_keysym(name) for name in events._LATIN1_NAMES}
+    assert len(named) == 96
+    for offset, (name, stored) in enumerate(named.items()):
+        char = chr(0xA0 + offset)
+        assert stored == events.keysym_for_char(char), name
+
+
+@pytest.mark.parametrize(
+    ("char", "keysym"),
+    [
+        ("é", "é"),
+        ("界", "界"),
+        ("😀", "😀"),
+        (" ", "space"),
+        ("\xa0", "nobreakspace"),
+        ("\xad", "U00AD"),
+    ],
+)
+def test_the_keysym_of_a_typed_character(char, keysym):
+    assert events.keysym_for_char(char) == keysym
+
+
+@pytest.mark.parametrize(
+    ("keysym", "char"),
+    [
+        ("eacute", "é"),
+        ("é", "é"),
+        ("U754C", "界"),
+        ("nobreakspace", "\xa0"),
+        ("Ugrave", "Ù"),
+        ("Up", ""),
+        ("U", "U"),
+    ],
+)
+def test_the_character_a_named_key_types(keysym, char):
+    assert events.char_for_keysym(keysym) == char
+
+
+def test_a_code_point_past_unicode_is_no_key():
+    assert events.canonical_keysym("U110000") == "U110000"
+    assert events.char_for_keysym("U110000") == ""

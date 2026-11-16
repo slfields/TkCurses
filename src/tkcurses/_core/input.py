@@ -51,6 +51,7 @@ from tkcurses._core.events import (
     MouseState,
     ResizeEvent,
     keysym_for,
+    keysym_for_char,
     modified_key,
     shift_held,
 )
@@ -155,6 +156,19 @@ _REPLY_PREFIX = re.compile(
     rb"P(?:[01](?:\+(?:r[0-9A-Fa-f]*(?:=[0-9A-Fa-f]*)?\x1b?)?)?)?|\[(?:\?[0-9;]*)?"
 )
 _REPLY_STARTS = (ord("P"), ord("["))
+
+
+def _utf8_length(lead: int) -> int:
+    """How many bytes the UTF-8 character starting with ``lead`` has, or 0
+    for a byte no character starts with: ASCII, a continuation byte, or one
+    of the leads only an overlong or out-of-range form would use."""
+    if 0xC2 <= lead <= 0xDF:
+        return 2
+    if 0xE0 <= lead <= 0xEF:
+        return 3
+    if 0xF0 <= lead <= 0xF4:
+        return 4
+    return 0
 
 
 class MouseDecoder:
@@ -678,6 +692,46 @@ class InputHandler:
         self._pushback[:0] = read
         return False
 
+    def _read_key(self, code: int) -> KeyEvent:
+        """The key ``code`` begins, reading the rest of its character if it
+        is the first byte of one beyond ASCII."""
+        if _utf8_length(code):
+            return self._read_char(code)
+        return self._key_event(code)
+
+    def _read_char(self, lead: int) -> KeyEvent:
+        """One character typed beyond ASCII, read on from its first byte.
+
+        ``getch()`` hands a UTF-8 character over a byte at a time - é is
+        195 then 169 - and this puts them back together. ``get_wch()``
+        would decode it, but it also decodes the mouse and resize codes away
+        and is a second read path for every key; the bytes are simple enough
+        to do here. The rest of a character split across reads is waited for
+        briefly, as the rest of a late reply is. Bytes that do not make a
+        character - a lone continuation byte, a sequence cut short, an
+        overlong form - are given back and read as the keys with no
+        character they always were, never as text.
+        """
+        length = _utf8_length(lead)
+        read = [lead]
+        while len(read) < length:
+            code = self._next()
+            if code == curses.ERR and self.wait_for_input(_REPLY_GAP_MS):
+                code = self._next()
+            if not 0x80 <= code <= 0xBF:
+                if code != curses.ERR:
+                    self._pushback.insert(0, code)
+                break
+            read.append(code)
+        try:
+            char = bytes(read).decode("utf-8") if len(read) == length else ""
+        except UnicodeDecodeError:
+            char = ""
+        if not char:
+            self._pushback[:0] = read[1:]
+            return self._key_event(lead)
+        return KeyEvent(keycode=ord(char), keysym=keysym_for_char(char), char=char)
+
     def _alt_key(self, code: int) -> KeyEvent:
         """A key pressed with Alt, which a terminal sends as Escape and then
         the key.
@@ -690,7 +744,7 @@ class InputHandler:
         has nothing behind it, and stays Escape. Mouse reports and resizes
         are never Alt, and are read as themselves.
         """
-        event = self._key_event(code)
+        event = self._read_key(code)
         event.modifiers |= MOD_ALT
         return event
 
@@ -707,7 +761,7 @@ class InputHandler:
             return self._read_mouse()
         if code == curses.KEY_RESIZE:
             return [self._read_resize()]
-        return [self._key_event(code)]
+        return [self._read_key(code)]
 
     def _read_mouse(self) -> Sequence[Event]:
         """Pull the pending mouse report and decode it."""
