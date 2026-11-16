@@ -5,7 +5,7 @@
 #
 #     sh requirements/lock.sh
 #
-# Each lock is universal - one file for Python 3.10 to 3.14 and every
+# Each lock is universal - one file for Python 3.11 to 3.14 and every
 # platform - and carries a hash for every file, so CI installs with
 # --require-hashes and gets exactly what was locked or nothing. Needs uv
 # (https://docs.astral.sh/uv/). Security review TkCurses-tcbj.8.
@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 lock() {
     out=$1
     shift
-    uv pip compile --quiet --universal --python-version 3.10 \
+    uv pip compile --quiet --universal --python-version 3.11 \
         --generate-hashes --no-header --output-file "requirements/$out" "$@"
 }
 lock test.txt pyproject.toml --extra test

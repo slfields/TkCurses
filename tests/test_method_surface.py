@@ -74,7 +74,7 @@ skip for.
 
 VERSION SKEW IS REAL, AND IT BROKE THIS FILE ON THREE OF THE FIVE PYTHONS.
 tkinter's own method surface grew in 3.13: the ``busy_*`` family,
-``info_patchlevel``, ``after_info``, ``PhotoImage.copy_replace``. CI runs
+``info_patchlevel``, ``after_info``, ``PhotoImage.copy_replace``. CI ran
 3.10-3.14, so on the older runners **tkinter has less**, and eighteen entries
 in :data:`GAPS` name methods that tkinter does not have there either.
 
@@ -89,7 +89,7 @@ than skipping the check on three runners out of five.
 **Verify a fix here against an older tkinter, not against this one.** Deleting
 the 3.13 additions from ``tkinter.Misc`` and ``tkinter.PhotoImage`` in a probe
 reproduces the condition, and the version-gated test has to be deselected to
-match what a real 3.10 runs - the probe can strip the library but cannot lower
+match what a real 3.11 or 3.12 runs - the probe can strip the library but cannot lower
 ``sys.version_info``.
 """
 
@@ -397,7 +397,7 @@ def _some_compared_class_has(method: str) -> bool:
 
     THE VERSION TRAP. tkinter's own method surface grew in 3.13 - the
     ``busy_*`` family, ``info_patchlevel``, ``PhotoImage.copy_replace`` - so on
-    3.10 eighteen entries in :data:`GAPS` name methods tkinter does not have
+    3.11 and 3.12 eighteen entries in :data:`GAPS` name methods tkinter does not have
     there. Nothing of ours can resolve an owner for a method that does not
     exist, so :func:`_covered_by` comes back empty and the entry looks dead
     when it is merely ahead of the interpreter.

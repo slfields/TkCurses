@@ -161,7 +161,7 @@ you can move things around in, and a picture.
 
 ## Before you start
 
-You need Python 3.10 or later on Linux or macOS, and a terminal. Install
+You need Python 3.11 or later on Linux or macOS, and a terminal. Install
 TkCurses with `pip`:
 
 ```bash

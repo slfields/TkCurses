@@ -25,6 +25,7 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -544,10 +545,9 @@ def test_an_unexpected_error_is_status_1_and_asks_for_debug(run, monkeypatch):
 
 
 def test_the_command_is_installed_as_tkcurses_cfg():
-    """Read as text: tomllib is not in Python 3.10."""
     text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
-    scripts = text.split("[project.scripts]\n")[1].split("\n\n")[0]
-    assert 'tkcurses-cfg = "tkcurses._cfg.cli:main"' in scripts.splitlines()
+    scripts = tomllib.loads(text)["project"]["scripts"]
+    assert scripts["tkcurses-cfg"] == "tkcurses._cfg.cli:main"
 
 
 def test_it_runs_as_a_program(tmp_path):

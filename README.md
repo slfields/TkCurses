@@ -92,7 +92,7 @@ Missing pieces are tracked as issues. The larger ones:
 
 ## Requirements
 
-- Python 3.10 or later; every release is tested on 3.10 to 3.14.
+- Python 3.11 or later; every release is tested on 3.11 to 3.14.
 - A POSIX system: Linux, where every release is tested. It should work on macOS,
   but it is not tested there. **It does not work on Windows**, where Python has
   no `termios`. It may work under WSL.

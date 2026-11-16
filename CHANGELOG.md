@@ -6,6 +6,11 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+### Removed
+- Python 3.10 is no longer supported: it reached the end of its life in
+  October 2026. TkCurses needs Python 3.11 or later, and is tested on 3.11
+  to 3.14.
+
 ## [0.4.2] - 2026-11-16
 
 ### Security

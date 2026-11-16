@@ -13,7 +13,7 @@ description = "A tkinter-compatible API layer that renders to curses"
 readme = "README.md"
 license = "GPL-3.0-only"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     { name = "Scott L. Fields" },
 ]
@@ -24,7 +24,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: POSIX",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -131,7 +130,7 @@ timeout = 60
 
 # ------------------------------------------------------------------ mypy ----
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 files = ["src/tkcurses"]
 # Everything strict mode turns on, because measuring it cost nothing - the
 # library already passed with no errors at all. The individual flags below
@@ -167,7 +166,7 @@ ignore_missing_imports = true
 
 # ------------------------------------------------------------------ ruff ----
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 line-length = 88
 src = ["src", "tests"]
 # Ruff 0.16 formats fenced Python inside Markdown. ARCHITECTURE.md's snippets

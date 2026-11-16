@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -173,13 +174,8 @@ ADAPTED_FROM_TKINTER = ("dnd.py", "simpledialog.py")
 
 
 def test_the_notices_ship_with_the_package():
-    # Read as text: tomllib is 3.11 and later, and this runs on 3.10 too.
-    line = next(
-        line
-        for line in (ROOT / "pyproject.toml").read_text().splitlines()
-        if line.startswith("license-files")
-    )
-    assert '"THIRD_PARTY_NOTICES.md"' in line
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    assert "THIRD_PARTY_NOTICES.md" in project["license-files"]
 
 
 def test_the_notices_carry_both_licences():

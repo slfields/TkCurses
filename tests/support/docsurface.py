@@ -86,7 +86,7 @@ COUNTERPARTS = (
 #: carries the marker, and their members need not repeat it.
 EXTENSION_MODULES = ("tkcurses.curses", "tkcurses.panel", "tkcurses.constants")
 
-#: tkinter's API grew after Python 3.10, the oldest TkCurses supports, so
+#: tkinter's API grew after Python 3.11, the oldest TkCurses supports, so
 #: the tkinter a test runs against may be missing methods TkCurses provides
 #: to match a newer one. They are tkinter's API all the same, not
 #: extensions. The test checks each against the tkinter that has it, so an
@@ -110,7 +110,6 @@ LATER_TKINTER = {
     ("Misc", "tk_busy_forget"): (3, 13),
     ("Misc", "tk_busy_hold"): (3, 13),
     ("Misc", "tk_busy_status"): (3, 13),
-    ("Misc", "info_patchlevel"): (3, 11),
     ("PhotoImage", "copy_replace"): (3, 13),
     ("PhotoImage", "data"): (3, 13),
     ("PhotoImage", "read"): (3, 13),
