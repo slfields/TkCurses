@@ -7,6 +7,40 @@ clipboard. They are for the person at the terminal; a program decides
 everything else through its own code, as with tkinter.
 [Terminals](../guide/terminals.md) explains when each one helps.
 
+## Seeing and changing settings
+
+[`tkcurses-cfg`](tkcurses-cfg.md), installed with TkCurses, is the easiest
+way to change a setting. Run alone at a terminal, it opens a screen of
+every setting, with what each one does, the value a program would use and
+where that value comes from: move to one, press Enter to change it, `s` to
+save.
+
+Given a command, it does that one thing. `set` writes a setting into your
+own file, making the file if there is none, and refuses a value the
+setting does not take; `list --changed` shows what is no longer at its
+default; `check` reads every file for mistakes; `unset` takes the setting
+out again:
+
+```console
+$ tkcurses-cfg set display.unicode_borders off
+display.unicode_borders = false in ~/.config/tkcurses/tkcurses.ini
+$ tkcurses-cfg list --changed
+SETTING                  VALUE  SOURCE
+display.unicode_borders  false  user
+
+user:  ~/.config/tkcurses/tkcurses.ini
+$ tkcurses-cfg check
+0 errors, 0 warnings (~/.config/tkcurses/tkcurses.ini; and this shell's environment)
+$ tkcurses-cfg unset display.unicode_borders
+display.unicode_borders removed from ~/.config/tkcurses/tkcurses.ini
+note: display.unicode_borders is now true, from default
+```
+
+A setting is named by its section and key, as below: `unicode_borders` in
+`[display]` is `display.unicode_borders`. `tkcurses-cfg list` shows them
+all. [Its page](tkcurses-cfg.md) describes every command, the screen, and
+how it keeps a file safe while changing it.
+
 ## Where settings come from
 
 Each setting can be given in three places. Later ones win:
@@ -33,10 +67,6 @@ unicode_borders = off
 ```
 
 Settings are read once, when the program starts.
-
-[`tkcurses-cfg`](tkcurses-cfg.md) shows every setting and where its value
-comes from, changes them in either file without disturbing the rest of it,
-and checks both files for mistakes.
 
 ## Values
 
