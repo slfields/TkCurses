@@ -103,7 +103,10 @@ def test_the_example_file_means_what_the_page_says(tmp_path):
 
 
 def test_the_example_variable_is_a_setting():
-    named = re.findall(r"TKCURSES_\w+", page_block("console"))
+    blocks = [
+        body for lang, body in FENCE.findall(PAGE.read_text()) if lang == "console"
+    ]
+    named = re.findall(r"TKCURSES_\w+", "".join(blocks))
     variables = {setting.variable for setting in config.SETTINGS}
     assert named and set(named) <= variables
 

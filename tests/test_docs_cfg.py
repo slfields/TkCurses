@@ -15,16 +15,17 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""The ``tkcurses-cfg`` page's examples are what the command prints.
+"""The ``tkcurses-cfg`` examples are what the command prints.
 
-Every ``console`` block on the page is one session, run in order: each
+Every ``console`` block on a page is one session, run in order: each
 ``$ tkcurses-cfg ...`` line is run - with any ``NAME=value`` in front of it
 set in the environment for that command alone - and what follows it, up to
 the next ``$``, must be exactly its output, standard output and standard
 error together as a terminal would show them. The run starts with no
 configuration files and a home directory of its own, and runs in-process
 with the system-wide file moved somewhere empty, so the page cannot depend
-on the machine that builds it.
+on the machine that builds it. The configuration page shows a few too,
+among a command that is not ``tkcurses-cfg``, which is passed over.
 """
 
 from __future__ import annotations
@@ -40,28 +41,44 @@ import pytest
 
 from tkcurses._cfg import cli
 
-PAGE = Path(__file__).parents[1] / "docs" / "reference" / "tkcurses-cfg.md"
-BLOCK = re.compile(r"```console\n(.*?)```", re.DOTALL)
+REFERENCE = Path(__file__).parents[1] / "docs" / "reference"
+PAGE = REFERENCE / "tkcurses-cfg.md"
+PAGES = (PAGE, REFERENCE / "configuration.md")
+#: A ``console`` block at the margin; one indented in a list is an aside.
+BLOCK = re.compile(r"^```console\n(.*?)^```", re.DOTALL | re.MULTILINE)
 
 
-def session() -> list[tuple[str, str]]:
-    """Each command on the page with the output shown for it."""
+def session(page: Path = PAGE) -> list[tuple[str, str]]:
+    """Each ``tkcurses-cfg`` command on a page with the output shown for it."""
     steps: list[tuple[str, str]] = []
-    for block in BLOCK.findall(PAGE.read_text()):
+    for block in BLOCK.findall(page.read_text()):
         for line in block.splitlines(keepends=True):
             if line.startswith("$ "):
                 steps.append((line[2:].strip(), ""))
             else:
                 command, shown = steps[-1]
                 steps[-1] = (command, shown + line)
-    return steps
+    return [(command, shown) for command, shown in steps if runs_cfg(command)]
+
+
+def runs_cfg(command: str) -> bool:
+    """Whether a command, after any ``NAME=value`` in front of it, is ours."""
+    words = shlex.split(command)
+    while words and "=" in words[0]:
+        words.pop(0)
+    return bool(words) and words[0] == "tkcurses-cfg"
 
 
 def test_the_page_has_examples():
     assert len(session()) >= 10
 
 
-def test_every_example_prints_what_the_page_shows(tmp_path, monkeypatch):
+def test_the_configuration_page_has_examples():
+    assert len(session(PAGES[1])) >= 3
+
+
+@pytest.mark.parametrize("page", PAGES, ids=lambda page: page.name)
+def test_every_example_prints_what_the_page_shows(page, tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -72,7 +89,7 @@ def test_every_example_prints_what_the_page_shows(tmp_path, monkeypatch):
     user = home / ".config" / "tkcurses" / "tkcurses.ini"
     system = tmp_path / "etc" / "tkcurses.ini"
     monkeypatch.setattr(cli, "config_paths", lambda: (system, user))
-    for command, shown in session():
+    for command, shown in session(page):
         words = shlex.split(command)
         assignments = {}
         while "=" in words[0]:
