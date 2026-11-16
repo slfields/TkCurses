@@ -7037,6 +7037,12 @@ _IDLE_TIMEOUT_MS = 50
 #: posting work in a tight loop cannot starve input handling.
 _DISPATCH_BATCH = 64
 
+#: How many input events to handle per pass, for the same reason: a terminal
+#: sending without pause - a mouse dragged across a large screen, a long
+#: paste - held the loop in input until it stopped, and a 10 ms timer ran
+#: once in seven seconds of drag reports. Measured, TkCurses-tcbj.21.
+_INPUT_BATCH = 256
+
 #: The root that currently owns the terminal. Curses is process-global -
 #: there is one screen, whatever the object model says - so a second live
 #: root is refused rather than allowed to corrupt the first.
@@ -7897,9 +7903,45 @@ class Tk(_Backdrop, BaseWidget, Wm):
             if delay is None
             else min(int(delay * 1000), _IDLE_TIMEOUT_MS)
         )
-        self._input.wait_for_input(max(timeout, 0))
-        for event in self._input.poll():
+        if not self._input.more_pending:
+            # Not after a pass that stopped at its limit: what is left may be
+            # inside curses already, where select() cannot see it.
+            self._input.wait_for_input(max(timeout, 0))
+        for event in self._collapse_motion(self._input.poll(_INPUT_BATCH)):
             self._guard(self._route, event)
+
+    def _collapse_motion(self, events: list[CoreEvent]) -> list[CoreEvent]:
+        """``events`` with each run of motion in one window cut to its last.
+
+        As Tk collapses them: ``Tk_QueueWindowEvent`` (``tkEvent.c``) keeps
+        a motion event back and replaces it with the next one in the same
+        window, and anything else sends it on first. The window is the
+        widget under the pointer, or under a drag the one pressed, which
+        holds the pointer until the release. A change of modifier keys ends
+        a run too, as X's key event between them would.
+        """
+        collapsed: list[CoreEvent] = []
+        window: Misc | None = None
+        for event in events:
+            if isinstance(event, MouseEvent) and event.state in ("motion", "drag"):
+                # A drag runs from a press to a release, neither of which is
+                # motion, so a run of drags is all in the one window pressed.
+                here = (
+                    None if event.state == "drag" else self._widget_at(event.x, event.y)
+                )
+                last = collapsed[-1] if collapsed else None
+                if (
+                    isinstance(last, MouseEvent)
+                    and last.state == event.state
+                    and last.button == event.button
+                    and last.modifiers == event.modifiers
+                    and here is window
+                ):
+                    collapsed[-1] = event
+                    continue
+                window = here
+            collapsed.append(event)
+        return collapsed
 
     def _route(self, event: CoreEvent) -> None:
         """Deliver one event to the widget it belongs to.
@@ -8164,6 +8206,7 @@ class Tk(_Backdrop, BaseWidget, Wm):
         """
         if not self._started:
             return
+        self._repaint_due()
         self._renew_colour_pairs()
         painted = bool(self._screen.refresh())
         if self.tk.panels is not None:
@@ -8180,6 +8223,16 @@ class Tk(_Backdrop, BaseWidget, Wm):
         painter = getattr(self.tk, "painter", None)
         if painter is not None and painter.pending:
             CursesDispatcher.get().call(painter.paint, painted)
+
+    def _repaint_due(self) -> None:
+        """Repaint the widgets that asked to be repainted before the screen
+        is next shown, each once."""
+        due = self.tk.repaint_due
+        while due:
+            widget = next(iter(due))
+            del due[widget]
+            if widget.winfo_exists():
+                self._guard(widget._redraw)
 
     def update(self) -> None:
         """Process everything pending without entering the loop.
@@ -16437,9 +16490,25 @@ class Text(_Drawable, XView, YView):
         """
         if typed:
             self.see("insert")
-        self._redraw()
+        self._redraw_soon()
         self._report_view()
         self._set_modified(True)
+
+    def _redraw_soon(self) -> None:
+        """Repaint before the screen is next shown, once however many edits
+        and calls to ``see`` ask.
+
+        Tk's text widget repaints from an idle handler for the same reason:
+        ``TextChanged`` (``tkTextDisp.c``) schedules ``DisplayText`` with
+        ``Tcl_DoWhenIdle``. Each key typed here repainted at once, and twice
+        - the edit, then ``see`` - at a cost that grows with the lines in
+        view: a paste of 1000 characters onto one line took seconds.
+        TkCurses-tcbj.21.
+        """
+        if self.tk.screen is None:
+            self._redraw()
+            return
+        self.tk.repaint_due[self] = None
 
     def _set_modified(self, state: bool) -> None:
         """Move the modified flag, announcing it only when it moves.
@@ -17649,7 +17718,7 @@ class Text(_Drawable, XView, YView):
             left = _see_offset(self._left_value, target.char, width, width // 2)
             self._left_value = max(0, left)
             self._clamp_left(rows)
-        self._redraw()
+        self._redraw_soon()
         # A scrollbar cannot know the view moved unless it is told, and see()
         # is the one thing that moves it without going through _scroll.
         self._report_view(rows)
