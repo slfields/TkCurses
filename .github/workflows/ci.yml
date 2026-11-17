@@ -94,10 +94,18 @@ jobs:
           # makes this so much worse here than in an ordinary suite.
           #
           # 3.12 carries it, matching the interpreter the build job uses.
-          # Nothing gates on the number - no fail_under, no upload - so the
-          # other four jobs lose nothing by not computing it. TkCurses-2gh.
+          # TkCurses-2gh.
+          #
+          # And it is held to a floor. The total, branch coverage, measured
+          # on four master runs on 2026-11-17: 94.36, 94.41, 94.45 and
+          # 94.50%. The tty tests' timing moves it by about a tenth from run
+          # to run, so the floor sits under the lowest by more than that.
+          # Raise it as the figure rises; lower it only for a reason written
+          # here. The floor is on this command and not in pyproject.toml, so
+          # `pytest --cov` on a few files locally is not failed for covering
+          # a few files. TkCurses-us5p.4.
           - python-version: "3.12"
-            coverage: "--cov --cov-report=term-missing"
+            coverage: "--cov --cov-report=term-missing --cov-fail-under=94"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -142,6 +150,16 @@ jobs:
           # per-test timeout still backstops a genuine hang.
           TKCURSES_TEST_TIMEOUT_SCALE: "4"
         run: pytest ${{ matrix.coverage }}
+      - name: Record the coverage total
+        # In the run's summary, where a figure can be looked up later; the
+        # term report scrolls by in a log of 15,000 tests.
+        if: matrix.coverage && !cancelled()
+        run: |
+          {
+            echo "### Coverage"
+            echo
+            echo "Branch coverage of src/tkcurses: $(coverage report --format=total)% (floor 94%)"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   build:
     name: Build distributions

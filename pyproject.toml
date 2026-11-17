@@ -297,6 +297,9 @@ sigterm = true
 
 [tool.coverage.report]
 show_missing = true
+# Two places, so CI's --cov-fail-under compares 93.99 as 93.99: at the
+# default of none it is rounded first, and 93.6 would pass a floor of 94.
+precision = 2
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",
