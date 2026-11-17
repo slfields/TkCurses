@@ -378,8 +378,8 @@ the worst that can be imagined. Record both ratings in the issue, e.g.
 |---|---|
 | 4 | Security or data: input from outside the program runs code, reads or writes what it should not, or loses or corrupts a user's data; or a release publishes the wrong thing. |
 | 3 | Failure: an exception escapes that the documentation does not name, the program hangs or spins, or the terminal is left unusable after it exits. |
-| 2 | Wrong behaviour: the program carries on but does something other than Tk does or the documentation says, including drawing the wrong thing. |
-| 1 | Cosmetic or slow: everything works and reads correctly, but looks wrong or takes noticeably longer. |
+| 2 | Wrong behaviour: the program carries on but does something other than Tk does or the documentation says, including drawing the wrong thing. Or too slow to use: one operation takes ten times as long as it should, or a person waits more than 100 ms for something Tk does at once. |
+| 1 | Cosmetic or slow: everything works and reads correctly, but looks wrong or takes noticeably longer, short of impact 2's bounds. |
 | 0 | No effect on a program: the tests, tools or documentation are wrong or missing. |
 
 | Reach | Who meets it |
@@ -403,10 +403,13 @@ fixed, it can hide any failure in the code it covers, so it is P2 if that
 code reads outside bytes or runs on every program's main loop, and P3
 otherwise.
 
-Two worked examples. Typing a no-break space did nothing: wrong behaviour,
-impact 2, met only with that character, reach 1, so P3. The image decoders
-had no fuzzing: the failure that could slip through is an exception escaping
-on a hostile file (impact 3, reach 3: P1), and as a gap that is P2.
+Three worked examples. Typing a no-break space did nothing: wrong
+behaviour, impact 2, met only with that character, reach 1, so P3. The
+image decoders had no fuzzing: the failure that could slip through is an
+exception escaping on a hostile file (impact 3, reach 3: P1), and as a gap
+that is P2. A Listbox insert from a worker thread took a second, where it
+takes milliseconds from the main thread: far past ten times as long, so
+impact 2 rather than 1, in a common pattern, reach 2, so P3.
 
 ## Gaps
 
