@@ -23,6 +23,8 @@ nor pad the suite with fixed delays.
 
 from __future__ import annotations
 
+import os
+import select
 import threading
 import time
 
@@ -336,3 +338,64 @@ def test_get_yields_to_a_thread_that_won_the_race():
         assert CursesDispatcher.get() is winner
     finally:
         CursesDispatcher._instance_lock = original
+
+
+# ------------------------------------------------------------- waking the loop
+#
+# The owner's loop sleeps in select() between passes. A call queued from
+# another thread used to wait for that sleep to time out - up to 50 ms a
+# call, and a widget method from a worker makes dozens of them. Measured
+# before the pipe: one Listbox.insert from a worker took a second.
+
+
+def readable(fd, timeout=0.0):
+    ready, _, _ = select.select([fd], [], [], timeout)
+    return bool(ready)
+
+
+def test_a_queued_call_makes_the_wakeup_readable(dispatcher):
+    fd = dispatcher.wakeup_fd()
+    assert not readable(fd)
+    worker = threading.Thread(target=dispatcher.call, args=(lambda: None,))
+    worker.start()
+    assert readable(fd, timeout=5)
+    dispatcher.process_queue()
+    worker.join(5)
+
+
+def test_a_posted_call_makes_the_wakeup_readable(dispatcher):
+    fd = dispatcher.wakeup_fd()
+    worker = threading.Thread(target=dispatcher.post, args=(lambda: None,))
+    worker.start()
+    worker.join(5)
+    assert readable(fd)
+
+
+def test_draining_lets_the_next_wait_sleep(dispatcher):
+    fd = dispatcher.wakeup_fd()
+    for _ in range(3):
+        dispatcher.post(lambda: None)
+    dispatcher.drain_wakeups()
+    assert not readable(fd)
+
+
+def test_a_full_pipe_does_not_block_the_caller(dispatcher):
+    """The loop may be busy for a long time; queueing must never stall."""
+    dispatcher.wakeup_fd()
+    for _ in range(100_000):
+        dispatcher.post(lambda: None)
+    assert dispatcher.pending == 100_000
+
+
+def test_queueing_before_anyone_waits_needs_no_pipe(dispatcher):
+    dispatcher.post(lambda: None)
+    assert dispatcher._wake_fds is None
+
+
+def test_close_gives_the_pipe_back(dispatcher):
+    fd = dispatcher.wakeup_fd()
+    dispatcher.close()
+    with pytest.raises(OSError):
+        os.fstat(fd)
+    assert dispatcher.wakeup_fd() is None
+    dispatcher.drain_wakeups()

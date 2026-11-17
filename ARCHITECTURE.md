@@ -3877,6 +3877,20 @@ queue for every other thread — with six corrections found while building it:
 6. **`process_queue()` accepts a batch limit**, so a thread queueing work in
    a tight loop cannot starve input handling, and it rejects callers that do
    not own the screen.
+7. **Queueing a call wakes the loop.** The loop sleeps in `select()` on the
+   terminal between passes, up to 50 ms when no timer is due, and a call
+   queued during that sleep waited for it to end. A widget method from a
+   worker makes dozens of curses calls, each a round trip: measured, one
+   `Listbox.insert` from a worker took 1.01 s, and a `Label.configure`
+   0.2 s. The dispatcher now keeps a pipe, written each time a call is
+   queued, which the loop's idle wait also selects on (`wait_for_input(...,
+   wake=True)`); the same insert takes 2.7 ms. Only that wait listens: the
+   short waits inside reading a key, a late reply or a paste do not, since
+   a worker's call ending the 500 ms gap allowed inside a paste would cut
+   the paste in two. The pipe is made when the loop first asks for it and
+   closed by `close()`, under a lock that `_wake()` also takes, so a late
+   wake can never write to a descriptor number the process has reused.
+   Found by `tests/integration/test_worker_thread_tty.py`.
 
 #### Usage Pattern
 
@@ -3900,7 +3914,11 @@ dispatcher.call(update_widget)
 1. **Never call curses directly** - always use `CursesDispatcher.call()`
 2. **Main loop must call `process_queue()`** - typically in `mainloop()` iteration
 3. **Callbacks execute on main thread** - `after()`, `bind()` callbacks are safe
-4. **Widget methods are thread-safe** - internally dispatch to main thread
+4. **Widget methods may be called from a worker thread.** The method itself
+   runs on the worker; each curses call it makes is carried to the main
+   thread and waited for. `tests/integration/test_worker_thread_tty.py`
+   holds the usual pattern: configure, insert, a variable and `after`
+   from a worker while a person types.
 
 ### Platform Considerations
 1. **Unix/Linux**: Full support via standard curses module

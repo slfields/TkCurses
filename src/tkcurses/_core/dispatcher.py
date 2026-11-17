@@ -29,6 +29,8 @@ code responsible.
 
 from __future__ import annotations
 
+import contextlib
+import os
 import queue
 import threading
 from dataclasses import dataclass, field
@@ -94,6 +96,13 @@ class CursesDispatcher:
         self._lock = threading.RLock()
         self._queue: queue.Queue[_Call[Any]] = queue.Queue()
         self._closed = False
+        # A pipe the owner's loop also waits on, written whenever a call is
+        # queued, so the loop wakes for it at once instead of when its wait
+        # next times out. Made when the loop first asks for it. The lock
+        # keeps a late write from reaching a descriptor close() has given
+        # back, which the process may already have reused for a file.
+        self._wake_lock = threading.Lock()
+        self._wake_fds: tuple[int, int] | None = None
 
     # ------------------------------------------------------------ singleton
 
@@ -140,6 +149,42 @@ class CursesDispatcher:
         """Number of calls waiting to run."""
         return self._queue.qsize()
 
+    # ------------------------------------------------------------ waking
+
+    def wakeup_fd(self) -> int | None:
+        """A descriptor that becomes readable when a call is queued.
+
+        The owner's loop waits on it alongside its input, and calls
+        :meth:`drain_wakeups` when it fires. None once closed.
+        """
+        with self._wake_lock:
+            if self._closed:
+                return None
+            if self._wake_fds is None:
+                read, write = os.pipe()
+                os.set_blocking(read, False)
+                os.set_blocking(write, False)
+                self._wake_fds = (read, write)
+            return self._wake_fds[0]
+
+    def drain_wakeups(self) -> None:
+        """Empty the wake-up pipe, so the next wait sleeps until new work."""
+        with self._wake_lock:
+            if self._wake_fds is None:
+                return
+            with contextlib.suppress(BlockingIOError):
+                while os.read(self._wake_fds[0], 4096):
+                    pass
+
+    def _wake(self) -> None:
+        """Wake the owner's loop, if it is waiting on the pipe."""
+        with self._wake_lock:
+            if self._wake_fds is None:
+                return
+            # A full pipe means the loop has a wake-up waiting already.
+            with contextlib.suppress(BlockingIOError):
+                os.write(self._wake_fds[1], b"\0")
+
     # ----------------------------------------------------------- dispatch
 
     def call(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
@@ -158,6 +203,7 @@ class CursesDispatcher:
 
         pending: _Call[T] = _Call(func, args, kwargs)
         self._queue.put(pending)
+        self._wake()
         # Re-check after queueing: close() may have drained the queue between
         # the check above and the put, which would strand this caller.
         self._abort_if_closed(pending)
@@ -173,6 +219,7 @@ class CursesDispatcher:
         if self._closed:
             raise DispatcherClosed("dispatcher is closed; no thread will run this call")
         self._queue.put(_Call(func, args, kwargs))
+        self._wake()
 
     def process_queue(self, limit: int | None = None) -> int:
         """Run queued calls on the owning thread. Returns how many ran.
@@ -195,6 +242,11 @@ class CursesDispatcher:
     def close(self) -> None:
         """Shut down, releasing every thread still waiting on a call."""
         self._closed = True
+        with self._wake_lock:
+            if self._wake_fds is not None:
+                for fd in self._wake_fds:
+                    os.close(fd)
+                self._wake_fds = None
         while True:
             try:
                 pending = self._queue.get_nowait()

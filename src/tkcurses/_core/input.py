@@ -665,19 +665,31 @@ class InputHandler:
 
     # -------------------------------------------------------------- input
 
-    def wait_for_input(self, timeout_ms: int = 50) -> bool:
+    def wait_for_input(self, timeout_ms: int = 50, *, wake: bool = False) -> bool:
         """Wait up to ``timeout_ms`` for input. True if any arrived.
 
         This is what keeps the loop off the CPU while idle, and what bounds
         how long timers wait to be serviced.
+
+        With ``wake``, a call another thread queues on the dispatcher ends
+        the wait too, returning False. Only the main loop's idle wait asks
+        for that. The waits inside reading a key, a reply or a paste do not:
+        a worker's call ending one would cut a paste short.
         """
         if timeout_ms < 0:
             raise ValueError(f"timeout must not be negative: {timeout_ms}")
+        alarm = self._dispatcher.wakeup_fd() if wake else None
+        watch: list[Any] = [self._stream]
+        if alarm is not None:
+            watch.append(alarm)
         try:
-            readable, _, _ = select.select([self._stream], [], [], timeout_ms / 1000)
+            readable, _, _ = select.select(watch, [], [], timeout_ms / 1000)
         except (OSError, ValueError):
             # The descriptor was closed underneath us, during shutdown.
             return False
+        if alarm is not None and alarm in readable:
+            self._dispatcher.drain_wakeups()
+            readable.remove(alarm)
         return bool(readable)
 
     def poll(self, limit: int | None = None) -> list[Event]:
