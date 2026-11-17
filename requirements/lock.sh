@@ -19,6 +19,7 @@ lock() {
 }
 lock test.txt pyproject.toml --extra test
 lock dev.txt pyproject.toml --extra dev
+lock mutation.txt pyproject.toml --extra mutation
 lock docs.txt pyproject.toml --extra docs --extra test requirements/release.in
 lock release.txt requirements/release.in
 lock security.txt requirements/security.in

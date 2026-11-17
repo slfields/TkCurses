@@ -32,6 +32,8 @@ MANIFEST
 *.spec
 
 # Unit test / coverage reports
+# mutmut's working copy, if it is ever run outside tests/support/mutate.py
+mutants/
 htmlcov/
 .tox/
 .nox/

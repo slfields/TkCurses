@@ -14,6 +14,7 @@ given with the rule so the rule can be judged rather than only obeyed.
 ```bash
 pip install -e ".[dev]"     # the library, editable, with the test tools
 pip install -e ".[docs]"    # the documentation toolchain, if you build the site
+pip install -e ".[mutation]"  # mutmut, for tests/support/mutate.py (see TESTING.md)
 ```
 
 CI installs the same tools from the lock files under `requirements/`, which

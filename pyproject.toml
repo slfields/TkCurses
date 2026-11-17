@@ -75,6 +75,15 @@ dev = [
     "mypy>=1.19,<1.20",
     "ruff>=0.16,<0.17",
 ]
+# Mutation testing, run by hand with tests/support/mutate.py; see TESTING.md.
+# Not in dev: it brings a terminal UI toolkit and a parser CI never needs.
+# Pinned to a minor series for the reason ruff and mypy are: its mutation
+# operators change between releases, and a survivor list should mean the
+# same thing to everyone reading it.
+mutation = [
+    "tkcurses[test]",
+    "mutmut>=3.8,<3.9",
+]
 
 [project.urls]
 Homepage = "https://github.com/slfields/TkCurses"
@@ -219,6 +228,53 @@ known-first-party = ["tkcurses"]
 # Binding callbacks take an event whether or not they read it, and a trace
 # takes three arguments it rarely wants all of. Same reason as the tests.
 "uat/*" = ["ARG001", "ARG002", "ARG005"]
+
+# ---------------------------------------------------------------- mutmut ----
+# Run through tests/support/mutate.py, which runs mutmut in a worktree of the
+# commit and sets only_mutate there to the modules asked about. Mutating them
+# all is not just slow: each function becomes a copy per mutant, so
+# __init__.py grows from 1 MB to 43 MB, every test imports it, and a test
+# that caps its child at 512 MB runs out.
+[tool.mutmut]
+source_paths = ["src/"]
+only_mutate = []
+pytest_add_cli_args_test_selection = ["tests/"]
+pytest_add_cli_args = [
+    "-p", "no:cacheprovider",
+    # mutmut learns which tests reach a function by tracing them in its own
+    # process, and a tty test reaches the library in a child it forks, so a
+    # tty test is never chosen to kill a mutant. Leaving them out keeps the
+    # tracing run to about a minute.
+    "-m", "not tty",
+    # About the repository rather than the library: they ask git about the
+    # tree, and mutmut's copy of it is not a checkout - or, the last, read
+    # this table, which mutate.py has just changed in that copy.
+    "--ignore=tests/test_ci_changes.py",
+    "--ignore=tests/test_hygiene.py",
+    "--ignore=tests/test_licensing.py",
+    "--ignore=tests/test_packaging.py",
+    "--ignore=tests/test_suite_tests_its_own_tree.py",
+    "--ignore=tests/test_uat_cfg_sandbox.py",
+    "--ignore=tests/test_mutate_script.py",
+]
+# What the tests read besides src/ and tests/, which mutmut copies itself.
+also_copy = [
+    ".github/",
+    "docs/",
+    "examples/",
+    "requirements/",
+    "uat/",
+    ".gitattributes",
+    ".gitignore",
+    "ARCHITECTURE.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "SECURITY.md",
+    "TESTING.md",
+    "THIRD_PARTY_NOTICES.md",
+]
 
 # -------------------------------------------------------------- coverage ----
 [tool.coverage.run]
