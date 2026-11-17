@@ -47,6 +47,7 @@ import tkinter
 import tkinter.font
 import tkinter.ttk
 from pathlib import Path
+from typing import Any, Literal
 
 #: Words, runs of spaces, underscores and punctuation, for the word motions.
 LINE = "hello world  foo_bar-baz, 42 x"
@@ -95,9 +96,11 @@ WIDGETS: dict[str, list[tuple[str, str]]] = {
 }
 
 
-def make(root: tkinter.Tk, kind: str, font: tkinter.font.Font) -> tkinter.Widget:
+def make(root: tkinter.Tk, kind: str, font: tkinter.font.Font) -> Any:
     if kind == "Entry":
-        widget: tkinter.Widget = tkinter.Entry(root, font=font, width=12)
+        # Any: Entry, Spinbox, the ttk ones and Text share these methods by
+        # name, not through a common base the stubs know of.
+        widget: Any = tkinter.Entry(root, font=font, width=12)
     elif kind == "Spinbox":
         widget = tkinter.Spinbox(root, font=font, width=12, values=())
     elif kind == "TEntry":
@@ -107,7 +110,7 @@ def make(root: tkinter.Tk, kind: str, font: tkinter.font.Font) -> tkinter.Widget
     elif kind == "TSpinbox":
         widget = tkinter.ttk.Spinbox(root, font=font, width=12)
     else:
-        wrap = "word" if kind == "WrappedText" else "none"
+        wrap: Literal["word", "none"] = "word" if kind == "WrappedText" else "none"
         widget = tkinter.Text(root, font=font, width=16, height=4, wrap=wrap)
     widget.configure(exportselection=False)
     widget.pack()
@@ -118,14 +121,14 @@ def make(root: tkinter.Tk, kind: str, font: tkinter.font.Font) -> tkinter.Widget
     return widget
 
 
-def entry_state(widget) -> list[object]:
+def entry_state(widget: Any) -> list[object]:
     insert = widget.index("insert")
     if widget.selection_present():
         return [insert, widget.index("sel.first"), widget.index("sel.last")]
     return [insert, None, None]
 
 
-def text_state(widget) -> list[object]:
+def text_state(widget: Any) -> list[object]:
     return [widget.index("insert"), [str(i) for i in widget.tag_ranges("sel")]]
 
 
@@ -137,8 +140,8 @@ def random_index(rng: random.Random, kind: str) -> str | int:
     return f"{row + 1}.{rng.randrange(len(lines[row]) + 1)}"
 
 
-def random_steps(rng: random.Random, kind: str) -> list[list[object]]:
-    steps: list[list[object]] = [["j", random_index(rng, kind)]]
+def random_steps(rng: random.Random, kind: str) -> list[list[Any]]:
+    steps: list[list[Any]] = [["j", random_index(rng, kind)]]
     virtual = TEXT_VIRTUAL if kind.endswith("Text") else VIRTUAL
     for _ in range(rng.randint(1, 8)):
         choice = rng.choice("kkkkkkvvjr")
@@ -158,7 +161,9 @@ def random_steps(rng: random.Random, kind: str) -> list[list[object]]:
     return steps
 
 
-def run(root, font, kind: str, steps: list[list[object]]) -> list[list[object]]:
+def run(
+    root: tkinter.Tk, font: tkinter.font.Font, kind: str, steps: list[list[Any]]
+) -> list[list[Any]]:
     widget = make(root, kind, font)
     widget.focus_force()
     root.update()
@@ -208,7 +213,7 @@ def record(count: int = 150, seed: int = 20261104) -> dict[str, list[object]]:
 
 if __name__ == "__main__":
     out = Path(__file__).with_name("navigation_keys.json")
-    data = {
+    data: dict[str, Any] = {
         "measured": "tkinter on Python 3.14 over Tk 9.0.2",
         "line": LINE,
         "text": TEXT,

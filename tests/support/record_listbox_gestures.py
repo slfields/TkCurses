@@ -53,6 +53,7 @@ import random
 import tkinter
 import tkinter.font
 from pathlib import Path
+from typing import Any
 
 #: Of different lengths, so that the view scrolls sideways as well.
 ITEMS = [
@@ -92,7 +93,7 @@ VIRTUAL = ["SelectAll", "SelectNone"]
 #: range from an anchor above items a program selected. Run with every item
 #: in view, ``FULL`` rows tall, since a click names a visible row.
 FULL = len(ITEMS)
-EDGES: list[tuple[str, list[list[object]]]] = [
+EDGES: list[tuple[str, list[list[Any]]]] = [
     ("extended", [["c", 1], ["t", 3], ["s", 0], ["s", 5]]),
     ("extended", [["c", 5], ["t", 2], ["s", 6], ["s", 0]]),
     ("extended", [["c", 0], ["t", 6], ["t", 3], ["s", 1], ["s", 5]]),
@@ -112,9 +113,9 @@ EDGES: list[tuple[str, list[list[object]]]] = [
 ]
 
 
-def random_steps(rng: random.Random) -> list[list[object]]:
+def random_steps(rng: random.Random) -> list[list[Any]]:
     """A sequence of gestures, keys, commands and state changes."""
-    steps: list[list[object]] = []
+    steps: list[list[Any]] = []
     rows = len(ITEMS)
     for _ in range(rng.randint(2, 10)):
         kind = rng.choice("ccssttdmkkkkkvpagexiDN")
@@ -160,7 +161,8 @@ class Recorder:
         widest = max((self.font.measure(box.get(i)) for i in range(size)), default=0)
         left = round(box.xview()[0] * widest / self.char)
         return [
-            list(box.curselection()),
+            # typeshed leaves curselection unannotated.
+            list(box.curselection()),  # type: ignore[no-untyped-call]
             len(seen),
             box.index("active"),
             box.index("anchor"),
@@ -178,7 +180,9 @@ class Recorder:
         _, y, _, h = bbox
         return 3, y + h * row + h // 2
 
-    def press(self, box, row, state=0, *, same_time=False):
+    def press(
+        self, box: tkinter.Listbox, row: Any, state: int = 0, *, same_time: bool = False
+    ) -> None:
         if not same_time:
             self.clock += 2000
         x, y = self.row_y(box, row)
@@ -187,9 +191,7 @@ class Recorder:
             "<ButtonRelease-1>", x=x, y=y, state=state, time=self.clock + 5
         )
 
-    def run(
-        self, mode: str, steps: list[list[object]], height: int
-    ) -> list[list[object]]:
+    def run(self, mode: str, steps: list[list[Any]], height: int) -> list[list[Any]]:
         root = self.root
         box = tkinter.Listbox(
             root,
@@ -275,7 +277,7 @@ def record(count: int = 600, seed: int = 20261103) -> list[dict[str, object]]:
 
 if __name__ == "__main__":
     out = Path(__file__).with_name("listbox_gestures.json")
-    data = {
+    data: dict[str, Any] = {
         "measured": "tkinter on Python 3.14 over Tk 9.0.2",
         "items": ITEMS,
         "width": WIDTH,

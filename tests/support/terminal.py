@@ -68,7 +68,7 @@ import textwrap
 import time
 import traceback
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any
 
 import pyte
 
@@ -185,7 +185,7 @@ class _Screen(pyte.Screen):
     wrapping.
     """
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._dim = False
         self._dim_cells: set[tuple[int, int]] = set()
         self._last_drawn = ""
@@ -361,7 +361,8 @@ class _Screen(pyte.Screen):
                 self.buffer[row] = lines[source]
                 self._dim_cells |= {(row, c) for (r, c) in dim if r == source}
             else:
-                blank = self.buffer.default_factory()
+                # A defaultdict at run time; pyte annotates it as a dict.
+                blank = self.buffer.default_factory()  # type: ignore[attr-defined]
                 for column in range(self.columns):
                     blank[column] = self.cursor.attrs
                 self.buffer[row] = blank
@@ -485,7 +486,9 @@ class _ByteStream(pyte.ByteStream):
     inked cells in one colour, against 901 cells in 239 at 256 colours.
     """
 
-    csi: ClassVar[dict[str, str]] = {
+    # Not ClassVar, as RUF012 asks: pyte declares csi as an instance
+    # attribute, and mypy refuses a ClassVar over one.
+    csi = {  # noqa: RUF012
         **pyte.ByteStream.csi,
         "Z": "cursor_back_tab",
         "b": "repeat_last_character",
@@ -493,12 +496,14 @@ class _ByteStream(pyte.ByteStream):
         "T": "scroll_down",
     }
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         #: The start of an OSC sequence whose end has not arrived yet.
         self._held = b""
 
-    def feed(self, data: bytes) -> None:
+    # Bytes, as pyte's own ByteStream.feed takes, with the same ignore: the
+    # base Stream.feed is annotated for str.
+    def feed(self, data: bytes) -> None:  # type: ignore[override]
         """Feed bytes, converting any colon-separated SGR on the way in, and
         taking out OSC 4 and OSC 104 for the screen's palette.
 

@@ -140,7 +140,12 @@ timeout = 60
 # ------------------------------------------------------------------ mypy ----
 [tool.mypy]
 python_version = "3.11"
-files = ["src/tkcurses"]
+# The library, and the tooling that measures and publishes it: the test
+# harness and the recorders that write its reference data, the
+# documentation extensions, and the release scripts. Not the tests
+# themselves, the examples or the UAT scenarios, which are programs written
+# the way a user would write them.
+files = ["src/tkcurses", "tests/support", "docs/_ext", ".github/scripts"]
 # Everything strict mode turns on, because measuring it cost nothing - the
 # library already passed with no errors at all. The individual flags below
 # were the subset chosen at the time, and the rest have been available for
@@ -163,10 +168,14 @@ show_error_codes = true
 show_column_numbers = true
 pretty = true
 
+# The documentation extensions import Sphinx and docutils. Sphinx is
+# written for Python 3.12 and docutils ships no stubs, so mypy, checking for
+# 3.11, stops inside them; and CI's lint job does not install either. The
+# extensions are checked; what they import is taken as Any.
 [[tool.mypy.overrides]]
-module = "tests.*"
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
+module = ["sphinx.*", "docutils.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
 
 # pyte ships no type stubs.
 [[tool.mypy.overrides]]

@@ -90,9 +90,9 @@ def lay_out(root: tkinter.Tk, case: dict[str, Any]) -> list[list[int]]:
     vertical = case["orient"] == "vertical"
     along = "height" if vertical else "width"
     window = tkinter.PanedWindow(
-        root, orient=case["orient"], sashwidth=1, sashpad=0, showhandle=0, bd=0
+        root, orient=case["orient"], sashwidth=1, sashpad=0, showhandle=False, bd=0
     )
-    fixed = {"height": 10} if not vertical else {"width": 10}
+    fixed: dict[str, Any] = {"height": 10} if not vertical else {"width": 10}
     window.place(x=0, y=0, **fixed, **{along: case["length"]})
     children = []
     for pane in case["panes"]:
@@ -117,9 +117,10 @@ def lay_out(root: tkinter.Tk, case: dict[str, Any]) -> list[list[int]]:
         if step[0] == "resize":
             window.place(**{along: step[1]})
         elif step[0] == "size":
-            window.paneconfigure(children[step[1]], **{along: step[2]})
+            # typeshed leaves paneconfigure unannotated.
+            window.paneconfigure(children[step[1]], **{along: step[2]})  # type: ignore[no-untyped-call]
         elif step[0] == "stretch":
-            window.paneconfigure(children[step[1]], stretch=step[2])
+            window.paneconfigure(children[step[1]], stretch=step[2])  # type: ignore[no-untyped-call]
         else:
             at = (0, step[2]) if vertical else (step[2], 0)
             window.sash_place(step[1], *at)

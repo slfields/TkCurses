@@ -60,6 +60,7 @@ import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -269,7 +270,7 @@ BOOLEANS = {
 #: Content an option needs before it can show: alignment needs room to move
 #: in, and justification needs lines of different lengths. Given to the
 #: baseline as well, so only the option itself differs.
-NEEDS = {
+NEEDS: dict[str, dict[str, Any]] = {
     "anchor": {"width": 20, "height": 3},
     "justify": {"text": "Sample\na wider line"},
     "wraplength": {"text": "a longer line of text to wrap"},
@@ -514,7 +515,7 @@ def measure(widget: str) -> dict[str, object]:
         program = Path(tmp) / "measure.py"
         program.write_text(PROGRAM)
         term = TerminalHarness(COLS, ROWS, timeout=20)
-        screens: list[object] = []
+        screens: list[Any] = []
         outcomes: list[str] = []
         try:
             term.run([sys.executable, str(program), str(spec_file)])

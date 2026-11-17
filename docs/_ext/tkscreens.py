@@ -249,7 +249,7 @@ def _arms(chars: str, up: int, down: int, left: int, right: int) -> None:
 
 
 for _w, _set in ((_L, "─│┌┐└┘├┤┬┴┼"), (_H, "━┃┏┓┗┛┣┫┳┻╋"), (_D, "═║╔╗╚╝╠╣╦╩╬")):
-    h, v, tl, tr, bl, br, lt, rt, tt, bt, x = _set
+    h, v, tl, tr, bl, br, lt, rt, tt, bt, x = list(_set)
     _arms(h, 0, 0, _w, _w)
     _arms(v, _w, _w, 0, 0)
     _arms(tl, 0, _w, 0, _w)
@@ -497,7 +497,8 @@ def shown(source: str) -> str:
 # -- Sphinx -------------------------------------------------------------------
 
 
-class SampleDirective(Directive):
+# Directive is Any here: mypy does not follow Sphinx or docutils (pyproject).
+class SampleDirective(Directive):  # type: ignore[misc]
     """``.. tkcurses-sample::`` - the example as code, then its screen."""
 
     has_content = True
@@ -541,7 +542,7 @@ def _keys_option(text: str) -> tuple[str, ...]:
     return tuple(keys)
 
 
-class ExampleDirective(Directive):
+class ExampleDirective(Directive):  # type: ignore[misc]
     """``.. tkcurses-example:: examples/name.py`` - a whole program, its
     screen, and a link to the file.
 
