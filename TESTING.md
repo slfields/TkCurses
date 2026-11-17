@@ -98,7 +98,7 @@ These hold how well TkCurses behaves under constraints.
 | Test type | Unit level | Integration level |
 |---|---|---|
 | **Security** | Here the injection risk is the terminal: text a program shows must not be able to drive it. `tests/test_input_hostile.py` covers environment values, configuration files and reports on the way out. `tests/test_image_hostile.py` covers image files built to exhaust memory or crash a decoder. `tests/test_cfg_safety.py` covers the paths `tkcurses-cfg` writes through and the text it shows. Each of these tests fails without its fix. | A terminal sending faster than the program reads: `tests/test_input_flood_tty.py`. The system clipboard over OSC 52 and the desktop's tools: `tests/test_system_clipboard.py`. In CI, Bandit scans `src/` and pip-audit checks every lock file (see [Static checks](#static-checks)). `tests/test_hygiene.py` keeps private files out of this public repository. |
-| **Performance** | Work counted rather than timed, so the result is the same on any machine: `tests/test_text_layout_cost.py` holds that typing into a long Text lays out only the line typed into. | A repaint stays cheap enough to run inside a click handler: `tests/test_redraw_cost_tty.py`. |
+| **Performance** | Work counted rather than timed, so the result is the same on any machine: `tests/test_text_layout_cost.py` holds that typing into a long Text lays out only the line typed into. | A repaint stays cheap enough to run inside a click handler: `tests/test_redraw_cost_tty.py`. Timings, outside the gate: `tests/support/bench.py` (see [Timing the hot paths](#timing-the-hot-paths)). |
 | **Resilience** | Partial input: an escape sequence or UTF-8 character split across reads, a terminal reply that arrives late, a paste cut off before its end marker (`tests/test_core_input.py`). A `tkcurses-cfg` save interrupted by `SIGTERM` or `SIGHUP`, or failing on a full disk, changes nothing (`tests/test_cfg_store.py`). | Ctrl-Z and `fg` hand the terminal's modes back and take them again: `tests/test_bracketed_paste_tty.py`. Ctrl-C in a dialog: `tests/test_dialog_interrupt_tty.py`. A raising callback leaves a usable screen: `tests/test_callback_exceptions_tty.py`. A resize in the middle of everything: `tests/integration/test_resize_full_screen_tty.py`. The terminal hanging up under `mainloop()`, with SIGHUP at its default, ignored, or handled by the program, ends it with status 129 after its `finally` and `atexit` run: `tests/test_terminal_hangup_tty.py`. |
 | **Concurrency** | Calls from other threads are queued and run on the thread that owns curses, in order, and a call left waiting when the queue closes is released: `tests/test_core_dispatcher.py`. These tests synchronise on events, not sleeps. A queued call wakes the main loop at once, and only the loop's own wait, not the waits inside reading a key or a paste: `tests/test_core_input.py`. End to end, a worker thread updates a Label, a variable, a Text and a Listbox, and schedules callbacks with `after`, while a person types; every update, callback and key arrives, in order: `tests/integration/test_worker_thread_tty.py`. | Several processes saving one configuration file at once, and a reader that never sees a half-written file: `tests/test_cfg_store.py`. The test harness forks from xdist's threaded workers, so the child may make only async-signal-safe calls before exec. `tests/test_harness.py` checks that by reading the code. |
 
@@ -391,6 +391,44 @@ the total, which is where to look when raising the floor. Raise it as the
 figure rises, and lower it only for a reason written beside it in
 `.github/workflows/ci.yml`.
 
+## Timing the hot paths
+
+The gate counts work, because a count is the same on every machine. A
+count cannot see a path that does the same work more slowly, so
+`tests/support/bench.py` times the paths where that would hurt:
+
+- typing into a long Text;
+- tagging every line;
+- decoding a PNG and a GIF;
+- reading typed text as keys;
+- measuring the cells of mixed-script text.
+
+```bash
+python3 tests/support/bench.py                          # this tree
+python3 tests/support/bench.py --compare origin/master  # against a base
+```
+
+A timing belongs to the machine and the moment it was taken, so the script
+never compares against a number written down earlier. `--compare` checks
+the base out into a temporary worktree and times the two trees in turn,
+each in a fresh interpreter importing its own `src`. It reports each
+median against the base's and exits 1 if any is more than 15% slower
+(`--threshold`). A measurement that imported the library from anywhere
+but the tree being timed is refused: an editable install of another
+checkout would otherwise be timed against itself and show no change.
+
+Measured on one machine on 2026-11-17, against master:
+
+- **Unchanged paths** came in within 2% of master.
+- **One path deliberately slowed**, with `cells()` made to do its work
+  twice, showed +56.7% and was marked. The script exited 1.
+
+It is not part of CI: a shared runner's timings vary more than the
+slowdowns worth catching. Run it before merging a change to a hot path.
+`tests/test_bench_script.py` checks that every benchmark still runs
+against the library as it stands, and that a comparison marks what it
+should.
+
 ## Setting the priority of a problem a test finds
 
 A problem's priority comes from two ratings, each judged against a
@@ -438,9 +476,21 @@ impact 2 rather than 1, in a common pattern, reach 2, so P3.
 
 ## Gaps
 
-What this review of the suite found missing. Each gap is an issue under the
-epic `TkCurses-us5p`.
+None are open. The review that wrote this document, epic `TkCurses-us5p`,
+found seven and closed them all:
 
-| Issue | Rating | Gap |
-|---|---|---|
-| `TkCurses-us5p.8` | P4: lets through impact 1, reach 3 | Performance is held by counting work, which is right for a gate. Nothing records timings over time, so a slowdown that changes no count goes unnoticed. |
+- mutation testing;
+- the type-checking scope;
+- a coverage floor;
+- fuzzing the input reader and the image decoders;
+- a worker thread updating widgets;
+- a terminal that hangs up;
+- timing.
+
+Two of these found bugs, and both are fixed: the worker thread found the
+main loop's 50 ms wait, and the hangup gap found the full-CPU spin. One
+case the hangup work left open is a bug of its own, not a gap in the
+tests: a hangup during a dialog shown before `mainloop()` still ends the
+program without its cleanup (`TkCurses-wk51`). A gap found later is filed
+as an issue and listed here, rated as
+[above](#setting-the-priority-of-a-problem-a-test-finds).
