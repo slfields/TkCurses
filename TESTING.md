@@ -376,12 +376,15 @@ other interpreters don't, because coverage more than doubles the run time:
 every tty test forks a process, and each process writes its own data file.
 The report lists the lines and branches that never ran.
 
-The job fails if the total drops below 94%. On four master runs on
-2026-11-17 the total was between 94.36% and 94.50%. The tty tests'
-timing moves it by about a tenth of a point from run to run, so the floor
-sits about four tenths below the lowest of them. Coverage reports to two
-decimal places (`precision` in `pyproject.toml`), so 93.99% fails rather
-than being rounded up to 94. The floor is set on CI's command, not in
+The job fails if the total drops below 93.5%. On 2026-11-17 coverage put
+master's library at 93.78%. Across four master runs the report's missed
+lines and partial branches move by about a tenth of a point, because of the
+tty tests' timing, so the floor sits about three tenths below. Read the
+total coverage prints. It can't be worked out from the report's columns,
+because a missed branch on a line that never ran is not in the
+partial-branch count. Coverage reports to two decimal places (`precision`
+in `pyproject.toml`), so the figure printed is the figure the floor is
+compared with, not a whole number rounded from it. The floor is set on CI's command, not in
 `pyproject.toml`, so `pytest --cov` on a few files does not fail for
 covering only part of the library. Each run's summary on GitHub records
 the total, which is where to look when raising the floor. Raise it as the

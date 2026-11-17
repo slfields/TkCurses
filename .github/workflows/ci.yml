@@ -96,16 +96,19 @@ jobs:
           # 3.12 carries it, matching the interpreter the build job uses.
           # TkCurses-2gh.
           #
-          # And it is held to a floor. The total, branch coverage, measured
-          # on four master runs on 2026-11-17: 94.36, 94.41, 94.45 and
-          # 94.50%. The tty tests' timing moves it by about a tenth from run
-          # to run, so the floor sits under the lowest by more than that.
+          # And it is held to a floor. The total, branch coverage, as
+          # coverage computes it: 93.78% on 2026-11-17, master's library. (A
+          # first try at the floor took 94 from the report's columns, counting
+          # partial lines as the missed branches; coverage counts every missed
+          # branch, and the job failed at 93.78.) Across four master runs the
+          # columns move by about a tenth of a point - the tty tests' timing -
+          # so the floor sits about three tenths under.
           # Raise it as the figure rises; lower it only for a reason written
           # here. The floor is on this command and not in pyproject.toml, so
           # `pytest --cov` on a few files locally is not failed for covering
           # a few files. TkCurses-us5p.4.
           - python-version: "3.12"
-            coverage: "--cov --cov-report=term-missing --cov-fail-under=94"
+            coverage: "--cov --cov-report=term-missing --cov-fail-under=93.5"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -158,7 +161,7 @@ jobs:
           {
             echo "### Coverage"
             echo
-            echo "Branch coverage of src/tkcurses: $(coverage report --format=total)% (floor 94%)"
+            echo "Branch coverage of src/tkcurses: $(coverage report --format=total)% (floor 93.5%)"
           } >> "$GITHUB_STEP_SUMMARY"
 
   build:
