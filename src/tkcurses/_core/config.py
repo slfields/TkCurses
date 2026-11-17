@@ -124,6 +124,7 @@ class InputSettings:
     """Input behaviour. Each field is described by its row of SETTINGS."""
 
     escape_delay: int = 25
+    bracketed_paste: bool = True
     # ncurses defaults to a full second, which makes Escape - the key that
     # cancels things - feel broken. Every terminal in common use sends the
     # rest of a sequence in the same packet, so 25ms loses nothing and is
@@ -345,6 +346,16 @@ SETTINGS: tuple[Setting, ...] = (
         "a slow connection where arrow keys arrive as Escape and letters.",
         limits=(0, 1000),
         unit="ms",
+    ),
+    Setting(
+        "input",
+        "bracketed_paste",
+        "bool",
+        "TKCURSES_INPUT_BRACKETED_PASTE",
+        "Whether to ask the terminal to mark what is pasted into it, so that a "
+        "paste arrives as text rather than as keys: a line break in it is not "
+        "Return, and the keys of a shortcut are not the shortcut. Off for a "
+        "terminal that shows ``200~`` and ``201~`` around everything pasted.",
     ),
     Setting(
         "clipboard",

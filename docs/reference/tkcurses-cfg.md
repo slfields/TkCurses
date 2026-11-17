@@ -29,6 +29,7 @@ display.color_mode       auto    default
 display.unicode_borders  true    default
 display.direct_images    true    default
 input.escape_delay       25 ms   default
+input.bracketed_paste    true    default
 clipboard.system         auto    default
 clipboard.primary        true    default
 ```

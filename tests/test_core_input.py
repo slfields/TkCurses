@@ -702,3 +702,149 @@ def test_a_limit_does_not_split_a_character(curses_stub):
     assert [e.char for e in handler.poll(limit=2)] == ["a", "界"]
     assert handler.more_pending
     assert [e.char for e in handler.poll()] == ["b"]
+
+
+# ------------------------------------------ bracketed paste, TkCurses-tcbj.22
+
+from tkcurses._core import input as input_module  # noqa: E402
+from tkcurses._core.events import PasteEvent  # noqa: E402
+
+
+def pasted(text: bytes) -> list[int]:
+    """What getch() returns for ``text`` pasted with the mode on."""
+    return list(b"\x1b[200~" + text + b"\x1b[201~")
+
+
+def paste_handler(codes, **kwargs):
+    return make_handler(FakeScreen(codes), bracketed_paste=True, **kwargs)
+
+
+def summary(events):
+    return [
+        ("paste", e.text, e.complete) if isinstance(e, PasteEvent) else e.keysym
+        for e in events
+    ]
+
+
+def test_a_paste_is_one_event_and_typing_around_it_is_keys(curses_stub):
+    handler = paste_handler([ord("a"), *pasted(b"x\ry\tz"), ord("b")])
+    assert summary(handler.poll()) == ["a", ("paste", "x\ry\tz", True), "b"]
+
+
+def test_without_the_mode_a_paste_is_the_keys_it_always_was(curses_stub):
+    handler = make_handler(FakeScreen(pasted(b"x")))
+    keys = handler.poll()
+    assert not any(isinstance(e, PasteEvent) for e in keys)
+    assert [(e.keysym, e.modifiers) for e in keys][:2] == [("[", MOD_ALT), ("2", 0)]
+
+
+@pytest.mark.parametrize(
+    ("sent", "text"),
+    [
+        ("aé界😀".encode(), "aé界😀"),
+        (b"a\xffb", "a�b"),
+        (b"a\x1bb", "a\x1bb"),  # an Escape that starts no end marker
+        (b"a\x1b[20x", "a\x1b[20x"),  # one that starts it and stops
+        (b"a\x1b[201", "a\x1b[201"),  # the marker all but its last byte
+        (b"\x1b", "\x1b"),  # an Escape just before the real marker
+        (b"", ""),
+    ],
+)
+def test_what_a_paste_holds_is_kept_as_it_came(curses_stub, sent, text):
+    handler = paste_handler([*pasted(sent), ord("k")])
+    assert summary(handler.poll()) == [("paste", text, True), "k"]
+
+
+def test_a_paste_start_that_goes_wrong_is_read_as_typed(curses_stub):
+    handler = paste_handler(list(b"\x1b[20x"))
+    assert [(e.keysym, e.modifiers) for e in handler.poll()] == [
+        ("[", MOD_ALT),
+        ("2", 0),
+        ("0", 0),
+        ("x", 0),
+    ]
+
+
+def test_a_paste_past_the_limit_is_cut_and_the_rest_not_typed(curses_stub, monkeypatch):
+    monkeypatch.setattr(input_module, "PASTE_LIMIT", 4)
+    handler = paste_handler([*pasted(b"abcdefgh"), ord("k")])
+    assert summary(handler.poll()) == [("paste", "abcd", False), "k"]
+
+
+def test_a_paste_cut_mid_character_loses_the_character(curses_stub, monkeypatch):
+    monkeypatch.setattr(input_module, "PASTE_LIMIT", 2)
+    handler = paste_handler(pasted("a界".encode()))
+    assert summary(handler.poll()) == [("paste", "a", False)]
+
+
+def test_a_paste_whose_end_never_comes_ends(curses_stub, monkeypatch):
+    handler = paste_handler(list(b"\x1b[200~abc\x1b[20"))
+    waits = []
+    monkeypatch.setattr(
+        handler, "wait_for_input", lambda ms: bool(waits.append(ms)) and False
+    )
+    assert summary(handler.poll()) == [("paste", "abc\x1b[20", False)]
+    assert waits == [500]
+
+
+def test_a_paste_waits_out_a_pause(curses_stub, monkeypatch):
+    handler = paste_handler([*b"\x1b[200~ab", curses.ERR, *b"cd\x1b[201~"])
+    monkeypatch.setattr(handler, "wait_for_input", lambda ms: True)
+    assert summary(handler.poll()) == [("paste", "abcd", True)]
+
+
+def test_a_key_curses_decoded_inside_a_paste_is_dropped(curses_stub):
+    handler = paste_handler([*b"\x1b[200~a", curses.KEY_UP, *b"b\x1b[201~", ord("k")])
+    assert summary(handler.poll()) == [("paste", "ab", True), "k"]
+
+
+def test_a_mouse_report_inside_a_paste_comes_after_it(curses_stub, monkeypatch):
+    monkeypatch.setattr(
+        curses, "getmouse", lambda: (0, 3, 4, 0, curses.BUTTON1_PRESSED)
+    )
+    handler = paste_handler([*b"\x1b[200~a", curses.KEY_MOUSE, *b"b\x1b[201~"])
+    events = handler.poll()
+    assert summary(events[:1]) == [("paste", "ab", True)]
+    assert isinstance(events[1], MouseEvent)
+
+
+def test_a_paste_counts_once_against_a_limit(curses_stub):
+    handler = paste_handler([*pasted(b"long text"), ord("k")])
+    assert summary(handler.poll(limit=1)) == [("paste", "long text", True)]
+    assert [e.keysym for e in handler.poll()] == ["k"]
+
+
+def test_the_terminal_is_asked_to_mark_pastes_only_when_wanted(curses_stub):
+    make_handler(FakeScreen())
+    assert input_module.PASTE_MODE_ON not in PUT
+    handler = paste_handler([])
+    assert PUT[-1] == input_module.PASTE_MODE_ON
+    assert handler.paste_mode
+    handler.restore()
+    assert input_module.PASTE_MODE_OFF in PUT
+    assert not handler.paste_mode
+    assert not handler.enable_paste()
+
+
+def test_a_pause_turns_the_modes_off_and_a_resume_back_on(curses_stub):
+    handler = paste_handler([])
+    PUT.clear()
+    handler.pause()
+    assert PUT == [b"\x1b[?1003l\x1b[?1002l" + input_module.PASTE_MODE_OFF]
+    PUT.clear()
+    handler.resume()
+    assert PUT == [b"\x1b[?1002h", input_module.PASTE_MODE_ON]
+    assert handler.paste_mode
+
+
+def test_keys_for_text_are_the_keys_typing_it_sends(curses_stub):
+    handler = make_handler(FakeScreen())
+    keys = handler.keys_for("a\rb\té\x03")
+    assert [(k.keysym, k.char, k.modifiers) for k in keys] == [
+        ("a", "a", 0),
+        ("Return", "", 0),
+        ("b", "b", 0),
+        ("Tab", "", 0),
+        ("é", "é", 0),
+        ("c", "", MOD_CTRL),
+    ]

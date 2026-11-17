@@ -30,6 +30,7 @@ stateful part and lives there, so it can be exercised directly.
 
 from __future__ import annotations
 
+import codecs
 import contextlib
 import curses
 import os
@@ -49,6 +50,7 @@ from tkcurses._core.events import (
     KeyEvent,
     MouseEvent,
     MouseState,
+    PasteEvent,
     ResizeEvent,
     keysym_for,
     keysym_for_char,
@@ -156,6 +158,20 @@ _REPLY_PREFIX = re.compile(
     rb"P(?:[01](?:\+(?:r[0-9A-Fa-f]*(?:=[0-9A-Fa-f]*)?\x1b?)?)?)?|\[(?:\?[0-9;]*)?"
 )
 _REPLY_STARTS = (ord("P"), ord("["))
+
+
+#: DEC private mode 2004, bracketed paste: set and reset.
+PASTE_MODE_ON = b"\x1b[?2004h"
+PASTE_MODE_OFF = b"\x1b[?2004l"
+#: What follows the Escape that begins a paste, and what ends one.
+_PASTE_START = b"[200~"
+_PASTE_END = b"\x1b[201~"
+#: The most of one paste kept, in bytes. The rest is read and dropped, so
+#: that it is not typed, and the paste is marked incomplete.
+PASTE_LIMIT = 16 * 1024 * 1024
+#: How long a paste may go quiet before it is taken to have ended without
+#: saying so - a terminal that died, or a connection that did, part way.
+_PASTE_GAP_MS = 500
 
 
 def _utf8_length(lead: int) -> int:
@@ -318,6 +334,8 @@ class InputHandler:
         report_motion: Ask for motion while a button is held.
         report_hover: Ask for every movement of the pointer.
         mouse: False leaves the mouse unreported, to the terminal.
+        bracketed_paste: Ask the terminal to mark what is pasted, which
+            then arrives as one :class:`PasteEvent` rather than as keys.
     """
 
     def __init__(
@@ -330,6 +348,7 @@ class InputHandler:
         report_motion: bool = True,
         report_hover: bool = False,
         mouse: bool = True,
+        bracketed_paste: bool = False,
     ) -> None:
         self._stdscr = stdscr
         self._dispatcher = dispatcher or CursesDispatcher.get()
@@ -352,6 +371,8 @@ class InputHandler:
         self._pushback: list[int] = []
         #: Until when a terminal's late answer to a query is dropped.
         self._late_reply_until: float | None = None
+        #: Whether pastes are asked to be marked, and so looked for.
+        self._paste_mode = bracketed_paste
         self._configure()
 
     def _configure(self) -> None:
@@ -366,6 +387,7 @@ class InputHandler:
         # mouse and its own selection works as it does in a shell.
         if self._mouse_wanted:
             self._enable_mouse()
+        self.enable_paste()
 
     def _disable_flow_control(self) -> None:
         """Take the tty's own keys back, as far as the application needs.
@@ -456,7 +478,66 @@ class InputHandler:
     def restore(self) -> None:
         """Undo everything this handler did to the terminal."""
         self.disable_mouse()
+        self.disable_paste()
         self._restore_flow_control()
+
+    def enable_paste(self) -> bool:
+        """Ask the terminal to mark pastes, if this handler wants them.
+        True if it was asked.
+
+        Written straight to the terminal, past curses' buffer, as the mouse
+        mode is and for the same reason; safe to send again.
+        """
+        if not self._paste_mode:
+            return False
+        return self._write_to_terminal(PASTE_MODE_ON)
+
+    def disable_paste(self) -> None:
+        """Stop the terminal marking pastes, on the way out.
+
+        A shell left in mode 2004 gets every paste wrapped in escape
+        sequences it may not expect. Pastes are not looked for after this.
+        """
+        if not self._paste_mode:
+            return
+        self._paste_mode = False
+        self._write_to_terminal(PASTE_MODE_OFF)
+
+    def pause(self) -> None:
+        """Hand the terminal back for a while - a suspend - keeping every
+        setting to put back with :meth:`resume`.
+
+        Turns off the modes curses knows nothing of, motion and paste: its
+        own ``endwin()`` resets only the mouse mode it set itself, so a shell
+        would get mouse reports and marked pastes. Restores the tty's keys.
+        """
+        off = b""
+        if self._motion_mode:
+            off += b"\x1b[?1003l\x1b[?1002l"
+        if self._paste_mode:
+            off += PASTE_MODE_OFF
+        if off:
+            self._write_to_terminal(off)
+        if self._saved_termios is not None:
+            fd, saved = self._saved_termios
+            with contextlib.suppress(termios.error, OSError, ValueError):
+                termios.tcsetattr(fd, termios.TCSANOW, saved)
+
+    def resume(self) -> None:
+        """Take the terminal again after :meth:`pause`, once curses has.
+
+        curses' own return from ``endwin()`` sets back what it saved when it
+        started, which predates the keys taken from the tty and knows of
+        neither mode.
+        """
+        self._apply_termios()
+        self.enable_motion()
+        self.enable_paste()
+
+    @property
+    def paste_mode(self) -> bool:
+        """True while pastes are asked to be marked."""
+        return self._paste_mode
 
     def _enable_mouse(self) -> None:
         """Ask for mouse reporting, tolerating terminals that refuse."""
@@ -625,6 +706,13 @@ class InputHandler:
                 break
             if code == _ESCAPE:
                 following = self._next()
+                if (
+                    following == _PASTE_START[0]
+                    and self._paste_mode
+                    and self._read_marker(following, _PASTE_START)
+                ):
+                    events.extend(self._read_paste())
+                    continue
                 if following in _REPLY_STARTS and self._late_reply_due():
                     if self._drop_late_reply(following):
                         continue
@@ -691,6 +779,96 @@ class InputHandler:
             read.append(code)
         self._pushback[:0] = read
         return False
+
+    def _read_marker(self, first: int, marker: bytes) -> bool:
+        """Read on from ``first`` for as long as it is ``marker``. True if
+        it all came, and is gone; otherwise what was read after ``first`` is
+        given back, and ``first`` is the caller's to use."""
+        read = [first]
+        while len(read) < len(marker):
+            if read[-1] != marker[len(read) - 1]:
+                break
+            code = self._next()
+            if code == curses.ERR and self.wait_for_input(_REPLY_GAP_MS):
+                code = self._next()
+            if code == curses.ERR:
+                break
+            read.append(code)
+        if read == list(marker):
+            return True
+        self._pushback[:0] = read[1:]
+        return False
+
+    def _read_paste(self) -> list[Event]:
+        """The paste whose start marker was just read, up to its end marker.
+
+        Kept as bytes until it ends, then decoded as UTF-8, anything that is
+        not a character becoming U+FFFD. Past :data:`PASTE_LIMIT` bytes the
+        rest is read and dropped. A resize or a mouse report that arrives in
+        the middle - curses' own codes, not bytes - is delivered after the
+        paste; any other key curses decoded from it is dropped, since there
+        is no telling which bytes it was.
+        """
+        data = bytearray()
+        # Bytes that may be the start of the end marker, held back until
+        # they are or are not. The marker's Escape is its only one, so a
+        # mismatch can only begin a new marker with an Escape.
+        held = bytearray()
+        after: list[Event] = []
+        complete = True
+
+        def keep(chunk: bytes | bytearray) -> None:
+            nonlocal complete
+            room = PASTE_LIMIT - len(data)
+            data.extend(chunk[:room])
+            if len(chunk) > room:
+                complete = False
+
+        while True:
+            code = self._next()
+            if code == curses.ERR and self.wait_for_input(_PASTE_GAP_MS):
+                code = self._next()
+            if code == curses.ERR:
+                # Quiet for too long, or readable with nothing to read - a
+                # terminal that has hung up. Either way the end is not coming.
+                complete = False
+                keep(held)
+                break
+            if not 0 <= code < 256:
+                if code in (curses.KEY_RESIZE, curses.KEY_MOUSE):
+                    after.extend(self._translate(code))
+                continue
+            held.append(code)
+            if _PASTE_END.startswith(held):
+                if len(held) == len(_PASTE_END):
+                    break
+                continue
+            restart = 1 if code == _ESCAPE else 0
+            keep(held[: len(held) - restart])
+            del held[: len(held) - restart]
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        # A paste cut off mid-character loses that character rather than
+        # ending in U+FFFD.
+        text = decoder.decode(bytes(data), final=complete)
+        return [PasteEvent(text=text, complete=complete), *after]
+
+    def keys_for(self, text: str) -> list[KeyEvent]:
+        """The keys typing ``text`` sends, as :meth:`poll` would read them.
+
+        How a paste is delivered to a program that does not take pastes:
+        each character the key it would be if typed - a carriage return is
+        Return, a tab Tab.
+        """
+        keys = []
+        for char in text:
+            code = ord(char)
+            if code < 128:
+                keys.append(self._key_event(code))
+            else:
+                keys.append(
+                    KeyEvent(keycode=code, keysym=keysym_for_char(char), char=char)
+                )
+        return keys
 
     def _read_key(self, code: int) -> KeyEvent:
         """The key ``code`` begins, reading the rest of its character if it
