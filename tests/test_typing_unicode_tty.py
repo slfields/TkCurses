@@ -100,3 +100,28 @@ def test_a_typed_no_break_space_and_soft_hyphen_are_kept_and_drawn(terminal, tmp
             and any("│a b-c " in row for row in t.display)
         )
     )
+
+
+ZERO_WIDTH = """
+import tkcurses as tk
+root = tk.Tk()
+field = tk.Entry(root, width=20)
+field.insert(0, "a\\u200bb\\u200dc|")
+field.pack()
+field.focus_set()
+tk.Label(root, text="ready").pack()
+root.after(15000, root.quit)
+root.mainloop()
+"""
+
+
+def test_a_zero_width_character_leaves_the_cursor_after_the_text(terminal, tmp_path):
+    """Drawn as nothing, as it is measured: drawn as a ``?`` it pushed the
+    text a column past the cursor."""
+    term = terminal(cols=40, rows=8)
+    term.run_source(ZERO_WIDTH, workdir=tmp_path)
+    term.wait_for_text("ready")
+    term.wait_for(lambda t: any("│abc| " in row for row in t.display))
+    row = next(i for i, text in enumerate(term.display) if "│abc|" in text)
+    column = term.display[row].index("│abc|") + 5
+    term.wait_for(lambda t: t.cursor == (row, column))

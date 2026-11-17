@@ -33,6 +33,10 @@ All notable changes to TkCurses. The format follows
   dropped, and one put there by a program was drawn as `?`. Both are
   typed now, as any character but a control one is in Tk, and are drawn
   as a space and a hyphen.
+- A zero-width space, joiner or direction mark in a widget's text was drawn
+  as `?`, a cell wide, while being measured as none, so an Entry's cursor
+  sat a column short of the end of its text. It is drawn as nothing now,
+  and any other space as spaces as wide as it is.
 - A long Text no longer slows down as it grows. Typing laid out every line
   of the text twice a key: 2.6 ms a key at 2,000 lines and 26 ms at 20,000,
   now 0.45 ms and 3.3 ms, as only the line typed into is laid out again.
