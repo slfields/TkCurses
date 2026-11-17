@@ -68,3 +68,35 @@ def test_a_typed_character_beyond_ascii_reaches_the_widget(
     term.send((TYPED + "\r").encode())
     expected = f"got={TYPED!r} eacute U754C"
     term.wait_for(lambda t: any(expected in row for row in t.display))
+
+
+SHOWN = """
+import tkcurses as tk
+root = tk.Tk()
+field = tk.Entry(root, width=20)
+field.pack()
+field.focus_set()
+shown = tk.Label(root, text="ready")
+shown.pack()
+def report(event):
+    shown["text"] = "got=%r" % field.get()
+    return "break"
+field.bind("<Key-Return>", report)
+root.after(15000, root.quit)
+root.mainloop()
+"""
+
+
+def test_a_typed_no_break_space_and_soft_hyphen_are_kept_and_drawn(terminal, tmp_path):
+    """Python calls both unprintable; Tk inserts them, and a terminal shows
+    them as a space and a hyphen."""
+    term = terminal(cols=40, rows=8)
+    term.run_source(SHOWN, workdir=tmp_path)
+    term.wait_for_text("ready")
+    term.send("a\u00a0b\u00adc\r".encode())
+    term.wait_for(
+        lambda t: (
+            any("got='a\\xa0b\\xadc'" in row for row in t.display)
+            and any("│a b-c " in row for row in t.display)
+        )
+    )
