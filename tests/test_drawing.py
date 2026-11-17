@@ -32,6 +32,7 @@ twenty-column box. Every widget, because they all write through
 from __future__ import annotations
 
 from tkcurses import _one_cell_each
+from tkcurses._core.cells import cells, char_cells
 
 
 def test_printable_text_is_left_exactly_alone():
@@ -61,12 +62,33 @@ def test_a_no_break_space_and_a_soft_hyphen_are_drawn_as_they_look():
     assert _one_cell_each("a\u00adb") == "a-b"
 
 
-def test_the_length_never_changes():
-    """What the clipping either side of it depends on.
+def test_a_zero_width_format_character_is_drawn_as_nothing():
+    """Measured as no cells, so drawn as none: a ``?`` put an Entry's cursor
+    a column short of the end of the text. And not given to the terminal,
+    where a joiner would join what is measured apart and a direction
+    override would reorder the row."""
+    assert _one_cell_each("a\u200bb") == "ab"
+    assert _one_cell_each("\U0001f468\u200d\U0001f469") == "\U0001f468\U0001f469"
+    assert _one_cell_each("a\u202eb\ufeffc") == "abc"
 
-    If a substitution were wider or narrower, the slice that keeps a write
-    inside its window would be cutting the wrong number of cells - which is
-    the bug this function exists to prevent, reintroduced one level down.
-    """
-    for text in ("\tAB", "a\x00b", "plain", "\t\t\t", "a\x1b\x7f\tz"):
-        assert len(_one_cell_each(text)) == len(text), text
+
+def test_every_space_is_drawn_as_spaces_as_wide_as_it_is():
+    assert _one_cell_each("a\u2003b") == "a b"
+    assert _one_cell_each("a\u3000b") == "a  b"
+
+
+def test_the_width_never_changes():
+    """What the clipping, the cursor and a click depend on: each measures a
+    character by char_cells, so what is drawn must take exactly that many
+    cells, or everything after it is drawn where it is not measured."""
+    for text in (
+        "\tAB",
+        "a\x00b",
+        "plain",
+        "\t\t\t",
+        "a\x1b\x7f\tz",
+        "a\u00a0b\u00adc",
+        "a\u200bb\u2003c\u3000d\u2028e\U000e0001f\ue000g",
+        "\U0001f468\u200d\U0001f469\u202e",
+    ):
+        assert cells(_one_cell_each(text)) == sum(map(char_cells, text)), text

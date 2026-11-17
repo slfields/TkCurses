@@ -1468,7 +1468,17 @@ Until `TkCurses-m5jx` the handlers here asked `str.isprintable()`, which
 refuses a no-break space, a soft hyphen and every format character, so
 none of them could be typed. They now refuse only C0, DEL and C1. The two
 that are typed on purpose draw as what they look like, a space and a
-hyphen; anything else that does not print still draws as `?`.
+hyphen; any other space draws as spaces.
+
+**What is drawn for a character that does not print is as wide as it is
+measured**, by `char_cells`, because the cursor, `bbox`, clipping and a
+click are all measured that way. A zero-width format character - a
+zero-width space or joiner, a direction mark, a byte-order mark - is drawn
+as nothing. It used to be a `?`, one cell: an Entry holding a zero-width
+space put its cursor on the last character instead of after it
+(`TkCurses-sv3s`). It is not given to the terminal either: a joiner would
+make one glyph of two emoji measured as two, and a direction override can
+reorder the row. A control character is still a `?`, visible on purpose.
 
 #### Bracketed paste, and handing the terminal back on Ctrl-Z
 

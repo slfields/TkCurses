@@ -63,6 +63,7 @@ import sys
 import threading
 import time
 import traceback
+import unicodedata
 import weakref
 from collections.abc import Collection, Mapping, MutableMapping
 from dataclasses import dataclass, replace
@@ -9416,25 +9417,45 @@ class _Drawable(Widget):
         )
 
 
-#: What a character that is not one printable cell is drawn as instead.
-#: A tab becomes a space because a tab IS whitespace - it simply does not
-#: advance to a tab stop yet; see TkCurses-wy7. Everything else becomes a
-#: question mark, which is visible: a stray control character in a widget is
-#: a bug somewhere, and silently drawing nothing hides it. A no-break space
-#: and a soft hyphen are typed on purpose and are one cell wide, so they are
-#: drawn as what they look like.
+#: What a character that does not print is drawn as instead, where that is
+#: not a question mark. A tab becomes a space because a tab IS whitespace -
+#: it simply does not advance to a tab stop yet; see TkCurses-wy7. A
+#: no-break space and a soft hyphen are typed on purpose, so they are drawn
+#: as what they look like. Any other space is a space too.
 _STAND_IN = {"\t": " ", "\u00a0": " ", "\u00ad": "-"}
 
 
+def _stand_in(character: str) -> str:
+    """What ``character``, which does not print, is drawn as: as many cells
+    as :func:`~tkcurses._core.cells.char_cells` measures it, so that what
+    is drawn and what is measured agree.
+
+    A zero-width format character - a zero-width space or joiner, a
+    direction mark - is drawn as nothing; given to the terminal, a joiner
+    would join two emoji the widths here count apart, and a direction
+    override could reorder the row. A control character, and anything else
+    with no better stand-in, is a question mark, which is visible: a stray
+    control character in a widget is a bug somewhere, and drawing nothing
+    would hide it.
+    """
+    if is_embedded(character):
+        return "?"  # a Text draws its embedded windows and images itself
+    width = char_cells(character)
+    mark = _STAND_IN.get(character)
+    if mark is None:
+        mark = " " if unicodedata.category(character) == "Zs" else "?"
+    return mark * width
+
+
 def _one_cell_each(text: str) -> str:
-    """Replace each control character with a printable stand-in.
+    """Replace each character that does not print with a stand-in of the
+    same width in cells (see :func:`_stand_in`).
 
     Column calculations here - clipping to a window, the insert cursor,
-    ``bbox``, mapping a click back to an index - measure a printable
-    character by :func:`~tkcurses._core.cells.char_cells`, and some still
-    count one cell per character. A control character has no width at all
-    until curses draws it as the terminal sees fit, which is after the
-    arithmetic has been done.
+    ``bbox``, mapping a click back to an index - measure a character by
+    :func:`~tkcurses._core.cells.char_cells`. A control character has no
+    width at all until curses draws it as the terminal sees fit, which is
+    after the arithmetic has been done.
 
     Measured before this existed: a Text holding "\tAB" drew A at column 10
     while reporting it at column 4, because curses expanded the tab to a tab
@@ -9443,13 +9464,14 @@ def _one_cell_each(text: str) -> str:
     into a twenty-column box. Every widget was affected, because they all
     write through here.
 
-    The substitution is length-preserving on purpose, so the clipping either
-    side of it stays correct.
+    The substitution keeps the width in cells, not the length: a
+    zero-width space measured as no cells and drawn as a one-cell ``?``
+    put the cursor of the Entry holding it a column short.
     """
     if text.isprintable():
         return text
     return "".join(
-        character if character.isprintable() else _STAND_IN.get(character, "?")
+        character if character.isprintable() else _stand_in(character)
         for character in text
     )
 
