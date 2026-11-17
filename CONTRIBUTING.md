@@ -36,7 +36,7 @@ audits every lock for known vulnerabilities on each run.
 ```bash
 ruff check .            # lint
 ruff format --check .   # formatting
-mypy                    # type-check (strict; src/tkcurses)
+mypy                    # type-check (strict; the library and its tooling)
 pytest                  # full suite, including the tty tests
 pytest -n 4             # the same suite in a quarter of the time
 pytest -m "not tty"     # fast subset, no pseudo-terminals

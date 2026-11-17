@@ -61,6 +61,7 @@ import random
 import tkinter
 import tkinter.font
 from pathlib import Path
+from typing import Any
 
 LINES = "\n".join(f"line {k:02d} " + "abc" * (k % 3) for k in range(1, 41))
 INSERTS = ("x", "ab", "xyz\n", "\n", "p\nq\nr\n", "a long one ")
@@ -71,8 +72,8 @@ def random_index(rng: random.Random) -> str:
     return f"{row}.{rng.randrange(14)}"
 
 
-def random_steps(rng: random.Random) -> list[list[object]]:
-    steps: list[list[object]] = [["y", rng.randrange(30)]]
+def random_steps(rng: random.Random) -> list[list[Any]]:
+    steps: list[list[Any]] = [["y", rng.randrange(30)]]
     for _ in range(rng.randint(3, 12)):
         choice = rng.choice("iiippddqsssuuuUrrRjy")
         if choice in "ip":
@@ -92,7 +93,7 @@ def random_steps(rng: random.Random) -> list[list[object]]:
     return steps
 
 
-def whole_lines(root, view: str) -> None:
+def whole_lines(root: tkinter.Tk, view: str) -> None:
     """Follow every ``see`` on ``view`` with ``yview`` to its first index."""
     root.tk.eval(f"""
         rename {view} {view}_tk
@@ -106,7 +107,9 @@ def whole_lines(root, view: str) -> None:
     """)
 
 
-def run(root, font, auto: bool, steps) -> list[list[object]]:
+def run(
+    root: tkinter.Tk, font: tkinter.font.Font, auto: bool, steps: list[list[Any]]
+) -> list[list[Any]]:
     widget = tkinter.Text(
         root, font=font, width=16, height=4, wrap="none", undo=True,
         autoseparators=auto,
@@ -121,7 +124,9 @@ def run(root, font, auto: bool, steps) -> list[list[object]]:
     views = (str(widget), other)
     for view in views:
         whole_lines(root, view)
-    inset = widget.dlineinfo("1.0")[1]
+    line = widget.dlineinfo("1.0")
+    assert line is not None, "the first line is on screen after update()"
+    inset = line[1]
     after = []
     for kind, *args in steps:
         answer: object = None
@@ -137,7 +142,8 @@ def run(root, font, auto: bool, steps) -> list[list[object]]:
                 result = root.tk.call(
                     target, "edit", "undo" if kind in "uU" else "redo"
                 )
-                answer = [str(i) for i in root.tk.splitlist(result)]
+                # typeshed leaves Tkapp.splitlist unannotated, here and below.
+                answer = [str(i) for i in root.tk.splitlist(result)]  # type: ignore[no-untyped-call]
             except tkinter.TclError:
                 answer = "error"
         elif kind == "j":
@@ -149,7 +155,7 @@ def run(root, font, auto: bool, steps) -> list[list[object]]:
         tops = []
         for view in views:
             top = str(root.tk.call(view, "index", "@0,0"))
-            line = root.tk.splitlist(root.tk.call(view, "dlineinfo", top))
+            line = root.tk.splitlist(root.tk.call(view, "dlineinfo", top))  # type: ignore[no-untyped-call]
             assert int(line[1]) == inset, f"{view} is between lines at {top}"
             tops.append(top)
         after.append([

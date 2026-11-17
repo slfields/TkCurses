@@ -325,17 +325,28 @@ tests instead.
 formatted as Ruff would format it, at 88 columns. It reports a difference
 and changes nothing; run `ruff format` to apply the changes.
 
-**mypy** (`mypy`) checks `src/tkcurses` in strict mode, plus the flags listed
-in `pyproject.toml`. It reports:
+**mypy** (`mypy`) checks `src/tkcurses`, `tests/support`, `docs/_ext` and
+`.github/scripts` in strict mode, plus the flags listed in `pyproject.toml`:
+the library, and the tooling that tests, documents and releases it. It
+reports:
 
 - any function without full annotations;
 - `Any` leaking out of a typed function;
 - unreachable code, and an `# type: ignore` that is no longer needed;
 - an equality check between types that cannot be equal.
 
-pyte, which the test harness uses, has no type stubs, and its missing
-imports are ignored. Nothing outside the library is type-checked yet (see
-[Gaps](#gaps)). `tests/test_packaging.py` checks that the built package
+The tooling is held to the same strict mode as the library. Where a
+recorder in `tests/support` feeds tkinter values read from a table or from
+JSON, those values are typed `Any` on purpose; and where typeshed leaves a
+tkinter method unannotated (`curselection`, `paneconfigure`, `splitlist`),
+the call carries an ignore that says so. The documentation extensions
+import Sphinx and docutils, which mypy does not follow: Sphinx is written
+for Python 3.12, while this checks for 3.11, and CI's lint job installs
+neither. pyte's missing imports are ignored.
+
+Not checked: the tests themselves, `examples/` and `uat/`. Those are
+programs written as a user would write them, against the library's
+annotations, and mypy is not asked to hold them to strict mode. `tests/test_packaging.py` checks that the built package
 carries its `py.typed` marker, so a program using TkCurses is type-checked
 against it.
 
@@ -419,5 +430,4 @@ epic `TkCurses-us5p`.
 | Issue | Rating | Gap |
 |---|---|---|
 | `TkCurses-us5p.4` | P4: lets through impact 2, reach 2 | Coverage is measured and nothing gates on it, so a drop goes unnoticed. |
-| `TkCurses-us5p.3` | P4: impact 0 | mypy checks only `src/tkcurses`. The test harness, the documentation extensions, the release scripts, the examples and the UAT scenarios are not type-checked. The release scripts' decisions are tested in `tests/test_release_script.py`. |
 | `TkCurses-us5p.8` | P4: lets through impact 1, reach 3 | Performance is held by counting work, which is right for a gate. Nothing records timings over time, so a slowdown that changes no count goes unnoticed. |

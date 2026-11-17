@@ -94,8 +94,7 @@ def test_the_markers_are_the_ones_declared():
 
 
 def test_mypy_is_said_to_check_what_it_checks():
-    checked = PYPROJECT["tool"]["mypy"]["files"]
-    assert re.search(
-        r"\(`mypy`\) checks " + " and ".join(f"`{path}`" for path in checked),
-        section("Static checks"),
-    )
+    checked = [f"`{path}`" for path in PYPROJECT["tool"]["mypy"]["files"]]
+    listed = ", ".join(checked[:-1]) + " and " + checked[-1]
+    said = re.sub(r"\s+", " ", section("Static checks"))
+    assert "(`mypy`) checks " + listed in said

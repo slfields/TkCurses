@@ -119,11 +119,17 @@ def lay_out(root: tkinter.Tk, case: dict[str, Any]) -> list[Any]:
         configure(int(index), **config)
     outer.grid_anchor(case["anchor"])
     root.update()
+
+    def bbox(*cell: int) -> list[int]:
+        box = outer.grid_bbox(*cell)
+        assert box is not None, "a gridded frame always has a bbox"
+        return list(box)
+
     cells = [
-        [list(outer.grid_bbox(column, row)) for column in range(case["columns"])]
+        [bbox(column, row) for column in range(case["columns"])]
         for row in range(case["rows"])
     ]
-    whole = list(outer.grid_bbox())
+    whole = bbox()
     outer.destroy()
     return [cells, whole]
 

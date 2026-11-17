@@ -42,6 +42,7 @@ import json
 import random
 import tkinter
 from pathlib import Path
+from typing import Any
 
 PROCEDURES = ("endOfWord", "startOfNextWord", "startOfPreviousWord")
 BREAKS = ("wordBreakBefore", "wordBreakAfter")
@@ -59,7 +60,7 @@ FIXED = [
 ]  # fmt: skip
 
 
-def record(count: int = 400, seed: int = 20261104) -> list[dict[str, object]]:
+def record(count: int = 400, seed: int = 20261104) -> list[dict[str, Any]]:
     root = tkinter.Tk()
     proc = root.tk.eval("info procs ::tk::wordBreakBefore")
     assert proc, "Tk has a C wordBreakBefore; the fixture's note is wrong"

@@ -47,6 +47,7 @@ import random
 import tkinter
 import tkinter.font
 from pathlib import Path
+from typing import Any, Literal
 
 WIDTH = 40
 WORDS = [
@@ -89,7 +90,12 @@ KEYS = [
 ]
 #: Each widget: its height, and how it wraps. A page is three lines of four
 #: and ten of twelve; see's reach is three lines in both, and four in twelve.
-WIDGETS = {"Text4": (4, "none"), "Text12": (12, "none"), "Wrapped4": (4, "word")}
+Wrap = Literal["none", "char", "word"]
+WIDGETS: dict[str, tuple[int, Wrap]] = {
+    "Text4": (4, "none"),
+    "Text12": (12, "none"),
+    "Wrapped4": (4, "word"),
+}
 
 
 def random_index(rng: random.Random) -> str:
@@ -97,8 +103,8 @@ def random_index(rng: random.Random) -> str:
     return f"{row + 1}.{rng.randrange(len(LINES[row]) + 1)}"
 
 
-def random_steps(rng: random.Random) -> list[list[object]]:
-    steps: list[list[object]] = []
+def random_steps(rng: random.Random) -> list[list[Any]]:
+    steps: list[list[Any]] = []
     for _ in range(rng.randint(2, 10)):
         choice = rng.choice("kkkkkkkkjyYxXr")
         if choice == "k":
@@ -137,7 +143,9 @@ def state(text: tkinter.Text) -> list[object]:
     ]
 
 
-def run(root, font, kind: str, steps: list[list[object]]) -> list[list[object]]:
+def run(
+    root: tkinter.Tk, font: tkinter.font.Font, kind: str, steps: list[list[Any]]
+) -> list[list[Any]]:
     height, wrap = WIDGETS[kind]
     text = tkinter.Text(root, font=font, width=16, height=height, wrap=wrap)
     text.configure(exportselection=False)
@@ -189,7 +197,7 @@ def record(count: int = 150, seed: int = 20261105) -> dict[str, list[object]]:
 
 if __name__ == "__main__":
     out = Path(__file__).with_name("page_keys.json")
-    data = {
+    data: dict[str, Any] = {
         "measured": "tkinter on Python 3.14 over Tk 9.0.2",
         "text": TEXT,
         "cases": record(),

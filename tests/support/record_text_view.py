@@ -52,12 +52,14 @@ import random
 import tkinter
 import tkinter.font
 from pathlib import Path
+from typing import Any, Literal
 
 #: Lines from empty to four rows wide, so a wrapped one is several rows and
 #: an unwrapped one is wider than the view, or not.
 LENGTHS = (0, 3, 8, 15, 16, 17, 24, 31, 40, 60)
 INSERTS = ("", "ab", "xyz\n", "\n", "a long piece of text ", "p\nq\nr\n", "\n\n")
-WIDGETS = {"Text": "none", "Wrapped": "word"}
+Wrap = Literal["none", "char", "word"]
+WIDGETS: dict[str, Wrap] = {"Text": "none", "Wrapped": "word"}
 
 
 def corpus(rng: random.Random) -> str:
@@ -76,8 +78,8 @@ def random_index(rng: random.Random, text: str) -> str:
     return f"{row + 1}.{rng.randrange(len(lines[row]) + 1)}"
 
 
-def random_steps(rng: random.Random, text: str) -> list[list[object]]:
-    steps: list[list[object]] = [["y", rng.randrange(30)]]
+def random_steps(rng: random.Random, text: str) -> list[list[Any]]:
+    steps: list[list[Any]] = [["y", rng.randrange(30)]]
     if rng.random() < 0.5:
         steps.append(["x", rng.randrange(1, 40)])
     for _ in range(rng.randint(1, 6)):
@@ -103,7 +105,13 @@ def state(widget: tkinter.Text) -> list[object]:
     return [widget.index("@0,0"), [round(f, 4) for f in widget.xview()]]
 
 
-def run(root, font, wrap: str, text: str, steps) -> list[list[object]]:
+def run(
+    root: tkinter.Tk,
+    font: tkinter.font.Font,
+    wrap: Wrap,
+    text: str,
+    steps: list[list[Any]],
+) -> list[list[Any]]:
     widget = tkinter.Text(root, font=font, width=16, height=4, wrap=wrap)
     widget.pack()
     widget.insert("1.0", text)
@@ -158,6 +166,9 @@ def record(count: int = 150, seed: int = 20261104) -> dict[str, list[object]]:
 
 if __name__ == "__main__":
     out = Path(__file__).with_name("text_view.json")
-    data = {"measured": "tkinter on Python 3.14 over Tk 9.0.2", "cases": record()}
+    data: dict[str, Any] = {
+        "measured": "tkinter on Python 3.14 over Tk 9.0.2",
+        "cases": record(),
+    }
     out.write_text(json.dumps(data, separators=(",", ":")) + "\n")
     print(sum(map(len, data["cases"].values())), "cases ->", out)

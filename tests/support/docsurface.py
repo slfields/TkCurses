@@ -447,7 +447,7 @@ def options_page_samples() -> set[str]:
     ``### name`` with a ``{tkcurses-sample}`` block before the next one."""
     if not OPTIONS_PAGE.exists():
         return set()
-    sampled = set()
+    sampled: set[str] = set()
     for block in re.split(r"^### ", OPTIONS_PAGE.read_text(), flags=re.M)[1:]:
         names = block.split("\n", 1)[0].replace("`", "").split(",")
         if "```{tkcurses-sample}" in block:

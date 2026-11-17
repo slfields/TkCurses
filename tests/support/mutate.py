@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib.util
 import json
 import os
 import re
@@ -160,9 +161,7 @@ def main(argv: list[str] | None = None) -> int:
     if not modules:
         print(f"mutate.py: no library module changed since {args.base}; name one")
         return 0
-    try:
-        import mutmut  # noqa: F401
-    except ImportError:
+    if importlib.util.find_spec("mutmut") is None:
         sys.exit('mutate.py: mutmut is not installed: pip install -e ".[mutation]"')
     if git("status", "--porcelain", "--", "src", "tests"):
         print(
