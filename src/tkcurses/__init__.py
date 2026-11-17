@@ -7082,9 +7082,10 @@ class Wm:
 # ======================================================================
 
 #: Longest the loop will wait on input when no timer is due. It does not sit
-#: on a blocking read forever: quit() may be called from another thread, a
-#: SIGWINCH may need servicing, and work queued through the dispatcher has to
-#: be picked up. A twentieth of a second is below the threshold of noticing
+#: on a blocking read forever: quit() may be called from another thread, and
+#: a SIGWINCH may need servicing. Work another thread queues through the
+#: dispatcher does not wait for it: the dispatcher's wake-up pipe ends the
+#: wait at once. A twentieth of a second is below the threshold of noticing
 #: and costs nothing while idle.
 _IDLE_TIMEOUT_MS = 50
 
@@ -8106,7 +8107,7 @@ class Tk(_Backdrop, BaseWidget, Wm):
         if not self._input.more_pending:
             # Not after a pass that stopped at its limit: what is left may be
             # inside curses already, where select() cannot see it.
-            readable = self._input.wait_for_input(max(timeout, 0))
+            readable = self._input.wait_for_input(max(timeout, 0), wake=True)
         events = self._input.poll(_INPUT_BATCH)
         if readable and not events and self._input.terminal_gone():
             # Readable with nothing to read is how a hung-up terminal looks

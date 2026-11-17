@@ -27,6 +27,11 @@ All notable changes to TkCurses. The format follows
   ends the program with `SystemExit(129)`, after its own cleanup runs. A
   program's own SIGHUP handler is left in charge, and the loop still
   notices the terminal is gone.
+- A worker thread updating widgets crawled: each drawing call a widget
+  method made from another thread waited for the main loop's idle wait to
+  run out, up to 50 ms, and a widget makes dozens. One `Listbox.insert`
+  from a worker took a second. The loop now wakes as soon as another
+  thread queues work; the same insert takes about 3 ms.
 - After Ctrl-Z and `fg`, dragging with the mouse did nothing: the suspend
   left the mouse's motion reporting on in the shell, and the return asked
   only for clicks. Both modes now go off when the program stops and come

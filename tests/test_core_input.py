@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import curses
 import os
+import time
 
 import pytest
 
@@ -555,7 +556,7 @@ class _Input:
         self.more_pending = more_pending
         self.waited = False
 
-    def wait_for_input(self, timeout_ms):
+    def wait_for_input(self, timeout_ms, *, wake=False):
         self.waited = True
 
     def poll(self, limit=None):
@@ -848,6 +849,41 @@ def test_keys_for_text_are_the_keys_typing_it_sends(curses_stub):
         ("é", "é", 0),
         ("c", "", MOD_CTRL),
     ]
+
+
+# ------------------------------------------------- the loop's wait, and workers
+
+
+def test_the_loops_wait_ends_when_a_worker_queues_a_call(curses_stub):
+    """Not when the wait times out: that was up to 50 ms for every call."""
+    read, write = os.pipe()
+    with os.fdopen(read, "rb", buffering=0) as stream:
+        handler = make_handler(FakeScreen(), stream=stream)
+        dispatcher = handler._dispatcher
+        worker = threading.Thread(target=dispatcher.post, args=(lambda: None,))
+        threading.Timer(0.05, worker.start).start()
+        began = time.monotonic()
+        assert handler.wait_for_input(10_000, wake=True) is False
+        assert time.monotonic() - began < 5
+        worker.join(5)
+        dispatcher.close()
+    os.close(write)
+
+
+def test_a_wait_inside_reading_a_key_is_not_ended_by_a_worker(curses_stub):
+    """A worker's call ending the gap allowed inside a paste would cut the
+    paste short, so only the loop's own wait asks to be woken."""
+    read, write = os.pipe()
+    with os.fdopen(read, "rb", buffering=0) as stream:
+        handler = make_handler(FakeScreen(), stream=stream)
+        dispatcher = handler._dispatcher
+        dispatcher.wakeup_fd()
+        dispatcher.post(lambda: None)
+        began = time.monotonic()
+        assert handler.wait_for_input(100) is False
+        assert time.monotonic() - began >= 0.09
+        dispatcher.close()
+    os.close(write)
 
 
 # ------------------------------------------------------------ a hung-up terminal

@@ -100,7 +100,7 @@ These hold how well TkCurses behaves under constraints.
 | **Security** | Here the injection risk is the terminal: text a program shows must not be able to drive it. `tests/test_input_hostile.py` covers environment values, configuration files and reports on the way out. `tests/test_image_hostile.py` covers image files built to exhaust memory or crash a decoder. `tests/test_cfg_safety.py` covers the paths `tkcurses-cfg` writes through and the text it shows. Each of these tests fails without its fix. | A terminal sending faster than the program reads: `tests/test_input_flood_tty.py`. The system clipboard over OSC 52 and the desktop's tools: `tests/test_system_clipboard.py`. In CI, Bandit scans `src/` and pip-audit checks every lock file (see [Static checks](#static-checks)). `tests/test_hygiene.py` keeps private files out of this public repository. |
 | **Performance** | Work counted rather than timed, so the result is the same on any machine: `tests/test_text_layout_cost.py` holds that typing into a long Text lays out only the line typed into. | A repaint stays cheap enough to run inside a click handler: `tests/test_redraw_cost_tty.py`. |
 | **Resilience** | Partial input: an escape sequence or UTF-8 character split across reads, a terminal reply that arrives late, a paste cut off before its end marker (`tests/test_core_input.py`). A `tkcurses-cfg` save interrupted by `SIGTERM` or `SIGHUP`, or failing on a full disk, changes nothing (`tests/test_cfg_store.py`). | Ctrl-Z and `fg` hand the terminal's modes back and take them again: `tests/test_bracketed_paste_tty.py`. Ctrl-C in a dialog: `tests/test_dialog_interrupt_tty.py`. A raising callback leaves a usable screen: `tests/test_callback_exceptions_tty.py`. A resize in the middle of everything: `tests/integration/test_resize_full_screen_tty.py`. The terminal hanging up under `mainloop()`, with SIGHUP at its default, ignored, or handled by the program, ends it with status 129 after its `finally` and `atexit` run: `tests/test_terminal_hangup_tty.py`. |
-| **Concurrency** | Calls from other threads are queued and run on the thread that owns curses, in order, and a call left waiting when the queue closes is released: `tests/test_core_dispatcher.py`. These tests synchronise on events, not sleeps. | Several processes saving one configuration file at once, and a reader that never sees a half-written file: `tests/test_cfg_store.py`. The test harness forks from xdist's threaded workers, so the child may make only async-signal-safe calls before exec. `tests/test_harness.py` checks that by reading the code. |
+| **Concurrency** | Calls from other threads are queued and run on the thread that owns curses, in order, and a call left waiting when the queue closes is released: `tests/test_core_dispatcher.py`. These tests synchronise on events, not sleeps. A queued call wakes the main loop at once, and only the loop's own wait, not the waits inside reading a key or a paste: `tests/test_core_input.py`. End to end, a worker thread updates a Label, a variable, a Text and a Listbox, and schedules callbacks with `after`, while a person types; every update, callback and key arrives, in order: `tests/integration/test_worker_thread_tty.py`. | Several processes saving one configuration file at once, and a reader that never sees a half-written file: `tests/test_cfg_store.py`. The test harness forks from xdist's threaded workers, so the child may make only async-signal-safe calls before exec. `tests/test_harness.py` checks that by reading the code. |
 
 ## Property-based testing and fuzzing
 
@@ -378,8 +378,8 @@ the worst that can be imagined. Record both ratings in the issue, e.g.
 |---|---|
 | 4 | Security or data: input from outside the program runs code, reads or writes what it should not, or loses or corrupts a user's data; or a release publishes the wrong thing. |
 | 3 | Failure: an exception escapes that the documentation does not name, the program hangs or spins, or the terminal is left unusable after it exits. |
-| 2 | Wrong behaviour: the program carries on but does something other than Tk does or the documentation says, including drawing the wrong thing. |
-| 1 | Cosmetic or slow: everything works and reads correctly, but looks wrong or takes noticeably longer. |
+| 2 | Wrong behaviour: the program carries on but does something other than Tk does or the documentation says, including drawing the wrong thing. Or too slow to use: one operation takes ten times as long as it should, or a person waits more than 100 ms for something Tk does at once. |
+| 1 | Cosmetic or slow: everything works and reads correctly, but looks wrong or takes noticeably longer, short of impact 2's bounds. |
 | 0 | No effect on a program: the tests, tools or documentation are wrong or missing. |
 
 | Reach | Who meets it |
@@ -403,10 +403,13 @@ fixed, it can hide any failure in the code it covers, so it is P2 if that
 code reads outside bytes or runs on every program's main loop, and P3
 otherwise.
 
-Two worked examples. Typing a no-break space did nothing: wrong behaviour,
-impact 2, met only with that character, reach 1, so P3. The image decoders
-had no fuzzing: the failure that could slip through is an exception escaping
-on a hostile file (impact 3, reach 3: P1), and as a gap that is P2.
+Three worked examples. Typing a no-break space did nothing: wrong
+behaviour, impact 2, met only with that character, reach 1, so P3. The
+image decoders had no fuzzing: the failure that could slip through is an
+exception escaping on a hostile file (impact 3, reach 3: P1), and as a gap
+that is P2. A Listbox insert from a worker thread took a second, where it
+takes milliseconds from the main thread: far past ten times as long, so
+impact 2 rather than 1, in a common pattern, reach 2, so P3.
 
 ## Gaps
 
@@ -415,7 +418,6 @@ epic `TkCurses-us5p`.
 
 | Issue | Rating | Gap |
 |---|---|---|
-| `TkCurses-us5p.6` | P2: lets through impact 3, reach 2 | No end-to-end test runs a worker thread that updates widgets in a running program while a person types. That is the usual pattern for a tkinter program with background work. |
 | `TkCurses-us5p.4` | P4: lets through impact 2, reach 2 | Coverage is measured and nothing gates on it, so a drop goes unnoticed. |
 | `TkCurses-us5p.3` | P4: impact 0 | mypy checks only `src/tkcurses`. The test harness, the documentation extensions, the release scripts, the examples and the UAT scenarios are not type-checked. The release scripts' decisions are tested in `tests/test_release_script.py`. |
 | `TkCurses-us5p.8` | P4: lets through impact 1, reach 3 | Performance is held by counting work, which is right for a gate. Nothing records timings over time, so a slowdown that changes no count goes unnoticed. |
