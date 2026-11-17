@@ -42,6 +42,11 @@ pytest -m "not tty"     # fast subset, no pseudo-terminals
 python3 -m sphinx -W --keep-going -b html docs docs/_build/html  # the docs site
 ```
 
+[TESTING.md](TESTING.md) is the map of what these run: the suite's unit and
+integration levels, which modules hold each functional and non-functional
+concern, the property-based and mutation testing, what Ruff, mypy, Bandit
+and pip-audit each check, and the gaps still open.
+
 **`-n 4` is safe and a large difference.** Measured on a 12-core machine, the
 suite takes about five minutes serially and under a minute and a half across
 four workers. The tests that drive pseudo-terminals are about a sixth of the
