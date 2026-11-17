@@ -297,6 +297,9 @@ sigterm = true
 
 [tool.coverage.report]
 show_missing = true
+# Two places, so the total is printed as the figure CI's --cov-fail-under
+# compares: at the default of none, anything from 93.5 up reads as "94%".
+precision = 2
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

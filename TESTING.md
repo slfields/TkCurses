@@ -374,8 +374,22 @@ request.
 Python 3.12's CI job runs the suite under coverage, with branch coverage. The
 other interpreters don't, because coverage more than doubles the run time:
 every tty test forks a process, and each process writes its own data file.
-The report lists the lines and branches that never ran. Nothing yet fails
-when coverage drops; see [Gaps](#gaps).
+The report lists the lines and branches that never ran.
+
+The job fails if the total drops below 93.5%. On 2026-11-17 coverage put
+master's library at 93.78%. Across four master runs the report's missed
+lines and partial branches move by about a tenth of a point, because of the
+tty tests' timing, so the floor sits about three tenths below. Read the
+total coverage prints. It can't be worked out from the report's columns,
+because a missed branch on a line that never ran is not in the
+partial-branch count. Coverage reports to two decimal places (`precision`
+in `pyproject.toml`), so the figure printed is the figure the floor is
+compared with, not a whole number rounded from it. The floor is set on CI's command, not in
+`pyproject.toml`, so `pytest --cov` on a few files does not fail for
+covering only part of the library. Each run's summary on GitHub records
+the total, which is where to look when raising the floor. Raise it as the
+figure rises, and lower it only for a reason written beside it in
+`.github/workflows/ci.yml`.
 
 ## Setting the priority of a problem a test finds
 
@@ -429,5 +443,4 @@ epic `TkCurses-us5p`.
 
 | Issue | Rating | Gap |
 |---|---|---|
-| `TkCurses-us5p.4` | P4: lets through impact 2, reach 2 | Coverage is measured and nothing gates on it, so a drop goes unnoticed. |
 | `TkCurses-us5p.8` | P4: lets through impact 1, reach 3 | Performance is held by counting work, which is right for a gate. Nothing records timings over time, so a slowdown that changes no count goes unnoticed. |
