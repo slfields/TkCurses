@@ -9420,8 +9420,10 @@ class _Drawable(Widget):
 #: A tab becomes a space because a tab IS whitespace - it simply does not
 #: advance to a tab stop yet; see TkCurses-wy7. Everything else becomes a
 #: question mark, which is visible: a stray control character in a widget is
-#: a bug somewhere, and silently drawing nothing hides it.
-_STAND_IN = {"\t": " "}
+#: a bug somewhere, and silently drawing nothing hides it. A no-break space
+#: and a soft hyphen are typed on purpose and are one cell wide, so they are
+#: drawn as what they look like.
+_STAND_IN = {"\t": " ", "\u00a0": " ", "\u00ad": "-"}
 
 
 def _one_cell_each(text: str) -> str:
@@ -12865,7 +12867,11 @@ def _entry_keystroke(event: Event) -> str | None:
         # bind <Alt-Key> and <Meta-Key> to "# nothing", so Alt-f opens a menu
         # through "all" rather than putting an f in the field. TkCurses-r3og.
         return None
-    if event.char and event.char.isprintable():
+    if event.char and not any(map(_is_control, event.char)):
+        # Any character but a control one, as tk::EntryInsert takes any %A
+        # that is not empty - a no-break space or a soft hyphen too, which
+        # str.isprintable() refuses. A control character reaches Tk with
+        # Control held, or as a key bound to "# nothing" above.
         # Two edits, each validated, as tk::EntryInsert makes them: the
         # selection is deleted, then the character inserted at the cursor -
         # even if the validator kept the selection.
@@ -18563,7 +18569,8 @@ def _text_key(event: Event) -> str | None:
         # text.tcl binds <Alt-Key> and <Meta-Key> to "# nothing": see the
         # same test in the Entry's. TkCurses-r3og.
         return None
-    if len(event.char) == 1 and event.char.isprintable():
+    if len(event.char) == 1 and not _is_control(event.char):
+        # tk::TextInsert: any character, as in the Entry's handler.
         text._type(event.char)
         return "break"
     return None

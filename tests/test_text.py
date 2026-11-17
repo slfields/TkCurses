@@ -1740,3 +1740,23 @@ def test_up_and_down_keep_the_column_in_cells(text, start, keysym, lands):
     text.mark_set("insert", start)
     text._handle(KeyEvent(keysym=keysym))
     assert text.index("insert") == lands
+
+
+# --------------------------------------------- characters str calls unprintable
+
+
+def test_a_typed_no_break_space_soft_hyphen_or_format_character_is_inserted(text):
+    """tk::TextInsert inserts any character that is not empty, and Python's
+    str.isprintable() refuses all three of these."""
+    typed(text, "a\u00a0b\u00adc\u200bd")
+    assert text.get("1.0", "end-1c") == "a\u00a0b\u00adc\u200bd"
+
+
+@pytest.mark.parametrize("character", ["\x1b", "\x7f", "\x85"])
+def test_a_typed_control_character_is_not_inserted(text, character):
+    """C0, DEL and C1 reach Tk as keys bound to nothing, or with Control."""
+    assert text._handle(KeyEvent(keysym=f"U{ord(character):04X}", char=character)) in (
+        False,
+        None,
+    )
+    assert text.get("1.0", "end-1c") == ""

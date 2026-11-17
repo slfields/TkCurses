@@ -1415,3 +1415,19 @@ def test_a_masked_field_measures_its_mask_not_its_text(entry):
     entry.insert(0, WIDE + "ab")
     x0 = entry._char_bbox(0)[0]
     assert [entry._char_bbox(i)[0] - x0 for i in range(5)] == [0, 1, 2, 3, 4]
+
+
+def test_a_typed_no_break_space_soft_hyphen_or_format_character_is_inserted(entry):
+    """tk::EntryInsert inserts any %A that is not empty, and Python's
+    str.isprintable() refuses all three of these."""
+    for character in "a\u00a0b\u00adc\u200bd":
+        entry._handle(KeyEvent(keysym=character, char=character))
+    assert entry.get() == "a\u00a0b\u00adc\u200bd"
+    assert entry.index("insert") == 7
+
+
+@pytest.mark.parametrize("character", ["\x1b", "\x7f", "\x85"])
+def test_a_typed_control_character_is_not_inserted(entry, character):
+    """C0, DEL and C1 reach Tk as keys bound to nothing, or with Control."""
+    entry._handle(KeyEvent(keysym=f"U{ord(character):04X}", char=character))
+    assert entry.get() == ""

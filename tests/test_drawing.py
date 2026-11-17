@@ -55,6 +55,12 @@ def test_other_control_characters_become_a_visible_mark():
     assert _one_cell_each("a\x7fb") == "a?b"
 
 
+def test_a_no_break_space_and_a_soft_hyphen_are_drawn_as_they_look():
+    """Typed on purpose, and one cell wide, so not marked as a fault."""
+    assert _one_cell_each("a\u00a0b") == "a b"
+    assert _one_cell_each("a\u00adb") == "a-b"
+
+
 def test_the_length_never_changes():
     """What the clipping either side of it depends on.
 

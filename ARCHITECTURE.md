@@ -1459,6 +1459,17 @@ One difference kept on purpose: a bare `é` as a sequence. Through tkinter,
 Tk 9.0.2 stores it as `<Key-Ã><Key-©>`, two keys, one per byte of its
 UTF-8, which nothing typed can match. Here it is the one key.
 
+**An Entry or a Text takes any typed character but a control one.** Read
+from Tk 9.0.2's scripts, since `event_generate` cannot type these on the
+machine measured: `tk::EntryInsert`, `ttk::entry::Insert` and
+`tk::TextInsert` insert any `%A` that is not empty, and what keeps Escape,
+Return or a Control key out is the class binding of each to `# nothing`.
+Until `TkCurses-m5jx` the handlers here asked `str.isprintable()`, which
+refuses a no-break space, a soft hyphen and every format character, so
+none of them could be typed. They now refuse only C0, DEL and C1. The two
+that are typed on purpose draw as what they look like, a space and a
+hyphen; anything else that does not print still draws as `?`.
+
 #### Bracketed paste, and handing the terminal back on Ctrl-Z
 
 **A paste is asked to be marked**: `ESC [ ? 2004 h` at start-up, unless
