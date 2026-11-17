@@ -621,6 +621,36 @@ class EventType(enum.StrEnum):
     MouseWheel = "38"
 
 
+#: The event a marked paste is delivered as. A TkCurses virtual event: Tk
+#: has no paste that arrives as keystrokes, X11's being selections.
+_TERMINAL_PASTE = EventPattern(type="Virtual", detail="TerminalPaste")
+
+
+def _is_control(char: str) -> bool:
+    """C0, DEL and C1: what a terminal would act on rather than show."""
+    code = ord(char)
+    return code < 0x20 or 0x7F <= code < 0xA0
+
+
+def _without_controls(text: str) -> str:
+    """``text`` with every control character taken out."""
+    return "".join(char for char in text if not _is_control(char))
+
+
+def _pasted_lines(text: str) -> str:
+    """A paste for a Text: its line breaks as newlines - a terminal sends
+    carriage returns - and tabs kept; every other control taken out."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return "".join(c for c in text if c in "\n\t" or not _is_control(c))
+
+
+def _pasted_line(text: str) -> str:
+    """A paste for an entry, which has one line: each line break a space,
+    every other control taken out."""
+    text = text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+    return _without_controls(text)
+
+
 def _event_type(pattern_type: str) -> EventType:
     """The :class:`EventType` for a binding pattern's type name."""
     if pattern_type == "Virtual":
@@ -656,10 +686,17 @@ class Event:
         x_root, y_root: Position on the screen, in cells.
         width, height: New size, for ``<Configure>``.
         delta: Scroll amount, positive for up.
+        data: What a virtual event carries, as Tk's ``%d`` - the text, for
+            ``<<TerminalPaste>>``. ``event_generate(..., data=...)`` sets
+            it, as Tk's ``-data`` does.
+
+    TkCurses extension:
+        ``data``, which tkinter does not pass to a callback.
     """
 
     __slots__ = (
         "char",
+        "data",
         "delta",
         "height",
         "keycode",
@@ -697,6 +734,7 @@ class Event:
         self.width: int = 0
         self.height: int = 0
         self.delta: int = 0
+        self.data: str = ""
         for name, value in fields.items():
             if name not in self.__slots__:
                 raise TypeError(f"Event has no field {name!r}")
@@ -2476,6 +2514,14 @@ class Misc:
                 return self._handle(replace(core, state="released")) or broke
         pattern = pattern_for_event(core)
         return self._dispatch(Event._from_core(core, self), [pattern])
+
+    def _binds(self, pattern: EventPattern) -> bool:
+        """Whether anything on this widget's binding tags takes ``pattern``."""
+        bindings = self.tk.bindings
+        return any(
+            next(iter(bindings.matching(tag, [pattern])), None) is not None
+            for tag in self._binding_tags()
+        )
 
     def _dispatch(self, event: Event, patterns: list[EventPattern]) -> bool:
         """Run the bindings matching ``patterns`` over this widget's tags.
@@ -7995,6 +8041,25 @@ class Tk(_Backdrop, BaseWidget, Wm):
         for event in self._collapse_motion(self._input.poll(_INPUT_BATCH)):
             self._guard(self._route, event)
 
+    def _paste(self, text: str) -> None:
+        """Hand a paste the terminal marked to the focus, as
+        ``<<TerminalPaste>>`` with the text in ``event.data``.
+
+        A widget that binds nothing to it - a button, a list, a program's own
+        canvas - gets the text as the keys typing it would send, less every
+        control character: a pasted line break is not Return to a dialog's
+        default button, nor Escape the key that closes it.
+        """
+        target = self._through_grab(self.tk.focus or self)
+        if target._binds(_TERMINAL_PASTE):
+            event = Event(widget=target, data=text)
+            event.type = EventType.VirtualEvent
+            target._dispatch(event, [_TERMINAL_PASTE])
+            return
+        if self._input is not None:
+            for key in self._input.keys_for(_without_controls(text)):
+                self._route(key)
+
     def _collapse_motion(self, events: list[CoreEvent]) -> list[CoreEvent]:
         """``events`` with each run of motion in one window cut to its last.
 
@@ -8039,11 +8104,7 @@ class Tk(_Backdrop, BaseWidget, Wm):
             self._handle_resize()
             return
         if isinstance(event, PasteEvent):
-            # As the keys it would have been before the terminal marked it,
-            # each to whatever has the focus by then.
-            if self._input is not None:
-                for key in self._input.keys_for(event.text):
-                    self._route(key)
+            self._paste(event.text)
             return
         if isinstance(event, MouseEvent):
             if event.state in _PRESSES and self.tk.repeat is not None:
@@ -13247,6 +13308,40 @@ def _entry_paste_selection(event: Event) -> None:
     entry._redraw()
 
 
+def _entry_terminal_paste(event: Event) -> str:
+    """Put a paste the terminal marked in, replacing any selection.
+
+    One edit, validated once with the whole result, as a key is: a
+    validator sees ``%d`` 1, ``%S`` the pasted text. Line breaks become
+    spaces and control characters go, since an entry holds one line of
+    text and a pasted Return would otherwise be a keystroke.
+    """
+    entry = event.widget
+    pasted = _pasted_line(event.data)
+    if not pasted:
+        return "break"
+    field = entry._field
+    text = field.text
+    first, last = field.selection or (field.cursor, field.cursor)
+
+    def change() -> None:
+        if last > first:
+            field.delete(first, last)
+        field.insert(first, pasted)
+        field.place_cursor(first + len(pasted))
+
+    entry._edit(
+        change,
+        text[:first] + pasted + text[last:],
+        action=1,
+        index=first,
+        changed=pasted,
+    )
+    entry._see_cursor()
+    entry._redraw()
+    return "break"
+
+
 def _bind_entry_clipboard(bind: Callable[..., Any], name: str) -> None:
     """Install the clipboard bindings under one entry class's name.
 
@@ -13260,6 +13355,7 @@ def _bind_entry_clipboard(bind: Callable[..., Any], name: str) -> None:
     bind(name, "<<Clear>>", _entry_clear)
     bind(name, "<<SelectAll>>", _entry_select_all)
     bind(name, "<<PasteSelection>>", _entry_paste_selection)
+    bind(name, "<<TerminalPaste>>", _entry_terminal_paste)
 
 
 # ------------------------------------------------- moving through an entry
@@ -15798,6 +15894,7 @@ class Text(_Drawable, XView, YView):
         bind(name, "<<SelectAll>>", _text_select_all)
         bind(name, "<<SelectNone>>", _text_select_none)
         bind(name, "<<PasteSelection>>", _text_paste_selection)
+        bind(name, "<<TerminalPaste>>", _text_terminal_paste)
         bind(name, "<<Undo>>", _text_undo)
         bind(name, "<<Redo>>", _text_redo)
         # Alt-z. Ours, not Tk's, whose X11 <<Redo>> is Control-Z alone. It was
@@ -18842,6 +18939,35 @@ def _text_paste(event: Event) -> None:
         text.delete(selected[0], selected[1])
     text.insert("insert", data)
     text.see("insert")
+
+
+def _text_terminal_paste(event: Event) -> str:
+    """Put a paste the terminal marked in at the insert mark, replacing any
+    selection, as one undo step.
+
+    Line breaks are kept, as newlines, and tabs; every other control
+    character goes. Nothing is indented or completed: the text goes in as
+    it was copied. A disabled Text takes none of it.
+    """
+    text = event.widget
+    pasted = _pasted_lines(event.data)
+    if not pasted or not _text_writable(text):
+        return "break"
+    buffer = text._buffer
+    auto = buffer.auto_separators
+    text._separate_if_asked()
+    buffer.auto_separators = False
+    try:
+        selected = _text_selected(text)
+        if selected is not None:
+            text.mark_set("insert", selected[0])
+            text.delete(selected[0], selected[1])
+        text.insert("insert", pasted)
+    finally:
+        buffer.auto_separators = auto
+    text._separate_if_asked()
+    text.see("insert")
+    return "break"
 
 
 def _text_clear(event: Event) -> None:

@@ -119,11 +119,18 @@ apart arrive as the same bytes:
   by waiting 25 milliseconds for more. Over a slow connection a sequence
   can be split, and arrow keys arrive as Escape and letters; set
   `TKCURSES_INPUT_ESCAPE_DELAY` to more, in milliseconds.
-- **A paste** arrives as bytes too, the same as typing it. TkCurses asks
-  the terminal to mark the start and end of what is pasted (bracketed
-  paste), which almost every terminal does. One that does not understand
-  the request may show `200~` and `201~` around every paste; set
-  `TKCURSES_INPUT_BRACKETED_PASTE=0` for it.
+- **A paste** with the terminal's own paste key arrives as bytes too, the
+  same as typing it. TkCurses asks the terminal to mark the start and end
+  of what is pasted (bracketed paste), which almost every terminal does,
+  and puts it into the focused widget as one piece: a Text keeps its line
+  breaks and tabs, and undoes it in one step; an entry takes it as one
+  line, each line break a space. Control characters in a paste are dropped
+  - a pasted line break is never Return, a pasted Escape never Escape. A
+  program can take a paste itself by binding `<<TerminalPaste>>`, whose
+  `event.data` is the text; a widget that takes none gets the paste as the
+  keys it would be, less its control characters. A terminal that does not
+  understand the request may show `200~` and `201~` around every paste;
+  set `TKCURSES_INPUT_BRACKETED_PASTE=0` for it, and a paste is typed.
 
 Some keys never reach the program because something else takes them first:
 

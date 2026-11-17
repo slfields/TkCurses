@@ -142,3 +142,45 @@ def test_control_z_under_a_shell_stops_and_fg_brings_it_back(terminal, tmp_path)
     taken_again = term.received[before:]
     assert b"\x1b[?1002h" in taken_again
     assert ON in taken_again
+
+
+FALLBACK = """
+import tkcurses as tk
+root = tk.Tk()
+keys = []
+shown = tk.Label(root, text="ready")
+shown.pack()
+button = tk.Button(root, text="OK", command=lambda: keys.append("INVOKED"))
+button.pack()
+button.focus_set()
+button.bind("<Key>", lambda e: keys.append(e.keysym))
+button.bind("<Return>", lambda e: keys.append("RETURN"))
+button.bind("<F5>", lambda e: shown.configure(text="keys=[" + ",".join(keys) + "]"))
+root.after(15000, root.quit)
+root.mainloop()
+"""
+
+
+def test_a_widget_that_takes_no_paste_gets_its_keys_without_controls(
+    terminal, tmp_path
+):
+    """A focused button bound to Return, as a dialog's default is: the line
+    break in a paste must not press it, nor the Escape close anything."""
+    term = terminal(cols=50, rows=8)
+    term.run_source(FALLBACK, workdir=tmp_path)
+    term.wait_for_text("ready")
+    term.send(b"\x1b[200~a\rb\x1b\tc\x1b[201~")
+    term.send_keys("<F5>")
+    term.wait_for_text("keys=[a,b,c]")
+
+
+def test_a_paste_goes_to_the_focus_as_one_edit_in_an_entry(terminal, tmp_path):
+    source = PROGRAM.replace(
+        "text = tk.Text(root, width=30, height=3)", "text = tk.Entry(root, width=30)"
+    ).replace('text.get("1.0", "end-1c")', "text.get()")
+    term = terminal(cols=50, rows=8)
+    term.run_source(source, workdir=tmp_path)
+    term.wait_for_text("ready")
+    term.send(b"\x1b[200~one\rtwo\x1b[201~")
+    term.send_keys("<F5>")
+    term.wait_for_text("got='one two'")

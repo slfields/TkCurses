@@ -1470,9 +1470,33 @@ marker becomes one `PasteEvent` - at most 16 MiB of it kept, the rest read
 and dropped so that it is not typed, and ended unfinished after half a
 second with nothing. Anything ncurses decoded inside a paste is not text:
 a resize or mouse report is delivered after it, any other key code
-dropped. The loop gives a paste to the focus as the keys it would have
-been, so marking it changes nothing yet; what a widget makes of one is
-`TkCurses-tcbj.22`'s second half.
+dropped.
+
+**A paste is `<<TerminalPaste>>` to the focus**, through any grab, with
+the text in `event.data` - Tk's `%d`, which tkinter's Event lacks and this
+one has. Tk has nothing to follow: an X11 paste is a selection a widget
+asks for, never keystrokes, so the rules were chosen, with the user, on
+`TkCurses-tcbj.22`:
+
+- **Text** replaces the selection and inserts at the insert mark, as its
+  `<<Paste>>` does here, all as one undo step - autoseparators held off
+  between the delete and the insert, a separator either side, as
+  `tk::TextInsert` groups typing over a selection. Line breaks become
+  newlines (a terminal sends `\r`; `\r\n` is one break), tabs stay, every
+  other control character - C0, DEL and C1 - goes. No auto-indent, no
+  Return binding: the text goes in as it was copied. A disabled Text
+  takes none of it and its marks stay where they were.
+- **The entry family** - Entry, Spinbox, and ttk's Entry, Spinbox and
+  Combobox, which all install `_bind_entry_clipboard` - takes it as one
+  line: each line break a space, every control gone. The selection is
+  replaced and the paste inserted as **one** edit, so a validator is
+  called once, with `%d` 1, `%i` where it starts, `%S` the pasted text and
+  `%P` the result; the cursor ends after it.
+- **Anything else**, with no `<<TerminalPaste>>` binding on any of its
+  tags, gets the paste as the keys it would have been, less every control
+  character. Removing them is the point: a dialog's focused default
+  button bound to Return would otherwise be pressed by a pasted line
+  break, and Escape would close it.
 
 **Ctrl-Z is answered by the loop, not by ncurses.** ncurses' own SIGTSTP
 handler runs `endwin()` inside the signal and, measured, sends only what
