@@ -25,6 +25,7 @@ that builds one widget and nothing else.
 | `test_dialog_over_app_tty.py` | The same, with real dialogs on a real screen |
 | `test_resize_full_screen_tty.py` | Everything above, and then the terminal changes size |
 | `test_teardown.py` | Nothing can still reach a destroyed widget; nothing it reached is damaged |
+| `test_worker_thread_tty.py` | A worker thread updating several widgets while a person types loses nothing and stalls nothing |
 
 ## Writing one
 
