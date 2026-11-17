@@ -7089,6 +7089,10 @@ class Wm:
 #: and costs nothing while idle.
 _IDLE_TIMEOUT_MS = 50
 
+#: The exit status of a program whose terminal hung up under ``mainloop``:
+#: 128 + SIGHUP, what a shell reports for a process the signal killed.
+_HANGUP_EXIT_STATUS = 129
+
 #: How many queued cross-thread calls to run per pass. Bounded so a thread
 #: posting work in a tight loop cannot starve input handling.
 _DISPATCH_BATCH = 64
@@ -7404,6 +7408,9 @@ class Tk(_Backdrop, BaseWidget, Wm):
         self._interrupt_pending = False
         #: A suspend the loop has yet to carry out; see :meth:`_catch_suspend`.
         self._suspend_pending = False
+        #: The terminal hung up; the loop ends the program at the end of the
+        #: pass. See :meth:`_catch_hangup`.
+        self._hangup = False
         #: What puts SIGTSTP back, while this root has it.
         self._release_suspend: Callable[[], None] | None = None
         #: Set while a wait runs before mainloop: a Ctrl-C then cancels the
@@ -7703,6 +7710,17 @@ class Tk(_Backdrop, BaseWidget, Wm):
             main window. A modal window with no Escape binding is closed as
             if by its ``WM_DELETE_WINDOW`` protocol. With text selected in
             the dialog, Ctrl-C copies it instead, as it does everywhere.
+
+            **The terminal hanging up ends the program with**
+            ``SystemExit(129)``. Closing the terminal's window, or losing
+            the connection it came over, sends SIGHUP, whose default kills
+            the process at once. While the loop runs the hangup is answered
+            between callbacks instead, so ``finally`` blocks and ``atexit``
+            handlers run - somewhere to save work. 129 is the status a
+            shell reports for a process SIGHUP killed. A SIGHUP handler of
+            the program's own is left in charge; if the loop goes on
+            running, it finds the terminal gone and ends the same way, as
+            it does when SIGHUP is ignored.
         """
         # This docstring once claimed the terminal was restored before it was
         # true - measured, Ctrl-C left cbreak, the hidden cursor, the
@@ -7714,6 +7732,7 @@ class Tk(_Backdrop, BaseWidget, Wm):
         self.tk.quit_requested = False
         passes = 0
         release = self._catch_interrupts()
+        release_hangup = self._catch_hangup()
         try:
             while self._running and not self.tk.quit_requested:
                 if not self.winfo_exists():
@@ -7743,6 +7762,8 @@ class Tk(_Backdrop, BaseWidget, Wm):
             self._running = False
             if release is not None:
                 release()
+            if release_hangup is not None:
+                release_hangup()
 
     def _catch_interrupts(self) -> Callable[[], None] | None:
         """Take Ctrl-C as a request the loop answers between callbacks.
@@ -7778,6 +7799,51 @@ class Tk(_Backdrop, BaseWidget, Wm):
             self._interrupt_pending = False
 
         return release
+
+    def _catch_hangup(self) -> Callable[[], None] | None:
+        """Take SIGHUP as a request the loop answers between callbacks.
+
+        The terminal closing - its window shut, the SSH connection lost -
+        sends SIGHUP, whose default kills the process where it stands: no
+        ``finally``, no ``atexit``, nothing a program wrote to save its work.
+        While the loop runs the signal only marks the hangup, and the loop
+        answers it at the end of the pass with SystemExit, so all of those
+        run. Nothing is changed outside the main thread, where there is no
+        such signal, or when the program has a SIGHUP handler of its own or
+        ignores it; a hangup it lets through is still noticed, by the
+        terminal, in :meth:`_read_input`.
+
+        Returns:
+            What puts the signal back, or None if it was left alone.
+        """
+        hangup = getattr(signal, "SIGHUP", None)
+        if hangup is None or threading.current_thread() is not threading.main_thread():
+            return None
+        if signal.getsignal(hangup) is not signal.SIG_DFL:
+            return None
+        self._hangup = False
+        signal.signal(hangup, self._on_hangup)
+
+        def release() -> None:
+            signal.signal(hangup, signal.SIG_DFL)
+
+        return release
+
+    def _on_hangup(self, signum: int, frame: Any) -> None:
+        """SIGHUP while the loop runs: note it for the end of the pass."""
+        del signum, frame
+        self._hangup = True
+
+    def _answer_hangup(self) -> None:
+        """End the program for a hangup noted since the last pass.
+
+        SystemExit, with the status a shell reports for a process SIGHUP
+        killed, 128 + 1: nothing is left to show a traceback on, and a
+        caller looking at the status sees the same reason as before.
+        """
+        if self._hangup:
+            self._hangup = False
+            raise SystemExit(_HANGUP_EXIT_STATUS)
 
     def _on_interrupt(self, signum: int, frame: Any) -> None:
         """SIGINT while the loop runs: note it, or raise if one is waiting."""
@@ -7878,6 +7944,7 @@ class Tk(_Backdrop, BaseWidget, Wm):
         # Last, between passes, where a callback cannot be cut in half.
         self._answer_interrupt()
         self._answer_suspend()
+        self._answer_hangup()
 
     def _catch_suspend(self) -> Callable[[], None] | None:
         """Take the suspend key, Control-Z, as something the loop does
@@ -8036,11 +8103,19 @@ class Tk(_Backdrop, BaseWidget, Wm):
             if delay is None
             else min(int(delay * 1000), _IDLE_TIMEOUT_MS)
         )
+        readable = False
         if not self._input.more_pending:
             # Not after a pass that stopped at its limit: what is left may be
             # inside curses already, where select() cannot see it.
-            self._input.wait_for_input(max(timeout, 0), wake=True)
-        for event in self._collapse_motion(self._input.poll(_INPUT_BATCH)):
+            readable = self._input.wait_for_input(max(timeout, 0), wake=True)
+        events = self._input.poll(_INPUT_BATCH)
+        if readable and not events and self._input.terminal_gone():
+            # Readable with nothing to read is how a hung-up terminal looks
+            # when SIGHUP did not end the program - ignored, as under nohup,
+            # or handled by a handler that carried on. Left alone the loop
+            # spun on it at full CPU for ever.
+            self._hangup = True
+        for event in self._collapse_motion(events):
             self._guard(self._route, event)
 
     def _paste(self, text: str) -> None:

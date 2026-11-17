@@ -884,3 +884,32 @@ def test_a_wait_inside_reading_a_key_is_not_ended_by_a_worker(curses_stub):
         assert time.monotonic() - began >= 0.09
         dispatcher.close()
     os.close(write)
+
+
+# ------------------------------------------------------------ a hung-up terminal
+
+
+def test_a_terminal_that_hung_up_is_seen_to_be_gone(curses_stub):
+    master, slave = os.openpty()
+    with os.fdopen(slave, "rb", buffering=0) as stream:
+        handler = make_handler(FakeScreen(), stream=stream)
+        assert handler.terminal_gone() is False
+        os.close(master)
+        assert handler.terminal_gone() is True
+
+
+def test_a_stream_that_is_not_a_terminal_is_not_gone(curses_stub):
+    """A pipe has no terminal settings to refuse: that is not a hangup."""
+    read, write = os.pipe()
+    with os.fdopen(read, "rb", buffering=0) as stream:
+        handler = make_handler(FakeScreen(), stream=stream)
+        assert handler.terminal_gone() is False
+    os.close(write)
+
+
+def test_a_closed_stream_is_not_gone(curses_stub):
+    class Closed:
+        def fileno(self):
+            raise ValueError("I/O operation on closed file")
+
+    assert make_handler(FakeScreen(), stream=Closed()).terminal_gone() is False

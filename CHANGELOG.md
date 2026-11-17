@@ -20,6 +20,13 @@ All notable changes to TkCurses. The format follows
   shows `200~` around pastes.
 
 ### Fixed
+- A program whose terminal went away - its window closed, the SSH
+  connection lost - was killed where it stood by SIGHUP, so no `finally`
+  block or `atexit` handler ran; and with SIGHUP ignored, as under `nohup`,
+  it never exited and spun at full CPU. Under `mainloop()` a hangup now
+  ends the program with `SystemExit(129)`, after its own cleanup runs. A
+  program's own SIGHUP handler is left in charge, and the loop still
+  notices the terminal is gone.
 - A worker thread updating widgets crawled: each drawing call a widget
   method made from another thread waited for the main loop's idle wait to
   run out, up to 50 ms, and a widget makes dozens. One `Listbox.insert`

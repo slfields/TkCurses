@@ -783,6 +783,19 @@ class TerminalHarness:
                 os.write(2, traceback.format_exc().encode())
             os._exit(127)
 
+    def hang_up(self) -> None:
+        """Take the terminal away from the running child.
+
+        What closing its window or losing an SSH connection does: the master
+        side closes, the kernel sends the child SIGHUP, and from then on the
+        child's terminal reads end of file and refuses to give its settings.
+        Nothing more is read from the screen; :meth:`wait_for_exit` still
+        reaps the child and collects its stderr.
+        """
+        if self._master is not None:
+            os.close(self._master)
+            self._master = None
+
     def close(self) -> None:
         """Terminate the child if still running and release all descriptors."""
         if self._pid is not None:
