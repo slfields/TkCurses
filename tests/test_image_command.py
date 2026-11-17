@@ -26,6 +26,7 @@ library has none.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -35,6 +36,11 @@ import tkcurses
 tkinter = pytest.importorskip("tkinter")
 
 XBM = "#define t_width 4\n#define t_height 2\nstatic unsigned char t_bits[] = { 0x0f, 0x09 };\n"
+
+#: Stands for the name ``image create photo`` chose. Tk numbers those across
+#: the whole process, as TkCurses does, so it is ``image1`` only if no test
+#: before this one made an unnamed image.
+NEW = object()
 
 #: Each step is a tk.call, in order, on an application holding a 4x6 photo
 #: "pic" shown by a label, and a 4x2 bitmap "bits".
@@ -70,7 +76,7 @@ STEPS: list[tuple[Any, ...]] = [
     ("image", "create", "photo", "bad", "-zzz", "1"),
     ("image", "create", "photo", "odd", "-width"),
     ("image", "names"),
-    ("image", "delete", "made", "image1", "bm2"),
+    ("image", "delete", "made", NEW, "bm2"),
     ("image", "names"),
 ]
 
@@ -80,12 +86,20 @@ def _run(module: Any, root: Any) -> list:
     module.BitmapImage(master=root, name="bits", data=XBM)
     label = module.Label(root, image=picture)
     found: list = []
+    new = None
     for step in STEPS:
+        call = tuple(new if part is NEW else part for part in step)
         try:
-            answer = root.tk.call(*step)
+            answer = root.tk.call(*call)
         except module.TclError as error:
             found.append((step, "error", str(error)))
             continue
+        if step == ("image", "create", "photo"):
+            new = str(answer)
+            assert re.fullmatch(r"image\d+", new), new
+            answer = "image<n>"
+        elif new is not None and isinstance(answer, tuple):
+            answer = tuple("image<n>" if str(a) == new else a for a in answer)
         if isinstance(answer, tuple):
             answer = sorted(str(a) for a in answer if not str(a).startswith("::tk::"))
         found.append((step, answer))

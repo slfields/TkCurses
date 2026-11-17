@@ -131,26 +131,139 @@ has a generated fuzzer yet. See [Gaps](#gaps).
 
 A mutation test changes the code under test on purpose and checks that some
 test fails. A mutant that survives means either a test is missing or the
-change cannot alter behaviour. TkCurses has used it by hand, on the code a
-change touched, to find tests that passed without checking anything. The fixes
-from the 2026-11 security review were checked this way.
+change cannot alter behaviour. Coverage says a line ran. A killed mutant says
+some test would have noticed if that line were wrong. The tool is
+[mutmut](https://mutmut.readthedocs.io/), run through
+`tests/support/mutate.py`.
 
-The method, with mutmut, is being written up under `TkCurses-us5p.2`. Until
-it lands, these rules come from running mutation tests by hand and each one
-was learned from a failure:
+### Running it
 
-- **Cap each mutant's memory.** For example, `(ulimit -v 2000000; pytest ...)`.
-  A mutant that removes a bound can turn one test into unlimited allocation.
-  One grew to 12.8 GB in 35 seconds and was killed by the kernel along with
-  the terminal running it.
-- **Write no bytecode.** Set `PYTHONDONTWRITEBYTECODE=1`. If a mutant is
-  restored within the same second and at the same size, Python can keep
-  running the mutant's cached `.pyc`.
-- **Restore from a byte snapshot, never `git checkout`.** After a crash,
-  compare the source with the snapshot before anything else, in case the
-  mutant is still in place.
-- **Start from a passing baseline.** A mutant is killed only by a test that
-  passed without it.
+```bash
+pip install -e ".[mutation]"
+python3 tests/support/mutate.py                              # every module HEAD changed since origin/master
+python3 tests/support/mutate.py src/tkcurses/_core/cells.py  # one module
+python3 tests/support/mutate.py --base v0.4.2                # changed since a tag
+```
+
+Run it on a change to the library's logic before opening its pull request,
+and say what it found in the pull request. It is not part of CI, for two
+reasons:
+
+- **It takes too long.** A small module takes about two minutes: one to find
+  which tests reach each function, and the rest to run them against each
+  mutant.
+- **A survivor needs reading, not just counting.** It can be a missing test
+  or a change that can never matter, and only a person can tell which.
+
+The script applies what was learned running mutation tests by hand, so
+nobody has to remember it:
+
+- **It mutates the commit, not the working copy.** mutmut runs in a fresh
+  worktree of HEAD outside the repository, so your files are never touched
+  and a half-made change is not what gets measured. Commit first. The
+  worktree is kept afterwards for reading the results.
+- **Only the modules named are mutated.** mutmut replaces each function with
+  a copy per mutant. Mutated whole, `__init__.py` grows from 1 MB to 43 MB,
+  every test slows down importing it, and a test that caps its child process
+  at 512 MB runs out. The script sets `only_mutate` in the worktree's
+  `pyproject.toml` alone.
+- **Every process has a memory cap**, 8 GiB unless `--memory` says otherwise.
+  A mutant that removes a bound can make one test allocate without end. By
+  hand, once, a test grew to 12.8 GB in 35 seconds before the kernel killed
+  it and the terminal with it. Under the cap the test fails with
+  `MemoryError` instead, and the mutant counts as killed.
+- **No bytecode is written**, so a stale `.pyc` can never stand in for a
+  source file.
+
+mutmut itself refuses to start unless the selected tests pass unmutated,
+and it checks that a forced mutant fails them. A survivor is never the
+product of a broken baseline.
+
+### Which tests can kill a mutant
+
+The configuration is `[tool.mutmut]` in `pyproject.toml`. mutmut runs the
+whole suite once, tracing which tests call each function, then runs only
+those tests against that function's mutants. Two kinds of test are left out:
+
+- **The tty tests.** They reach the library in a child process the harness
+  forks, which mutmut's tracing cannot see, so they would never be chosen.
+  Leaving them out keeps the tracing run to about a minute.
+- **Tests about the repository rather than the library.** These ask git
+  about the tree, and mutmut's copy of it is not a checkout.
+
+So a function that only a tty test exercises reports **no tests**. That is a
+gap in the unit tests, not proof the code is untested.
+
+### Reading the results
+
+The script ends with every mutant that was not killed, grouped by status,
+and the commands to read one and to remove the worktree.
+
+| Status | Meaning | What to do |
+|---|---|---|
+| killed | A test failed. | Nothing. |
+| survived | Every test passed with the mutant in place. | Read it (below). |
+| no tests | No traced test calls the function. | Write a unit test, or check by hand that a tty test catches it (below). |
+| timeout | The tests ran far longer than they do unmutated: usually a loop that no longer ends. | Treat as killed, unless the slowness itself is what a test should have caught. |
+| suspicious, segfault | The test run ended in a way that is neither a pass nor a failure. | Read it. It may be a fault in a test's cleanup. |
+
+To read one, in the worktree the script printed:
+
+```bash
+python3 -m mutmut show tkcurses._core.cells.x_char_cells__mutmut_1   # the change, as a diff
+python3 -m mutmut browse                                            # all of them, interactively
+```
+
+### What to do about a survivor
+
+A surviving mutant is one of two things.
+
+1. **A test that is missing.** The mutant changes behaviour that a program
+   could see, and nothing checks it. Write the test that fails with the
+   mutant in place, then run the script again to see it killed. The test
+   should state the behaviour, not the mutant. "U+0300 takes no cells" is a
+   fact about terminals; "`<` is not `<=`" is not a test name.
+2. **An equivalent mutant.** No input can tell it from the original, so no
+   test can ever kill it. Typically the mutant changes a shortcut that the
+   slow path agrees with, an optimisation, or a value that is overwritten
+   before it is read. Say in the pull request why it is equivalent.
+
+   `# pragma: no mutate` on a line stops mutmut mutating that line at all.
+   Use it only when every mutant of the line is equivalent, because it hides
+   the meaningful ones too.
+
+To check a **no tests** mutant against the tty tests, apply it in the
+worktree, never in your own checkout. The worktree is disposable:
+
+```bash
+cd /tmp/tkcurses-mutation
+python3 -m mutmut apply NAME
+python3 -m pytest -m tty TESTS   # the tty tests that should catch it
+git checkout -- src              # the worktree's src, not yours
+```
+
+### A worked example
+
+`src/tkcurses/_core/cells.py`, which measures how many terminal cells text
+takes, was the first module run this way. 63 mutants, 14 survived:
+
+- **13 were missing tests**, now in `tests/test_core_cells.py`:
+  - U+0300, the first combining mark, where Latin's fast path ends;
+  - the last code point of the embedding range;
+  - an embedded character whose window has gone;
+  - clipping or skipping zero cells of text that starts with a combining
+    mark;
+  - skipping past the end of the text, including a cut through a wide
+    character.
+- **1 is equivalent.** It changes `character < "\u0300"` so that the fast path
+  ends at `"X"` instead. Every character it moves to the slow path gets the
+  same answer from the Unicode database there.
+
+Its first run also found a test that depended on the order tests ran in.
+`tests/test_image_command.py` expected Tk's unnamed images to be numbered
+from `image1`. Tk numbers them across the whole process, and so does
+TkCurses, so the test passed only because no earlier test made one. It now
+takes the name Tk gives.
 
 ## Static checks
 
@@ -238,7 +351,6 @@ epic `TkCurses-us5p`.
 
 | Issue | Gap |
 |---|---|
-| `TkCurses-us5p.2` | Mutation testing is done by hand. Adopt mutmut and write up its method here. |
 | `TkCurses-us5p.3` | mypy checks only `src/tkcurses`. The test harness, the documentation extensions, the release scripts, the examples and the UAT scenarios are not type-checked. |
 | `TkCurses-us5p.4` | Coverage is measured and nothing gates on it, so a drop goes unnoticed. |
 | `TkCurses-us5p.5` | The two parsers of outside bytes, the input stream and the image decoders, have hand-built hostile cases but no generated fuzzing. |

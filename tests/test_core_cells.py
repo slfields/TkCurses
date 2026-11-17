@@ -21,7 +21,17 @@ from __future__ import annotations
 
 import pytest
 
-from tkcurses._core.cells import cells, char_cells, clip_cells, pad_cells, skip_cells
+from tkcurses._core import cells as cells_module
+from tkcurses._core.cells import (
+    EMBEDDED_FIRST,
+    EMBEDDED_LAST,
+    cells,
+    char_cells,
+    clip_cells,
+    is_embedded,
+    pad_cells,
+    skip_cells,
+)
 
 WIDE = "\u65e5"  # a CJK ideograph
 EMOJI = "\U0001f600"
@@ -37,6 +47,7 @@ SAMPLES = [
     ("\U0001f1e6", 2),  # a regional indicator, half a flag
     ("\u1100", 2),  # a Hangul leading jamo
     (ACUTE, 0),
+    ("\u0300", 0),  # the first combining mark, where Latin's fast path ends
     ("\u20dd", 0),  # an enclosing circle
     ("\u0903", 0),  # a Devanagari spacing mark
     ("\u200b", 0),  # zero width space
@@ -102,3 +113,35 @@ def test_padding_fills_to_exactly_the_cells_asked_for():
 def test_padding_replaces_a_wide_character_cut_at_the_end_with_a_space():
     assert pad_cells("a" + WIDE, 2) == "a "
     assert cells(pad_cells("a" + WIDE * 2, 4)) == 4
+
+
+def test_both_ends_of_the_embedding_range_are_embedded():
+    assert is_embedded(EMBEDDED_FIRST)
+    assert is_embedded(EMBEDDED_LAST)
+    assert not is_embedded(chr(ord(EMBEDDED_FIRST) - 1))
+
+
+@pytest.mark.parametrize("character", [EMBEDDED_FIRST, EMBEDDED_LAST])
+def test_an_embedded_character_whose_window_has_gone_takes_no_cells(
+    character, monkeypatch
+):
+    """Its window or image was destroyed, and the Text still holds it. The
+    registry is emptied first: a Text made by an earlier test may have left
+    one of these registered."""
+    monkeypatch.setattr(cells_module, "EMBEDDED", {})
+    assert char_cells(character) == 0
+
+
+def test_no_cells_leaves_out_even_a_mark_with_no_width():
+    assert clip_cells(ACUTE + "a", 0) == ""
+
+
+def test_skipping_no_cells_keeps_a_leading_mark():
+    assert skip_cells(ACUTE + "a", 0) == (ACUTE + "a", 0)
+
+
+def test_skipping_past_the_end_leaves_nothing():
+    """And says how far a wide character it cut ran on past the count."""
+    assert skip_cells(WIDE, 1) == ("", 1)
+    assert skip_cells(WIDE, 2) == ("", 0)
+    assert skip_cells("a" + WIDE, 10) == ("", 0)
