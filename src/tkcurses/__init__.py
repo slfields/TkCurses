@@ -4190,11 +4190,17 @@ class Misc:
         # does - noted, answered between callbacks - and the answer is a
         # cancel. Inside mainloop the loop's own handling stands, which
         # cancels a modal window too: _answer_interrupt.
+        #
+        # SIGHUP likewise: left at its default, a hangup while a dialog
+        # waited before mainloop killed the program where it stood, with no
+        # finally or atexit. The wait's passes answer it as the loop's do.
         release = None
+        release_hangup = None
         if isinstance(root, Tk) and not root._running:
             release = root._catch_interrupts()
             if release is not None:
                 root._interrupt_cancels = True
+            release_hangup = root._catch_hangup()
         try:
             while not ready():
                 if not root.winfo_exists():
@@ -4204,6 +4210,8 @@ class Misc:
             if release is not None and isinstance(root, Tk):
                 root._interrupt_cancels = False
                 release()
+            if release_hangup is not None:
+                release_hangup()
 
     def quit(self) -> None:
         """Ask the main loop to stop.
@@ -7714,8 +7722,9 @@ class Tk(_Backdrop, BaseWidget, Wm):
             **The terminal hanging up ends the program with**
             ``SystemExit(129)``. Closing the terminal's window, or losing
             the connection it came over, sends SIGHUP, whose default kills
-            the process at once. While the loop runs the hangup is answered
-            between callbacks instead, so ``finally`` blocks and ``atexit``
+            the process at once. While the loop runs, or a dialog shown
+            before it waits, the hangup is answered between callbacks
+            instead, so ``finally`` blocks and ``atexit``
             handlers run - somewhere to save work. 129 is the status a
             shell reports for a process SIGHUP killed. A SIGHUP handler of
             the program's own is left in charge; if the loop goes on

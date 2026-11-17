@@ -106,3 +106,42 @@ def test_quit_still_returns_from_mainloop(terminal, tmp_path):
         "default again: True",
         "atexit",
     ]
+
+
+BEFORE_MAINLOOP = APPLICATION.replace(
+    """root = tkcurses.Tk()
+tkcurses.Label(root, text='RUNNING').pack()
+root.after(20000, root.quit)
+try:
+    root.mainloop()
+    note('mainloop returned')""",
+    """root = tkcurses.Tk()
+dialog = tkcurses.Toplevel(root)
+tkcurses.Label(dialog, text='RUNNING').pack()
+root.after(20000, dialog.destroy)
+try:
+    root.wait_window(dialog)
+    note('wait returned')""",
+)
+
+
+@pytest.mark.parametrize("handling", ["default", "ignored", "own handler"])
+def test_a_hangup_during_a_dialog_before_mainloop_ends_it_the_same_way(
+    terminal, tmp_path, handling
+):
+    """A dialog shown before ``mainloop()`` waits in a loop of its own,
+    which used to leave SIGHUP at its default: the program died with no
+    cleanup."""
+    log = tmp_path / "events.txt"
+    term = terminal(cols=30, rows=6)
+    term.run_source(
+        BEFORE_MAINLOOP % {"log": str(log), "handling": handling}, workdir=tmp_path
+    )
+    term.wait_for_text("RUNNING")
+    term.hang_up()
+    assert term.wait_for_exit(timeout=5) == 129
+    expected = ["SystemExit 129", "finally", "atexit"]
+    if handling == "own handler":
+        expected.insert(0, "handler")
+    assert log.read_text().splitlines() == expected
+    assert "Traceback" not in term.stderr
