@@ -181,6 +181,33 @@ The setting, either way:
       readout says `OSC 52 - the terminal says it has it`, and a copy here
       pastes elsewhere
 
+## Pasting with the terminal's own paste
+
+Added for `TkCurses-tcbj.22`, after the acceptance above, and not yet run.
+Your terminal's paste - Ctrl-Shift-V, Shift-Insert, the middle button, or
+its menu - does not reach the program as a paste at all: the terminal types
+what it holds. TkCurses now asks the terminal to mark the start and end
+(bracketed paste), and puts the whole of it in as one piece. For each,
+first copy something **in another window** - this page will do.
+
+- [ ] Copy two lines, and paste them into **text** with your terminal's
+      paste. Both lines appear as two lines, the cursor after them, and
+      nothing else - no `200~`, no `~`
+- [ ] Paste the same two lines into **target**. They arrive on one line,
+      the line break a space
+- [ ] Copy a line with a tab in it (from a Makefile, say) and paste it into
+      **text**: the tab is kept
+- [ ] Select a word in **target** and paste: the word is replaced
+- [ ] Paste into **read-only**: nothing changes
+- [ ] **Ctrl-Z**. The shell comes back, and pasting at its prompt shows no
+      `200~` around what you pasted. `fg`, and the program is back, redrawn;
+      a paste into **text** still arrives as above, and dragging in
+      **source** still selects
+- [ ] Quit, then run `cat` at the prompt and paste. What appears is what
+      you copied, with no `^[[200~` in front of it. Ctrl-D ends `cat`
+- [ ] Run it as `TKCURSES_INPUT_BRACKETED_PASTE=0 python3 -m uat 43`. A paste
+      into **text** is typed, as before this change
+
 ## Faults found by running it
 
 Each was found by the author running this scenario, and fixed on PR #134

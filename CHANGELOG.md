@@ -7,9 +7,15 @@ All notable changes to TkCurses. The format follows
 ## [Unreleased]
 
 ### Added
-- TkCurses asks the terminal to mark what is pasted into it (bracketed
-  paste, DEC mode 2004), and gives the mode back on exit and on Ctrl-Z. A
-  paste still reaches widgets as the keys it was. `TKCURSES_INPUT_BRACKETED_PASTE=0`, or
+- A paste with the terminal's own paste key is put in as one piece, not
+  typed. TkCurses asks the terminal to mark what is pasted (bracketed
+  paste, DEC mode 2004), and gives the mode back on exit and on Ctrl-Z.
+  A Text takes the paste with its lines and tabs, as one undo step; an
+  Entry, Spinbox or Combobox as one line and one validated edit. Control
+  characters in a paste are dropped, so a pasted line break no longer
+  presses a dialog's default button, nor a pasted Escape closes it. The
+  paste arrives as the new `<<TerminalPaste>>` virtual event, with the
+  text in `event.data`, for a program to bind. `TKCURSES_INPUT_BRACKETED_PASTE=0`, or
   `bracketed_paste = off` under `[input]`, turns it off for a terminal that
   shows `200~` around pastes.
 
