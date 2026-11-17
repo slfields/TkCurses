@@ -1,0 +1,247 @@
+# Testing TkCurses
+
+This is what the tests and the static checks are for, how they are divided,
+and where each kind lives. [CONTRIBUTING.md](CONTRIBUTING.md) has the rules for
+working on a change: which commands CI runs, running them in a clean
+checkout, and how to write a tty test that does not flake. This document is
+the map of the suite those commands run.
+
+TkCurses is a library with two contracts: a program written for tkinter must
+behave the same here, and what it draws must reach a real terminal correctly.
+Most of the suite holds one or the other. Where Tk's behaviour cannot be
+cited from its manual, a test holds the behaviour measured on Tk 9.0.2, and
+[ARCHITECTURE.md](ARCHITECTURE.md) records how it was measured.
+
+## Running the tests
+
+```bash
+pytest                    # everything, about five minutes
+pytest -n 4               # the same across four workers, about a minute and a half
+pytest -m "not tty"       # unit and integration tests without a pseudo-terminal, seconds
+pytest -m tty             # only the tests that drive a pseudo-terminal
+pytest tests/integration  # only the multi-widget integration tests
+```
+
+Two markers are declared in `pyproject.toml`, and `--strict-markers` refuses
+any other:
+
+- `tty` marks a test that runs a program in a pseudo-terminal.
+- `slow` marks a test worth leaving out of a quick run.
+
+Every test has a 60-second timeout, so a hung curses read fails one test
+rather than stalling the whole run.
+
+## The levels
+
+**A unit test exercises one module or one widget.** It needs no terminal:
+
+- A widget is built on a bare root whose panel stack is a stub.
+- Time comes from a fake clock where timing matters.
+- The core modules under `src/tkcurses/_core/` are tested directly in
+  `tests/test_core_*.py`.
+
+Most of the suite is at this level, in `tests/test_*.py` files without `_tty`
+in the name. These tests run in seconds.
+
+**An integration test needs more than one part to be able to fail.** There are
+three kinds, from narrowest to widest.
+
+- **Widgets together, `tests/integration/`.** These tests build an
+  application rather than a widget. Each one needs more than one widget to be
+  able to fail: stacking and hit-testing, nested geometry, event routing
+  through binding tags, shared variables, scrollbar pairs, focus traversal,
+  dialogs over an application, resizing, and teardown.
+  [tests/integration/README.md](tests/integration/README.md) states the rule
+  and how each module was checked against the fault it claims to catch.
+- **The library and a real terminal, `tests/*_tty.py`.** The test runs a
+  complete program in a pseudo-terminal, through the real curses library. It
+  types real bytes at the program and reads the screen back through a
+  terminal emulator (pyte). The harness is `tests/support/terminal.py`, and
+  `tests/test_harness.py` tests the harness itself. This is the only level
+  that sees the bytes a terminal actually receives:
+  - mouse and paste modes;
+  - the cursor;
+  - colour pairs;
+  - what is left behind after a widget moves.
+- **Programs as a reader writes them.** These tests run every complete
+  program printed in the documentation and every example under `examples/`,
+  and check that each does what its page says. Every acceptance scenario
+  under `uat/` is run too, to check it still starts, draws and exits cleanly:
+  - `tests/test_docs_tutorial.py`, `tests/test_docs_porting.py`,
+    `tests/test_docs_terminals.py` and `tests/test_docs_cfg.py` for the
+    documentation;
+  - `tests/test_examples.py` for the examples;
+  - `tests/test_uat_scenarios_tty.py` for the scenarios.
+
+**Acceptance by a person** is the UAT suites. Each one is a runnable scenario
+under `uat/` and a checklist under `docs/UAT_*.md` saying what to look at.
+They cover what only eyes can judge: whether a drag feels right, whether a
+colour reads. They are run by hand when a cycle produces something a person
+can look at, and their acceptance is recorded in the checklist.
+
+## Functional tests
+
+These hold what TkCurses does.
+
+| Test type | Unit level | Integration level |
+|---|---|---|
+| **Positive (happy path)** | A widget's methods and options return and draw what Tk's do: `tests/test_entry.py`, `tests/test_text.py`, `tests/test_listbox.py` and a file for every other widget; the core modules in `tests/test_core_*.py`. | Widgets working together in `tests/integration/`. Each widget driven through real keys and clicks in its `*_tty.py`. Every documented program and example running as its page says. |
+| **Negative (sad path)** | A bad value is a `TclError` in Tk's own words: `tests/test_tcl_errors.py`, `tests/test_option_refusals.py`, and `tests/test_option_values_against_tk.py`, which gives every option of every widget a bad value and compares the result with real tkinter. | A callback that raises: `tests/test_callback_exceptions_tty.py`. A terminal that cannot do the job: `tests/test_terminal_environment_tty.py`. `tkcurses-cfg`'s errors and exit statuses: `tests/test_cfg_cli.py`. |
+| **Boundary and edge cases** | One character, one cell: `tests/test_drawing.py`. Wide and zero-width characters: `tests/test_core_cells.py`, `tests/test_wide_text.py`. A paste larger than the limit kept: `tests/test_core_input.py`. Empty widgets, index ends, the first and last row. | A widget hanging off the screen or its master: `tests/test_clipping_tty.py`, `tests/test_master_clipping_tty.py`. A widget that shrinks: `tests/test_shrink_tty.py`. The terminal resized under a full application: `tests/integration/test_resize_full_screen_tty.py`. |
+| **State and behaviour** | Undo and redo: `tests/test_text_undo.py`. Variables and traces: `tests/test_variables.py`. Timers: `tests/test_core_timers.py`. Allocation, mapping and destruction: `tests/test_widget_lifecycle.py`. | One variable shared by several widgets: `tests/integration/test_shared_variables.py`. Destroying a populated tree: `tests/integration/test_teardown.py`. `tkcurses-cfg` saving a file whole or not at all, which is this project's transaction: `tests/test_cfg_store.py`. |
+| **Contract and schema** | tkinter's interface is the contract. What a star-import provides: `tests/test_tkinter_namespace.py`. Positional calls: `tests/test_tkinter_signatures.py`. Each widget's methods and options against real tkinter: `tests/test_method_surface.py`, `tests/test_classic_option_surface.py`, `tests/test_ttk_option_surface.py`. Behaviour replayed from recordings of Tk 9.0.2 (the `*.json` files in `tests/support/`, made by its `record_*.py` scripts). | The configuration reference is generated from the code and true of it: `tests/test_configref.py`. The compatibility matrix is complete: `tests/test_compat_matrix.py`. The docstrings keep the API reference's convention: `tests/test_docstrings.py`. A program written for the `curses` module runs here: `tests/test_curses_module_tty.py`. |
+
+## Non-functional tests
+
+These hold how well TkCurses behaves under constraints.
+
+| Test type | Unit level | Integration level |
+|---|---|---|
+| **Security** | Here the injection risk is the terminal: text a program shows must not be able to drive it. `tests/test_input_hostile.py` covers environment values, configuration files and reports on the way out. `tests/test_image_hostile.py` covers image files built to exhaust memory or crash a decoder. `tests/test_cfg_safety.py` covers the paths `tkcurses-cfg` writes through and the text it shows. Each of these tests fails without its fix. | A terminal sending faster than the program reads: `tests/test_input_flood_tty.py`. The system clipboard over OSC 52 and the desktop's tools: `tests/test_system_clipboard.py`. In CI, Bandit scans `src/` and pip-audit checks every lock file (see [Static checks](#static-checks)). `tests/test_hygiene.py` keeps private files out of this public repository. |
+| **Performance** | Work counted rather than timed, so the result is the same on any machine: `tests/test_text_layout_cost.py` holds that typing into a long Text lays out only the line typed into. | A repaint stays cheap enough to run inside a click handler: `tests/test_redraw_cost_tty.py`. |
+| **Resilience** | Partial input: an escape sequence or UTF-8 character split across reads, a terminal reply that arrives late, a paste cut off before its end marker (`tests/test_core_input.py`). A `tkcurses-cfg` save interrupted by `SIGTERM` or `SIGHUP`, or failing on a full disk, changes nothing (`tests/test_cfg_store.py`). | Ctrl-Z and `fg` hand the terminal's modes back and take them again: `tests/test_bracketed_paste_tty.py`. Ctrl-C in a dialog: `tests/test_dialog_interrupt_tty.py`. A raising callback leaves a usable screen: `tests/test_callback_exceptions_tty.py`. A resize in the middle of everything: `tests/integration/test_resize_full_screen_tty.py`. |
+| **Concurrency** | Calls from other threads are queued and run on the thread that owns curses, in order, and a call left waiting when the queue closes is released: `tests/test_core_dispatcher.py`. These tests synchronise on events, not sleeps. | Several processes saving one configuration file at once, and a reader that never sees a half-written file: `tests/test_cfg_store.py`. The test harness forks from xdist's threaded workers, so the child may make only async-signal-safe calls before exec. `tests/test_harness.py` checks that by reading the code. |
+
+## Property-based testing and fuzzing
+
+Hypothesis generates the inputs for invariants that must hold for every
+input, not only the ones someone thought of:
+
+| Module | The property |
+|---|---|
+| `tests/test_layout_properties.py` | For any tree, options and terminal size, packed and gridded children never overlap, stay inside their container and never get a negative size; laying out again changes nothing; a layout survives a resize and back; and a nested tree always settles. |
+| `tests/test_core_geometry.py` | Content and padding never escape their window. |
+| `tests/test_core_screen.py` | Dirty regions lie inside the buffer, and any resize yields a consistent grid. |
+| `tests/test_core_colors.py` | Every hex colour resolves, at every colour depth. |
+| `tests/test_canvas_arcs.py` | An arc is one connected piece, inside its box. |
+| `tests/test_text_embedded.py` | Undo and redo still line up after any sequence of edits around an embedded window. |
+| `tests/test_cfg_inifile.py` | A file the editor accepts is read the same way by a program, an unedited file comes back byte for byte, and `unset` removes only its own line. |
+| `tests/test_cfg_session.py`, `tests/test_cfg_invariants.py` | What the `tkcurses-cfg` screen previews is what a program reads once the file is saved. |
+| `tests/test_core_config.py` | For any value of any setting, a program keeps what the parser accepts, clamps what is out of range, and falls back on anything else, so `tkcurses-cfg` and a program never disagree. |
+
+The number of examples is set per test with `@settings`, where the default
+is too few or too many. A failing example is shrunk to the smallest case
+that fails, and that case is worth adding as an ordinary test once fixed.
+
+The hostile-input tests above are hand-built: each is a file or value that
+once broke something. Neither the input byte stream nor the image decoders
+has a generated fuzzer yet. See [Gaps](#gaps).
+
+## Mutation testing
+
+A mutation test changes the code under test on purpose and checks that some
+test fails. A mutant that survives means either a test is missing or the
+change cannot alter behaviour. TkCurses has used it by hand, on the code a
+change touched, to find tests that passed without checking anything. The fixes
+from the 2026-11 security review were checked this way.
+
+The method, with mutmut, is being written up under `TkCurses-us5p.2`. Until
+it lands, these rules come from running mutation tests by hand and each one
+was learned from a failure:
+
+- **Cap each mutant's memory.** For example, `(ulimit -v 2000000; pytest ...)`.
+  A mutant that removes a bound can turn one test into unlimited allocation.
+  One grew to 12.8 GB in 35 seconds and was killed by the kernel along with
+  the terminal running it.
+- **Write no bytecode.** Set `PYTHONDONTWRITEBYTECODE=1`. If a mutant is
+  restored within the same second and at the same size, Python can keep
+  running the mutant's cached `.pyc`.
+- **Restore from a byte snapshot, never `git checkout`.** After a crash,
+  compare the source with the snapshot before anything else, in case the
+  mutant is still in place.
+- **Start from a passing baseline.** A mutant is killed only by a test that
+  passed without it.
+
+## Static checks
+
+CI runs all of these on every pull request that changes code.
+
+**Ruff lint** (`ruff check .`) checks every Python file in the repository:
+`src/`, `tests/`, `docs/_ext/`, `uat/`, `examples/` and the workflow scripts.
+The rule sets are chosen in `pyproject.toml`:
+
+| Rules | What they catch |
+|---|---|
+| `E`, `W` | pycodestyle errors and warnings. Line length (`E501`) is left to the formatter. |
+| `F` | Pyflakes: undefined and unused names, and imports that shadow each other. |
+| `I` | Import order, with `tkcurses` as first-party. |
+| `B` | bugbear: mutable defaults, loop variables captured by closures, and similar. |
+| `C4` | Comprehensions written the long way. |
+| `UP` | Syntax that Python 3.11 makes unnecessary. |
+| `ARG` | Unused arguments. |
+| `SIM` | Conditions and blocks that can be simpler. |
+| `TC` | Imports needed only for type checking, kept out of the runtime. |
+| `PTH` | `os.path` where `pathlib` would do. |
+| `RUF` | Ruff's own rules, including invisible or confusable characters in strings. Write those as `\u` escapes. |
+
+The per-file exceptions are in `pyproject.toml`, each with its reason:
+
+- `src/tkcurses/__init__.py` may star-import and re-export, as tkinter does.
+- `filedialog.py` and its tests keep `os.path`, because tkinter's file
+  dialogs take and return path strings.
+- Tests, examples and UAT scenarios may leave arguments unused, because a
+  binding callback takes an event whether it reads it or not.
+
+Markdown is excluded: the Python fragments in `ARCHITECTURE.md` are sketches,
+not programs. The complete programs in the documentation are run by the
+tests instead.
+
+**Ruff format** (`ruff format --check .`) checks that every Python file is
+formatted as Ruff would format it, at 88 columns. It reports a difference
+and changes nothing; run `ruff format` to apply the changes.
+
+**mypy** (`mypy`) checks `src/tkcurses` in strict mode, plus the flags listed
+in `pyproject.toml`. It reports:
+
+- any function without full annotations;
+- `Any` leaking out of a typed function;
+- unreachable code, and an `# type: ignore` that is no longer needed;
+- an equality check between types that cannot be equal.
+
+pyte, which the test harness uses, has no type stubs, and its missing
+imports are ignored. Nothing outside the library is type-checked yet (see
+[Gaps](#gaps)). `tests/test_packaging.py` checks that the built package
+carries its `py.typed` marker, so a program using TkCurses is type-checked
+against it.
+
+**Bandit** scans `src/` at medium severity and above. Findings below medium
+were read in the 2026-11 security review and are not acted on.
+
+**pip-audit** checks every lock file under `requirements/` for packages with
+known vulnerabilities.
+
+**The convention tests** check what no linter can:
+
+- `tests/test_licensing.py`: every source file carries its licence and its
+  credits.
+- `tests/test_docstrings.py`: docstrings keep the API reference's
+  convention.
+- `tests/test_hygiene.py`: the repository holds only the project.
+- `tests/test_suite_tests_its_own_tree.py`: the suite exercises the checkout
+  it is run in, not an installed copy.
+
+The documentation site is also built with warnings as errors on every pull
+request.
+
+## Coverage
+
+Python 3.12's CI job runs the suite under coverage, with branch coverage. The
+other interpreters don't, because coverage more than doubles the run time:
+every tty test forks a process, and each process writes its own data file.
+The report lists the lines and branches that never ran. Nothing yet fails
+when coverage drops; see [Gaps](#gaps).
+
+## Gaps
+
+What this review of the suite found missing. Each gap is an issue under the
+epic `TkCurses-us5p`.
+
+| Issue | Gap |
+|---|---|
+| `TkCurses-us5p.2` | Mutation testing is done by hand. Adopt mutmut and write up its method here. |
+| `TkCurses-us5p.3` | mypy checks only `src/tkcurses`. The test harness, the documentation extensions, the release scripts, the examples and the UAT scenarios are not type-checked. |
+| `TkCurses-us5p.4` | Coverage is measured and nothing gates on it, so a drop goes unnoticed. |
+| `TkCurses-us5p.5` | The two parsers of outside bytes, the input stream and the image decoders, have hand-built hostile cases but no generated fuzzing. |
+| `TkCurses-us5p.6` | No end-to-end test runs a worker thread that updates widgets in a running program while a person types. That is the usual pattern for a tkinter program with background work. |
+| `TkCurses-us5p.7` | What a program does when its terminal goes away (the terminal closed, `SIGHUP`) is neither decided nor tested. |
+| `TkCurses-us5p.8` | Performance is held by counting work, which is right for a gate. Nothing records timings over time, so a slowdown that changes no count goes unnoticed. |
