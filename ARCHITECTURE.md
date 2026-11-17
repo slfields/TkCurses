@@ -2472,6 +2472,46 @@ that raises out of a `WM_DELETE_WINDOW` handler gets its traceback on a
 terminal that works, not on the alternate screen where it would be swapped
 away unread.
 
+### A terminal that hangs up ends the program, and its cleanup runs
+
+Closing the terminal's window, or losing the SSH connection it came over,
+hangs the terminal up. The program gets SIGHUP, and from then on its
+terminal reads end of file. Measured on a pty whose master was closed under
+a running `mainloop()`, before this was handled:
+
+- **SIGHUP at its default** killed the process at once. No `finally` block,
+  no `atexit` handler and no code after `mainloop()` ran, so nothing a
+  program meant to save was saved.
+- **SIGHUP ignored**, as under `nohup`, the process never exited. It used
+  4.99 s of CPU in 5 s: `select()` reports a hung-up terminal readable for
+  ever, `getch()` has nothing, and the loop went round again.
+
+What a hung-up terminal answers, measured in a child that ignored SIGHUP:
+`select` readable; `getch()` ERR; `os.read` empty; `tcgetattr`,
+`tcgetpgrp` and `write` EIO; `endwin()` ERR.
+
+The author's decision, 2026-11-17: exit with cleanup. While `mainloop()`
+runs, and SIGHUP is at its default, the signal only marks the hangup
+(`Tk._catch_hangup`, as Ctrl-C is marked), and the loop raises
+`SystemExit(129)` at the end of the pass. 129 is 128 + SIGHUP, what a shell
+reports for a process the signal killed, so a caller reading the status
+sees the same reason as before. `finally`, `atexit` and a program's
+`except SystemExit` all run. The terminal is not restored, since there is
+none; every write on the way out already tolerated failure.
+
+A program with its own SIGHUP handler, or one that ignores the signal, is
+left in charge of it. The loop still notices the hangup, from the terminal:
+a wait that reports input followed by a poll that reads none sends it to
+`InputHandler.terminal_gone()`, which asks for the terminal's settings and
+takes EIO or ENXIO as a hangup. That is one system call, made only on a
+pass that was woken and read nothing, so a live terminal pays nothing for
+it. A stream that is not a terminal answers differently and is not taken
+for one that hung up.
+
+Before `mainloop()` the default stands: a hangup during a dialog shown
+first is still the signal's own kill. `tests/test_terminal_hangup_tty.py`
+holds all three cases, default, ignored and the program's own handler.
+
 ---
 
 ## Data Flow

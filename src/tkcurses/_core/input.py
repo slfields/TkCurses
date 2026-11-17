@@ -33,6 +33,7 @@ from __future__ import annotations
 import codecs
 import contextlib
 import curses
+import errno
 import os
 import re
 import select
@@ -679,6 +680,25 @@ class InputHandler:
             # The descriptor was closed underneath us, during shutdown.
             return False
         return bool(readable)
+
+    def terminal_gone(self) -> bool:
+        """True if the terminal has hung up: closed, or its connection lost.
+
+        A terminal that has gone stays readable for ever - select() reports
+        end of file at once, and getch() has nothing - so a loop that only
+        waited for input would spin. The terminal's own settings can no
+        longer be read either, which is what tells the two apart: asked
+        for them, a terminal that hung up answers EIO.
+        """
+        try:
+            termios.tcgetattr(self._stream.fileno())
+        except (termios.error, OSError) as exc:
+            code = getattr(exc, "errno", None) or (exc.args[0] if exc.args else None)
+            return code in (errno.EIO, errno.ENXIO)
+        except ValueError:
+            # The stream itself was closed, during shutdown: not a hangup.
+            return False
+        return False
 
     def poll(self, limit: int | None = None) -> list[Event]:
         """Read the events currently available, without blocking.

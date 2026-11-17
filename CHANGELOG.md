@@ -20,6 +20,13 @@ All notable changes to TkCurses. The format follows
   shows `200~` around pastes.
 
 ### Fixed
+- A program whose terminal went away - its window closed, the SSH
+  connection lost - was killed where it stood by SIGHUP, so no `finally`
+  block or `atexit` handler ran; and with SIGHUP ignored, as under `nohup`,
+  it never exited and spun at full CPU. Under `mainloop()` a hangup now
+  ends the program with `SystemExit(129)`, after its own cleanup runs. A
+  program's own SIGHUP handler is left in charge, and the loop still
+  notices the terminal is gone.
 - After Ctrl-Z and `fg`, dragging with the mouse did nothing: the suspend
   left the mouse's motion reporting on in the shell, and the return asked
   only for clicks. Both modes now go off when the program stops and come
