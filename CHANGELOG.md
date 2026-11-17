@@ -6,6 +6,8 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-17
+
 ### Added
 - A paste with the terminal's own paste key is put in as one piece, not
   typed. TkCurses asks the terminal to mark what is pasted (bracketed
@@ -18,6 +20,13 @@ All notable changes to TkCurses. The format follows
   text in `event.data`, for a program to bind. `TKCURSES_INPUT_BRACKETED_PASTE=0`, or
   `bracketed_paste = off` under `[input]`, turns it off for a terminal that
   shows `200~` around pastes.
+- For contributors: `TESTING.md` maps the test suite - what each kind of
+  test covers, how to run it, and how to rate a problem a test finds - and
+  is held to the tree by a test. Alongside it: mutation testing of a
+  change (`tests/support/mutate.py`), property-based fuzzing of the input
+  reader and the image decoders, a coverage floor in CI, timings of the hot
+  paths against a base (`tests/support/bench.py`), and type-checking of the
+  test harness, the documentation extensions and the release scripts.
 
 ### Fixed
 - A program whose terminal went away - its window closed, the SSH
@@ -932,7 +941,8 @@ Phase 2 of the original codebase: the base widget classes, `Tk` and `Toplevel`,
 the variable classes and the panel stack. Superseded by the rebuild; it has no
 `Entry` or `Text`.
 
-[Unreleased]: https://github.com/slfields/TkCurses/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/slfields/TkCurses/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/slfields/TkCurses/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/slfields/TkCurses/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/slfields/TkCurses/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/slfields/TkCurses/compare/v0.3.0...v0.4.0
