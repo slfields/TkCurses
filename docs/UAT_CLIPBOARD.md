@@ -35,7 +35,7 @@ selected**. It wants a terminal at least **90 columns by 24 rows**.
 | Terminal | |
 | Size | |
 | Date | 2026-10-04 |
-| Result | **Accepted.** Run by the author: "I consider uat 43 as complete, now", after the five faults listed at the end were fixed. Terminal and size not recorded. "Reaching other applications" was added afterwards (`TkCurses-hpr`) and accepted on its own on 2026-10-13: "That works". Whether `wl-copy` flickers on GNOME was not reported either way. "Middle-click paste in other applications" (`TkCurses-r1k1`) accepted on 2026-11-14: "I don't notice any flicker for loss of focus when using middle click paste." |
+| Result | **Accepted.** Run by the author: "I consider uat 43 as complete, now", after the five faults listed at the end were fixed. Terminal and size not recorded. "Reaching other applications" was added afterwards (`TkCurses-hpr`) and accepted on its own on 2026-10-13: "That works". Whether `wl-copy` flickers on GNOME was not reported either way. "Middle-click paste in other applications" (`TkCurses-r1k1`) accepted on 2026-11-14: "I don't notice any flicker for loss of focus when using middle click paste." "Pasting with the terminal's own paste" (`TkCurses-tcbj.22`) accepted on 2026-11-16: "uat 43 appears to work as you stated". Terminal and size not recorded. |
 
 The boxes below are left unticked deliberately: the acceptance was given as a
 whole rather than item by item, and ticking them would claim a record that was
@@ -183,7 +183,8 @@ The setting, either way:
 
 ## Pasting with the terminal's own paste
 
-Added for `TkCurses-tcbj.22`, after the acceptance above, and not yet run.
+Added for `TkCurses-tcbj.22`, after the acceptance above, and accepted on
+its own on 2026-11-16 (see the table at the top).
 Your terminal's paste - Ctrl-Shift-V, Shift-Insert, the middle button, or
 its menu - does not reach the program as a paste at all: the terminal types
 what it holds. TkCurses now asks the terminal to mark the start and end
