@@ -2508,9 +2508,17 @@ pass that was woken and read nothing, so a live terminal pays nothing for
 it. A stream that is not a terminal answers differently and is not taken
 for one that hung up.
 
-Before `mainloop()` the default stands: a hangup during a dialog shown
-first is still the signal's own kill. `tests/test_terminal_hangup_tty.py`
-holds all three cases, default, ignored and the program's own handler.
+A dialog shown before `mainloop()` waits in passes of its own
+(`Misc._wait_until`), which catch SIGHUP as they catch Ctrl-C, so a hangup
+there ends the program the same way. Until they did, the default stood and
+the hangup was the signal's own kill, measured as the child dying by
+signal; ignored or handled, the wait already ended with 129, because its
+passes are the loop's and notice the terminal. A program that calls
+`update()` in a loop of its own, outside both, keeps the default: catching
+the signal on every call would change it for code that never asked.
+`tests/test_terminal_hangup_tty.py` holds the three cases, default,
+ignored and the program's own handler, under `mainloop()` and under a
+dialog's wait before it (`TkCurses-wk51`).
 
 ---
 
