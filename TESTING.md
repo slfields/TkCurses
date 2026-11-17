@@ -117,15 +117,37 @@ input, not only the ones someone thought of:
 | `tests/test_text_embedded.py` | Undo and redo still line up after any sequence of edits around an embedded window. |
 | `tests/test_cfg_inifile.py` | A file the editor accepts is read the same way by a program, an unedited file comes back byte for byte, and `unset` removes only its own line. |
 | `tests/test_cfg_session.py`, `tests/test_cfg_invariants.py` | What the `tkcurses-cfg` screen previews is what a program reads once the file is saved. |
+| `tests/test_input_properties.py` | Any byte stream from the terminal, with keys curses decoded mixed in, is read to the end without an exception and leaves nothing unread. Typed text arrives as exactly that text; bytes that are not UTF-8 never become a character they do not spell; a paste is one event holding what was pasted, with typing either side kept; a paste whose end never comes is kept and marked incomplete; and a late reply to a start-up query is never typed. |
+| `tests/test_image_properties.py` | Any bytes, anything after a valid magic number, and good PNG, GIF and PPM files that have been cut, overwritten or grown (a PNG's checksums mended, so the damage reaches the decoder) either decode to a rectangular picture of `#rrggbb` cells within `MAX_PIXELS`, or raise `TclError`, holding under 64 MB while they do. A file our own encoders wrote reads back exactly. Any XBM source makes a bitmap or a `TclError`, and so does any photo data. |
 | `tests/test_core_config.py` | For any value of any setting, a program keeps what the parser accepts, clamps what is out of range, and falls back on anything else, so `tkcurses-cfg` and a program never disagree. |
 
 The number of examples is set per test with `@settings`, where the default
 is too few or too many. A failing example is shrunk to the smallest case
 that fails, and that case is worth adding as an ordinary test once fixed.
 
-The hostile-input tests above are hand-built: each is a file or value that
-once broke something. Neither the input byte stream nor the image decoders
-has a generated fuzzer yet. See [Gaps](#gaps).
+The two fuzzing modules, `test_input_properties.py` and
+`test_image_properties.py`, cover the code that reads bytes from outside the
+program. They run 300 examples a test in the suite, which takes seconds. After
+changing the input reader or a decoder, run them for longer. The suite's
+60-second timeout would stop a long run, so lift it:
+
+```bash
+TKCURSES_FUZZ_EXAMPLES=20000 pytest --timeout=0 -n 4 \
+    tests/test_input_properties.py tests/test_image_properties.py
+```
+
+They complement the hand-built cases in test_image_hostile and
+test_input_hostile (listed under the non-functional tests), each a file or
+byte sequence that once broke something. The two kinds catch different faults. With `decode`'s catch-all
+for unexpected exceptions removed, 20,000 damaged files still raised nothing
+but `TclError`, because every refusal is an explicit check; the catch-all is
+a second line. Removing the `MAX_PIXELS` check is caught only by the
+hand-built gigabyte cases, since a random file almost never declares a huge
+image *and* carries enough data to reach the allocation. Each of four faults
+put back into the input reader on purpose (bytes that are not UTF-8 decoded
+as text, a paste's end marker missed when split, a late reply typed, a
+continuation byte dropped) failed a property within the default 300
+examples.
 
 ## Mutation testing
 
@@ -344,16 +366,57 @@ every tty test forks a process, and each process writes its own data file.
 The report lists the lines and branches that never ran. Nothing yet fails
 when coverage drops; see [Gaps](#gaps).
 
+## Setting the priority of a problem a test finds
+
+A problem's priority comes from two ratings, each judged against a
+description below rather than by feel: how bad the effect is (**impact**)
+and who meets it (**reach**). Rate the worst effect that can be shown, not
+the worst that can be imagined. Record both ratings in the issue, e.g.
+`Impact 3, reach 2: P1`, so the priority can be checked by someone else.
+
+| Impact | The effect |
+|---|---|
+| 4 | Security or data: input from outside the program runs code, reads or writes what it should not, or loses or corrupts a user's data; or a release publishes the wrong thing. |
+| 3 | Failure: an exception escapes that the documentation does not name, the program hangs or spins, or the terminal is left unusable after it exits. |
+| 2 | Wrong behaviour: the program carries on but does something other than Tk does or the documentation says, including drawing the wrong thing. |
+| 1 | Cosmetic or slow: everything works and reads correctly, but looks wrong or takes noticeably longer. |
+| 0 | No effect on a program: the tests, tools or documentation are wrong or missing. |
+
+| Reach | Who meets it |
+|---|---|
+| 3 | Any program, in ordinary use, or anyone who can send it bytes: terminal input, an image file, a pasted clipboard. |
+| 2 | A program using a common feature in the usual way. |
+| 1 | A particular input, option, platform or sequence of steps, or there is a workaround. |
+
+| Priority | Impact and reach |
+|---|---|
+| P0 | Impact 4 with reach 2 or 3. Drop other work. |
+| P1 | Impact 4 with reach 1; impact 3 with reach 2 or 3. |
+| P2 | Impact 3 with reach 1; impact 2 with reach 3. |
+| P3 | Impact 2 with reach 1 or 2; impact 1 with reach 3. |
+| P4 | Impact 1 with reach 1 or 2; impact 0. |
+
+**A gap in the tests**, with no failure known, is rated as the failure it
+would most plausibly let through, one priority lower, and never above P2.
+**A test that fails intermittently** is rated by what it hides: until it is
+fixed, it can hide any failure in the code it covers, so it is P2 if that
+code reads outside bytes or runs on every program's main loop, and P3
+otherwise.
+
+Two worked examples. Typing a no-break space did nothing: wrong behaviour,
+impact 2, met only with that character, reach 1, so P3. The image decoders
+had no fuzzing: the failure that could slip through is an exception escaping
+on a hostile file (impact 3, reach 3: P1), and as a gap that is P2.
+
 ## Gaps
 
 What this review of the suite found missing. Each gap is an issue under the
 epic `TkCurses-us5p`.
 
-| Issue | Gap |
-|---|---|
-| `TkCurses-us5p.3` | mypy checks only `src/tkcurses`. The test harness, the documentation extensions, the release scripts, the examples and the UAT scenarios are not type-checked. |
-| `TkCurses-us5p.4` | Coverage is measured and nothing gates on it, so a drop goes unnoticed. |
-| `TkCurses-us5p.5` | The two parsers of outside bytes, the input stream and the image decoders, have hand-built hostile cases but no generated fuzzing. |
-| `TkCurses-us5p.6` | No end-to-end test runs a worker thread that updates widgets in a running program while a person types. That is the usual pattern for a tkinter program with background work. |
-| `TkCurses-us5p.7` | What a program does when its terminal goes away (the terminal closed, `SIGHUP`) is neither decided nor tested. |
-| `TkCurses-us5p.8` | Performance is held by counting work, which is right for a gate. Nothing records timings over time, so a slowdown that changes no count goes unnoticed. |
+| Issue | Rating | Gap |
+|---|---|---|
+| `TkCurses-us5p.6` | P2: lets through impact 3, reach 2 | No end-to-end test runs a worker thread that updates widgets in a running program while a person types. That is the usual pattern for a tkinter program with background work. |
+| `TkCurses-us5p.7` | P2: lets through impact 3, reach 2 | What a program does when its terminal goes away (the terminal closed, `SIGHUP`) is neither decided nor tested. |
+| `TkCurses-us5p.4` | P4: lets through impact 2, reach 2 | Coverage is measured and nothing gates on it, so a drop goes unnoticed. |
+| `TkCurses-us5p.3` | P4: impact 0 | mypy checks only `src/tkcurses`. The test harness, the documentation extensions, the release scripts, the examples and the UAT scenarios are not type-checked. The release scripts' decisions are tested in `tests/test_release_script.py`. |
+| `TkCurses-us5p.8` | P4: lets through impact 1, reach 3 | Performance is held by counting work, which is right for a gate. Nothing records timings over time, so a slowdown that changes no count goes unnoticed. |
