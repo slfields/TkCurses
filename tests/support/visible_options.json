@@ -3037,6 +3037,339 @@
    "kind": "behaviour"
   }
  },
+ "bargraph.BarGraph": {
+  "autoscaledelay": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1000
+   ]
+  },
+  "axis": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 1
+  },
+  "axislabel": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Name"
+  },
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "backgroundimage": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "IMAGE"
+   ]
+  },
+  "baseline": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 1
+  },
+  "borderwidth": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "colormap": {
+   "kind": "behaviour"
+  },
+  "colormode": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "gradient"
+  },
+  "colors": {
+   "kind": "visible",
+   "state": "plain",
+   "value": [
+    "red",
+    "blue"
+   ]
+  },
+  "container": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    1
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "decimals": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 2
+  },
+  "digits": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 1
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "gap": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "gradientstart": {
+   "kind": "visible",
+   "state": "plain",
+   "value": [
+    "white"
+   ]
+  },
+  "gridlines": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 1
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "label": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Changed"
+  },
+  "labelanchor": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "s"
+  },
+  "labels": {
+   "kind": "visible",
+   "state": "plain",
+   "value": [
+    "a",
+    "b",
+    "c"
+   ]
+  },
+  "labelwidth": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 1
+  },
+  "logbase": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 2
+  },
+  "markers": {
+   "kind": "visible",
+   "state": "plain",
+   "value": [
+    [
+     50,
+     "red"
+    ]
+   ]
+  },
+  "maximum": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 200
+  },
+  "minimum": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 20
+  },
+  "mode": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "overlay"
+  },
+  "orient": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "horizontal"
+  },
+  "padx": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "pady": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "peakholdtime": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    5000
+   ]
+  },
+  "readout": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 1
+  },
+  "readoutformat": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "{:.1f}%"
+  },
+  "refreshinterval": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    500
+   ]
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "rounding": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "down"
+  },
+  "scale": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 32
+  },
+  "scaletype": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "log"
+  },
+  "segments": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 2
+  },
+  "series": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 1
+  },
+  "source": {
+   "kind": "behaviour"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "thickness": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 2
+  },
+  "thresholds": {
+   "kind": "visible",
+   "state": "plain",
+   "value": [
+    [
+     50,
+     "red"
+    ]
+   ]
+  },
+  "ticks": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 2
+  },
+  "tile": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    1
+   ]
+  },
+  "unitplacement": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "prefix"
+  },
+  "units": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "%"
+  },
+  "unitscale": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "time"
+  },
+  "unitspace": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 1
+  },
+  "visual": {
+   "kind": "behaviour"
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
  "ttk.Button": {
   "class": {
    "kind": "invisible",

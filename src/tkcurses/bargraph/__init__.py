@@ -17,10 +17,14 @@
 
 """A bar graph widget: :class:`BarGraph`.
 
-TkCurses extension: tkinter and Tk have no bar graph widget, and this module
-has no counterpart in either. Import it on its own::
+Import it on its own, beside the tkinter names::
 
+    import tkcurses as tk
     from tkcurses.bargraph import BarGraph
+
+TkCurses extension:
+    Neither tkinter nor Tk has a bar graph widget, and this module has no
+    counterpart in either. A program that uses it runs on TkCurses only.
 """
 
 # BarGraph began as a separate package, tkcurses-bargraph, by the same
@@ -102,6 +106,8 @@ if TYPE_CHECKING:
     from tkcurses.bargraph._gradient import RGB
     from tkcurses.bargraph._layout import Layout
     from tkcurses.bargraph._render import Mode
+
+__all__ = ["BarGraph"]
 
 #: Series colors when ``colors`` is not given, cycled by series index.
 DEFAULT_COLORS = ("green", "red", "blue", "yellow", "magenta", "cyan")
@@ -443,6 +449,13 @@ class BarGraph(tkcurses.Frame):
     A bad option value raises :class:`tkcurses.TclError` and leaves the graph
     as it was, at creation and in :meth:`configure` alike.
 
+    TkCurses extension:
+        Neither tkinter nor Tk has a bar graph; ``ttk.Progressbar``, a
+        single bar, is the nearest. Where an option does what a Tk widget's
+        does, it has that option's name: ``orient`` and ``maximum`` as
+        ``ttk.Progressbar``'s, ``digits`` as ``Scale``'s, ``labelanchor`` as
+        ``LabelFrame``'s.
+
     Options:
         segments: How many bars. Default 1.
         series: How many values each bar holds. Default 1.
@@ -588,11 +601,27 @@ class BarGraph(tkcurses.Frame):
             An empty entry, or none at all, starts at a quarter of the series
             color's brightness.
 
+    Frame's own options, as :class:`tkcurses.Frame` takes them:
+    ``backgroundimage``, ``class``, ``colormap``, ``container``, ``tile``
+    and ``visual``. The graph is drawn over a background image.
+
+    Standard options, described in :doc:`/reference/options`:
+    ``background``, ``borderwidth``, ``cursor``, ``height``,
+    ``highlightbackground``, ``highlightcolor``, ``highlightthickness``,
+    ``padx``, ``pady``, ``relief``, ``takefocus``, ``width``.
+
     Sample output:
         graph = BarGraph(root, segments=3, series=2, colors=["green", "red"],
                          labels=["a", "b", "c"], label="Load", borderwidth=1)
         graph.pack(fill="both", expand=True)
         graph.set_all([[40, 25], [10, 5], [70, 20]])
+
+    Sample output (segments):
+        # size: 40x8
+        for count in (2, 5):
+            graph = BarGraph(root, segments=count, scale=40, label=f"{count}")
+            graph.pack(side="left", padx=2)
+            graph.set_all([[20 * (n + 1)] for n in range(count)])
 
     Sample output (mode, series):
         # size: 40x8
