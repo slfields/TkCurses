@@ -176,13 +176,42 @@ def test_every_classic_option_was_measured():
     added since is not silently left without a sample."""
     import json
 
-    import tkcurses
-
     measured = json.loads(docsurface.VISIBLE.read_text())
     classic = {k: v for k, v in measured.items() if not k.startswith("ttk.")}
     assert classic
     for name, options in classic.items():
-        assert set(options) == docsurface.widget_options(getattr(tkcurses, name))
+        assert set(options) == docsurface.widget_options(
+            docsurface.measured_class(name)
+        )
+
+
+def test_every_public_module_is_surveyed():
+    """A module left off both lists escapes every rule here: the bar
+    graph module passed the whole suite before it was added."""
+    import pkgutil
+
+    import tkcurses
+
+    listed = {ours for ours, _ in docsurface.COUNTERPARTS}
+    listed |= set(docsurface.EXTENSION_MODULES)
+    public = {
+        f"tkcurses.{info.name}"
+        for info in pkgutil.iter_modules(tkcurses.__path__)
+        if not info.name.startswith("_")
+    }
+    assert public - listed == set()
+
+
+def test_every_extension_widget_was_measured():
+    """A widget only TkCurses has is held to the same samples, so it has
+    to be in the measurement too."""
+    import json
+
+    measured = json.loads(docsurface.VISIBLE.read_text())
+    widgets = docsurface.extension_widgets()
+    assert widgets
+    for cls in widgets:
+        assert docsurface.measured_key(cls) in measured
 
 
 def test_every_themed_widget_was_measured_against_tks_options():

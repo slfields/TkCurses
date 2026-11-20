@@ -6,6 +6,29 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+### Added
+- `BarGraph`, a bar graph widget, imported with
+  `from tkcurses.bargraph import BarGraph`. It is a TkCurses widget:
+  neither tkinter nor Tk has one, so a program that uses it runs on
+  TkCurses only. Bars are drawn an eighth of a cell at a time, upright or
+  on their side, each holding one or more series stacked or overlaid. A
+  graph can poll a function for its values, colour the part of a bar past
+  a threshold, hold each bar's peak, read values out beside the bars, and
+  scale itself to the values; it can draw a box, labels, an axis with
+  ticks and gridlines, marker lines, a log scale, and a gradient, and
+  writes its numbers with units, significant digits, and SI, binary or
+  time prefixes. It began as the separate package `tkcurses-bargraph`;
+  coming in, three options were renamed to Tk's style:
+  `refreshinterval`, `autoscaledelay` and `peakholdtime`, for
+  `refresh_ms`, `autoscale_ms` and `peakhold_ms`. Also fixed on the way:
+  an unknown colour is refused when set instead of blanking the screen,
+  wide and combining characters in labels are measured in cells, and an
+  autoscaled graph is drawn to its scale from its first frame.
+- The documentation has a section for widgets only TkCurses has, with
+  BarGraph's reference, and a guide to it with three new example
+  programs: `examples/bars.py`, `examples/meters.py` and
+  `examples/scales.py`.
+
 ## [0.5.0] - 2026-11-17
 
 ### Added

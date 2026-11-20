@@ -74,6 +74,16 @@ COLS, ROWS = 50, 16
 
 #: How each widget is made, and what it is given to show.
 BASES = {
+    # Three bars of two series, eight cells tall, with values to draw.
+    "bargraph.BarGraph": (
+        "BarGraph(root, **{'segments': 3, 'series': 2, 'scale': 64,"
+        " 'refreshinterval': 0, **kw})",
+        # Shaped to whatever segments and series the variant has: the base,
+        # three of two, is [[30, 20], [60, 10], [90, 5]].
+        "rows = [[30, 20, 10], [60, 10, 5], [90, 5, 3], [45, 15, 5]];"
+        " w.set_all([row[: int(w.cget('series'))]"
+        " for row in rows[: int(w.cget('segments'))]])",
+    ),
     "Button": ("tk.Button(root, **{'text': 'Sample', **kw})", ""),
     "Checkbutton": ("tk.Checkbutton(root, **{'text': 'Sample', **kw})", ""),
     "Radiobutton": ("tk.Radiobutton(root, **{'text': 'Sample', 'value': 1, **kw})", ""),
@@ -176,6 +186,8 @@ BEHAVIOUR = {
     "command", "variable", "textvariable", "listvariable", "validatecommand",
     "invalidcommand", "xscrollcommand", "yscrollcommand", "postcommand",
     "tearoffcommand", "menu", "labelwidget",
+    # BarGraph's: a function it calls for values.
+    "source",
     # Values compared with the variable's. One can look visible - an onvalue
     # equal to the variable's current value shows the button selected - but
     # what changed is the state, not how a state is drawn.
@@ -189,6 +201,43 @@ DRAWN_VALUES = {("ttk.Scale", "value"), ("ttk.Progressbar", "value")}
 #: Values for an option whose meaning, and so whose values, depend on the
 #: widget.
 WIDGET_VALUES: dict[tuple[str, str], list[object]] = {
+    ("bargraph.BarGraph", "segments"): [2, 4],
+    ("bargraph.BarGraph", "series"): [1, 3],
+    ("bargraph.BarGraph", "mode"): ["overlay"],
+    ("bargraph.BarGraph", "scale"): [32, "50%"],
+    ("bargraph.BarGraph", "maximum"): [200, "auto"],
+    ("bargraph.BarGraph", "autoscaledelay"): [0, 1000],
+    ("bargraph.BarGraph", "minimum"): [20],
+    ("bargraph.BarGraph", "scaletype"): ["log"],
+    ("bargraph.BarGraph", "logbase"): [2, 4],
+    ("bargraph.BarGraph", "thickness"): [2],
+    ("bargraph.BarGraph", "gap"): [0, 2],
+    ("bargraph.BarGraph", "colors"): [("red", "blue")],
+    ("bargraph.BarGraph", "refreshinterval"): [500],
+    ("bargraph.BarGraph", "labelanchor"): ["s", "nw", "se"],
+    ("bargraph.BarGraph", "labels"): [("a", "b", "c")],
+    ("bargraph.BarGraph", "labelwidth"): [1],
+    ("bargraph.BarGraph", "baseline"): [1],
+    ("bargraph.BarGraph", "axis"): [1],
+    ("bargraph.BarGraph", "ticks"): [2, (0, 50, 100)],
+    ("bargraph.BarGraph", "gridlines"): [1],
+    ("bargraph.BarGraph", "markers"): [((50, "red"),)],
+    # Shows only once a bar has fallen from its peak, which one screen
+    # drawn from one set of values never has: measured invisible.
+    ("bargraph.BarGraph", "peakholdtime"): [5000],
+    ("bargraph.BarGraph", "readout"): [1],
+    ("bargraph.BarGraph", "readoutformat"): ["{:.1f}%"],
+    ("bargraph.BarGraph", "units"): ["%"],
+    ("bargraph.BarGraph", "unitplacement"): ["prefix"],
+    ("bargraph.BarGraph", "unitspace"): [1],
+    ("bargraph.BarGraph", "digits"): [1],
+    ("bargraph.BarGraph", "decimals"): [2],
+    ("bargraph.BarGraph", "rounding"): ["down"],
+    ("bargraph.BarGraph", "unitscale"): ["time"],
+    ("bargraph.BarGraph", "axislabel"): ["Name"],
+    ("bargraph.BarGraph", "thresholds"): [((50, "red"),)],
+    ("bargraph.BarGraph", "colormode"): ["gradient"],
+    ("bargraph.BarGraph", "gradientstart"): [("white",)],
     ("ttk.Treeview", "show"): ["tree", "headings"],
     ("ttk.Treeview", "columns"): [("size", "kind"), ()],
     ("ttk.Treeview", "displaycolumns"): [(), "#all"],
@@ -291,6 +340,48 @@ NEEDS: dict[str, dict[str, Any]] = {
     "tile": {"backgroundimage": "IMAGE", "width": 10, "height": 4},
 }
 
+#: What an option of one widget needs before it can show, in place of
+#: NEEDS for that option: a BarGraph's readout shows only on a horizontal
+#: graph, its logbase only on a log scale, its units only on an axis.
+WIDGET_NEEDS: dict[tuple[str, str], dict[str, Any]] = {
+    ("bargraph.BarGraph", "relief"): {"borderwidth": 1},
+    ("bargraph.BarGraph", "foreground"): {"axis": 1},
+    ("bargraph.BarGraph", "labelanchor"): {"label": "Graph"},
+    ("bargraph.BarGraph", "labelwidth"): {
+        "orient": "horizontal",
+        "labels": ("alpha", "beta", "gamma"),
+    },
+    ("bargraph.BarGraph", "autoscaledelay"): {"maximum": "auto"},
+    ("bargraph.BarGraph", "scaletype"): {"mode": "overlay"},
+    ("bargraph.BarGraph", "logbase"): {
+        "scaletype": "log",
+        "mode": "overlay",
+        "axis": 1,
+    },
+    ("bargraph.BarGraph", "ticks"): {"axis": 1},
+    ("bargraph.BarGraph", "readout"): {"orient": "horizontal"},
+    ("bargraph.BarGraph", "readoutformat"): {"orient": "horizontal", "readout": 1},
+    ("bargraph.BarGraph", "units"): {"axis": 1},
+    ("bargraph.BarGraph", "unitplacement"): {"axis": 1, "units": "$"},
+    ("bargraph.BarGraph", "unitspace"): {"axis": 1, "units": "ms"},
+    ("bargraph.BarGraph", "digits"): {"axis": 1},
+    ("bargraph.BarGraph", "decimals"): {"axis": 1},
+    # Readouts of 50, 70 and 95 to one digit: 95 is 100 to the nearest,
+    # 90 rounded down.
+    ("bargraph.BarGraph", "rounding"): {
+        "orient": "horizontal",
+        "readout": 1,
+        "digits": 1,
+    },
+    ("bargraph.BarGraph", "unitscale"): {
+        "axis": 1,
+        "units": "ms",
+        "maximum": 120000,
+    },
+    ("bargraph.BarGraph", "axislabel"): {"axis": 1, "borderwidth": 1},
+    ("bargraph.BarGraph", "gradientstart"): {"colormode": "gradient"},
+}
+
 COLOURS = ("red",)
 RELIEFS = ("groove", "sunken", "raised", "flat")
 
@@ -377,11 +468,13 @@ PROGRAM = r"""
 import json, sys, time, traceback
 import tkcurses as tk
 from tkcurses import ttk
+from tkcurses.bargraph import BarGraph
 root = tk.Tk()
 spec = json.loads(open(sys.argv[1]).read())
+names = {"tk": tk, "ttk": ttk, "BarGraph": BarGraph, "root": root}
 # A themed widget's "style" is tried as a style of its own class that
 # changes the colours, so that a style it takes is a style that shows.
-probe = eval(spec["make"], {"tk": tk, "ttk": ttk, "root": root, "kw": {}})
+probe = eval(spec["make"], {**names, "kw": {}})
 sample_style = "Sample." + probe.winfo_class()
 ttk.Style(root).configure(
     sample_style, foreground="red", background="blue", fieldbackground="blue"
@@ -397,11 +490,11 @@ def build(kw, setup):
     root.configure(menu="")
     images = {"IMAGE": image, "IMAGE2": image2, "SAMPLE_STYLE": sample_style}
     kw = {k: images.get(v, v) if isinstance(v, str) else v for k, v in kw.items()}
-    w = eval(spec["make"], {"tk": tk, "ttk": ttk, "root": root, "kw": kw})
+    w = eval(spec["make"], {**names, "kw": kw})
     if spec["after"] == "FILL":
         w.pack(padx=1, pady=1, fill="x")
     elif spec["after"]:
-        exec(spec["after"], {"tk": tk, "ttk": ttk, "root": root, "w": w, "kw": kw})
+        exec(spec["after"], {**names, "w": w, "kw": kw})
     if w.winfo_class() != "Menu" and not w.winfo_manager():
         w.pack(padx=1, pady=1)
     if setup:
@@ -445,12 +538,11 @@ def _cell(term: TerminalHarness, row: int, column: int) -> tuple[object, ...]:
 
 def measure(widget: str) -> dict[str, object]:
     """Every option of one widget, measured."""
-    import tkcurses
-    from tkcurses import ttk
+    from tests.support.docsurface import measured_class
 
     make, after = BASES[widget]
     themed = widget.startswith("ttk.")
-    cls = getattr(ttk, widget[4:]) if themed else getattr(tkcurses, widget)
+    cls: Any = measured_class(widget)
     options: dict[str, object] = {}
     for klass in reversed(cls.__mro__):
         options.update(vars(klass).get("_widget_options", {}) or {})
@@ -478,7 +570,9 @@ def measure(widget: str) -> dict[str, object]:
             result[option] = {"kind": "behaviour"}
             continue
         setup = setup_for(option)
-        needs = {k: v for k, v in NEEDS.get(option, {}).items() if k in options}
+        needs = WIDGET_NEEDS.get((widget, option)) or {
+            k: v for k, v in NEEDS.get(option, {}).items() if k in options
+        }
         if option == "justify" and widget in ("Entry", "Spinbox"):
             needs = {}
         for value in values:

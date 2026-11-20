@@ -7,6 +7,7 @@ core/index
 options
 widgets/index
 ttk/index
+exclusive/index
 geometry
 images
 dialogs/index
@@ -20,6 +21,7 @@ Every class and function TkCurses provides: [the application and what
 every widget has](core/index.md), the [standard options](options.md), the
 [classic widgets](widgets/index.md), the
 [themed widgets](ttk/index.md), the
+[widgets only TkCurses has](exclusive/index.md), the
 [geometry managers](geometry.md), [images](images.md),
 [dialogs](dialogs/index.md) and [the other modules](modules/index.md),
 among them `curses` and `panel`. [Configuration](configuration.md) lists
@@ -47,8 +49,10 @@ here as well, so a program that relies on it knows it will not run on
 tkinter.
 
 **TkCurses extension** marks API that tkinter does not have at all - the
-`tkcurses.curses` and `tkcurses.panel` modules, and a few methods such as
-`winfo_colordepth`. A program that uses one runs only on TkCurses.
+`tkcurses.curses` and `tkcurses.panel` modules, the
+[widgets only TkCurses has](exclusive/index.md) such as `BarGraph`, and a
+few methods such as `winfo_colordepth`. A program that uses one runs only
+on TkCurses.
 
 **Differences from curses** is the same as the first heading for those
 two modules, which follow the standard library's `curses` and

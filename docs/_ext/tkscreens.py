@@ -54,12 +54,13 @@ import json
 import re
 import sys
 import tempfile
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from docutils import nodes
-from docutils.parsers.rst import Directive
+from docutils.parsers.rst import Directive, directives
 
 if TYPE_CHECKING:
     from sphinx.application import Sphinx
@@ -74,8 +75,9 @@ SECTION_LINE = re.compile(r"Sample output(?: \((\w+(?:, \w+)*)\))?:")
 SIZE = re.compile(r"#\s*size:\s*(\d+)\s*x\s*(\d+)\s*$")
 DEFAULT_SIZE = (40, 10)
 
-#: Bumped when the drawing changes, so cached screens are drawn again.
-RENDERER_VERSION = "7"
+#: Bumped when the drawing or the capture changes, so cached screens are
+#: drawn again.
+RENDERER_VERSION = "8"
 
 CELL_WIDTH = 8.4
 CELL_HEIGHT = 17
@@ -132,13 +134,22 @@ def program(code: str) -> str:
 
 
 def capture(
-    code: str, size: tuple[int, int], keys: tuple[str, ...] = (), *, whole: bool = False
+    code: str,
+    size: tuple[int, int],
+    keys: tuple[str, ...] = (),
+    *,
+    whole: bool = False,
+    live: float = 0.0,
 ) -> list[list[Any]]:
     """Run the example in a pseudo-terminal and return its cells, settled.
 
     ``whole`` runs ``code`` as a complete program rather than an example's
-    body; ``keys`` are pressed, in order, once it has drawn.
+    body; ``keys`` are pressed, in order, once it has drawn. ``live`` is for
+    a program that redraws on a timer and so never goes quiet for long: the
+    screen is taken that many seconds after it first draws, in a pause
+    between two frames rather than after a long silence.
     """
+    quiet = 0.05 if live else 0.3
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     from tests.support.terminal import TerminalHarness, TerminalTimeout
@@ -156,10 +167,18 @@ def capture(
                 lambda t: any(line.strip() for line in t.display),
                 message="the example to draw something",
             )
-            term.wait_for_idle(0.3)
+            # Reading all the while: a program whose output is left unread
+            # blocks once the terminal's buffer fills, and stops its clock.
+            deadline = time.monotonic() + live
+            term.wait_for(
+                lambda _: time.monotonic() >= deadline,
+                timeout=live + 5,
+                message=f"{live} seconds to pass",
+            )
+            term.wait_for_idle(quiet)
             for key in keys:
                 term.send_keys(key)
-                term.wait_for_idle(0.3)
+                term.wait_for_idle(quiet)
         except TerminalTimeout as error:
             raise SampleError(f"{error}\n{term.stderr}") from None
         if term.exit_status is not None or term.stderr.strip():
@@ -460,7 +479,11 @@ def _summary(body: str) -> str:
 
 
 def render_example(
-    path: Path, size: tuple[int, int], keys: tuple[str, ...], cache: Path | None = None
+    path: Path,
+    size: tuple[int, int],
+    keys: tuple[str, ...],
+    cache: Path | None = None,
+    live: float = 0.0,
 ) -> str:
     """A whole program's screen, after ``keys``, as SVG."""
     source = path.read_text()
@@ -471,6 +494,7 @@ def render_example(
                 library_fingerprint(),
                 f"{size}",
                 json.dumps(keys),
+                f"{live}",
                 source,
             )
         ).encode()
@@ -478,7 +502,7 @@ def render_example(
     if cache is not None and (cache / f"{key}.svg").exists():
         return (cache / f"{key}.svg").read_text()
     title = f"What {path.name} draws" + (f" after {' '.join(keys)}" if keys else "")
-    picture = svg(crop(capture(source, size, keys, whole=True)), title)
+    picture = svg(crop(capture(source, size, keys, whole=True, live=live)), title)
     if cache is not None:
         cache.mkdir(parents=True, exist_ok=True)
         (cache / f"{key}.svg").write_text(picture)
@@ -548,12 +572,17 @@ class ExampleDirective(Directive):  # type: ignore[misc]
 
     ``:size: 60x15`` sets the terminal (40x10 otherwise), and ``:keys:`` is a
     JSON list of what to press first: literal text and ``<Name>`` keys, as
-    the test harness's ``send_keys`` takes them.
+    the test harness's ``send_keys`` takes them. ``:live: 3`` is for a
+    program that keeps redrawing: its screen is taken three seconds in.
     """
 
     required_arguments = 1
     has_content = False
-    option_spec = {"size": _size_option, "keys": _keys_option}  # noqa: RUF012
+    option_spec = {  # noqa: RUF012
+        "size": _size_option,
+        "keys": _keys_option,
+        "live": directives.nonnegative_int,
+    }
 
     def run(self) -> list[nodes.Node]:
         relative = self.arguments[0]
@@ -581,6 +610,7 @@ class ExampleDirective(Directive):  # type: ignore[misc]
                 self.options.get("size", DEFAULT_SIZE),
                 self.options.get("keys", ()),
                 cache,
+                self.options.get("live", 0),
             )
         except SampleError as error:
             return [

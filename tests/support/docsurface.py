@@ -84,7 +84,12 @@ COUNTERPARTS = (
 
 #: Modules that are TkCurses extensions as a whole. Their own docstring
 #: carries the marker, and their members need not repeat it.
-EXTENSION_MODULES = ("tkcurses.curses", "tkcurses.panel", "tkcurses.constants")
+EXTENSION_MODULES = (
+    "tkcurses.curses",
+    "tkcurses.panel",
+    "tkcurses.constants",
+    "tkcurses.bargraph",
+)
 
 #: tkinter's API grew after Python 3.11, the oldest TkCurses supports, so
 #: the tkinter a test runs against may be missing methods TkCurses provides
@@ -460,15 +465,13 @@ def _check_options(found: dict[str, set[str]]) -> None:
     docstring, and - where it changes the drawing - sampled. A themed
     widget's options are the ones Tk's has; one TkCurses lacks is measured
     as ``missing`` and has to be described all the same."""
-    import tkcurses
-    from tkcurses import ttk
 
     measured = json.loads(VISIBLE.read_text())
     tk_ttk = json.loads(TK_TTK_OPTIONS.read_text())
     on_page = options_page_samples()
     for name, options in measured.items():
         themed = name.startswith("ttk.")
-        cls = getattr(ttk, name[4:]) if themed else getattr(tkcurses, name)
+        cls = measured_class(name)
         shared = COMMON_OPTIONS | THEMED_OPTIONS if themed else COMMON_OPTIONS
         key = class_key(cls)
         doc = inspect.getdoc(cls) or ""
@@ -491,15 +494,54 @@ def _check_options(found: dict[str, set[str]]) -> None:
 
 
 def widget_classes() -> list[type]:
-    """The widgets tkinter has, as TkCurses provides them: everything that
-    draws, and so everything that has a sample to show."""
+    """The widgets tkinter has, as TkCurses provides them, and the ones
+    only TkCurses has: everything that draws, and so everything that has a
+    sample to show."""
     import tkcurses
 
     return [
         cls
         for cls in class_counterparts()
         if issubclass(cls, tkcurses.Widget) and cls is not tkcurses.Widget
-    ]
+    ] + extension_widgets()
+
+
+def extension_widgets() -> list[type]:
+    """The widgets the extension modules define, such as BarGraph."""
+    import tkcurses
+
+    found = []
+    for name in EXTENSION_MODULES:
+        module = _module(name)
+        for attr in _public_names(module):
+            obj = getattr(module, attr, None)
+            if (
+                inspect.isclass(obj)
+                and issubclass(obj, tkcurses.Widget)
+                and obj.__module__ == name
+            ):
+                found.append(obj)
+    return found
+
+
+def measured_key(cls: type) -> str:
+    """How ``visible_options.json`` names a widget: ``Button``, or for an
+    extension module's, its module and name: ``bargraph.BarGraph``."""
+    module = cls.__module__.removeprefix("tkcurses").lstrip(".")
+    return f"{module}.{cls.__qualname__}" if module else cls.__qualname__
+
+
+def measured_class(name: str) -> type:
+    """The class a ``visible_options.json`` key names: ``Button``,
+    ``ttk.Button`` or ``bargraph.BarGraph``."""
+    import tkcurses
+
+    if "." not in name:
+        cls: type = getattr(tkcurses, name)
+        return cls
+    module, attr = name.rsplit(".", 1)
+    found: type = getattr(_module(f"tkcurses.{module}"), attr)
+    return found
 
 
 def class_key(cls: type) -> str:

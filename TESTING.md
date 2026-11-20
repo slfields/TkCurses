@@ -119,6 +119,12 @@ input, not only the ones someone thought of:
 | `tests/test_cfg_session.py`, `tests/test_cfg_invariants.py` | What the `tkcurses-cfg` screen previews is what a program reads once the file is saved. |
 | `tests/test_input_properties.py` | Any byte stream from the terminal, with keys curses decoded mixed in, is read to the end without an exception and leaves nothing unread. Typed text arrives as exactly that text; bytes that are not UTF-8 never become a character they do not spell; a paste is one event holding what was pasted, with typing either side kept; a paste whose end never comes is kept and marked incomplete; and a late reply to a start-up query is never typed. |
 | `tests/test_image_properties.py` | Any bytes, anything after a valid magic number, and good PNG, GIF and PPM files that have been cut, overwritten or grown (a PNG's checksums mended, so the damage reaches the decoder) either decode to a rectangular picture of `#rrggbb` cells within `MAX_PIXELS`, or raise `TclError`, holding under 64 MB while they do. A file our own encoders wrote reads back exactly. Any XBM source makes a bitmap or a `TclError`, and so does any photo data. |
+| `tests/test_bargraph_render.py` | For any values, a stacked bar's tip is exactly their total and an overlaid bar's the longest value, a threshold zone's tip is exact, and no cell holds more than two colours. |
+| `tests/test_bargraph_layout.py` | For any options and size, a graph's regions stay inside it and never overlap, and its natural size fits everything it draws. |
+| `tests/test_bargraph_decor.py` | A composed graph never writes outside its window or onto its border. |
+| `tests/test_bargraph_scale.py`, `tests/test_bargraph_model.py` | A value never maps past the bar's peak, and an autoscaled maximum never cuts a value off, for any sequence of values. |
+| `tests/test_bargraph_numformat.py` | A number is never written with more significant digits than asked, with no leading zeros but one before the point, and with exactly the decimals asked. |
+| `tests/test_bargraph_gradient.py` | The shades run evenly from the start colour to the series colour. |
 | `tests/test_core_config.py` | For any value of any setting, a program keeps what the parser accepts, clamps what is out of range, and falls back on anything else, so `tkcurses-cfg` and a program never disagree. |
 
 The number of examples is set per test with `@settings`, where the default
