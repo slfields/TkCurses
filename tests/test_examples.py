@@ -32,6 +32,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
 PAGE = ROOT / "docs" / "guide" / "examples.md"
+#: The bar graph examples are shown on their guide page instead.
+PAGES = (PAGE, ROOT / "docs" / "guide" / "bargraph.md")
 TIMES = "\N{MULTIPLICATION SIGN}"
 DIRECTIVE = re.compile(r"^```\{tkcurses-example\} (\S+)$", re.M)
 
@@ -52,10 +54,10 @@ def start(terminal, tmp_path, name, *argv, cols=60, rows=16):
 
 
 def test_every_example_is_on_the_page_and_nothing_else_is():
-    shown = DIRECTIVE.findall(PAGE.read_text())
+    shown = [found for page in PAGES for found in DIRECTIVE.findall(page.read_text())]
     files = sorted(f"examples/{path.name}" for path in EXAMPLES.glob("*.py"))
     assert sorted(shown) == files
-    assert len(files) == 16
+    assert len(files) == 19
 
 
 def test_every_example_carries_the_notice():
@@ -702,3 +704,133 @@ def test_the_scroller_moves_its_pad_with_the_keys(terminal, tmp_path):
     )
     term.send_keys("q")
     assert term.wait_for_exit(timeout=10) == 0
+
+
+BLOCKS = set("▏▎▍▌▋▊▉█▁▂▃▄▅▆▇")
+
+
+def bar_length(line: str) -> int:
+    return sum(char in BLOCKS for char in line)
+
+
+@pytest.mark.tty
+def test_the_bars_switch_mode_and_orientation(terminal, tmp_path):
+    term = start(terminal, tmp_path, "bars", rows=16)
+    term.wait_for(
+        lambda t: t.contains("stacked, vertical") and t.contains("Q4"),
+        message="the stacked graph",
+    )
+    term.send(b"o")
+
+    def lying(t):
+        rows = [line for line in t.display if "│Q4 " in line]
+        return t.contains("stacked, horizontal") and rows and bar_length(rows[0]) > 0
+
+    term.wait_for(lying, message="the bars on their side")
+    stacked = bar_length(next(line for line in term.display if "│Q4 " in line))
+    term.send(b"m")
+
+    # Q4 holds 60, 30 and 25 of 120: stacked, the bar is their total;
+    # overlaid, the longest alone. The label changes at once and the graph
+    # on its next repaint, so the wait is for both.
+    def overlaid(t):
+        rows = [line for line in t.display if "│Q4 " in line]
+        return (
+            t.contains("overlay, horizontal")
+            and rows
+            and 0 < bar_length(rows[0]) < stacked * 0.7
+        )
+
+    term.wait_for(overlaid, message="the overlaid bars, shorter")
+
+
+def core_rows(term):
+    return [r for r, line in enumerate(term.display) if "│cpu" in line]
+
+
+@pytest.mark.tty
+def test_the_meters_read_out_in_place_and_mark_their_peaks(terminal, tmp_path):
+    # Each core's readout is rewritten where it stands: one value at the
+    # row's right end, whatever its width was before. A red part shows a
+    # core above 90%, and a mark beyond a bar the highest it reached.
+    term = start(terminal, tmp_path, "meters", rows=20)
+    readouts: set[str] = set()
+    stray: list[str] = []
+    seen = {"red": False, "peak": False}
+
+    def watched(t):
+        rows = core_rows(t)
+        if len(rows) != 4:
+            return False
+        for r in rows:
+            line = t.display[r]
+            inside = line[: line.rindex("│")]
+            values = re.findall(r"[\d.]+%", inside)
+            if len(values) != 1 or not inside.rstrip().endswith(values[0]):
+                stray.append(line)
+            readouts.update(values)
+            cells = range(6, len(inside))
+            if any(t.char_at(r, c).fg == "red" for c in cells):
+                seen["red"] = True
+            bar_end = max(
+                (c for c in cells if inside[c] in BLOCKS), default=len(inside)
+            )
+            if "│" in inside[bar_end + 1 :]:
+                seen["peak"] = True
+        return all(seen.values()) and len(readouts) > 8
+
+    term.wait_for(watched, timeout=10, message="readouts, a red part and a peak")
+    assert stray == []
+
+
+@pytest.mark.tty
+def test_the_request_scale_grows_for_a_burst_and_shrinks_after(terminal, tmp_path):
+    term = start(terminal, tmp_path, "meters", rows=20)
+
+    def top(t):
+        labels = [line.split("┤")[0].strip("│ ") for line in t.display if "┤" in line]
+        return labels[0] if labels else None
+
+    term.wait_for(lambda t: top(t) == "40/s", message="the quiet scale")
+    # The first burst comes 8.5 s in, and grows the scale at once.
+    term.wait_for(lambda t: top(t) == "400/s", timeout=12, message="the burst")
+    # Once it has passed, the scale comes down in steps.
+    term.wait_for(lambda t: top(t) == "40/s", timeout=10, message="the scale back")
+
+
+@pytest.mark.tty
+def test_the_scales_write_each_unit_and_space_log_powers_evenly(terminal, tmp_path):
+    term = start(terminal, tmp_path, "scales", cols=80, rows=24)
+    texts = ("1ms┤", "100ms┤", "10s┤", "210 GiB", "440 GiB", "500 GiB")
+    texts += ("$2000┤", "$500┤", "$0┤", "40°C┤", "0°C┤")
+    term.wait_for(
+        lambda t: all(t.contains(text) for text in texts), message="every axis"
+    )
+    rows = {
+        text: next(
+            r
+            for r, line in enumerate(term.display)
+            if f"│{text}" in line or f" {text}" in line
+        )
+        for text in ("1ms┤", "100ms┤", "10s┤")
+    }
+    # Each hundredfold takes the same height on a log scale - to the row,
+    # since a tick is drawn on one: five decades in nine rows put a
+    # hundredfold 3.6 rows high, drawn as 3 or 4.
+    low, high = rows["1ms┤"] - rows["100ms┤"], rows["100ms┤"] - rows["10s┤"]
+    assert low > 0 and high > 0 and abs(low - high) <= 1
+
+    def coloured(t, text, colour):
+        r = next(r for r, line in enumerate(t.display) if f"│{text} " in line)
+        return any(t.char_at(r, c).fg == colour for c in range(40, 80))
+
+    # /home is 86% full and crosses the yellow threshold; /var, at 98%,
+    # the red one too. pyte calls ANSI yellow "brown".
+    term.wait_for(
+        lambda t: (
+            coloured(t, "/home", "brown")
+            and not coloured(t, "/home", "red")
+            and coloured(t, "/var", "red")
+        ),
+        message="the thresholds' colours",
+    )

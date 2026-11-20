@@ -417,3 +417,32 @@ def test_each_run_starts_in_a_directory_of_its_own():
     for _ in range(2):
         cells = tkscreens.capture(program, (20, 3), whole=True)
         assert "".join(cell.data for cell in cells[0]).strip() == "first"
+
+
+LIVE = """
+import time
+import tkcurses as tk
+
+root = tk.Tk()
+start = time.monotonic()
+label = tk.Label(root)
+label.pack()
+
+
+def tick():
+    label.configure(text="late" if time.monotonic() - start > 1.5 else "early")
+    root.after(50, tick)
+
+
+tick()
+root.mainloop()
+"""
+
+
+@pytest.mark.tty
+def test_a_live_example_is_taken_after_its_time():
+    # It redraws every 50 ms, so it is never quiet for the 0.3 s a still
+    # example waits for; live, the picture is taken in a gap between two
+    # frames, and late enough to show what the program draws by then.
+    cells = tkscreens.capture(LIVE, (20, 3), whole=True, live=2)
+    assert "late" in "".join(cell.data for row in cells for cell in row)

@@ -1,6 +1,6 @@
 # Examples
 
-Fourteen complete programs, each a single file in the
+Sixteen complete programs, each a single file in the
 [`examples`](https://github.com/slfields/TkCurses/tree/master/examples)
 directory. Run one from a checkout with:
 
@@ -257,3 +257,9 @@ the same way.
 :size: 44x12
 :keys: ["<Down>", "<Down>"]
 ```
+
+## Bar graphs
+
+Three more programs are about `BarGraph`, a widget only TkCurses has:
+bars and series, values that change, and axes and number formats. They
+are on [their own page](bargraph.md), with what each shows.
