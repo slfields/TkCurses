@@ -19,6 +19,8 @@
 
 from __future__ import annotations
 
+import itertools
+
 import pytest
 
 from tkcurses.bargraph._decor import (
@@ -149,8 +151,8 @@ def test_vertical_with_axis_baseline_and_labels():
         "32┤   ",
         "~~│▄  ",
         "~~│█  ",
-        "~0┤█ ▆",
-        "~~└───",
+        "~~│█ ▆",
+        "~0┴───",
         "~~~a~b",
     ]
     assert window[0][0] == Cell("3", TEXT, BACKGROUND)
@@ -251,6 +253,41 @@ def test_horizontal_with_labels_axis_and_readout():
         "~~~~┬┬─┬~~~~",
         "~~~~0~32~~~~",
     ]
+
+
+@pytest.mark.parametrize("baseline", [True, False])
+def test_the_bottom_tick_is_spaced_like_the_rest(baseline):
+    # Five ticks evenly across 8 rows: with a baseline the lowest goes on its
+    # corner, where an empty bar ends, and every pair is two rows apart.
+    # Without one there is no row below the bars, and the lowest pair is
+    # one row apart - there are only 8 rows for 9 places.
+    spec = LayoutSpec(
+        segments=1, relative=False, baseline=baseline, axis=True, axis_label_width=4
+    )
+    ticks = (0, 500, 1000, 1500, 2000)
+    window = _window(
+        spec, 8, [[0]], 2000, {"baseline": baseline, "axis": True, "ticks": ticks}
+    )
+    rows = [
+        next(
+            r
+            for r, line in enumerate(_text(window))
+            if line.lstrip("~").startswith(f"{t}")
+        )
+        for t in reversed(ticks)
+    ]
+    gaps = [b - a for a, b in itertools.pairwise(rows)]
+    assert gaps == ([2, 2, 2, 2] if baseline else [2, 2, 2, 1])
+    if baseline:
+        assert _text(window)[-1] == "~~~0┴─"
+
+
+def test_the_bottom_tick_on_a_horizontal_baseline_is_on_its_corner():
+    spec = LayoutSpec(orient="horizontal", relative=False, axis=True, baseline=True)
+    window = _window(
+        spec, 8, [[10]], 32, {"axis": True, "baseline": True, "ticks": (0, 16, 32)}
+    )
+    assert _text(window)[1:] == ["├───┬───┬", "0~~~16~32"]
 
 
 def test_title_in_the_box_edge_with_spaces():

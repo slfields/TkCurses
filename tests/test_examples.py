@@ -23,6 +23,7 @@ the page tells a reader to.
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 from pathlib import Path
@@ -802,7 +803,7 @@ def test_the_request_scale_grows_for_a_burst_and_shrinks_after(terminal, tmp_pat
 def test_the_scales_write_each_unit_and_space_log_powers_evenly(terminal, tmp_path):
     term = start(terminal, tmp_path, "scales", cols=80, rows=24)
     texts = ("1ms┤", "100ms┤", "10s┤", "210 GiB", "440 GiB", "500 GiB")
-    texts += ("$2000┤", "$500┤", "$0┤", "40°C┤", "0°C┤")
+    texts += ("$2000┤", "$500┤", "$0┴", "40°C┤", "0°C┤")
     term.wait_for(
         lambda t: all(t.contains(text) for text in texts), message="every axis"
     )
@@ -819,6 +820,14 @@ def test_the_scales_write_each_unit_and_space_log_powers_evenly(terminal, tmp_pa
     # hundredfold 3.6 rows high, drawn as 3 or 4.
     low, high = rows["1ms┤"] - rows["100ms┤"], rows["100ms┤"] - rows["10s┤"]
     assert low > 0 and high > 0 and abs(low - high) <= 1
+
+    # The budget's ticks are evenly spaced, $0 included: it sits on the
+    # baseline, where an empty bar ends, not in the row above it.
+    budget = [
+        next(r for r, line in enumerate(term.display) if f"{tick}" in line)
+        for tick in ("$2000┤", "$1500┤", "$1000┤", "$500┤", "$0┴")
+    ]
+    assert {b - a for a, b in itertools.pairwise(budget)} == {2}
 
     def coloured(t, text, colour):
         r = next(r for r, line in enumerate(t.display) if f"│{text} " in line)
