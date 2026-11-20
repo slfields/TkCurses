@@ -346,3 +346,13 @@ def test_zone_tip_is_exact(value, length):
     if runs and tip <= length * 8:
         tip_cell = cells[(tip - 1) // 8]
         assert runs[-1].role in (tip_cell.fg, tip_cell.bg)
+
+
+def test_a_horizontal_bar_inside_a_box_is_drawn_in_its_own_row():
+    # A box moves the bars region down a row; the grid is still indexed
+    # from the region's corner, so the bar is in its row 0.
+    spec = LayoutSpec(relative=False, orient="horizontal", borderwidth=1)
+    layout = compute_layout(12, 3, spec)
+    assert layout.bars.y > 0
+    grid = render_bars([[8]], layout, "stacked", maximum=8, peak_points=8)
+    assert grid[0][0].char == "█"

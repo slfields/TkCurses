@@ -154,3 +154,21 @@ def test_shade_window_horizontal_runs_left_to_right():
     shaded = shade_window(window, layout)
     assert shaded[bars.y][bars.x].fg == shade(0, 0)
     assert shaded[bars.y][bars.x + bars.width - 1].fg == shade(0, 7)
+
+
+def test_shade_window_counts_along_the_bar_from_where_it_starts():
+    # Behind a box and a label the bar starts four columns in, and its
+    # first cell is still the start of the gradient, its last the end.
+    spec = LayoutSpec(
+        relative=False, orient="horizontal", labels=("ab",), borderwidth=1
+    )
+    layout = compute_layout(14, 3, spec)
+    bars = layout.bars
+    assert bars.x > 0
+    window = [[EMPTY_CELL] * 14 for _ in range(3)]
+    for x in range(bars.x, bars.x + bars.width):
+        window[bars.y][x] = Cell("█", series(0), BACKGROUND)
+    shaded = shade_window(window, layout)
+    last = step_count(bars.width) - 1
+    assert shaded[bars.y][bars.x].fg == shade(0, 0)
+    assert shaded[bars.y][bars.x + bars.width - 1].fg == shade(0, last)
