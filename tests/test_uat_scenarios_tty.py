@@ -2125,3 +2125,24 @@ def test_scenario_28_a_pads_one_side_only(uat_terminal):
     )
     term.send(ESCAPE)
     assert term.wait_for_exit() == 0
+
+
+def test_scenario_51_steps_the_bar_by_an_eighth(uat_terminal):
+    """One press of Up is one eighth of a cell: 13 of 64 is a full cell and
+    5/8, and 14 a full cell and 6/8 - the step the checklist asks a person
+    to watch, and the readout claims."""
+    term = uat_terminal(cols=80, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_51_bar_graphs"])
+
+    def tip(t, glyph, readout):
+        if not t.contains(readout):
+            return False
+        rows = [line for line in t.display if line.startswith(" │") and "┌" not in line]
+        return any(line[2:6] == glyph * 4 for line in rows)
+
+    term.wait_for(lambda t: tip(t, "▅", "13 of 64 = 1 cell and 5/8"), message="5/8")
+    term.send_keys("<Up>")
+    term.wait_for(lambda t: tip(t, "▆", "14 of 64 = 1 cell and 6/8"), message="6/8")
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+    assert "Traceback" not in term.stderr
