@@ -267,7 +267,7 @@ def test_peak_role(root):
     assert graph._peak_role(config, (5, 3, 0), 9) == ("series", 1)
     overlay = BarGraph(root, series=3, mode="overlay")._config
     assert graph._peak_role(overlay, (5, 9, 2), 9) == ("series", 1)
-    zoned = BarGraph(root, thresholds=[(80, "y"), (90, "r")])._config
+    zoned = BarGraph(root, thresholds=[(80, "yellow"), (90, "red")])._config
     assert graph._peak_role(zoned, (85,), 95) == ("zone", 2)
 
 
@@ -304,9 +304,10 @@ def test_gradient_shade_colors(root):
     assert graph._color_of(("shade", 7)) == "#cd0000"
 
 
-def test_solid_colormode_checks_no_colors(root):
-    # Color names are TkCurses' business in solid mode, as before.
-    assert BarGraph(root, colors=["whatever"])._config.gradient == ()
+def test_solid_colormode_needs_no_gradient(root):
+    # Solid mode works out no gradient ends; the names are still checked,
+    # as in any mode: test_an_unknown_color_is_refused_when_set.
+    assert BarGraph(root, colors=["green"])._config.gradient == ()
 
 
 # ---------------------------------------------------------- number format ----
@@ -534,3 +535,22 @@ def test_gap_zero_puts_bars_side_by_side(root):
     graph = BarGraph(root, segments=3, gap=0, scale=8, refreshinterval=0)
     graph.set_all([[100], [50], [100]])
     assert _text(graph._compose(3, 1)) == ["█▄█"]
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"colors": ["green", "notacolor"]},
+        {"thresholds": [(50, "notacolor")]},
+        {"markers": [("50%", "notacolor")]},
+    ],
+)
+def test_an_unknown_color_is_refused_when_set(root, options):
+    """Not when the bar is first drawn in it: that raised on every redraw
+    and left the whole window blank."""
+    with pytest.raises(tk.TclError, match="notacolor"):
+        BarGraph(root, **options)
+    graph = BarGraph(root)
+    with pytest.raises(tk.TclError, match="notacolor"):
+        graph.configure(**options)
+    assert graph.cget("colors") == ()

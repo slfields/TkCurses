@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import tkcurses
 from tkcurses import TclError
-from tkcurses._core.colors import ColorDepth, rgb_of
+from tkcurses._core.colors import ColorDepth, parse_color, rgb_of
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses.bargraph._decor import (
     MIN_TICK_ROWS,
@@ -227,6 +227,8 @@ def _parse(options: dict[str, Any]) -> _Config:
         raise ValueError("readout needs orient=horizontal")
     raw_thresholds = tuple(_pairs(options["thresholds"], "thresholds"))
     raw_markers = tuple(_pairs(options["markers"], "markers"))
+    for _, color in (*raw_thresholds, *raw_markers):
+        _color(color)
     thresholds = parse_thresholds(raw_thresholds, maximum)
     ticks: str | int | tuple[float, ...]
     raw_ticks: tuple[object, ...] = ()
@@ -240,7 +242,9 @@ def _parse(options: dict[str, Any]) -> _Config:
     colormode = str(options["colormode"])
     if colormode not in ("solid", "gradient"):
         raise ValueError(f'bad colormode "{colormode}": must be solid or gradient')
-    colors = tuple(str(color) for color in _items(options["colors"])) or DEFAULT_COLORS
+    colors = (
+        tuple(_color(color) for color in _items(options["colors"])) or DEFAULT_COLORS
+    )
     starts = tuple(
         "" if start is None else str(start)
         for start in _items(options["gradientstart"])
@@ -373,6 +377,18 @@ def _choice(value: Any, name: str, allowed: tuple[str, ...]) -> str:
     text = str(value)
     if text not in allowed:
         raise ValueError(f'bad {name} "{text}": must be {", ".join(allowed)}')
+    return text
+
+
+def _color(value: Any) -> str:
+    """A colour, refused here rather than when a bar is first drawn in it:
+    an unknown name used to raise on every repaint and leave the whole
+    window blank. Known or not does not depend on the terminal's depth."""
+    text = str(value)
+    try:
+        parse_color(text)
+    except ValueError:
+        raise ValueError(f'unknown color name "{text}"') from None
     return text
 
 
