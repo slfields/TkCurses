@@ -611,6 +611,7 @@ class BarGraph(tkcurses.Frame):
     ``padx``, ``pady``, ``relief``, ``takefocus``, ``width``.
 
     Sample output:
+        from tkcurses.bargraph import BarGraph
         graph = BarGraph(root, segments=3, series=2, colors=["green", "red"],
                          labels=["a", "b", "c"], label="Load", borderwidth=1)
         graph.pack(fill="both", expand=True)
@@ -618,6 +619,7 @@ class BarGraph(tkcurses.Frame):
 
     Sample output (segments):
         # size: 40x8
+        from tkcurses.bargraph import BarGraph
         for count in (2, 5):
             graph = BarGraph(root, segments=count, scale=40, label=f"{count}")
             graph.pack(side="left", padx=2)
@@ -625,6 +627,7 @@ class BarGraph(tkcurses.Frame):
 
     Sample output (mode, series):
         # size: 40x8
+        from tkcurses.bargraph import BarGraph
         values = [[30, 40, 20], [50, 20, 60]]
         for mode in ("stacked", "overlay"):
             graph = BarGraph(root, segments=2, series=3, mode=mode,
@@ -633,12 +636,14 @@ class BarGraph(tkcurses.Frame):
             graph.set_all(values)
 
     Sample output (orient, labels):
+        from tkcurses.bargraph import BarGraph
         graph = BarGraph(root, orient="horizontal", segments=3,
                          labels=["cpu", "memory", "disk"])
         graph.pack(fill="x")
         graph.set_all([[35], [80], [55]])
 
     Sample output (scale, maximum):
+        from tkcurses.bargraph import BarGraph
         # Fixed: 24 eighths, 3 cells, whatever the window.
         graph = BarGraph(root, segments=4, scale=24, maximum=10)
         graph.pack(side="left")
@@ -646,6 +651,7 @@ class BarGraph(tkcurses.Frame):
 
     Sample output (scaletype, logbase):
         # size: 40x12
+        from tkcurses.bargraph import BarGraph
         graph = BarGraph(root, segments=5, scaletype="log", maximum=1e6,
                          labels=["1", "40", "2k", "90k", "1M"], axis=True,
                          markers=[("50%", "red"), (1000, "yellow")],
@@ -655,29 +661,34 @@ class BarGraph(tkcurses.Frame):
 
     Sample output (minimum):
         # size: 40x12
+        from tkcurses.bargraph import BarGraph
         graph = BarGraph(root, segments=4, minimum=50, maximum=100,
                          axis=True, units="%", thickness=3)
         graph.pack(fill="both", expand=True)
         graph.set_all([[40], [62], [85], [97]])
 
     Sample output (colors):
+        from tkcurses.bargraph import BarGraph
         graph = BarGraph(root, segments=4, series=3,
                          colors=["#4080ff", "#ff8000", "magenta"])
         graph.pack(fill="both", expand=True)
         graph.set_all([[30, 20, 10], [20, 30, 25], [50, 10, 5], [10, 10, 60]])
 
     Sample output (thickness, gap):
+        from tkcurses.bargraph import BarGraph
         graph = BarGraph(root, segments=3, scale=48, thickness=4, gap=2)
         graph.pack(side="left")
         graph.set_all([[40], [70], [100]])
 
     Sample output (label, labelanchor, borderwidth):
+        from tkcurses.bargraph import BarGraph
         graph = BarGraph(root, segments=3, scale=32, label="Queue depth",
                          labelanchor="sw", borderwidth=1, thickness=3)
         graph.pack(side="left")
         graph.set_all([[30], [60], [90]])
 
     Sample output (labelwidth):
+        from tkcurses.bargraph import BarGraph
         graph = BarGraph(root, orient="horizontal", segments=2,
                          labels=["a very long label", "short"], labelwidth=6)
         graph.pack(fill="x")
@@ -685,6 +696,7 @@ class BarGraph(tkcurses.Frame):
 
     Sample output (axis, ticks, foreground):
         # size: 40x12
+        from tkcurses.bargraph import BarGraph
         graph = BarGraph(root, segments=4, axis=True, ticks=[0, 25, 50, 75, 100],
                          foreground="cyan", thickness=3)
         graph.pack(fill="both", expand=True)
@@ -692,6 +704,7 @@ class BarGraph(tkcurses.Frame):
 
     Sample output (baseline, gridlines):
         # size: 40x12
+        from tkcurses.bargraph import BarGraph
         graph = BarGraph(root, segments=4, baseline=True, gridlines=True,
                          axis=True, thickness=3)
         graph.pack(fill="both", expand=True)
@@ -699,12 +712,14 @@ class BarGraph(tkcurses.Frame):
 
     Sample output (markers):
         # size: 40x12
+        from tkcurses.bargraph import BarGraph
         graph = BarGraph(root, segments=4, markers=[("90%", "red"), (50, "yellow")],
                          thickness=3)
         graph.pack(fill="both", expand=True)
         graph.set_all([[20], [45], [70], [95]])
 
     Sample output (peakholdtime):
+        from tkcurses.bargraph import BarGraph
         # The values fell a moment ago; each bar's peak is still marked.
         graph = BarGraph(root, segments=3, peakholdtime=60000, thickness=3,
                          refreshinterval=10)
@@ -713,6 +728,7 @@ class BarGraph(tkcurses.Frame):
         root.after(200, lambda: graph.set_all([[30], [50], [20]]))
 
     Sample output (thresholds):
+        from tkcurses.bargraph import BarGraph
         graph = BarGraph(root, orient="horizontal", segments=3, colors=["white"],
                          thresholds=[("80%", "yellow"), ("90%", "red")],
                          labels=["/", "/home", "/var"])
@@ -720,6 +736,7 @@ class BarGraph(tkcurses.Frame):
         graph.set_all([[60], [85], [97]])
 
     Sample output (units, unitspace, digits, unitscale):
+        from tkcurses.bargraph import BarGraph
         graph = BarGraph(root, orient="horizontal", segments=3,
                          maximum=8 * 2**30, labels=["ram", "swap", "disk"],
                          readout=True, units="B", unitspace=True, digits=3,
@@ -729,6 +746,7 @@ class BarGraph(tkcurses.Frame):
 
     Sample output (unitplacement, decimals, rounding):
         # size: 40x12
+        from tkcurses.bargraph import BarGraph
         graph = BarGraph(root, segments=4, maximum=2500, axis=True,
                          ticks=[0, 625, 1250, 1875, 2500], units="$",
                          unitplacement="prefix", digits=3, decimals=2,
@@ -738,6 +756,7 @@ class BarGraph(tkcurses.Frame):
 
     Sample output (axislabel):
         # size: 40x12
+        from tkcurses.bargraph import BarGraph
         graph = BarGraph(root, segments=3, maximum=16 * 2**30, axis=True,
                          axislabel="Memory", borderwidth=1, units="B",
                          unitspace=True, digits=3, unitscale="binary",
@@ -747,6 +766,7 @@ class BarGraph(tkcurses.Frame):
         graph.set_all([[11 * 2**30], [3.5 * 2**30], [14.5 * 2**30]])
 
     Sample output (readout, readoutformat):
+        from tkcurses.bargraph import BarGraph
         graph = BarGraph(root, orient="horizontal", segments=2,
                          labels=["rx", "tx"], readout=True,
                          readoutformat="{:.1f}%")
@@ -755,6 +775,7 @@ class BarGraph(tkcurses.Frame):
 
     Sample output (colormode, gradientstart):
         # size: 40x12
+        from tkcurses.bargraph import BarGraph
         graph = BarGraph(root, segments=3, series=1, colors=["red"],
                          colormode="gradient", thickness=3)
         graph.pack(side="left", fill="both", expand=True)
