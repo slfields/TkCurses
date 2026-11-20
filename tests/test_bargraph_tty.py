@@ -378,3 +378,30 @@ graph.set(0, [10])
         lambda t: t.row(0).startswith("   Café") and t.row(1).startswith(FULL * 10),
         message="the label centred, the accent on its letter",
     )
+
+
+def test_an_autoscaled_graph_is_drawn_to_its_scale_from_the_first_frame(terminal):
+    # The refresh is five seconds off, so whatever is drawn first stays. The
+    # first frame used to be drawn before the scale had seen the values, at
+    # its starting maximum of 1, so every bar was full until the refresh.
+    term = run(
+        terminal,
+        """
+graph = BarGraph(root, segments=3, maximum="auto", refreshinterval=5000,
+                 thickness=1, gap=1, scale=80)
+graph.pack(side="top", anchor="nw")
+graph.set_all([[20], [50], [100]])
+""",
+        cols=10,
+        rows=12,
+    )
+
+    def height(t, col):
+        return sum(t.char_at(row, col).data != " " for row in range(10))
+
+    # Scale 100: 2, 5 and 10 cells of a 10-cell bar.
+    term.wait_for(
+        lambda t: (height(t, 0), height(t, 2), height(t, 4)) == (2, 5, 10),
+        timeout=3,
+        message="bars of 2, 5 and 10 cells",
+    )

@@ -887,6 +887,7 @@ class BarGraph(tkcurses.Frame):
             self._peak = None
             self._held = []
         self._model.dirty = True
+        self._grow_to_fit()
         self._apply_requested_size()
         self._invalidate_layout()
         self._schedule()
@@ -934,6 +935,7 @@ class BarGraph(tkcurses.Frame):
             self._model.set(segment, values)
         except ValueError as error:
             raise TclError(str(error)) from None
+        self._grow_to_fit()
         self._schedule()
 
     def set_all(self, rows: Sequence[Sequence[float]]) -> None:
@@ -951,6 +953,7 @@ class BarGraph(tkcurses.Frame):
             self._model.set_all(rows)
         except ValueError as error:
             raise TclError(str(error)) from None
+        self._grow_to_fit()
         self._schedule()
 
     def get(self, segment: int) -> tuple[float, ...]:
@@ -1000,6 +1003,27 @@ class BarGraph(tkcurses.Frame):
     def _values_for_peaks(self) -> list[float]:
         assert self._config is not None
         return [readout_value(row, self._config.mode) for row in self._model.rows()]
+
+    def _grow_to_fit(self) -> None:
+        """An autoscaled maximum grows as soon as the values need it, not
+        at the next refresh.
+
+        Growing is never held back, and anything drawn before the refresh -
+        the first frame, or a repaint the layout asks for - was drawn at the
+        old maximum, every bar past it full. Shrinking waits for the
+        refresh, which times how long the values have stayed low.
+        """
+        if self._autoscale is None or self._config is None:
+            return
+        largest = max([*self._values_for_peaks(), *self._held], default=0.0)
+        current = self._autoscale.current
+        if current is not None and self._autoscale.ceiling(largest) <= current:
+            return
+        maximum = self._autoscale.update(largest, time.monotonic() * 1000)
+        if maximum != current:
+            self._shown = _at_maximum(self._config, maximum)
+            self._apply_requested_size()
+            self._invalidate_layout()
 
     def refresh(self) -> None:
         """Repaint now, without waiting for the refresh timer."""
