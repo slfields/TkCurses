@@ -36,6 +36,7 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from tkcurses._core.cells import cells, char_cells
 from tkcurses.bargraph._glyphs import FULL, POINTS_PER_CELL
 from tkcurses.bargraph._layout import Rect, place_text
 from tkcurses.bargraph._numformat import NumberFormat, for_readout
@@ -76,6 +77,10 @@ V_DASH = "┊"  # ┊ gridline across a horizontal graph
 TICK_LEFT = "┤"  # ┤ vertical axis ruler, tick pointing at the bars
 TICK_DOWN = "┬"  # ┬ horizontal axis ruler, tick pointing at the labels
 CORNER = "└"  # └ where the axis or baseline meet
+
+#: The second cell of a wide character: drawn by the character before it,
+#: so nothing is written there.
+CONTINUATION = Cell("", TEXT, BACKGROUND)
 
 #: Fewest cells between ticks: rows on a vertical axis. A horizontal axis
 #: needs the widest tick label plus one.
@@ -300,19 +305,51 @@ class _Painter:
 
     # ------------------------------------------------------------ helpers
 
-    def put(self, x: int, y: int, cell: Cell, *, on_border: bool = False) -> None:
-        """Set a cell, if it is inside the box (or anywhere, ``on_border``)."""
+    def within(self, x: int, y: int, *, on_border: bool = False) -> bool:
+        """Whether a cell is inside the box (or anywhere, ``on_border``)."""
         area = (
             Rect(0, 0, len(self.window[0]), len(self.window))
             if on_border
             else self.inside
         )
-        if area.x <= x < area.x + area.width and area.y <= y < area.y + area.height:
+        return area.x <= x < area.x + area.width and area.y <= y < area.y + area.height
+
+    def put(self, x: int, y: int, cell: Cell, *, on_border: bool = False) -> None:
+        """Set a cell, if it is inside the box (or anywhere, ``on_border``)."""
+        if self.within(x, y, on_border=on_border):
             self.window[y][x] = cell
 
     def text(self, x: int, y: int, text: str, *, on_border: bool = False) -> None:
-        for offset, char in enumerate(text):
-            self.put(x + offset, y, Cell(char, TEXT, BACKGROUND), on_border=on_border)
+        """``text`` from cell ``x``, a cell for each cell it takes.
+
+        A wide character takes its cell and a :data:`CONTINUATION` after
+        it, or is a space where only one cell is left; a combining mark
+        goes into the cell of the character it follows.
+        """
+        clusters: list[tuple[str, int]] = []
+        for char in text:
+            width = char_cells(char)
+            if width == 0 and clusters:
+                glyph, first = clusters[-1]
+                clusters[-1] = (glyph + char, first)
+            else:
+                clusters.append((char, width))
+        column = x
+        for glyph, width in clusters:
+            if width == 2:
+                if self.within(column + 1, y, on_border=on_border):
+                    self.put(
+                        column, y, Cell(glyph, TEXT, BACKGROUND), on_border=on_border
+                    )
+                    self.put(column + 1, y, CONTINUATION, on_border=on_border)
+                else:
+                    self.put(
+                        column, y, Cell(" ", TEXT, BACKGROUND), on_border=on_border
+                    )
+                column += 2
+            elif width:
+                self.put(column, y, Cell(glyph, TEXT, BACKGROUND), on_border=on_border)
+                column += 1
 
     def cell_of(self, value: float) -> int | None:
         """The cell along the bars for ``value``, or None past their end."""
@@ -348,8 +385,8 @@ class _Painter:
 
     def bars(self, grid: Grid) -> None:
         bars = self.layout.bars
-        for row, cells in enumerate(grid):
-            for col, cell in enumerate(cells):
+        for row, line in enumerate(grid):
+            for col, cell in enumerate(line):
                 self.put(bars.x + col, bars.y + row, cell)
 
     def gridlines(self) -> None:
@@ -430,10 +467,10 @@ class _Painter:
                 # A label starts at its tick, or ends at the axis's right
                 # edge if it would run past it; it is skipped if that
                 # would run into the label before.
-                start = min(x, axis.x + axis.width - len(label or ""))
+                start = min(x, axis.x + axis.width - cells(label or ""))
                 if label and labels_row is not None and start >= free:
                     self.text(start, labels_row, label)
-                    free = start + len(label) + 1
+                    free = start + cells(label) + 1
             if corner:
                 assert baseline is not None
                 self.put(baseline.x, ruler, Cell(CORNER, TEXT, BACKGROUND))

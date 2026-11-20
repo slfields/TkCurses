@@ -329,3 +329,52 @@ def test_ctrl_c_ends_a_graph_program(terminal):
     term.wait_for_text(FULL)
     term.send(b"\x03")
     assert term.wait_for_exit(timeout=5) == 0
+
+
+def test_wide_characters_in_labels_take_their_two_cells(terminal):
+    # "界面" is four cells wide and "ab" two: the label column is four, and
+    # every bar starts in the same column after it. Measured by characters,
+    # the column was two, and the wide label pushed its bar two cells right.
+    term = run(
+        terminal,
+        """
+graph = BarGraph(root, orient="horizontal", segments=2, scale=40,
+                 maximum=10, labels=["界面", "ab"], refreshinterval=10,
+                 readout=True)
+graph.pack(side="top", anchor="nw")
+graph.set_all([[10], [10]])
+""",
+        cols=30,
+        rows=4,
+    )
+    full = FULL * 5
+
+    def aligned(t):
+        return (
+            t.row(0).startswith("界面 " + full)
+            and t.row(2).startswith("ab   " + full)
+            and t.row(0).rstrip().endswith(" 10")
+            and t.row(2).rstrip().endswith(" 10")
+        )
+
+    term.wait_for(aligned, message="both bars starting in column 5")
+
+
+def test_a_label_with_a_combining_mark_is_measured_without_it(terminal):
+    # "Cafe" with a combining acute is four cells, so it is centred over a
+    # ten-cell graph three cells in, as "Café" would be.
+    term = run(
+        terminal,
+        """
+graph = BarGraph(root, segments=1, thickness=10, scale=16, maximum=10,
+                 label="Cafe\\u0301", refreshinterval=10)
+graph.pack(side="top", anchor="nw")
+graph.set(0, [10])
+""",
+        cols=20,
+        rows=5,
+    )
+    term.wait_for(
+        lambda t: t.row(0).startswith("   Café") and t.row(1).startswith(FULL * 10),
+        message="the label centred, the accent on its letter",
+    )

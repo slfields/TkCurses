@@ -303,3 +303,14 @@ def test_natural_size_makes_room_for_the_axis_title():
     width, _ = natural_size(beside, 4)
     layout = compute_layout(width, 8, beside)
     assert layout.axis_title is not None and layout.title is not None
+
+
+def test_place_text_measures_and_cuts_in_cells():
+    from tkcurses.bargraph._layout import place_text
+
+    # Four cells in six: centred one cell in.
+    assert place_text(Rect(0, 0, 6, 1), "界面", "n") == (1, "界面")
+    # Cut to fit three cells: a wide character that would straddle the cut
+    # is left out, not halved, and the ellipsis takes the last cell.
+    assert place_text(Rect(0, 0, 3, 1), "界面x", "w") == (0, "界…")
+    assert place_text(Rect(0, 0, 2, 1), "界面", "w") == (0, "…")

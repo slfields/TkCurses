@@ -37,6 +37,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, replace
 
+from tkcurses._core.cells import cells, clip_cells
 from tkcurses.bargraph._glyphs import POINTS_PER_CELL, Orient
 
 #: The anchors the graph label accepts, as ``ttk.LabelFrame``'s.
@@ -163,7 +164,7 @@ class LayoutSpec:
         """A horizontal graph's segment-label column, without its spacer."""
         if not self.has_labels:
             return 0
-        return min(max(len(label) for label in self.labels), self.labelwidth)
+        return min(max(cells(label) for label in self.labels), self.labelwidth)
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,7 +252,7 @@ def axis_title_spot(outer: Rect, spec: LayoutSpec) -> Rect | None:
     vertical = spec.orient == "vertical"
     row = outer.y if vertical else outer.y + outer.height - 1
     span = Rect(outer.x + TITLE_INSET, row, outer.width - 2 * TITLE_INSET, 1)
-    width = len(spec.axis_title) + 2
+    width = cells(spec.axis_title) + 2
     if width > span.width:
         return None
     taken: tuple[int, int] | None = None
@@ -260,7 +261,7 @@ def axis_title_spot(outer: Rect, spec: LayoutSpec) -> Rect | None:
         label_row = outer.y if spec.labelanchor.startswith("n") else bottom
         if label_row == row:
             x, text = place_text(span, f" {spec.title} ", spec.labelanchor)
-            taken = (x, x + len(text))
+            taken = (x, x + cells(text))
     for x in (span.x, span.x + span.width - width):
         # A cell of border between the two, so they read as two.
         if taken is None or x + width < taken[0] or x > taken[1]:
@@ -369,18 +370,18 @@ def natural_size(spec: LayoutSpec, length_cells: int) -> tuple[int, int]:
         # The whole label: in a box's edge with a space either side and
         # clear of the corners, otherwise in a row of its own.
         if spec.borderwidth > 0:
-            width = max(width, len(spec.title) + 2 + 2 * TITLE_INSET)
+            width = max(width, cells(spec.title) + 2 + 2 * TITLE_INSET)
         else:
-            width = max(width, len(spec.title))
+            width = max(width, cells(spec.title))
     if spec.axis and spec.axis_title and spec.borderwidth > 0:
         # Room for the axis title too, beside the label if they share an
         # edge, so a graph of fixed size shows both.
-        needed = len(spec.axis_title) + 2 + 2 * TITLE_INSET
+        needed = cells(spec.axis_title) + 2 + 2 * TITLE_INSET
         shares = spec.title and spec.labelanchor.startswith("n") == (
             spec.orient == "vertical"
         )
         if shares:
-            needed += len(spec.title) + 2 + 1
+            needed += cells(spec.title) + 2 + 1
         width = max(width, needed)
     return width, height
 
@@ -393,14 +394,17 @@ def length_cells_for(points: int) -> int:
 def place_text(rect: Rect, text: str, anchor: str) -> tuple[int, str]:
     """Where a one-row ``text`` goes in ``rect``: ``(x, text)``.
 
-    Cut with ``…`` when it doesn't fit. The anchor's ``w`` puts it at the
+    Measured in cells, so a wide character counts two and a combining mark
+    none. Cut with ``…`` when it doesn't fit. The anchor's ``w`` puts it at the
     left, ``e`` at the right, and neither centres it.
     """
     if rect.width <= 0:
         return rect.x, ""
-    if len(text) > rect.width:
-        text = text[: rect.width - 1] + ELLIPSIS if rect.width > 1 else ELLIPSIS
-    spare = rect.width - len(text)
+    if cells(text) > rect.width:
+        text = (
+            clip_cells(text, rect.width - 1) + ELLIPSIS if rect.width > 1 else ELLIPSIS
+        )
+    spare = rect.width - cells(text)
     if anchor.endswith("w"):
         return rect.x, text
     if anchor.endswith("e"):

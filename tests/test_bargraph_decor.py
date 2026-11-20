@@ -415,3 +415,19 @@ def test_binary_ticks_count_in_powers_of_1024():
     assert auto_ticks(10 * 2.0**20, 16, 2, "binary") == [
         i * 2 * 2.0**20 for i in range(6)
     ]
+
+
+def test_text_gives_a_wide_character_two_cells_or_a_space():
+    from tkcurses.bargraph._decor import CONTINUATION, _Painter
+    from tkcurses.bargraph._layout import Rect as Area
+
+    layout = compute_layout(5, 1, LayoutSpec())
+    window = [[None] * 5]
+    painter = _Painter(window, layout, Decor(maximum=10, peak_points=8))
+    painter.inside = Area(0, 0, 5, 1)
+    painter.text(0, 0, "é界x界")
+    drawn = [cell.char if cell is not None else None for cell in window[0]]
+    # The accent rides on its letter; 界 takes two cells; the last 界 has
+    # one cell left and is a space rather than half a character.
+    assert drawn == ["é", "界", "", "x", " "]
+    assert window[0][2] is CONTINUATION

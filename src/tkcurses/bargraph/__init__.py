@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import tkcurses
 from tkcurses import TclError
+from tkcurses._core.cells import cells
 from tkcurses._core.colors import ColorDepth, parse_color, rgb_of
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses.bargraph._decor import (
@@ -1031,7 +1032,7 @@ class BarGraph(tkcurses.Frame):
         horizontal = config.orient == "horizontal"
         readout_width = 0
         if config.readout and config.readoutformat:
-            readout_width = len(config.readoutformat.format(config.maximum))
+            readout_width = cells(config.readoutformat.format(config.maximum))
         elif config.readout:
             readout_width = widest(for_readout(config.numbers), config.maximum)
         return LayoutSpec(
@@ -1054,7 +1055,7 @@ class BarGraph(tkcurses.Frame):
 
     @staticmethod
     def _axis_width_estimate(config: _Config) -> int:
-        return len(config.numbers.format(config.maximum, config.maximum))
+        return cells(config.numbers.format(config.maximum, config.maximum))
 
     @staticmethod
     def _ticks(config: _Config, layout: Layout, peak_points: int) -> tuple[float, ...]:
@@ -1063,7 +1064,7 @@ class BarGraph(tkcurses.Frame):
         if config.orient == "vertical":
             spacing = MIN_TICK_ROWS
         else:
-            spacing = len(config.numbers.format(config.maximum, config.maximum)) + 1
+            spacing = cells(config.numbers.format(config.maximum, config.maximum)) + 1
         if config.ticks == "auto":
             chosen = auto_ticks(
                 config.values,
@@ -1095,7 +1096,7 @@ class BarGraph(tkcurses.Frame):
             # The tick labels decide the axis width, which decides the room
             # left for the bars; measured once more if the estimate was off.
             labels = max(
-                len(config.numbers.format(tick, config.maximum)) for tick in ticks
+                cells(config.numbers.format(tick, config.maximum)) for tick in ticks
             )
             if labels != estimate:
                 layout = compute_layout(width, height, self._spec(config, edge, labels))
@@ -1233,7 +1234,8 @@ class BarGraph(tkcurses.Frame):
         cells sharing an attribute, skipping cells left to the frame."""
         runs: list[tuple[int, str, int]] = []
         for x, cell in enumerate(row):
-            if cell is None:
+            # A wide character's second cell is drawn by the character.
+            if cell is None or cell.char == "":
                 continue
             attribute = self._attribute(cell)
             glyph = self._glyph(cell, monochrome)
@@ -1241,7 +1243,7 @@ class BarGraph(tkcurses.Frame):
             if (
                 last is not None
                 and last[2] == attribute
-                and last[0] + len(last[1]) == x
+                and last[0] + cells(last[1]) == x
             ):
                 runs[-1] = (last[0], last[1] + glyph, attribute)
             else:

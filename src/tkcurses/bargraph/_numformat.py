@@ -34,6 +34,8 @@ from dataclasses import dataclass
 from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from typing import Literal
 
+from tkcurses._core.cells import cells
+
 Placement = Literal["suffix", "prefix"]
 Rounding = Literal["nearest", "down", "up"]
 UnitScale = Literal["si", "binary", "time", "none"]
@@ -256,7 +258,7 @@ def widest(fmt: NumberFormat, maximum: float) -> int:
             for near in (edge * 0.9999999, edge * 0.99):
                 if floor <= near <= maximum:
                     samples.add(near)
-    return max(len(fmt.format(sample, maximum)) for sample in samples)
+    return max(cells(fmt.format(sample, maximum)) for sample in samples)
 
 
 def for_readout(fmt: NumberFormat) -> NumberFormat:
