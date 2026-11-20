@@ -208,6 +208,9 @@ _CLOCK_STEPS = (
 )  # fmt: skip
 
 
+# The 1-2-5 series is the long-standing convention for the steps of chart
+# and instrument scales, not taken from any one source; the binary prefixes
+# it is written with (KiB, MiB) are IEC 80000-13's.
 #: What counts as a round number: ``"decimal"``, 1, 2 or 5 times a power of
 #: ten; ``"binary"``, the same times a power of 1024 (500 KiB, 1 MiB, 2 MiB);
 #: or a number, the length in seconds of the data's time unit, for steps a

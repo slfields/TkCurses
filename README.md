@@ -68,6 +68,10 @@ rows.
   or the desktop's own clipboard tool.
 - **`tkcurses.curses` and `tkcurses.panel`:** the curses API drawn on the same
   screen, so one program can mix curses windows and tkinter widgets.
+- **`BarGraph`, a widget only TkCurses has:** bar graphs drawn an eighth of a
+  cell at a time, with live values, thresholds, axes and units -
+  `from tkcurses.bargraph import BarGraph`. A program that uses it runs on
+  TkCurses only.
 
 ## Known gaps
 

@@ -3804,6 +3804,10 @@ tkcurses/
 ├── curses.py                # Curses compatibility API
 ├── panel.py                 # Panel/window stacking
 │
+├── bargraph/                # BarGraph, a TkCurses-only widget
+│   ├── __init__.py          # BarGraph: options, timer, painting
+│   └── _*.py                # pure: model, scale, layout, render, decor...
+│
 ├── _core/                   # Internal components
 │   ├── __init__.py
 │   ├── application.py       # Application (per-tree shared state)
@@ -8283,6 +8287,158 @@ mean one class doing both, badly.
 | `move(y, x)` | ✓ | Move panel |
 | `replace(win)` | ✓ | Replace window |
 | `set_userptr(obj)` | ✓ | Set user data |
+
+## BarGraph
+
+`tkcurses.bargraph.BarGraph` is a widget neither tkinter nor Tk has. It
+began as a separate package, `tkcurses-bargraph`, by the same author, and
+was brought in for 0.6 as a fresh copy without its history
+(`TkCurses-5r79`). Like `curses` and `panel` it is an extension module:
+`tests/support/docsurface.py` lists it in `EXTENSION_MODULES`, and its
+docstrings carry the `TkCurses extension:` section.
+
+### Its names, decided when it came in
+
+The API was declared stable on arrival, so its names were settled first
+(`TkCurses-5r79.1`):
+
+- **The three millisecond options follow Tk's spelling** - one lowercase
+  word, no unit suffix, as `repeatdelay` and `insertofftime`:
+  `refresh_ms` became `refreshinterval`, `autoscale_ms` `autoscaledelay`
+  and `peakhold_ms` `peakholdtime`. Each is still milliseconds and `0`
+  keeps its meaning. The old names are refused like any unknown option.
+- **Where an option does what a Tk widget's does, it has that name**:
+  `orient` and `maximum` as `ttk.Progressbar`'s, `digits` as `Scale`'s,
+  `labelanchor` as `LabelFrame`'s. `minimum` pairs with `maximum`.
+- **`set`, `set_all` and `get` stay**, though `ttk.Progressbar` has no
+  `set`: a bar graph holds a table of values, which Progressbar's
+  `value`/`step` do not describe.
+
+### Pure modules, one widget module
+
+The private modules know nothing of curses or of the rest of TkCurses, and
+raise `ValueError`; the widget turns that into `TclError`.
+
+| Module | Does |
+|--------|------|
+| `_model` | segments × series values, validation; `AutoScale` |
+| `_scale` | `"64"` and `"75%"` scales, `ValueRange` (linear or log, from `minimum`), value to points, round numbers |
+| `_layout` | the frame's size to regions: bars, axis, readout, labels, box |
+| `_render` | values to runs and cells, with colour *roles* (series *i*, zone *j*, marker, background), never colours |
+| `_thresholds` | levels to colour zones along a bar |
+| `_decor` | baseline, ticks, gridlines, markers, peak hold, readout, the box's text; composes the window |
+| `_numformat` | how axis labels and readouts write a value |
+| `_gradient` | each series cell's shade by position |
+| `_glyphs` | the eighth-block ramps, monochrome patterns |
+
+`__init__.py` holds only `BarGraph`. It parses options into a frozen
+config, asks the pure modules for a window of cells, maps roles to curses
+attributes, and writes the cells. It uses Frame's internals on purpose -
+`_redraw`, `_window`, `_rect`, `_bordered`, `_write_line`,
+`_request_size`, `_apply_requested_size`, `_invalidate_layout`,
+`_options` - and the application's screen, colours and
+`CursesDispatcher`; a change to any of those has this one module to fix.
+
+### Drawing in eighths
+
+A bar's length is counted in *points*, eight to a cell, drawn with the
+Block Elements ramps: `▁▂▃▄▅▆▇█` growing up, `▏▎▍▌▋▊▉█` growing right. A
+scale is an absolute number of points (`scale=64`, eight cells, at least
+8) or a percentage of the frame's length (`"100%"`, the default), worked
+out again on every resize. Thickness, across the bar, has no eighths:
+with an absolute scale it is `thickness` cells; with a percentage the
+cross axis is shared among the bars, the spare cells going to the first
+ones, and `thickness` is the least a bar gets.
+
+**A cell shows at most two colours**, its foreground and its background.
+A partial glyph is the series that ends in the cell over the one that
+continues past it. Where three or more meet in one cell, the smallest run
+is given to its larger neighbour until two remain; the bar's tip never
+moves, so a stacked total, or the longest overlaid value, stays exact and
+only that cell is approximate. A threshold zone is merged the same way,
+except that the highest zone a bar reaches is never the one merged away:
+a bar past 90% always shows red at its tip.
+
+Both modes reduce to runs end to end before that rule: stacked, the
+running totals; overlay, at each point the shortest value still covering
+it, since the shorter are painted over the longer. A log scale refuses to
+stack several series - equal lengths on it are equal ratios, not equal
+amounts.
+
+On a monochrome terminal, series and zones are told apart by `█▓▒░`.
+
+### Colour
+
+`colors` is one per series, cycled. Every colour an option names is
+checked when it is set, with `parse_color`, and an unknown one is refused
+with Tk's message (`TkCurses-5r79.9`): before, the name reached the paint,
+which raised on every pass and left the screen blank.
+
+`colormode="gradient"` shades by *position*, not value: at zero a series
+is its `gradientstart` (default a quarter of its colour's brightness), at
+the maximum its own colour, in at most 16 shades - each pairs with every
+background it meets, and curses names only about 255 pairs. The blend is
+linear in RGB. Thresholds win over it, and a held peak takes the shade at
+its level. Smooth at truecolor, banded at 256, solid below.
+
+### Repainting
+
+`set` and `set_all` change the model and mark it dirty; they never paint.
+A repaint is scheduled with `after(refreshinterval)`, and the tick calls
+`source` if there is one, paints, and re-arms only while something is
+pending: so a producer calling `set` a thousand times a second costs at
+most one repaint each interval. Everything is on the event loop; data
+from a thread comes through a queue that `source` reads.
+
+**An autoscaled maximum grows at once and shrinks on the timer**
+(`_model.AutoScale`). It grows to the round number at or above the
+largest value, held peaks included, the moment a value needs it - in
+`set`, `set_all` and `configure`, not at the next tick: the first frame
+of a new graph had drawn every bar full against an unset maximum
+(`TkCurses-5r79.11`). It shrinks only when the values have stayed under a
+lower round number for `autoscaledelay`, and then only to the highest
+round number they needed in that wait, so a burst's tail costs one step
+and the next quiet stretch another. `examples/meters.py` is timed so both
+steps land between bursts. Peak hold and autoscale read
+`time.monotonic()`; only the repaint uses Tk's timer.
+
+Round numbers are the 1-2-5 series - times powers of ten, or of 1024 for
+`unitscale="binary"`, or steps a clock reads (15 s, 1 min, 1 h) for
+time units - from one generator, `_scale.round_steps`, which ticks and
+autoscale share.
+
+### Text is measured in cells
+
+Labels, the readout, tick labels and the axis title are measured and cut
+with `_core.cells`, not `len()` (`TkCurses-5r79.10`): a CJK label ran
+past its bar, and an accented one, `"Café"` written with a combining
+mark, sat a cell off centre. `_decor`'s painter groups a combining mark
+with its base, gives a wide character two cells - the second an empty
+`CONTINUATION` cell the widget skips when writing - or a space when only
+one is left.
+
+### How its options are measured
+
+`record_visible_options.py` names it `bargraph.BarGraph`, and
+`docsurface.measured_class` resolves that name; a base of three bars of
+two series with values to draw; per-widget values in `WIDGET_VALUES`;
+and `WIDGET_NEEDS`, what an option needs before it can show at all - a
+readout a horizontal graph, `logbase` a log scale, `units` an axis.
+Measured three times alike: 40 options visible, 14 not and 3 behaviour.
+`peakholdtime` is among the invisible because one screen from one set of
+values has never fallen from a peak; `autoscaledelay` and
+`refreshinterval` likewise act over time. Their samples are in the
+docstring regardless.
+
+A guard test fails for any public module under `tkcurses` in neither
+`COUNTERPARTS` nor `EXTENSION_MODULES`: before it, the new module passed
+every docstring rule by being invisible to them.
+
+### Not yet
+
+Negative values. The origin left room: a bar split at a zero line, the
+negative side drawn with the complementary glyph in swapped colours,
+since the block has no eighth steps growing down or left.
 
 ## Running Both Halves
 
