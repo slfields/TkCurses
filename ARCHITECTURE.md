@@ -4784,9 +4784,11 @@ then raised):
   retrieving options only integer indices are allowed)`;
 - options are named by any unique prefix; a weight is an integer, and a
   weight or pad below zero is `invalid arg "-weight": should be
-  non-negative`, but a negative `minsize` is kept and read back. Here it
-  is laid out as none (`LineConfig.least`). `minsize` and `pad` are
-  distances, so `2c` is accepted, as cells.
+  non-negative`, but a negative `minsize` is kept, read back and laid out
+  as given: an empty column of minsize -30 is -30 wide, and the next
+  column starts at -30, its child cut at the left edge. The port's
+  arithmetic does the same in cells. `minsize` and `pad` are distances,
+  so `2c` is accepted, as cells.
 
 #### Place Class
 

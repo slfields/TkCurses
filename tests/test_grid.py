@@ -791,9 +791,14 @@ def test_options_are_named_and_checked_as_tk_does(root):
     assert root.columnconfigure(0, "uniform") is None
 
 
-def test_a_negative_minsize_reads_back_and_lays_out_as_none(root):
+def test_a_negative_minsize_is_kept_and_laid_out_as_tk_lays_it_out(root):
+    # Measured on Tk 9.0.2: an empty column of minsize -30 is -30 wide, so
+    # the next column starts at -30 and its child is pushed past the left
+    # edge; grid_bbox says the same.
     root.columnconfigure(0, minsize=-3)
     assert root.columnconfigure(0, "minsize") == -3
-    child = Box(root, "a", width=4)
-    child.grid(row=0, column=0)
-    assert root.grid_bbox(0, 0)[2] == 4
+    child = Box(root, "a", width=4, height=1)
+    child.grid(row=0, column=1)
+    root.update_layout()
+    assert child.winfo_x() == -3
+    assert root.grid_bbox(0, 0) == (0, 0, -3, 1)
