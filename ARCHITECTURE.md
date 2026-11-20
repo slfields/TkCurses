@@ -4762,6 +4762,34 @@ wants every cell's `grid_bbox` the same. Measured before the port, 85 of 400
 such grids matched; after, 1200 of 1200 (`TkCurses-xcy3`). Re-record when
 the Tk the library follows changes.
 
+**`rowconfigure` and `columnconfigure` take several lines**, as `grid(n)`
+says: a list of indices, `all`, or a gridded window for the lines it spans.
+What the manual does not say, measured on Tk 9.0.2 through tkinter
+(`TkCurses-2lg5`, where a tuple was kept as one index and every layout pass
+then raised):
+
+- `all` is every line a gridded child of the container occupies, spans
+  included - not every line that has been configured;
+- each index is read and given the options in turn, so an error part way
+  leaves the lines before it changed: `(9, "foo")` sets column 9 and then
+  fails, and `weight=5, bogus=1` sets the first line's weight before
+  failing on the option;
+- an index is a Tcl integer (`" 3 "`, `"0x3"`, `True`) from 0 to 9999;
+  `-1` and `10000` are `"-1" is out of range` when setting, but reading
+  either answers the defaults; `foo`, `ALL`, `1.5` and a window that does
+  not exist are all `illegal index`; a window gridded elsewhere, or not at
+  all, is `not managed by` the container;
+- reading takes exactly one integer: a list is `must specify a single
+  element on retrieval`, and `all` or a window `expected integer ... (when
+  retrieving options only integer indices are allowed)`;
+- options are named by any unique prefix; a weight is an integer, and a
+  weight or pad below zero is `invalid arg "-weight": should be
+  non-negative`, but a negative `minsize` is kept, read back and laid out
+  as given: an empty column of minsize -30 is -30 wide, and the next
+  column starts at -30, its child cut at the left edge. The port's
+  arithmetic does the same in cells. `minsize` and `pad` are distances,
+  so `2c` is accepted, as cells.
+
 #### Place Class
 
 | tkinter Method | TkCurses | Notes |

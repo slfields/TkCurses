@@ -29,6 +29,18 @@ All notable changes to TkCurses. The format follows
   programs: `examples/bars.py`, `examples/meters.py` and
   `examples/scales.py`.
 
+### Fixed
+- `rowconfigure` and `columnconfigure` given several lines at once -
+  `frame.columnconfigure((0, 1), weight=1)` - kept the tuple as one index,
+  and every layout after that raised, leaving the window blank. They now
+  take what Tk takes: a list of indices, a Tcl list string, `"all"` for
+  every line a gridded child occupies, or a gridded child for the lines it
+  spans; and refuse what Tk refuses, in its words. Alongside, the options
+  are read as Tk reads them: a unique prefix names one, a weight of 1.5 or
+  a negative weight or pad is refused instead of rounded or clamped,
+  `minsize` and `pad` take distances such as `2c`, and an empty `uniform`
+  reads back as `None`.
+
 ## [0.5.0] - 2026-11-17
 
 ### Added
