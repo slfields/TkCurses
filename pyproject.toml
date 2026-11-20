@@ -265,6 +265,10 @@ pytest_add_cli_args = [
     "--ignore=tests/test_suite_tests_its_own_tree.py",
     "--ignore=tests/test_uat_cfg_sandbox.py",
     "--ignore=tests/test_mutate_script.py",
+    # About the documentation of the public surface, which mutmut changes:
+    # it adds each mutant to the class as a method of its own, so mutating a
+    # public class such as BarGraph made dozens of "undocumented" methods.
+    "--ignore=tests/test_docstrings.py",
 ]
 # What the tests read besides src/ and tests/, which mutmut copies itself.
 also_copy = [
