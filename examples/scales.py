@@ -36,9 +36,8 @@ GiB = 2**30
 
 root = tk.Tk()
 root.title("Scales")
-for index in (0, 1):
-    root.columnconfigure(index, weight=1, uniform="half")
-    root.rowconfigure(index, weight=1, uniform="half")
+root.columnconfigure((0, 1), weight=1, uniform="half")
+root.rowconfigure((0, 1), weight=1, uniform="half")
 
 latency = BarGraph(
     root,

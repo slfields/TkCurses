@@ -128,6 +128,12 @@ class LineConfig:
     pad: int = 0
     uniform: str = ""
 
+    @property
+    def least(self) -> int:
+        """The smallest the line is laid out at: ``minsize``, or none for a
+        negative one, which Tk keeps as given and reads back."""
+        return max(0, self.minsize)
+
 
 @dataclass
 class _Axis:
@@ -177,7 +183,7 @@ def _resolve(
         return [], 0
     # Step 1: the lines' own constraints.
     lines = [configs.get(index, LineConfig()) for index in range(count)]
-    min_size = [line.minsize for line in lines]
+    min_size = [line.least for line in lines]
     weight = [line.weight for line in lines]
     # Step 2: a child in one line sizes it, its line's pad included; a
     # spanning child is binned by the line it ends in, for steps 3 and 4.
@@ -327,7 +333,7 @@ def _adjust(size: int, ends: list[int], configs: dict[int, LineConfig]) -> int:
         return ends[index] - (ends[index - 1] if index > 0 else 0)
 
     least = [
-        line.minsize if line.weight > 0 else current(index)
+        line.least if line.weight > 0 else current(index)
         for index, line in enumerate(lines)
     ]
     if size <= sum(least):
@@ -338,7 +344,7 @@ def _adjust(size: int, ends: list[int], configs: dict[int, LineConfig]) -> int:
         return sum(least)
     while diff < 0:
         shares = [
-            line.weight if current(index) > line.minsize else 0
+            line.weight if current(index) > line.least else 0
             for index, line in enumerate(lines)
         ]
         total_weight = sum(shares)
@@ -348,7 +354,7 @@ def _adjust(size: int, ends: list[int], configs: dict[int, LineConfig]) -> int:
         for index, line in enumerate(lines):
             if shares[index]:
                 most = _c_div(
-                    total_weight * (line.minsize - current(index)), shares[index]
+                    total_weight * (line.least - current(index)), shares[index]
                 )
                 step = max(step, most)
         so_far = 0

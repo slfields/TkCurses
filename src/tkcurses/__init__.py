@@ -3387,76 +3387,164 @@ class Misc:
         return manager.anchor
 
     def grid_rowconfigure(
-        self, index: int, cnf: dict[str, Any] | str | None = None, **kw: Any
+        self, index: Any, cnf: dict[str, Any] | str | None = None, **kw: Any
     ) -> Any:
-        """Get or set how one row behaves: weight, minsize, pad, uniform."""
+        """Get or set how rows behave: weight, minsize, pad, uniform.
+
+        ``index`` is a row, or when setting, several: a list or tuple of
+        them, ``"all"`` for every row a gridded child occupies, or a
+        gridded child for the rows it spans.
+
+        Raises:
+            TclError: If an index is not one of those, an option is not one
+                Tk accepts, or a value is out of range - in Tk's words.
+        """
         return self._line_configure("row", index, cnf, kw)
 
     def grid_columnconfigure(
-        self, index: int, cnf: dict[str, Any] | str | None = None, **kw: Any
+        self, index: Any, cnf: dict[str, Any] | str | None = None, **kw: Any
     ) -> Any:
-        """Get or set how one column behaves."""
+        """Get or set how columns behave: weight, minsize, pad, uniform.
+
+        ``index`` is a column, or when setting, several: a list or tuple of
+        them, ``"all"`` for every column a gridded child occupies, or a
+        gridded child for the columns it spans -
+        ``frame.columnconfigure((0, 1), weight=1)`` gives both columns a
+        weight.
+
+        Raises:
+            TclError: If an index is not one of those, an option is not one
+                Tk accepts, or a value is out of range - in Tk's words.
+        """
         return self._line_configure("column", index, cnf, kw)
 
     rowconfigure = grid_rowconfigure
     columnconfigure = grid_columnconfigure
 
+    #: A grid line's options, as Tk names them in its messages.
+    _LINE_OPTIONS = ("-minsize", "-pad", "-uniform", "-weight")
+
     def _line_configure(
         self,
         axis: str,
-        index: int,
+        index: Any,
         cnf: dict[str, Any] | str | None,
         kw: dict[str, Any],
     ) -> Any:
         """Shared implementation of grid_rowconfigure and grid_columnconfigure.
 
+        Follows ``grid rowconfigure`` and ``grid columnconfigure`` as Tk 9.0.2
+        does them, measured through tkinter: each index in turn is read and
+        then given the options in order, so an error part way leaves the
+        lines before it changed, as Tk leaves them.
+
         Raises:
-            TclError: If an option is not one Tk accepts for a grid line.
+            TclError: As :meth:`grid_columnconfigure` says.
         """
         manager = _grid_layout_of(self)
-        current = (
-            manager.row_config(index) if axis == "row" else manager.column_config(index)
-        )
-        listing = {
-            "weight": current.weight,
-            "minsize": current.minsize,
-            "pad": current.pad,
-            "uniform": current.uniform,
-        }
-        if isinstance(cnf, str):
-            # grid_columnconfigure(0, "weight") asks for one value. It crashed
-            # here on "'str' object is not a mapping" - TkCurses-bx5b, found
-            # beside the None handling; TkCurses-kifn was the same for
-            # configure. Message measured on Tk 9.0.2.
-            if cnf not in listing:
+        elements = self._line_elements(axis, index)
+        given = None if isinstance(cnf, str) else _given(cnf, kw)
+        if isinstance(cnf, str) or not given:
+            # Reading: one integer only. Measured: a list, "all" or a window
+            # each refused, and an index out of range (-1, 10000) answers
+            # the defaults.
+            if len(elements) != 1:
+                raise TclError("must specify a single element on retrieval")
+            line = _tcl_number(elements[0])
+            if not isinstance(line, int) or isinstance(elements[0], Misc):
                 raise TclError(
-                    f'bad option "-{cnf}": must be -minsize, -pad, -uniform, or -weight'
+                    f'expected integer but got "{elements[0]}" (when retrieving'
+                    " options only integer indices are allowed)"
                 )
-            return listing[cnf]
-        # Measured: unlike configure, a call whose every option is None DOES
-        # answer the listing in tkinter, since it checks after dropping them.
-        given = _given(cnf, kw)
-        if not given:
+            current = (
+                manager.row_config(line)
+                if axis == "row"
+                else manager.column_config(line)
+            )
+            listing = {
+                "minsize": current.minsize,
+                "pad": current.pad,
+                "uniform": current.uniform or None,
+                "weight": current.weight,
+            }
+            if isinstance(cnf, str):
+                # grid_columnconfigure(0, "weight") asks for one value: it
+                # crashed on "'str' object is not a mapping" once
+                # (TkCurses-bx5b). A unique prefix will do, as in Tk.
+                name = _tcl_index("-" + cnf, self._LINE_OPTIONS, "option")
+                return listing[name[1:]]
+            # Measured: unlike configure, a call whose every option is None
+            # DOES answer the listing in tkinter, since it checks after
+            # dropping them.
             return listing
-        config = LineConfig(
-            current.weight, current.minsize, current.pad, current.uniform
-        )
-        for name, value in given.items():
-            if not hasattr(config, name):
-                raise TclError(f'unknown option "-{name}"')
-            if name == "uniform":
-                config.uniform = str(value)
-            else:
+        for element in elements:
+            for line in self._line_numbers(axis, element, manager):
+                config = (
+                    manager.row_config(line)
+                    if axis == "row"
+                    else manager.column_config(line)
+                )
+                config = LineConfig(
+                    config.weight, config.minsize, config.pad, config.uniform
+                )
                 try:
-                    setattr(config, name, max(0, int(value)))
-                except (TypeError, ValueError):
-                    raise TclError(f'expected integer but got "{value}"') from None
-        if axis == "row":
-            manager.configure_row(index, config)
-        else:
-            manager.configure_column(index, config)
-        self.tk.layout.invalidate(self)
+                    for name, value in given.items():
+                        option = _tcl_index("-" + name, self._LINE_OPTIONS, "option")
+                        _set_line_option(config, option, value)
+                finally:
+                    # What was set before an error stays set, as in Tk.
+                    if axis == "row":
+                        manager.configure_row(line, config)
+                    else:
+                        manager.configure_column(line, config)
+                    self.tk.layout.invalidate(self)
         return None
+
+    def _line_elements(self, axis: str, index: Any) -> list[Any]:
+        """``index`` as a list of elements: a list or tuple as it is, a
+        widget alone, anything else split as a Tcl list."""
+        if isinstance(index, (tuple, list)):
+            elements = list(index)
+        elif isinstance(index, Misc):
+            elements = [index]
+        elif isinstance(index, bool):
+            # tkinter hands Tcl a boolean, which Tk reads as 0 or 1.
+            elements = [int(index)]
+        else:
+            elements = list(_tcl_list(index))
+        if not elements:
+            raise TclError(f"no {axis} indices specified")
+        return elements
+
+    def _line_numbers(self, axis: str, element: Any, manager: GridLayout) -> list[int]:
+        """The lines one element of an index list names, or Tk's error."""
+        if isinstance(element, bool):
+            element = int(element)
+        if not isinstance(element, Misc):
+            number = _tcl_number(element)
+            if isinstance(number, int):
+                if not 0 <= number < _GRID_MAX_LINES:
+                    raise TclError(f'"{element}" is out of range')
+                return [number]
+            if element == "all":
+                return sorted(
+                    {
+                        line
+                        for child in manager.slaves()
+                        for line in _grid_lines(axis, manager.options_for(child))
+                    }
+                )
+            text = str(element)
+            try:
+                element = self.nametowidget(text) if text.startswith(".") else None
+            except KeyError:
+                element = None
+            if element is None:
+                raise TclError(f'illegal index "{text}"')
+        options = manager.options_for(element)
+        if options is None:
+            raise TclError(f'the window "{element}" is not managed by "{self}"')
+        return _grid_lines(axis, options)
 
     def place_slaves(self) -> list[Misc]:
         """The children this container is placing."""
@@ -5931,6 +6019,38 @@ class Grid:
     rowconfigure = Misc.grid_rowconfigure
     size: Any = Misc.grid_size
     slaves: Any = Misc.grid_slaves
+
+
+#: Tk's limit on a grid row or column index: 10000 is "out of range".
+_GRID_MAX_LINES = 10000
+
+
+def _grid_lines(axis: str, options: GridOptions | None) -> list[int]:
+    """The rows or columns a gridded child spans."""
+    if options is None:
+        return []
+    if axis == "row":
+        return list(range(options.row, options.row + options.rowspan))
+    return list(range(options.column, options.column + options.columnspan))
+
+
+def _set_line_option(config: LineConfig, option: str, value: Any) -> None:
+    """Set one of a grid line's options as Tk 9.0.2 reads it.
+
+    Measured: a weight is an integer, and a weight or pad below zero is
+    refused; ``minsize`` and ``pad`` are distances, ``2c`` included, and a
+    negative ``minsize`` is kept and read back, though laid out as none.
+    """
+    if option == "-uniform":
+        config.uniform = "" if value is None else str(value)
+        return
+    if option == "-weight":
+        number = _tcl_integer(None, value)
+    else:
+        number = _signed_distance(None, value)
+    if number < 0 and option != "-minsize":
+        raise TclError(f'invalid arg "{option}": should be non-negative')
+    setattr(config, option[1:], number)
 
 
 def _grid_layout_of(container: Misc) -> GridLayout:

@@ -24,6 +24,8 @@ its natural size if its row or column has a weight.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from tkcurses import Misc, TclError, Widget
@@ -653,3 +655,145 @@ def test_forgetting_removes_it_from_the_container_that_held_it(root):
     box.grid_forget()
     assert holder.grid_slaves() == []
     assert box.winfo_manager() == ""
+
+
+# ------------------------------------------------- several lines at once
+#
+# Tk's grid rowconfigure and columnconfigure take a list of indices, "all"
+# or a gridded child, as tkinter passes them. Every expectation here was
+# measured on Tk 9.0.2 through tkinter. TkCurses-2lg5: a tuple was kept as
+# one index, and every layout pass then raised TypeError.
+
+
+@pytest.fixture
+def spanning(root):
+    """A child across columns 1-2 and one in row 2, column 4."""
+    wide = Box(root, "wide")
+    wide.grid(row=0, column=1, columnspan=2)
+    low = Box(root, "low")
+    low.grid(row=2, column=4)
+    return wide, low
+
+
+def weights(root, axis, count):
+    read = root.grid_columnconfigure if axis == "column" else root.grid_rowconfigure
+    return tuple(read(index, "weight") for index in range(count))
+
+
+def test_a_tuple_of_columns_configures_each_and_lays_out(root):
+    root.columnconfigure((0, 1), weight=1)
+    assert weights(root, "column", 3) == (1, 1, 0)
+    a = Box(root, "a", width=4)
+    a.grid(row=0, column=0, sticky="ew")
+    b = Box(root, "b", width=4)
+    b.grid(row=0, column=1, sticky="ew")
+    root.update_layout()
+    # Laid out: the two weighted columns share the 40 cells evenly.
+    assert a.winfo_width() == b.winfo_width() == 20
+
+
+def test_a_list_and_a_tcl_list_string_are_indices_too(root):
+    root.columnconfigure([3, 5], weight=2)
+    root.columnconfigure("6 {7}", weight=3)
+    assert weights(root, "column", 8) == (0, 0, 0, 2, 0, 2, 3, 3)
+
+
+def test_all_is_every_line_a_gridded_child_occupies(root, spanning):
+    root.columnconfigure("all", weight=4)
+    assert weights(root, "column", 6) == (0, 4, 4, 0, 4, 0)
+    root.rowconfigure("all", weight=5)
+    assert weights(root, "row", 3) == (5, 0, 5)
+
+
+def test_a_child_names_the_lines_it_spans(root, spanning):
+    wide, low = spanning
+    root.columnconfigure(wide, minsize=9)
+    assert [root.grid_columnconfigure(i, "minsize") for i in range(4)] == [0, 9, 9, 0]
+    root.rowconfigure(str(low), pad=5)
+    assert [root.grid_rowconfigure(i, "pad") for i in range(4)] == [0, 0, 5, 0]
+
+
+@pytest.mark.parametrize(
+    ("index", "message"),
+    [
+        ((), "no column indices specified"),
+        (-1, '"-1" is out of range'),
+        (10000, '"10000" is out of range'),
+        ("foo", 'illegal index "foo"'),
+        ("ALL", 'illegal index "ALL"'),
+        ("1.5", 'illegal index "1.5"'),
+        (2.0, 'illegal index "2.0"'),
+        (".nope", 'illegal index ".nope"'),
+    ],
+)
+def test_an_index_tk_refuses_is_refused_in_its_words(root, index, message):
+    with pytest.raises(TclError, match=f"^{re.escape(message)}$"):
+        root.columnconfigure(index, weight=1)
+
+
+def test_a_child_gridded_elsewhere_is_not_an_index(root):
+    elsewhere = Box(root, "elsewhere")
+    elsewhere.place(x=0, y=0)
+    with pytest.raises(TclError, match=r'^the window "\.elsewhere" is not managed by'):
+        root.columnconfigure(elsewhere, weight=1)
+
+
+def test_the_row_axis_says_row(root):
+    with pytest.raises(TclError, match=r"^no row indices specified$"):
+        root.rowconfigure([], weight=1)
+
+
+def test_an_index_is_read_as_tcl_reads_an_integer(root):
+    root.columnconfigure(" 3 ", weight="0x10")
+    root.columnconfigure(True, weight=True)
+    assert weights(root, "column", 4) == (0, 1, 0, 16)
+
+
+def test_the_lines_before_an_error_stay_configured(root):
+    with pytest.raises(TclError, match='illegal index "foo"'):
+        root.columnconfigure((9, "foo"), weight=7)
+    with pytest.raises(TclError, match='bad option "-bogus"'):
+        root.columnconfigure((22, 23), weight=5, bogus=1)
+    assert weights(root, "column", 24)[9] == 7
+    assert weights(root, "column", 24)[22:] == (5, 0)
+
+
+def test_reading_takes_one_integer(root, spanning):
+    wide, _ = spanning
+    with pytest.raises(TclError, match=r"^must specify a single element on retrieval$"):
+        root.columnconfigure((0, 1))
+    for index in ("all", wide):
+        with pytest.raises(TclError, match="only integer indices are allowed"):
+            root.columnconfigure(index, "weight")
+    assert root.columnconfigure((0,), "weight") == 0
+    # Out of range answers the defaults when reading.
+    assert root.columnconfigure(-1) == {
+        "minsize": 0,
+        "pad": 0,
+        "uniform": None,
+        "weight": 0,
+    }
+
+
+def test_options_are_named_and_checked_as_tk_does(root):
+    with pytest.raises(TclError, match=r'^bad option "-bogus": must be -minsize'):
+        root.columnconfigure(0, bogus=1)
+    root.columnconfigure(0, wei=6)
+    assert root.columnconfigure(0, "wei") == 6
+    with pytest.raises(TclError, match=r'^expected integer but got "1.5"$'):
+        root.columnconfigure(0, weight=1.5)
+    for option in ("weight", "pad"):
+        with pytest.raises(TclError, match=f'^invalid arg "-{option}": should be'):
+            root.columnconfigure(0, **{option: -3})
+    with pytest.raises(TclError, match=r'^expected screen distance but got "x"$'):
+        root.columnconfigure(0, pad="x")
+    root.columnconfigure(0, uniform="")
+    assert root.columnconfigure(0, "uniform") is None
+
+
+def test_a_negative_minsize_reads_back_and_lays_out_as_none(root):
+    root.columnconfigure(0, minsize=-3)
+    assert root.columnconfigure(0, "minsize") == -3
+    child = Box(root, "a", width=4)
+    child.grid(row=0, column=0)
+    assert root.grid_bbox(0, 0)[2] == 4
