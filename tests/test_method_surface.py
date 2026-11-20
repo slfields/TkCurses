@@ -586,6 +586,17 @@ _NOT_A_TABLE = frozenset(
         "Dialog Modules",
         "Curses Compatibility Module",
         "Panel Module Overview",
+        # BarGraph's design notes: it has no tkinter counterpart, and so
+        # no table of tkinter methods to check.
+        "BarGraph",
+        "Its names, decided when it came in",
+        "Pure modules, one widget module",
+        "Drawing in eighths",
+        "Colour",
+        "Repainting",
+        "Text is measured in cells",
+        "How its options are measured",
+        "Not yet",
         "The pixel",
         "What an option value is",
         "Image files",
