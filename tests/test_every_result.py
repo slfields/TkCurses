@@ -116,6 +116,8 @@ def _turned_off(config):
 
 @pytest.mark.parametrize("workers", [[], ["-n", "2"]])
 def test_a_real_run_that_loses_a_test_fails(tmp_path, workers, pytestconfig):
+    if workers and not pytestconfig.pluginmanager.hasplugin("xdist"):
+        pytest.skip("pytest-xdist is not loaded in this run")
     (tmp_path / "conftest.py").write_text(_CONFTEST)
     (tmp_path / "test_some.py").write_text(
         "def test_kept():\n    pass\n\n\ndef test_lost():\n    pass\n"
