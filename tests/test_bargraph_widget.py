@@ -19,11 +19,14 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 import tkcurses as tk
 import tkcurses.bargraph as widget_module
 from tkcurses.bargraph import BarGraph
+from tkcurses.bargraph._gradient import shade
 from tkcurses.bargraph._render import Cell
 
 
@@ -47,22 +50,86 @@ def test_thresholds_allowed_on_a_stacked_graph(root):
     assert len(graph.cget("thresholds")) == 2
 
 
+_LOG = {"scaletype": "log"}
+
+
 @pytest.mark.parametrize(
-    "options",
+    ("options", "message"),
     [
-        {"scale": 7},
-        {"segments": 0},
-        {"mode": "pie"},
-        {"orient": "diagonal"},
-        {"orient": "vertical", "readout": True},
-        {"colormode": "rainbow"},
-        {"colormode": "gradient", "gradientstart": "notacolor"},
-        {"colormode": "gradient", "colors": ["notacolor"]},
+        ({"scale": 7}, "scale must be at least 8 points, not 7"),
+        ({"segments": 0}, "segments must be at least 1, not 0"),
+        ({"series": 0}, "series must be at least 1, not 0"),
+        ({"thickness": 0}, "thickness must be at least 1, not 0"),
+        ({"gap": -1}, "gap must be at least 0, not -1"),
+        ({"labelwidth": -1}, "labelwidth must be at least 0, not -1"),
+        ({"autoscaledelay": -1}, "autoscaledelay must be at least 0, not -1"),
+        ({"peakholdtime": -1}, "peakholdtime must be at least 0, not -1"),
+        ({"refreshinterval": -1}, "refreshinterval must be at least 0, not -1"),
+        ({"mode": "pie"}, 'bad mode "pie": must be stacked or overlay'),
+        (
+            {"orient": "diagonal"},
+            'bad orient "diagonal": must be vertical or horizontal',
+        ),
+        ({"scaletype": "cubic"}, 'bad scaletype "cubic": must be linear or log'),
+        (
+            {"labelanchor": "middle"},
+            'bad labelanchor "middle": must be n, nw, ne, s, sw, or se',
+        ),
+        ({"orient": "vertical", "readout": True}, "readout needs orient=horizontal"),
+        (
+            {"colormode": "rainbow"},
+            'bad colormode "rainbow": must be solid or gradient',
+        ),
+        (
+            {"colormode": "gradient", "gradientstart": "notacolor"},
+            'unknown color "notacolor" in gradientstart',
+        ),
+        (
+            {"colormode": "gradient", "colors": ["notacolor"]},
+            'unknown color name "notacolor"',
+        ),
+        ({"maximum": 0}, "maximum (0) must be above minimum (0)"),
+        ({"maximum": "x"}, "maximum must be a number, not 'x'"),
+        ({"minimum": "x"}, "minimum must be a number, not 'x'"),
+        ({**_LOG, "minimum": 0}, "a log scale needs a minimum above 0, not 0"),
+        ({**_LOG, "logbase": 1}, "logbase must be above 1, not 1"),
+        ({**_LOG, "logbase": "x"}, "logbase must be a number, not 'x'"),
+        (
+            {**_LOG, "series": 2},
+            'a log scale cannot stack series: use mode="overlay", or one series',
+        ),
+        (
+            {"thresholds": [(80,)]},
+            "thresholds entries must be (level, color) pairs: (80,)",
+        ),
+        ({"gridlines": "maybe"}, "expected a boolean, not 'maybe'"),
     ],
 )
-def test_rejects(root, options):
-    with pytest.raises(tk.TclError):
+def test_rejects(root, options, message):
+    # A program sees these words, so they are held to them.
+    with pytest.raises(tk.TclError, match=f"^{re.escape(message)}$"):
         BarGraph(root, **options)
+
+
+def test_options_read_back_as_given(root):
+    graph = BarGraph(
+        root,
+        segments=2,
+        ticks=3,
+        maximum=100,
+        axis=True,
+        gridlines=True,
+        labels=["a", None],
+    )
+    assert graph.cget("ticks") == 3
+    assert graph.cget("gridlines") is True
+    assert graph.cget("labels") == ["a", None]
+    # Three ticks, 0, 50 and 100; a label of None is drawn as nothing.
+    text = _text(graph._compose(12, 8))
+    labels = [line.split("┤")[0].strip("~ ") for line in text if "┤" in line]
+    assert labels == ["100", "50", "0"]
+    assert "┈" in "".join(text)
+    assert "None" not in "".join(text)
 
 
 def test_set_get_and_reshape(root):
@@ -243,6 +310,19 @@ def test_monochrome_uses_fill_patterns_for_full_cells(root):
     assert graph._glyph(full, monochrome=True) == "▓"
     assert graph._glyph(full, monochrome=False) == "█"
     assert graph._glyph(partial, monochrome=True) == "▄"
+    # A gradient's shades and a threshold's zones have patterns too: a
+    # shade its series', a zone its own.
+    shaded = Cell("█", shade(1, 3), ("background", 0))
+    assert graph._glyph(shaded, monochrome=True) == "▓"
+    zoned = Cell("█", ("zone", 2), ("background", 0))
+    series_2 = Cell("█", ("series", 2), ("background", 0))
+    assert graph._glyph(zoned, monochrome=True) == graph._glyph(series_2, True)
+
+
+def test_the_baseline_is_drawn_under_the_bars(root):
+    graph = BarGraph(root, baseline=True, segments=2, scale=16, maximum=16)
+    graph.set_all([[12], [5]])
+    assert _text(graph._compose(3, 3)) == ["▄  ", "█ ▅", "───"]
 
 
 def test_runs_group_cells_and_skip_the_frame(root):

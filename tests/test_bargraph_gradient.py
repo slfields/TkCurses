@@ -64,7 +64,7 @@ def test_steps_run_from_zero_to_the_last_evenly(length):
 
 
 def test_step_outside_the_bar_is_an_error():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"^cell 8 outside a bar 8 long$"):
         step_at(8, 8)
 
 
@@ -83,7 +83,7 @@ def test_shades_run_from_start_to_end():
 
 def test_shade_roles_round_trip():
     assert shade_parts(shade(2, 5)[1]) == (2, 5)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"^shade step 16 outside 0-15$"):
         shade(0, MAX_STEPS)
 
 
@@ -172,3 +172,52 @@ def test_shade_window_counts_along_the_bar_from_where_it_starts():
     last = step_count(bars.width) - 1
     assert shaded[bars.y][bars.x].fg == shade(0, 0)
     assert shaded[bars.y][bars.x + bars.width - 1].fg == shade(0, last)
+
+
+def _filled(layout, width, height, cell):
+    return [[cell] * width for _ in range(height)]
+
+
+@pytest.mark.parametrize("orient", ["vertical", "horizontal"])
+def test_shade_window_leaves_series_cells_beside_the_bars(orient):
+    # Boxed and labelled, the bars start away from the window's corner on
+    # both axes; a series cell outside them, even level with one inside,
+    # keeps its color.
+    spec = LayoutSpec(relative=False, orient=orient, labels=("ab",), borderwidth=1)
+    width, height = (14, 3) if orient == "horizontal" else (5, 8)
+    layout = compute_layout(width, height, spec)
+    bars = layout.bars
+    assert bars.x > 0 and bars.y > 0
+    plain = Cell("█", series(0), BACKGROUND)
+    shaded = shade_window(_filled(layout, width, height, plain), layout)
+    for y in range(height):
+        for x in range(width):
+            inside = (
+                bars.x <= x < bars.x + bars.width and bars.y <= y < bars.y + bars.height
+            )
+            assert (shaded[y][x] != plain) == inside, (x, y)
+
+
+def test_shade_window_goes_on_past_an_undrawn_cell():
+    layout = compute_layout(8, 1, LayoutSpec(relative=False, orient="horizontal"))
+    bars = layout.bars
+    window = [[Cell("█", series(0), BACKGROUND)] * (bars.x + bars.width)]
+    window[bars.y][bars.x] = None
+    shaded = shade_window(window, layout)
+    assert shaded[bars.y][bars.x] is None
+    assert shaded[bars.y][bars.x + bars.width - 1].fg == shade(0, 7)
+
+
+def test_shade_window_shades_a_bar_one_cell_long():
+    layout = compute_layout(1, 1, LayoutSpec(relative=False))
+    window = _window(layout, lambda _: Cell("█", series(0), BACKGROUND))
+    assert shade_window(window, layout)[layout.bars.y][0].fg == shade(0, 0)
+
+
+def test_shade_window_shades_a_series_behind_a_zone():
+    # A partial cell whose lower part is a zone and upper a series: only
+    # the series is shaded.
+    layout = compute_layout(1, 4, LayoutSpec(relative=False))
+    window = _window(layout, lambda _: Cell("▄", zone(1), series(0)))
+    cell = shade_window(window, layout)[layout.bars.y][0]
+    assert cell.fg == zone(1) and cell.bg == shade(0, 3)

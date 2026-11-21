@@ -260,3 +260,79 @@ def test_time_in_one_unit_never_over_the_ceiling(value, ceiling, digits, roundin
     units = list(TIME_SECONDS)
     if unit != "d" and number:
         assert number < TIME_SECONDS[units[units.index(unit) + 1]] / TIME_SECONDS[unit]
+
+
+@pytest.mark.parametrize(
+    ("fmt", "maximum", "expected"),
+    [
+        # Each is found only by sampling just under a power of ten, a
+        # step of 1024 or a minute, where a value gains a digit or scales:
+        # evenly spaced samples find a column a cell or two narrower.
+        (NumberFormat(digits=2), 7, 7),
+        (NumberFormat(), 1_536_000, 8),
+        (NumberFormat(digits=2, unitscale="binary"), 5000, 7),
+        (NumberFormat(digits=3, unitscale="time", units="s"), 1_536_000, 7),
+    ],
+)
+def test_widest_finds_the_values_just_under_an_edge(fmt, maximum, expected):
+    assert widest(fmt, maximum) == expected
+
+
+def test_for_readout_writes_time_to_three_digits_and_keeps_the_rest():
+    time = for_readout(NumberFormat(unitscale="time", units="s", space=True))
+    assert (time.digits, time.decimals, time.space) == (3, None, True)
+    plain = for_readout(NumberFormat(units="%", space=True, rounding="down"))
+    assert (plain.digits, plain.decimals) == (None, 0)
+    assert (plain.space, plain.rounding, plain.units) == (True, "down", "%")
+
+
+_SPREAD = [
+    (
+        {"digits": 3},
+        [(9.996, "10"), (99.96, "100"), (0.009996, "0.01"), (1234567, "1.23M")],
+    ),
+    (
+        {"units": "B", "unitscale": "binary", "digits": 3},
+        [
+            (1023.9, "1KiB"),
+            (1024, "1KiB"),
+            (1536, "1.5KiB"),
+            (1048000, "0.999MiB"),
+            (0.5, "0.5B"),
+        ],
+    ),
+    (
+        {"units": "s", "unitscale": "time", "digits": 3},
+        [
+            (59.99, "1min"),
+            (59.4, "59.4s"),
+            (90, "1.5min"),
+            (3599.9, "1h"),
+            (259200, "3d"),
+            (0.012, "12ms"),
+            (0.0005, "500µs"),
+            (0, "0s"),
+        ],
+    ),
+    (
+        {"units": "min", "unitscale": "time", "digits": 2},
+        [(0.5, "30s"), (59.99, "1h"), (90, "1.5h"), (3600, "2.5d")],
+    ),
+    (
+        {"units": "ms", "unitscale": "time", "digits": 3},
+        [(999.6, "1s"), (0.4, "400µs")],
+    ),
+    ({"decimals": 1}, [(0.04, "0.0"), (9.96, "10.0"), (1234.56, "1234.6")]),
+    ({"digits": 2, "rounding": "down"}, [(9.99, "9.9"), (0.0199, "0.019")]),
+    ({"digits": 2, "rounding": "up"}, [(9.01, "9.1"), (0.0101, "0.011")]),
+]
+
+
+@pytest.mark.parametrize(
+    ("options", "value", "text"),
+    [(options, value, text) for options, pairs in _SPREAD for value, text in pairs],
+)
+def test_a_spread_of_values_on_each_scale(options, value, text):
+    # Each side of where rounding carries a value to the next unit or the
+    # next digit, on every kind of scale.
+    assert NumberFormat(**options).format(value, 1) == text

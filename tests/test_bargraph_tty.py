@@ -405,3 +405,29 @@ graph.set_all([[20], [50], [100]])
         timeout=3,
         message="bars of 2, 5 and 10 cells",
     )
+
+
+def test_empty_and_partial_cells_take_the_graph_background(terminal):
+    term = run(
+        terminal,
+        """
+graph = BarGraph(root, segments=2, scale=16, maximum=16, background="blue",
+                 colors=["green"], refreshinterval=10)
+graph.pack(side="top", anchor="nw")
+graph.set_all([[16], [5]])
+""",
+        cols=20,
+        rows=4,
+    )
+
+    # Segment 1's bar is five eighths of its bottom cell, the green glyph
+    # on the graph's own background; the cell above it is empty, and blue.
+    def drawn(t):
+        return (
+            t.text_at(1, 0, 3) == "█ ▅"
+            and t.char_at(1, 2).fg == "green"
+            and t.char_at(1, 2).bg == "blue"
+            and t.char_at(0, 2).bg == "blue"
+        )
+
+    term.wait_for(drawn, message="the bars on a blue background")

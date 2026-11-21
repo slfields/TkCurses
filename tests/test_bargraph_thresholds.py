@@ -47,5 +47,7 @@ def test_parse_sorts_and_converts_percentages():
 
 
 def test_parse_rejects_duplicates():
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match=r"^duplicate threshold levels: \[80\.0, 80\.0\]$"
+    ):
         parse_thresholds([(80, "yellow"), ("80%", "red")], maximum=100)

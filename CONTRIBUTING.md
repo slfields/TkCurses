@@ -58,6 +58,12 @@ execs - `tests/test_harness.py` checks that by reading the code. CI still runs
 the suite serially: a small runner under four-way contention is where the
 worst timing flakes came from.
 
+**A run that loses a test fails.** A few times a working copy's `-n 4` run
+reported a handful fewer results than it collected, green, with no record of
+which. `tests/every_result.py` now compares every collected test with the
+results that came back, and turns a passing run with any missing into a
+failure that names them.
+
 ## Working on a change
 
 **Every change is a branch and a pull request.** Nothing reaches `master`

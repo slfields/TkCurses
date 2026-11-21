@@ -25,7 +25,15 @@ from pathlib import Path
 
 import pytest
 
+from tests.every_result import EveryResult
 from tests.support import TerminalHarness
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    # In the controller only: an xdist worker sees a share of the tests.
+    if not hasattr(config, "workerinput"):
+        config.pluginmanager.register(EveryResult(), "every-result")
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 

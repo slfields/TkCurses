@@ -226,9 +226,7 @@ def _parse(options: dict[str, Any]) -> _Config:
         raise ValueError(
             'a log scale cannot stack series: use mode="overlay", or one series'
         )
-    labelanchor = str(options["labelanchor"])
-    if labelanchor not in LABEL_ANCHORS:
-        raise ValueError(f'bad labelanchor "{labelanchor}"')
+    labelanchor = _choice(options["labelanchor"], "labelanchor", LABEL_ANCHORS)
     readout = _flag(options["readout"])
     if readout and orient != "horizontal":
         raise ValueError("readout needs orient=horizontal")
@@ -383,7 +381,9 @@ def _optional_count(value: Any, name: str, *, minimum: int) -> int | None:
 def _choice(value: Any, name: str, allowed: tuple[str, ...]) -> str:
     text = str(value)
     if text not in allowed:
-        raise ValueError(f'bad {name} "{text}": must be {", ".join(allowed)}')
+        # Tcl's punctuation: "a or b" for two, "a, b, or c" for more.
+        listed = ", ".join(allowed[:-1]) + ("," if len(allowed) > 2 else "")
+        raise ValueError(f'bad {name} "{text}": must be {listed} or {allowed[-1]}')
     return text
 
 

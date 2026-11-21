@@ -27,7 +27,10 @@ or peak-hold line crossing a bar replaces only that cell's *graph
 background*, never another color, so it never changes what the data shows.
 
 Levels (ticks, markers, peaks) fall at cell resolution: each is drawn in the
-cell its value's tip would end in.
+cell its value's tip would end in. The one exception is a tick at the bottom
+of the scale when there is a baseline: a bar of that value ends on the
+baseline, not in the first cell, so its tick goes on the corner. Put in the
+first cell, it would sit a cell closer to the next tick than every other pair.
 """
 
 from __future__ import annotations
@@ -77,6 +80,8 @@ V_DASH = "┊"  # ┊ gridline across a horizontal graph
 TICK_LEFT = "┤"  # ┤ vertical axis ruler, tick pointing at the bars
 TICK_DOWN = "┬"  # ┬ horizontal axis ruler, tick pointing at the labels
 CORNER = "└"  # └ where the axis or baseline meet
+CORNER_TICK_LEFT = "┴"  # ┴ that corner with a vertical axis's tick on it
+CORNER_TICK_DOWN = "├"  # ├ that corner with a horizontal axis's tick on it
 
 #: The second cell of a wide character: drawn by the character before it,
 #: so nothing is written there.
@@ -435,10 +440,13 @@ class _Painter:
         baseline = self.layout.baseline
         corner = baseline is not None and not baseline.empty
         ticks = {}
+        span = as_range(self.decor.values or self.decor.maximum)
         for tick in self.decor.ticks:
-            along = self.cell_of(tick)
+            # Cell -1 is the corner: the baseline is where an empty bar ends.
+            along = -1 if corner and tick <= span.minimum else self.cell_of(tick)
             if along is not None:
                 ticks[along] = self.decor.numbers.format(tick, self.decor.maximum)
+        floor = ticks.get(-1)
         if self.vertical:
             ruler = axis.x + axis.width - 1
             for along in range(self.layout.length_cells):
@@ -452,12 +460,22 @@ class _Painter:
                     self.text(x, y, text)
             if corner:
                 assert baseline is not None
-                self.put(ruler, baseline.y, Cell(CORNER, TEXT, BACKGROUND))
+                glyph = CORNER_TICK_LEFT if floor else CORNER
+                self.put(ruler, baseline.y, Cell(glyph, TEXT, BACKGROUND))
+                if floor:
+                    row = Rect(axis.x, baseline.y, axis.width - 1, 1)
+                    x, text = place_text(row, floor, "e")
+                    self.text(x, baseline.y, text)
         else:
             ruler = axis.y
             # The label row only if the axis got both of its rows.
             labels_row = axis.y + 1 if axis.height > 1 else None
             free = axis.x
+            if corner and floor:
+                assert baseline is not None
+                if labels_row is not None:
+                    self.text(baseline.x, labels_row, floor)
+                    free = baseline.x + cells(floor) + 1
             for along in range(self.layout.length_cells):
                 x = axis.x + along
                 label = ticks.get(along)
@@ -473,7 +491,8 @@ class _Painter:
                     free = start + cells(label) + 1
             if corner:
                 assert baseline is not None
-                self.put(baseline.x, ruler, Cell(CORNER, TEXT, BACKGROUND))
+                glyph = CORNER_TICK_DOWN if floor else CORNER
+                self.put(baseline.x, ruler, Cell(glyph, TEXT, BACKGROUND))
 
     def readout(self, rows: Sequence[Sequence[float]]) -> None:
         readout = self.layout.readout

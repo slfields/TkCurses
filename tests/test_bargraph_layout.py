@@ -19,6 +19,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
@@ -26,6 +28,7 @@ from hypothesis import strategies as st
 from tkcurses.bargraph._layout import (
     LayoutSpec,
     Rect,
+    axis_title_spot,
     compute_layout,
     length_cells_for,
     natural_size,
@@ -37,19 +40,19 @@ from tkcurses.bargraph._layout import (
 
 
 @pytest.mark.parametrize(
-    "options",
+    ("options", "message"),
     [
-        {"orient": "diagonal"},
-        {"segments": 0},
-        {"thickness": 0},
-        {"gap": -1},
-        {"borderwidth": -1},
-        {"labelanchor": "center"},
-        {"orient": "vertical", "readout_width": 3},
+        ({"orient": "diagonal"}, "bad orient 'diagonal'"),
+        ({"segments": 0}, "segments must be >= 1"),
+        ({"thickness": 0}, "thickness must be >= 1"),
+        ({"gap": -1}, "gap must be >= 0"),
+        ({"borderwidth": -1}, "borderwidth must be >= 0"),
+        ({"labelanchor": "center"}, "bad labelanchor 'center'"),
+        ({"orient": "vertical", "readout_width": 3}, "readout needs orient=horizontal"),
     ],
 )
-def test_spec_rejects(options):
-    with pytest.raises(ValueError):
+def test_spec_rejects(options, message):
+    with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
         LayoutSpec(**options)
 
 
@@ -314,3 +317,59 @@ def test_place_text_measures_and_cuts_in_cells():
     # is left out, not halved, and the ellipsis takes the last cell.
     assert place_text(Rect(0, 0, 3, 1), "界面x", "w") == (0, "界…")
     assert place_text(Rect(0, 0, 2, 1), "界面", "w") == (0, "…")
+
+
+# ------------------------------------------------------- axis title spot ----
+
+_TITLED = {"orient": "horizontal", "axis": True, "axis_title": "GiB", "borderwidth": 1}
+
+
+def test_a_horizontal_axis_title_goes_in_the_bottom_edge():
+    outer = Rect(3, 2, 30, 6)
+    assert axis_title_spot(outer, LayoutSpec(**_TITLED)) == Rect(5, 7, 5, 1)
+    # The graph's label at the top leaves it where it was...
+    spec = LayoutSpec(**_TITLED, title="Disks", labelanchor="nw")
+    assert axis_title_spot(outer, spec) == Rect(5, 7, 5, 1)
+    # ...and at the bottom left sends it to the right.
+    spec = LayoutSpec(**_TITLED, title="Disks", labelanchor="sw")
+    assert axis_title_spot(outer, spec) == Rect(26, 7, 5, 1)
+
+
+def test_a_vertical_axis_title_goes_in_the_top_edge():
+    spec = LayoutSpec(
+        axis=True, axis_title="GiB", borderwidth=1, title="Disks", labelanchor="nw"
+    )
+    assert axis_title_spot(Rect(3, 2, 30, 6), spec) == Rect(26, 2, 5, 1)
+
+
+def test_the_axis_title_needs_the_box_and_room_for_itself():
+    spec = LayoutSpec(**_TITLED)
+    assert axis_title_spot(Rect(0, 0, 20, 1), spec) is None
+    assert axis_title_spot(Rect(0, 0, 1, 9), spec) is None
+    assert axis_title_spot(Rect(0, 0, 20, 2), spec) == Rect(2, 1, 5, 1)
+    # " GiB " and the two-cell inset at each end: 9 exactly fits.
+    assert axis_title_spot(Rect(0, 0, 9, 4), spec) == Rect(2, 3, 5, 1)
+    assert axis_title_spot(Rect(0, 0, 8, 4), spec) is None
+
+
+@pytest.mark.parametrize(
+    ("anchor", "fits_at"), [("sw", Rect(7, 3, 5, 1)), ("se", Rect(2, 3, 5, 1))]
+)
+def test_the_axis_title_keeps_a_cell_of_border_from_the_label(anchor, fits_at):
+    spec = LayoutSpec(**_TITLED, title="Ab", labelanchor=anchor)
+    assert axis_title_spot(Rect(0, 0, 13, 4), spec) is None
+    assert axis_title_spot(Rect(0, 0, 14, 4), spec) == fits_at
+
+
+def test_natural_size_widens_for_the_axis_title_and_the_label_it_shares_with():
+    assert natural_size(LayoutSpec(**_TITLED), 4) == (9, 5)
+    # Sharing the edge with the graph's label: both, and a cell between.
+    shared = LayoutSpec(**_TITLED, title="Disks", labelanchor="sw")
+    assert natural_size(shared, 4) == (17, 5)
+    apart = LayoutSpec(**_TITLED, title="Disks", labelanchor="nw")
+    assert natural_size(apart, 4) == (11, 5)
+    # No box, no edge to put it in.
+    unboxed = LayoutSpec(orient="horizontal", axis=True, axis_title="GiB")
+    assert natural_size(unboxed, 4) == natural_size(
+        LayoutSpec(orient="horizontal", axis=True), 4
+    )

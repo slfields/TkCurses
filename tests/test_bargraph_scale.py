@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import math
+import re
 
 import pytest
 from hypothesis import given
@@ -42,11 +43,29 @@ def test_absolute(value):
 
 
 @pytest.mark.parametrize(
-    "value", [7, 0, -8, "7", True, 8.0, "abc", "%", "0%", "101%", "nan%"]
+    ("value", "message"),
+    [
+        (7, "scale must be at least 8 points, not 7"),
+        (0, "scale must be at least 8 points, not 0"),
+        (-8, "scale must be at least 8 points, not -8"),
+        # The same words for the same number written as text.
+        ("7", "scale must be at least 8 points, not 7"),
+        (True, "bad scale True"),
+        (8.0, "bad scale 8.0"),
+        ("abc", "bad scale 'abc'"),
+        ("%", "bad scale '%'"),
+        ("0%", "scale percentage must be in (0, 100], not '0%'"),
+        ("101%", "scale percentage must be in (0, 100], not '101%'"),
+        ("nan%", "scale percentage must be in (0, 100], not 'nan%'"),
+    ],
 )
-def test_rejects(value):
-    with pytest.raises(ValueError):
+def test_rejects(value, message):
+    with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
         parse_scale(value)
+
+
+def test_a_percentage_below_one_is_still_a_percentage():
+    assert parse_scale("0.5%").peak_points(available_cells=400) == 16
 
 
 def test_percentage_follows_the_frame():
@@ -69,7 +88,7 @@ def test_str_round_trips():
 def test_levels():
     assert parse_level(90, 200) == 90
     assert parse_level("80%", 200) == 160
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"^bad level 'x'$"):
         parse_level("x", 100)
 
 
