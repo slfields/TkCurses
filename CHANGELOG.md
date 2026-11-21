@@ -6,6 +6,8 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-20
+
 ### Added
 - `BarGraph`, a bar graph widget, imported with
   `from tkcurses.bargraph import BarGraph`. It is a TkCurses widget:
@@ -28,6 +30,8 @@ All notable changes to TkCurses. The format follows
   BarGraph's reference, and a guide to it with three new example
   programs: `examples/bars.py`, `examples/meters.py` and
   `examples/scales.py`.
+- For contributors: a test run that would pass but has a collected test
+  with no result now fails and names it (`tests/every_result.py`).
 
 ### Fixed
 - `rowconfigure` and `columnconfigure` given several lines at once -
@@ -976,7 +980,8 @@ Phase 2 of the original codebase: the base widget classes, `Tk` and `Toplevel`,
 the variable classes and the panel stack. Superseded by the rebuild; it has no
 `Entry` or `Text`.
 
-[Unreleased]: https://github.com/slfields/TkCurses/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/slfields/TkCurses/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/slfields/TkCurses/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/slfields/TkCurses/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/slfields/TkCurses/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/slfields/TkCurses/compare/v0.4.0...v0.4.1
