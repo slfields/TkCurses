@@ -93,9 +93,11 @@ def parse_scale(value: object) -> Scale:
                 raise ValueError(f"scale percentage must be in (0, 100], not {value!r}")
             return Scale(percent=percent)
         try:
-            return _absolute(int(text))
+            points = int(text)
         except ValueError:
             raise ValueError(f"bad scale {value!r}") from None
+        # Outside the try, so "7" is told what "7" as a number is told.
+        return _absolute(points)
     raise ValueError(f"bad scale {value!r}")
 
 

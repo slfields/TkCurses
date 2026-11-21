@@ -92,7 +92,7 @@ def test_overlay_tie_goes_to_the_lower_series():
 
 
 def test_bad_mode():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"^bad mode 'pie'$"):
         segment_runs([1], "pie", **UNIT)  # type: ignore[arg-type]
 
 
@@ -356,3 +356,21 @@ def test_a_horizontal_bar_inside_a_box_is_drawn_in_its_own_row():
     assert layout.bars.y > 0
     grid = render_bars([[8]], layout, "stacked", maximum=8, peak_points=8)
     assert grid[0][0].char == "█"
+
+
+@given(
+    values=st.lists(st.integers(-20, 40), min_size=1, max_size=4),
+    mode=st.sampled_from(["stacked", "overlay"]),
+    levels=st.lists(st.integers(1, 63), max_size=3, unique=True).map(sorted),
+)
+def test_no_two_neighbouring_runs_share_a_role(values, mode, levels):
+    # What lets a cell's pieces go unjoined: series come once and in order,
+    # the zones above them rise, and zoned_runs joins its own.
+    if len(values) == 1:
+        runs = threshold_runs(values[0], levels, **UNIT)
+    else:
+        runs = segment_runs(values, mode, **UNIT)
+        if levels:
+            runs = zoned_runs(runs, levels, **UNIT)
+    roles = [run.role for run in runs]
+    assert all(a != b for a, b in itertools.pairwise(roles))

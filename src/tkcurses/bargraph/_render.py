@@ -224,26 +224,21 @@ def cells_along(
 def _pieces(runs: Sequence[Run], low: int, high: int) -> list[tuple[Role, int]]:
     """The roles in points ``low``-``high`` as ``(role, points)``, in order.
 
-    Any space past the tip is background; neighbouring pieces of the same
-    role are joined.
+    Any space past the tip is background. No two neighbouring pieces share
+    a role, since no two neighbouring runs do: a bar's series each come
+    once and in order, the threshold zones above them rise, and
+    :func:`zoned_runs` joins its own pieces. So nothing here joins them.
     """
     pieces: list[tuple[Role, int]] = []
     covered = 0
     for run in runs:
         start, end = max(run.start, low), min(run.end, high)
         if end > start:
-            _append(pieces, run.role, end - start)
+            pieces.append((run.role, end - start))
             covered += end - start
     if covered < high - low:
-        _append(pieces, BACKGROUND, high - low - covered)
+        pieces.append((BACKGROUND, high - low - covered))
     return pieces
-
-
-def _append(pieces: list[tuple[Role, int]], role: Role, points: int) -> None:
-    if pieces and pieces[-1][0] == role:
-        pieces[-1] = (role, pieces[-1][1] + points)
-    else:
-        pieces.append((role, points))
 
 
 def _merge(
@@ -273,11 +268,6 @@ def _merge(
         role, points = pieces[into]
         pieces[into] = (role, points + pieces[smallest][1])
         del pieces[smallest]
-        # Joining may have left two pieces of one role side by side.
-        joined: list[tuple[Role, int]] = []
-        for role, points in pieces:
-            _append(joined, role, points)
-        pieces = joined
     return pieces
 
 

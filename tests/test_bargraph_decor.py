@@ -30,6 +30,7 @@ from tkcurses.bargraph._decor import (
     compose,
     even_ticks,
     level_cell,
+    log_ticks,
     readout_value,
     spaced,
 )
@@ -224,6 +225,22 @@ def test_peak_hold_line_in_the_track_only():
         "▄ ▄",
     ]
     assert window[0][0] == Cell("─", series(0), BACKGROUND)
+
+
+@pytest.mark.parametrize(("small", "drawn"), [(0.5, True), (0, False)])
+def test_peak_hold_after_a_segment_without_one(small, drawn):
+    # The first segment holds no peak; the others are still drawn, down to
+    # a peak in the first cell, though not one at nothing.
+    spec = LayoutSpec(relative=False, segments=3)
+    window = _window(
+        spec,
+        4,
+        [[4], [4], [small]],
+        16,
+        {"peaks": (None, (12, series(0)), (small, series(1)))},
+    )
+    assert window[1][2] == Cell("─", series(0), BACKGROUND)
+    assert (window[3][4].bg == series(1)) == drawn
 
 
 def test_horizontal_with_labels_axis_and_readout():
@@ -468,3 +485,138 @@ def test_text_gives_a_wide_character_two_cells_or_a_space():
     # one cell left and is a space rather than half a character.
     assert drawn == ["é", "界", "", "x", " "]
     assert window[0][2] is CONTINUATION
+
+
+def test_log_ticks_add_two_and_five_only_with_room_for_all_of_them():
+    # Four powers and two between each is twelve ticks: twelve fit, eleven
+    # do not.
+    span = ValueRange(1000, 1, "log")
+    assert log_ticks(span, 12) == [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
+    assert log_ticks(span, 11) == [1, 10, 100, 1000]
+
+
+def test_log_ticks_reach_below_the_first_power():
+    # From 3, the 5 under the first power, 10, is a tick too.
+    assert log_ticks(ValueRange(1000, 3, "log"), 20)[:2] == [5, 10]
+
+
+def test_log_ticks_start_at_the_first_power_above_the_minimum():
+    assert log_ticks(ValueRange(1e4, 30, "log"), 2) == [100, 10000]
+
+
+def test_log_ticks_in_base_five_add_only_two():
+    span = ValueRange(625, 1, "log", 5)
+    assert log_ticks(span, 20) == [1, 2, 5, 10, 25, 50, 125, 250, 625]
+
+
+@pytest.mark.parametrize(("fits", "expected"), [(3, [1, 1000, 1_000_000]), (1, [1])])
+def test_log_ticks_skip_powers_to_fit(fits, expected):
+    assert log_ticks(ValueRange(1e6, 1, "log"), fits) == expected
+
+
+@pytest.mark.parametrize(
+    ("length", "spacing", "expected"),
+    [(1, 1, [0, 100]), (3, 1, [0, 50, 100])],
+)
+def test_auto_ticks_on_a_short_bar(length, spacing, expected):
+    assert auto_ticks(100, length, spacing) == expected
+
+
+def _decorated(spec, length, rows, decor_options):
+    window = _window(spec, length, rows, 32, decor_options)
+    bars = compute_layout(len(window[0]), len(window), spec).bars
+    return window, bars
+
+
+def _assert_text_cells(window, bars):
+    # Everything drawn outside the bars - axis, ruler, labels, readout,
+    # baseline, title - is text on the window's background.
+    for y, row in enumerate(window):
+        for x, cell in enumerate(row):
+            inside = (
+                bars.x <= x < bars.x + bars.width and bars.y <= y < bars.y + bars.height
+            )
+            if cell is not None and not inside and cell.char:
+                assert (cell.fg, cell.bg) == (TEXT, BACKGROUND), (x, y, cell)
+
+
+def test_a_horizontal_graph_with_everything():
+    spec = LayoutSpec(
+        orient="horizontal",
+        segments=2,
+        thickness=3,
+        relative=False,
+        labels=("cpu", "温"),
+        readout_width=4,
+        axis=True,
+        baseline=True,
+        borderwidth=1,
+        title="負荷",
+    )
+    window, bars = _decorated(
+        spec,
+        8,
+        [[10], [24]],
+        {
+            "labels": ("cpu", "温"),
+            "axis": True,
+            "baseline": True,
+            "ticks": (0, 16, 32),
+            "readoutformat": "{:.0f}",
+            "title": "負荷",
+        },
+    )
+    # A label and a readout sit in the middle row of a three-row track; a
+    # wide character takes two cells, the second drawn by the first.
+    assert _text(window) == [
+        "~~~~~~~~負荷~~~~~~~~",
+        "~~~~~│██▌     ~~~~~~",
+        "~cpu~│██▌     ~~~10~",
+        "~~~~~│██▌     ~~~~~~",
+        "~~~~~│        ~~~~~~",
+        "~~~~~│██████  ~~~~~~",
+        "~温~~│██████  ~~~24~",
+        "~~~~~│██████  ~~~~~~",
+        "~~~~~├───┬───┬~~~~~~",
+        "~~~~~0~~~16~32~~~~~~",
+        "~~~~~~~~~~~~~~~~~~~~",
+    ]
+    assert window[0][9].char == "" and window[6][2].char == ""
+    _assert_text_cells(window, bars)
+
+
+def test_a_vertical_graph_with_everything():
+    spec = LayoutSpec(
+        segments=2,
+        thickness=3,
+        relative=False,
+        labels=("a", "温"),
+        axis=True,
+        axis_label_width=2,
+        baseline=True,
+        borderwidth=1,
+        title="T",
+    )
+    window, bars = _decorated(
+        spec,
+        4,
+        [[20], [6]],
+        {
+            "labels": ("a", "温"),
+            "axis": True,
+            "baseline": True,
+            "ticks": (0, 16, 32),
+            "title": "T",
+        },
+    )
+    assert _text(window) == [
+        "~~~~~T~~~~~~",
+        "~32┤       ~",
+        "~~~│▄▄▄    ~",
+        "~16┤███    ~",
+        "~~~│███ ▆▆▆~",
+        "~~0┴───────~",
+        "~~~~~a~~温~~",
+        "~~~~~~~~~~~~",
+    ]
+    _assert_text_cells(window, bars)

@@ -40,7 +40,7 @@ def test_partial_covers_empty_to_full(orient):
 
 @pytest.mark.parametrize("points", [-1, 9])
 def test_partial_rejects_out_of_range(points):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=f"^points must be 0-8, not {points}$"):
         glyphs.partial(points, "vertical")
 
 
