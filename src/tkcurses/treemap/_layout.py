@@ -29,10 +29,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from tkcurses._charts.geometry import Rect
+from tkcurses.treemap._outline import inner, shrunk
 from tkcurses.treemap._squarify import CELL_ASPECT, tiles
 
 if TYPE_CHECKING:
-    from tkcurses._charts.geometry import Rect
     from tkcurses.treemap._model import Model
 
 __all__ = [
@@ -124,6 +125,9 @@ class Tile:
     level: int
     group: bool = False
     header: Rect | None = None
+    #: Drawn outlined: ``rect`` is then its box's corners, and what is
+    #: inside the lines is :func:`tkcurses.treemap._outline.inner`.
+    boxed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +160,11 @@ class TileLayout:
 
 
 def lay_out(
-    model: Model, area: Rect, zoom: str = "", aspect: float = CELL_ASPECT
+    model: Model,
+    area: Rect,
+    zoom: str = "",
+    aspect: float = CELL_ASPECT,
+    outlined: frozenset[str] = frozenset(),
 ) -> TileLayout:
     """The tiles of ``model`` in ``area``.
 
@@ -164,12 +172,18 @@ def lay_out(
     top of what is shown. Items are laid largest first; a group's children
     go inside its tile, under a header row when the tile has at least
     :data:`HEADER_MIN_ROWS` rows and :data:`HEADER_MIN_COLUMNS` columns.
+
+    ``outlined`` names the levels drawn with lines between their tiles:
+    ``""`` for the top level, a group's iid for its children. An outlined
+    level is laid out a column and a row short, to close its boxes; a
+    group outlined itself and around its children shares its lines with
+    theirs, and needs a row more for a header, the line under it.
     """
     placed: list[Tile] = []
     hidden: list[str] = []
 
-    def lay(iids: list[str], region: Rect, level: int) -> None:
-        rects = tiles([model.size(iid) for iid in iids], region, aspect)
+    def lay(iids: list[str], space: Rect, level: int, boxed: bool) -> None:
+        rects = tiles([model.size(iid) for iid in iids], space, aspect)
         for iid, rect in zip(iids, rects, strict=True):
             children = model.ordered(iid) if level == 0 else []
             if rect is None:
@@ -179,17 +193,32 @@ def lay_out(
                 hidden.extend(c for c in children if model.size(c) > 0)
                 continue
             if not children:
-                placed.append(Tile(iid, rect, level))
+                placed.append(Tile(iid, rect, level, boxed=boxed))
                 continue
+            inside = inner(rect) if boxed else rect
             header = None
-            inside = rect
-            if rect.height >= HEADER_MIN_ROWS and rect.width >= HEADER_MIN_COLUMNS:
-                header, inside = rect.take_top(1)
-            placed.append(Tile(iid, rect, level, group=True, header=header))
-            lay(children, inside, 1)
+            if (
+                inside.height >= HEADER_MIN_ROWS + (1 if boxed else 0)
+                and inside.width >= HEADER_MIN_COLUMNS
+            ):
+                header = Rect(inside.x, inside.y, inside.width, 1)
+            placed.append(
+                Tile(iid, rect, level, group=True, header=header, boxed=boxed)
+            )
+            lines_inside = iid in outlined
+            if boxed and lines_inside:
+                # The children's boxes close on the group's own lines.
+                top = rect.y + (2 if header else 0)
+                space_in = Rect(rect.x, top, rect.width, rect.y + rect.height - top)
+            else:
+                below = inside.take_top(1)[1] if header else inside
+                space_in = shrunk(below) if lines_inside else below
+            lay(children, space_in, 1, lines_inside)
 
+    key = zoom
+    top = shrunk(area) if key in outlined else area
     if zoom:
-        lay(model.ordered(zoom) or [zoom], area, 1)
+        lay(model.ordered(zoom) or [zoom], top, 1, key in outlined)
     else:
-        lay(model.ordered(), area, 0)
+        lay(model.ordered(), top, 0, key in outlined)
     return TileLayout(tuple(placed), tuple(hidden))

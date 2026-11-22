@@ -8588,8 +8588,8 @@ As BarGraph: pure modules know nothing of curses and raise `ValueError`;
 | `_model` | items, the two-level rule, sizes, order |
 | `_squarify` | weights and a rectangle to rectangles: the paper's algorithm, then snapped to cells |
 | `_layout` | the widget's size to regions: legend, readout, tiles; then the items to tiles, with group headers, zoom and the hidden ones |
-| `_shades` | which shade each child takes, so no two neighbours share one |
-| `_outline` | the lines between tiles, with their junctions, when outlined |
+| `_shades` | the four shades, which each child takes so no two neighbours share one, and which levels are outlined |
+| `_outline` | the lines between outlined tiles, with their junctions |
 | `_labels` | what text fits in a tile, and where |
 | `_legend` | the entries, wrapped and truncated, flowed into the legend region |
 | `_navigate` | which tile an arrow key moves to |
@@ -8695,22 +8695,58 @@ match. `_shades` builds the adjacency of the group's tiles (rectangles
 sharing an edge). It gives each tile, largest first, the lowest shade no
 neighbour has. A dissection that needs a fifth shade is rare. It then
 reuses the shade its smallest neighbour has, and the label still tells
-the two apart.
+the two apart. The four are, from `#cd00cd` for example, `#cd00cd`,
+`#9a009a`, `#dc4cdc` and `#660066`; each channel is rounded to the
+nearest whole value, half to even, as Python's `round` does.
 
 **Text is black or white**, whichever contrasts more with the tile, by
 WCAG relative luminance.
 
-**Outlined, where shades cannot be seen.** Shades are compared after the
-terminal's palette has rounded them. At 256 colours, two blends can land
-on one cube entry. If fewer than three distinct shades remain, and always
-below 256 colours, the group is drawn **outlined**: single box-drawing
-lines between tiles, on the top row and left column of each tile, with
-junctions (`┬ ┤ ┼`) from the directions that meet. The tiles area gives up
-one column and one row to close the right and bottom edges.
+**Outlined, where shades cannot be seen.** Outlining is decided per
+*level*: the top level, or one group's children (`outlined_levels`). The
+widget counts how many of a group's four shades the terminal shows apart,
+after its palette has rounded them (at 256 colours two blends can land on
+one cube entry), and passes that number in, so `_shades` stays pure.
+With `outline="auto"`:
 
-- In monochrome every tile is outlined, uncoloured.
-- The `outline` option forces it on or off: `auto` (the default), `on`,
-  `off`.
+| Terminal | Outlined |
+|---|---|
+| No colour | everything, uncoloured |
+| 8 or 16 colours | every group's children; the top level is told apart by `colors` |
+| 256 or more | a group whose distinct shades are fewer than 3, or than its children, whichever is less |
+
+`outline="on"` outlines everything, `off` nothing, even without colour,
+where the labels are then all that tells tiles apart. An outlined
+group's children all take the group's own colour: the lines separate
+them, and no shade pairs are spent.
+
+**How the lines are laid.** An outlined tile's rectangle names its box's
+corners. Its line runs along its top row and left column, and along the
+row and column just past its right and bottom edges, which are its
+neighbours' top row and left column. So neighbours share one line, and
+`_outline.lines` draws each cell from the directions that meet there:
+`┌ ┬ ┐ ├ ┼ ┤ └ ┴ ┘`. An outlined level is laid out one column and one
+row short (`shrunk`), to close its last boxes, and what a tile shows is
+inside its lines (`inner`).
+
+```text
+┌──────────────────────────────┬────────────────┐
+│web                           │db              │
+├──────────────────┬───────────┼───────────┬────┤
+│nginx             │apache     │postgres   │mysq│
+│                  │           │           │    │
+│                  │           │           │    │
+│                  │           ├───────────┴────┤
+│                  ├───────────┤cache           │
+│                  │php        │                │
+└──────────────────┴───────────┴────────────────┘
+```
+
+That is everything outlined, as without colour: 49 × 10, the services of
+the first picture. A group outlined around children that are outlined
+too shares its lines with theirs, and its header needs a row more, for
+the line under it: 4 rows, not 3. A group too small to hold its
+children's lines has them hidden, counted, and shows as itself.
 
 **Colour pairs stay within curses' budget.** That is at most
 `len(colors) × 4` tile pairs, plus headers, legend swatches and the

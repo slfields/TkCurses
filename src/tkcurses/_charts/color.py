@@ -23,7 +23,7 @@ and leave the rest to the colour manager.
 
 from __future__ import annotations
 
-__all__ = ["RGB", "hex_color", "shade_rgb"]
+__all__ = ["RGB", "hex_color", "mix", "shade_rgb"]
 
 RGB = tuple[int, int, int]
 
@@ -39,6 +39,15 @@ def shade_rgb(start: RGB, end: RGB, step: int, steps: int) -> RGB:
     red, green, blue = (
         round(low + (high - low) * fraction)
         for low, high in zip(start, end, strict=True)
+    )
+    return red, green, blue
+
+
+def mix(color: RGB, toward: RGB, fraction: float) -> RGB:
+    """``color`` moved ``fraction`` of the way to ``toward``, linear in RGB."""
+    red, green, blue = (
+        round(low + (high - low) * fraction)
+        for low, high in zip(color, toward, strict=True)
     )
     return red, green, blue
 
