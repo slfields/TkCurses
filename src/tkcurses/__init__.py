@@ -71,7 +71,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
 
 from tkcurses._core import geometry as _geometry
-from tkcurses._core import secret as _secret
+from tkcurses._core import wipeable as _wipeable
 from tkcurses._core import x11colors as _x11colors
 from tkcurses._core.application import Application
 from tkcurses._core.attributes import (
@@ -8757,12 +8757,12 @@ def _report_secret_unlocked() -> None:
 
     Locking keeps the operating system from writing the memory to swap.
     Without it the field still worked and was still wiped, so this is a
-    notice rather than an error; see :mod:`tkcurses._core.secret`.
+    notice rather than an error; see :mod:`tkcurses._core.wipeable`.
     """
-    reason = _secret.lock_failure()
+    reason = _wipeable.lock_failure()
     if not reason:
         return
-    _secret.forget_lock_failure()
+    _wipeable.forget_lock_failure()
     _write_to_stderr(
         "tkcurses: a hidden field's memory could not be locked against swap - "
         f"{reason}. It was still wiped.\n"
@@ -12086,7 +12086,7 @@ class Entry(_Drawable, XView):
 
         A Python ``str`` cannot be overwritten, so a password kept in one
         stays in the process's memory after it is deleted; see
-        :mod:`tkcurses._core.secret`. Emptying ``show`` turns the contents
+        :mod:`tkcurses._core.wipeable`. Emptying ``show`` turns the contents
         back into a ``str`` and wipes the memory they were in.
         """
         mask = str(self._options.get("show") or "")

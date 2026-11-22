@@ -29,11 +29,11 @@ from types import SimpleNamespace
 import pytest
 
 from tkcurses import Entry, Misc, StringVar, ttk
-from tkcurses._core import secret
+from tkcurses._core import wipeable
 from tkcurses._core.events import MOD_CTRL, MOD_SHIFT, KeyEvent
 from tkcurses._core.geometry import Rect
 from tkcurses._core.panels import PanelStack
-from tkcurses._core.secret import SecretBuffer
+from tkcurses._core.wipeable import SecretBuffer
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 
@@ -193,13 +193,13 @@ PROBE = textwrap.dedent(
     import gc, re, sys
     from types import SimpleNamespace
     from tkcurses import Entry, Misc
-    from tkcurses._core import secret
+    from tkcurses._core import wipeable
     from tkcurses._core.events import KeyEvent
     from tkcurses._core.geometry import Rect
     from tkcurses._core.panels import PanelStack
 
     if sys.argv[2] == "mmap":
-        secret._chosen = secret.MmapAllocator()
+        wipeable._chosen = wipeable.MmapAllocator()
     # Never a literal, so only the widget can assemble it.
     codes = [ord(c) + 1 for c in 'Yp6"oV8wJm']
 
@@ -277,7 +277,7 @@ def test_a_typed_password_is_gone_from_memory_once_the_entry_is(tmp_path, alloca
 def test_the_exit_notice_names_why_memory_was_not_locked(monkeypatch, capsys):
     import tkcurses
 
-    monkeypatch.setattr(secret, "_lock_failure", "Cannot allocate memory")
+    monkeypatch.setattr(wipeable, "_lock_failure", "Cannot allocate memory")
     written = []
     monkeypatch.setattr(tkcurses, "_write_to_stderr", written.append)
     tkcurses._report_secret_unlocked()

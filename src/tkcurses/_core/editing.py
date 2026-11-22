@@ -41,7 +41,7 @@ import unicodedata
 from typing import TYPE_CHECKING
 
 from tkcurses._core.cells import cells
-from tkcurses._core.secret import SecretBuffer
+from tkcurses._core.wipeable import SecretBuffer
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator

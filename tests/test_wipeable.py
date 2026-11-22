@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests for tkcurses._core.secret: wipeable memory for hidden fields."""
+"""Tests for tkcurses._core.wipeable: wipeable memory for hidden fields."""
 
 from __future__ import annotations
 
@@ -23,18 +23,18 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from tkcurses._core import secret
+from tkcurses._core import wipeable
 from tkcurses._core.editing import TextField
-from tkcurses._core.secret import MmapAllocator, SecretBuffer, SodiumAllocator
+from tkcurses._core.wipeable import MmapAllocator, SecretBuffer, SodiumAllocator
 
-PAGE_CHARS = secret._PAGE // secret.CHAR_BYTES
+PAGE_CHARS = wipeable._PAGE // wipeable.CHAR_BYTES
 
 
 class SpyRegion:
     """A real mmap region that records what it held when it was freed."""
 
     def __init__(self, spy: SpyAllocator, size: int) -> None:
-        self._inner = secret._MmapRegion(size)
+        self._inner = wipeable._MmapRegion(size)
         self.address = self._inner.address
         self.size = self._inner.size
         self.locked = self._inner.locked
@@ -67,7 +67,7 @@ class SpyAllocator:
 @pytest.fixture
 def spy(monkeypatch):
     allocator = SpyAllocator()
-    monkeypatch.setattr(secret, "_chosen", allocator)
+    monkeypatch.setattr(wipeable, "_chosen", allocator)
     return allocator
 
 
@@ -79,7 +79,7 @@ def each_allocator(request, monkeypatch):
         chosen = SodiumAllocator.load()
         if chosen is None:
             pytest.skip("libsodium is not installed")
-    monkeypatch.setattr(secret, "_chosen", chosen)
+    monkeypatch.setattr(wipeable, "_chosen", chosen)
     return chosen
 
 
@@ -208,9 +208,9 @@ def test_closing_wipes_the_memory(spy):
 def test_a_deleted_tail_leaves_zeros_behind(spy):
     buffer = SecretBuffer("abcdef")
     buffer.delete(1, 3)
-    raw = bytes(buffer._region.view[: 6 * secret.CHAR_BYTES])
+    raw = bytes(buffer._region.view[: 6 * wipeable.CHAR_BYTES])
     assert buffer.to_str() == "adef"
-    assert raw[4 * secret.CHAR_BYTES :] == bytes(2 * secret.CHAR_BYTES)
+    assert raw[4 * wipeable.CHAR_BYTES :] == bytes(2 * wipeable.CHAR_BYTES)
     buffer.close()
 
 
@@ -246,20 +246,20 @@ def test_a_lock_that_fails_is_remembered_once(monkeypatch):
             region.locked, region.lock_error = False, "Cannot allocate memory"
             return region
 
-    monkeypatch.setattr(secret, "_chosen", Unlockable())
-    monkeypatch.setattr(secret, "_lock_failure", "")
+    monkeypatch.setattr(wipeable, "_chosen", Unlockable())
+    monkeypatch.setattr(wipeable, "_lock_failure", "")
     buffer = SecretBuffer("still works")
     assert buffer.to_str() == "still works"
-    assert secret.lock_failure() == "Cannot allocate memory"
-    secret.forget_lock_failure()
-    assert secret.lock_failure() == ""
+    assert wipeable.lock_failure() == "Cannot allocate memory"
+    wipeable.forget_lock_failure()
+    assert wipeable.lock_failure() == ""
     buffer.close()
 
 
 def test_an_allocator_is_chosen_once(monkeypatch):
-    monkeypatch.setattr(secret, "_chosen", None)
-    first = secret.allocator()
-    assert secret.allocator() is first
+    monkeypatch.setattr(wipeable, "_chosen", None)
+    first = wipeable.allocator()
+    assert wipeable.allocator() is first
     assert first.name in ("libsodium", "mmap with mlock")
 
 

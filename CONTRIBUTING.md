@@ -257,7 +257,7 @@ to one.
 **A secret in memory never lives in a `str`.** A Python string cannot be
 overwritten, so a password held in one stays in memory after it is
 deleted. A field with `show` set therefore keeps its contents in locked
-memory that is zeroed after use (`_core/secret.py`). Code on the
+memory that is zeroed after use (`_core/wipeable.py`). Code on the
 keystroke path reads them by length or one character at a time, and never
 builds the text. A new feature that would turn a hidden field's contents
 into a string is a regression; `tests/test_entry_hidden.py` fails on one.
@@ -291,7 +291,7 @@ comes with a test that fails without it:
 | The paths `tkcurses-cfg` writes through, and what it shows | `test_cfg_safety.py` |
 | A terminal sending faster than the program reads | `test_input_flood_tty.py` |
 | The system clipboard, over OSC 52 and the desktop's tools | `test_system_clipboard.py` |
-| A hidden field's contents in memory | `test_entry_hidden.py`, `test_secret_buffer.py` |
+| A hidden field's contents in memory | `test_entry_hidden.py`, `test_wipeable.py` |
 | Private files kept out of the repository | `test_hygiene.py` |
 
 In CI, Bandit scans `src/` and pip-audit checks every lock file on each

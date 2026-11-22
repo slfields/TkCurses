@@ -3043,7 +3043,7 @@ bindings each built the *proposed* text for validation on every key, even
 with `validate="none"`, so each prefix was a string of its own.
 
 So with `show` set, `TextField` holds a `SecretBuffer`
-(`_core/secret.py`): one 32-bit code point per character, in memory from
+(`_core/wipeable.py`): one 32-bit code point per character, in memory from
 `sodium_malloc` when the system has libsodium, or an anonymous `mmap`
 otherwise. It is locked with `mlock` (or `sodium_mlock`), kept out of core
 dumps, and zeroed on delete, on growth, when `show` is emptied and on
