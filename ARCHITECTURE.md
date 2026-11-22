@@ -8499,6 +8499,316 @@ Negative values. The origin left room: a bar split at a zero line, the
 negative side drawn with the complementary glyph in swapped colours,
 since the block has no eighth steps growing down or left.
 
+## Treemap
+
+`tkcurses.treemap.Treemap` is the second widget neither tkinter nor Tk
+has. It draws a hierarchy of values as nested rectangles, each sized by
+its value, after Kibana's treemap charts. Like BarGraph it is an extension
+module: listed in `EXTENSION_MODULES`, and documented with
+`TkCurses extension:`.
+
+**This section is the design, written before the code** for review. Each
+heading names the decision and why. `Not yet` lists what was left out on
+purpose.
+
+### What comes from Kibana, and what does not
+
+Kibana's treemap is the model for *behaviour*. Its options, their
+defaults, and what a reader of the chart sees all follow Kibana. Kibana's
+*code* is not used. Its source is licensed AGPL-3.0, SSPL or the Elastic
+License 2.0, at the user's choice (the header of
+`expression_partition_vis/common/expression_functions/treemap_vis_function.ts`).
+None of those can be copied into a GPL-3.0-only library. Following a
+product's documented behaviour is not copying its code, just as this
+library follows tkinter's interface without tkinter's source.
+
+The layout is the **squarified treemap** of Bruls, Huizing and van Wijk
+("Squarified Treemaps", *Data Visualization 2000*). It is implemented from
+the paper and credited beside the code, by the rule for published
+algorithms.
+
+| Kibana | Here |
+|---|---|
+| Up to 2 Group by levels | Up to 2 levels: a third is refused |
+| Rectangles largest first | Largest first, ties in insertion order |
+| Slice labels: Show / Hide; hidden when a tile is too small | `labels`; hidden by the same test |
+| Slice values: Percentage / Integer / Hide; Decimal places, default 2 | `values`: `percent` / `value` / `none`; `percentdecimals`, default 2 |
+| Value format | `valueformat`: BarGraph's number options |
+| Legend: Visibility Auto / Show / Hide; position; Width; Nested; Line limit | `legend`, `legendposition`, `legendsize`, `nestedlegend`, `legendlines` |
+| Palette on the first level; nested levels follow their parent | `colors` on the top level; children are shades of it |
+| Hide zero values, on by default | A zero value takes no space |
+| Hover tooltip | The **readout** row, for the focused tile |
+| Click to filter | **Zoom**: a group fills the widget, Escape comes back |
+| Thin white borders between tiles | **Shades** of the group's colour; **outlines** where the terminal cannot show shades |
+
+Not taken: split charts (small multiples), "Other" grouping, per-category
+colour mapping, and empty-bucket rows.
+
+### The data: Treeview's item API, two levels
+
+The items are a ttk.Treeview's: `insert(parent, index, iid=None, text=,
+value=)` returns an iid (generated `I001`, `I002`, as Treeview's), with
+`item`, `delete`, `get_children`, `parent`, `exists`, `index`, `move`,
+`focus`, `selection` and `selection_set`. Errors use Treeview's words:
+`Item X not found`, `Item X already exists`. A program that knows
+Treeview knows this, and each tile has a handle a program can update.
+
+- **Two levels.** An item under the root is a *top-level item*. An item
+  under one of those is a *child*. Inserting under a child is refused:
+  `a treemap has two levels: I002 is already a child`.
+- **A group is a top-level item with children.** Its size is the sum of
+  its children. A `value` given to it is kept but not used while it has
+  children, so deleting the last child brings it back.
+- **A value is a finite number, not negative.** Negative, NaN and
+  infinity are refused with `TclError`. Zero is kept, and takes no space.
+- **Order on screen is by size, largest first**, whatever the insertion
+  order; `index` and `get_children` keep insertion order, as Treeview's
+  do. Equal sizes keep insertion order, so a layout is stable.
+- **One item is selected at most.** Kibana's click picks one value.
+  `selection()` still answers a tuple, for Treeview code.
+
+### Modules
+
+As BarGraph: pure modules know nothing of curses and raise `ValueError`;
+`__init__.py` holds only the widget.
+
+| Module | Does |
+|---|---|
+| `_model` | items, the two-level rule, sizes, order |
+| `_squarify` | weights and a rectangle to rectangles: the paper's algorithm, then snapped to cells |
+| `_layout` | the widget's size to regions: legend, readout, tiles; group headers |
+| `_shades` | which shade each child takes, so no two neighbours share one |
+| `_outline` | the lines between tiles, with their junctions, when outlined |
+| `_labels` | what text fits in a tile, and where |
+| `_legend` | the entries, wrapped and truncated, flowed into the legend region |
+| `_navigate` | which tile an arrow key moves to |
+| `_compose` | all of that into a window of cells with colour *roles* |
+
+**Shared with BarGraph, moved, not copied.** These move into a private
+package `tkcurses/_charts/`, and BarGraph imports them from there:
+`_numformat` (how a value is written), the RGB blend `shade_rgb` and
+`hex_color` from `_gradient`, the `Cell` and role types from `_render`,
+and the painter that writes text into cells by `_core.cells` widths from
+`_decor`. A second chart widget is the reason a shared package is worth
+having. BarGraph's behaviour does not change, and its tests hold it.
+
+### Layout
+
+**Squarified in the eye's units, not the terminal's.** A character cell is
+about twice as tall as it is wide. The algorithm wants tiles near square,
+so it runs on a rectangle `width × 2·height`, and the result is scaled
+back. A tile square in cells would look like a tall bar.
+
+The algorithm, from the paper:
+
+1. Lay tiles along the shorter side of the free rectangle, adding the
+   next largest to the current row while that improves the worst aspect
+   ratio in the row.
+2. When it would not, fix the row and continue in what is left.
+
+**Snapped to whole cells by rounding edges, not sizes.** Each tile's
+edges are cumulative positions: a row's offset from the rectangle's
+start, and a tile's offset along its row. Each position is rounded once.
+Two tiles that share an edge share the rounded position too, so the tiles
+cover the area exactly, with no gap and no overlap. Each edge is within
+half a cell of its exact place, so a tile's area is within one row and
+one column of its share. A tile whose edges round together has no cells
+and is **too small to show**. It is counted in the readout, and stays
+reachable through the API.
+
+**A group has a header** when its rectangle is at least 3 rows high and
+6 columns wide: one row with its name and value, in its colour, made
+bold. Its children are laid out in the rest. A group too small for a
+header gives its whole rectangle to its children, and its name is in the
+legend and the readout.
+
+**Regions, outside in:**
+
+1. The readout takes the bottom row, if `readout` is on.
+2. The legend takes a side.
+3. The tiles take the rest.
+
+When the tiles would be left with fewer than 10 columns or 3 rows, the
+legend goes first, then the readout.
+
+```text
+web 64.71%                                       │██ web
+nginx                │apache        │php         │██ db
+38.82%               │20.00%        │5.88%       │██ cache
+                     │              │            │
+db 23.53%                        │cache          │
+postgres             │mysql      │11.76%         │
+16.47%               │7.06%      │               │
+web › nginx   330   38.82% of all   60.00% of web
+```
+
+That is 60 × 8, with the legend on the right, for `web` (nginx 330,
+apache 170, php 50), `db` (postgres 140, mysql 60) and `cache` 100: 850
+in all, with `nginx` focused. In the widget there are no
+`│` lines between tiles: they mark where one shade or colour meets
+another. The `│` before the legend is the legend's own edge.
+
+### Colour, shades and outlines
+
+**Each top-level item takes a colour** from `colors`, in order of size,
+cycled: BarGraph's six by default. A group's children are **shades** of
+its colour, as Kibana's nested slices are, so a group reads as one
+region. The header is the colour itself; children take shades blended
+in RGB:
+
+| Shade | Blend |
+|---|---|
+| 0 | the colour's own |
+| 1 | a quarter of the way to black |
+| 2 | 30% of the way to white |
+| 3 | half way to black |
+
+**Neighbours never share a shade, where four allow it.** Shades are not
+dealt out in order, since two children next to each other could then
+match. `_shades` builds the adjacency of the group's tiles (rectangles
+sharing an edge). It gives each tile, largest first, the lowest shade no
+neighbour has. A dissection that needs a fifth shade is rare. It then
+reuses the shade its smallest neighbour has, and the label still tells
+the two apart.
+
+**Text is black or white**, whichever contrasts more with the tile, by
+WCAG relative luminance.
+
+**Outlined, where shades cannot be seen.** Shades are compared after the
+terminal's palette has rounded them. At 256 colours, two blends can land
+on one cube entry. If fewer than three distinct shades remain, and always
+below 256 colours, the group is drawn **outlined**: single box-drawing
+lines between tiles, on the top row and left column of each tile, with
+junctions (`┬ ┤ ┼`) from the directions that meet. The tiles area gives up
+one column and one row to close the right and bottom edges.
+
+- In monochrome every tile is outlined, uncoloured.
+- The `outline` option forces it on or off: `auto` (the default), `on`,
+  `off`.
+
+**Colour pairs stay within curses' budget.** That is at most
+`len(colors) × 4` tile pairs, plus headers, legend swatches and the
+readout, at the default 6 colours under 40. A program with 50 top-level
+items still cycles through `colors`, so the count does not grow with the
+data.
+
+### Labels
+
+Kibana hides a label that does not fit. So does this, by these rules:
+
+- **Inside the tile,** a label takes the top row, from the tile's first
+  column (after the line, when outlined), and the tile's colour shows
+  where it starts. The name is cut with `…` to fit. If it would keep fewer
+  than 3 cells, it is not drawn at all.
+- **The value goes on the second row** when there is one. In a one-row
+  tile it follows the name if both fit whole, and is dropped otherwise:
+  the name matters more.
+- **`values="percent"` is a share of what is shown.** That is the whole
+  treemap, or the group zoomed into. The readout gives both.
+  `percentdecimals` sets its decimals. `value` writes the number with
+  `valueformat`, through BarGraph's `NumberFormat`.
+- All text is measured with `_core.cells`, so a CJK name takes the cells
+  it draws in.
+
+### Legend
+
+- **Entries** are the top-level items, largest first: a two-cell swatch
+  `██` in the item's colour, a space, and the name. With `nestedlegend`,
+  each group's children follow it, indented two cells, each with its own
+  shade.
+- **Wrapping.** An entry wraps at word boundaries onto at most
+  `legendlines` lines, from 1 to 5, Kibana's default and limit. The last
+  line is cut with `…`.
+- **`legendposition`** is `right` (Kibana's default), `left`, `top` or
+  `bottom`.
+- **`legendsize`** is the width on the left or right: `small` 12,
+  `medium` 20, `large` 28, `xlarge` 36 cells. `auto` is the widest entry,
+  at most a third of the widget. At the top or bottom the entries flow
+  across in columns of the widest entry, and the region takes the rows
+  they need, at most a third of the height.
+- **Overflow.** Entries that do not fit end with a `+N more` line.
+- **`legend="auto"`** (Kibana's default) shows it when there are two or
+  more top-level items and the tiles keep room (above).
+- **The focused item's entry is drawn in reverse,** and clicking an entry
+  focuses that item.
+
+### Interaction
+
+The widget takes the focus. `takefocus` is on, as an Entry's is. Focus and
+selection are separate, as in Treeview:
+
+| Input | Does |
+|---|---|
+| Arrow keys | Move the focus to the nearest item in that direction, at the focused item's level |
+| Return | On a group: **zoom** into it, focusing its largest child. On anything else: select it |
+| Space | Select the focused item, group or not |
+| Escape | Zoomed: zoom out, focusing the group. On a child: focus its group. At the top: nothing, so the key reaches the program's bindings |
+| Button-1 | Focus and select the tile under the pointer: a group's header selects the group |
+| Double-1 | Zoom into the group under the pointer |
+
+**Levels.** The focus is either on top-level items (groups, and items
+without children) or on children, crossing from one group's children to
+the next. Escape goes up a level and Return goes down. That matches how
+the chart reads: first the regions, then what is in them.
+
+**The arrow keys move by geometry** (`_navigate`). The candidates for
+Right are the items whose left edge is at or beyond the focused tile's
+right edge. Those that overlap it vertically come first; then the
+smallest gap; then the nearest centre across the move. The same holds,
+turned, for the other three keys. With no candidate the focus stays, and
+the key is not consumed. Moving right then left returns to the same tile
+wherever the overlap rule decides, which a test holds.
+
+**Selecting fires `<<TreemapSelect>>`**, and zooming fires
+`<<TreemapZoom>>`. `zoom(item)` zooms in from the program, `zoom("")`
+zooms out, and `zoom()` answers the current one, as `xview()` answers
+the view. `identify(x, y)` answers the iid under a point, or `""`, for a
+program's own mouse bindings.
+
+**How focus and selection show.** The focused tile's label row is
+reversed. The selected tile gets a `●` before its name. The readout shows
+the focused item:
+
+```text
+web › nginx   330   38.82% of all   60.00% of web
+```
+
+With nothing focused, it shows the total, and how many tiles were too
+small to show: `total 850 · 2 too small to show`.
+
+### Repainting
+
+Every item change marks the layout stale and asks for one repaint with
+`after_idle`. A program updating a hundred values in a loop gets one
+layout and one paint. The layout is cached by the model's version, the
+widget's size and the zoom, so focus moves and selections repaint
+without laying out again. Everything runs on the event loop, as
+BarGraph's does. Data from a thread comes through a queue the program
+drains with `after`.
+
+The natural size is `width` 40 × `height` 12 cells, options as on a
+Frame. A widget with no items, or with only zeros, shows `nothing to
+show` in the middle.
+
+### Options measured
+
+`record_visible_options.py` names it `treemap.Treemap`. The base is two
+groups and one plain item, enough for headers, shades, labels and a
+legend. `WIDGET_NEEDS` gives `nestedlegend` and `legendlines` a legend
+shown, and `outline` a 256-colour run. Each widget option has a `Sample
+output (option):`.
+
+### Not yet
+
+- **"Other" grouping**, Kibana's default for top values: keep the top N
+  per group and fold the rest into one tile. Left room: `_model`'s order
+  is the place to cut.
+- **Colour mapping**, a colour per named item. Left room: an item
+  `color` option would take precedence over `colors`.
+- **More than two levels.** `_squarify` and `_layout` recurse already;
+  the limit is the model's, and the navigation's "level" would need to
+  become a depth.
+
 ## Running Both Halves
 
 `python -m tkcurses` is the demo, and it is the one place the library's own
