@@ -5,6 +5,7 @@
 
 core/index
 options
+hidden-fields
 widgets/index
 ttk/index
 exclusive/index
@@ -18,7 +19,8 @@ compatibility
 ```
 
 Every class and function TkCurses provides: [the application and what
-every widget has](core/index.md), the [standard options](options.md), the
+every widget has](core/index.md), the [standard options](options.md),
+[hidden fields](hidden-fields.md) for passwords, the
 [classic widgets](widgets/index.md), the
 [themed widgets](ttk/index.md), the
 [widgets only TkCurses has](exclusive/index.md), the

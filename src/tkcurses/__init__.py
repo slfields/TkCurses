@@ -71,6 +71,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, cast
 
 from tkcurses._core import geometry as _geometry
+from tkcurses._core import secret as _secret
 from tkcurses._core import x11colors as _x11colors
 from tkcurses._core.application import Application
 from tkcurses._core.attributes import (
@@ -8663,6 +8664,7 @@ class Tk(_Backdrop, BaseWidget, Wm):
             self._screen.stop()
             self._flush_held_reports()
             self._report_clipboard_kept_inside()
+            _report_secret_unlocked()
         route = self.tk.selections.route
         if route is not None and route.primary is not None:
             with contextlib.suppress(Exception):
@@ -8748,6 +8750,23 @@ class Tk(_Backdrop, BaseWidget, Wm):
         held, self._held_reports = self._held_reports, []
         for text in held:
             _write_to_stderr(text)
+
+
+def _report_secret_unlocked() -> None:
+    """Say once, on the way out, that a hidden field ran in unlocked memory.
+
+    Locking keeps the operating system from writing the memory to swap.
+    Without it the field still worked and was still wiped, so this is a
+    notice rather than an error; see :mod:`tkcurses._core.secret`.
+    """
+    reason = _secret.lock_failure()
+    if not reason:
+        return
+    _secret.forget_lock_failure()
+    _write_to_stderr(
+        "tkcurses: a hidden field's memory could not be locked against swap - "
+        f"{reason}. It was still wiped.\n"
+    )
 
 
 def _not_utf8_report(environ: Mapping[str, str]) -> str:
@@ -11829,7 +11848,8 @@ class Entry(_Drawable, XView):
         invalidcommand: Called when ``validatecommand`` refuses a change.
         readonlybackground: The background while ``state`` is ``readonly``.
         show: A character to show in place of each one typed, for a password:
-            ``show="*"``.
+            ``show="*"``. What it hides, and how long the text
+            stays in memory: :doc:`/reference/hidden-fields`.
         validate: When ``validatecommand`` is asked: ``none``, ``focus``,
             ``focusin``, ``focusout``, ``key`` or ``all``.
         validatecommand: Asked whether a change may be made; returns true to
@@ -11875,6 +11895,13 @@ class Entry(_Drawable, XView):
         registered name. It is given the text the change would make, ``%P``,
         if it takes an argument, and nothing if it does not - which is how
         tkinter calls one.
+
+        With ``show`` set, the contents are never held in a Python string,
+        which cannot be wiped, but in locked memory that is overwritten with
+        zeros as text is deleted and when the entry is destroyed.
+        :meth:`secret` reads them without making a string; :meth:`get`, a
+        ``textvariable`` and validation each still make one. See
+        :doc:`/reference/hidden-fields`.
 
     Sample output (disabledbackground, readonlybackground):
         for state, colour in (("disabled", "red"), ("readonly", "blue")):
@@ -11986,6 +12013,7 @@ class Entry(_Drawable, XView):
         # The screen cell the terminal's cursor goes in; see _draw_cursor.
         self._insert_at: tuple[int, int] | None = None
         super().__init__(master, cnf, name=name, **kw)
+        self._apply_show()
         self._follow_variable()
         self._apply_requested_size()
         self._install_class_bindings()
@@ -12036,6 +12064,8 @@ class Entry(_Drawable, XView):
         result = super().configure(cnf, **kw)
         if not given:
             return result
+        if "show" in given:
+            self._apply_show()
         if "textvariable" in given:
             self._follow_variable()
         if "exportselection" in given:
@@ -12050,6 +12080,20 @@ class Entry(_Drawable, XView):
         return result
 
     config = configure
+
+    def _apply_show(self) -> None:
+        """Hold the contents in wipeable memory while ``show`` is set.
+
+        A Python ``str`` cannot be overwritten, so a password kept in one
+        stays in the process's memory after it is deleted; see
+        :mod:`tkcurses._core.secret`. Emptying ``show`` turns the contents
+        back into a ``str`` and wipes the memory they were in.
+        """
+        mask = str(self._options.get("show") or "")
+        if mask:
+            self._field.hide(cells(mask[0]))
+        else:
+            self._field.reveal()
 
     def _apply_requested_size(self) -> None:
         """Ask for the field's width plus whatever the border and padding need."""
@@ -12111,8 +12155,44 @@ class Entry(_Drawable, XView):
     # ------------------------------------------------------------ public API
 
     def get(self) -> str:
-        """The text in the field."""
+        """The text in the field.
+
+        With ``show`` set this makes a ``str``, which stays in memory until
+        Python reuses the space; :meth:`secret` reads the contents without
+        one. See :doc:`/reference/hidden-fields`.
+        """
         return self._field.text
+
+    @contextlib.contextmanager
+    def secret(self) -> Iterator[memoryview]:
+        """The contents as UTF-8 bytes, in memory that is wiped afterwards.
+
+        Use it in a ``with`` statement. The view is read-only, and it is
+        released and its memory overwritten with zeros when the block ends,
+        even if the block raises. Pass it straight to what needs the value -
+        ``hashlib``, ``hmac``, ``cryptography`` - since anything turned into
+        a ``str`` or ``bytes`` is a copy that cannot be wiped.
+
+        It works on any entry, though only one with ``show`` set keeps its
+        contents out of Python strings all along. See
+        :doc:`/reference/hidden-fields`.
+
+        TkCurses extension:
+            tkinter has no way to read an entry other than :meth:`get`.
+
+        Example::
+
+            with password.secret() as view:
+                digest = hashlib.sha256(view).digest()
+            password.delete(0, "end")
+        """
+        with self._field.secret() as view:
+            yield view
+
+    def destroy(self) -> None:
+        """Destroy the entry, wiping a hidden field's contents from memory."""
+        super().destroy()
+        self._field.close()
 
     def insert(self, index: Any, string: str) -> None:
         """Insert ``string`` at ``index``, if the state and validator allow it.
@@ -12127,13 +12207,13 @@ class Entry(_Drawable, XView):
         if not string:
             return
         where = self.index(index)
-        text = self._field.text
+        field = self._field
         self._edit(
-            lambda: self._field.insert(where, string),
-            text[:where] + string + text[where:],
+            lambda: field.insert(where, string),
+            lambda: (text := field.text)[:where] + string + text[where:],
             action=1,
             index=where,
-            changed=string,
+            changed=lambda: string,
         )
 
     def delete(self, first: Any, last: Any = None) -> None:
@@ -12146,15 +12226,15 @@ class Entry(_Drawable, XView):
         """
         start = self.index(first)
         end = start + 1 if last is None else self.index(last)
-        text = self._field.text
-        if start >= len(text) or end <= start:
+        field = self._field
+        if start >= field.length or end <= start:
             return
         self._edit(
-            lambda: self._field.delete(start, end),
-            text[:start] + text[end:],
+            lambda: field.delete(start, end),
+            lambda: (text := field.text)[:start] + text[end:],
             action=0,
             index=start,
-            changed=text[start:end],
+            changed=lambda: field.text[start:end],
         )
 
     def icursor(self, index: Any) -> None:
@@ -12181,7 +12261,7 @@ class Entry(_Drawable, XView):
         if text.isdigit() or (text.startswith("-") and text[1:].isdigit()):
             return self._field.clamp(int(text))
         if text in ("end", END):
-            return len(self._field.text)
+            return self._field.length
         if text in ("insert", INSERT):
             return self._field.cursor
         if text.startswith("@"):
@@ -12329,7 +12409,7 @@ class Entry(_Drawable, XView):
         """
         x = int(x)
         mark_x, mark_index = getattr(self, "_scan_mark", (x, self._field.view))
-        last = len(self._field.text) - 1
+        last = self._field.length - 1
         first = mark_index - 10 * (x - mark_x)
         if first >= last:
             first = mark_index = max(0, last)
@@ -12756,22 +12836,37 @@ class Entry(_Drawable, XView):
     def _edit(
         self,
         change: Callable[[], None],
-        proposed: str,
+        proposed: Callable[[], str],
         *,
         action: int,
         index: int,
-        changed: str,
+        changed: Callable[[], str],
     ) -> None:
         """Apply an edit if the state and the validator both allow it.
 
         ``action``, ``index`` and ``changed`` are what Tk substitutes for
         ``%d``, ``%i`` and ``%S``: 1 for an insert or 0 for a delete, where,
         and the text inserted or deleted.
+
+        ``proposed`` and ``changed`` are made only when a validator will
+        read them. Building them for every keystroke made a ``str`` of
+        each prefix of a password typed into a hidden field, none of which
+        can be wiped.
         """
-        if not self._editable or not self._validated(
-            proposed, action=action, index=index, changed=changed
-        ):
+        if not self._editable:
             return
+        asks = (
+            str(self._options["validate"]) in _EDIT_VALIDATED
+            and self._options["validatecommand"] is not None
+        )
+        if asks:
+            if not self._validated(
+                proposed(), action=action, index=index, changed=changed()
+            ):
+                return
+        elif self._validating:
+            # What _validated notes for every edit, validator or not.
+            self._edited_while_validating = True
         change()
         self._changed()
 
@@ -12859,7 +12954,7 @@ class Entry(_Drawable, XView):
         character; a ``disabled`` or ``readonly`` field keeps it too, which is
         the opposite of how the insertion cursor behaves. TkCurses-xe9.3.
         """
-        return not self._field.text and bool(str(self._options["placeholder"]))
+        return not self._field.length and bool(str(self._options["placeholder"]))
 
     def _displayed(self) -> str:
         """What is on screen: the contents masked by ``show``, or the placeholder.
@@ -12873,8 +12968,9 @@ class Entry(_Drawable, XView):
         if self._showing_placeholder():
             return str(self._options["placeholder"])
         mask = str(self._options["show"])
-        text = self._field.text
-        return mask[0] * len(text) if mask else text
+        if mask:
+            return mask[0] * self._field.length
+        return self._field.text
 
     def _shown_cells(self, text: str) -> int:
         """The cells a run of the contents takes as drawn: the mask's, with
@@ -13062,10 +13158,10 @@ def _entry_keystroke(event: Event) -> str | None:
             at = field.cursor - 1
             entry._edit(
                 lambda: field.delete(at, at + 1),
-                field.text[:at] + field.text[at + 1 :],
+                lambda: (text := field.text)[:at] + text[at + 1 :],
                 action=0,
                 index=at,
-                changed=field.text[at],
+                changed=lambda: field.char(at),
             )
         else:
             entry._changed()
@@ -13076,14 +13172,14 @@ def _entry_keystroke(event: Event) -> str | None:
         # measured, it cuts the selection and deletes nothing else.
         if field.selection:
             _delete_selected(entry)
-        elif field.cursor < len(field.text):
+        elif field.cursor < field.length:
             at = field.cursor
             entry._edit(
                 lambda: field.delete(at, at + 1),
-                field.text[:at] + field.text[at + 1 :],
+                lambda: (text := field.text)[:at] + text[at + 1 :],
                 action=0,
                 index=at,
-                changed=field.text[at],
+                changed=lambda: field.char(at),
             )
         else:
             entry._changed()
@@ -13108,10 +13204,10 @@ def _entry_keystroke(event: Event) -> str | None:
         char = event.char
         entry._edit(
             lambda: field.insert(at, char),
-            field.text[:at] + char + field.text[at:],
+            lambda: (text := field.text)[:at] + char + text[at:],
             action=1,
             index=at,
-            changed=char,
+            changed=lambda: char,
         )
         return "break"
     return None
@@ -13123,13 +13219,12 @@ def _delete_selected(entry: Any) -> None:
     own ``delete``."""
     field = entry._field
     first, last = field.selection
-    text = field.text
     entry._edit(
         lambda: field.delete(first, last),
-        text[:first] + text[last:],
+        lambda: (text := field.text)[:first] + text[last:],
         action=0,
         index=first,
-        changed=text[first:last],
+        changed=lambda: field.text[first:last],
     )
 
 
@@ -13264,7 +13359,9 @@ def _entry_select_to(entry: Any, x: int) -> None:
     shift-click set.
     """
     field = entry._field
-    text = field.text  # the real text, as Tk's [$w get]: not what show= shows
+    # The real text, as Tk's [$w get]: not what show= shows. Read a
+    # character at a time, so a hidden field's never becomes a str.
+    text = field.characters
     cur = _entry_index_at(entry, x)
     anchor = field._anchor
     if cur != anchor:
@@ -13554,7 +13651,6 @@ def _entry_terminal_paste(event: Event) -> str:
     if not pasted:
         return "break"
     field = entry._field
-    text = field.text
     first, last = field.selection or (field.cursor, field.cursor)
 
     def change() -> None:
@@ -13565,10 +13661,10 @@ def _entry_terminal_paste(event: Event) -> str:
 
     entry._edit(
         change,
-        text[:first] + pasted + text[last:],
+        lambda: (text := field.text)[:first] + pasted + text[last:],
         action=1,
         index=first,
-        changed=pasted,
+        changed=lambda: pasted,
     )
     entry._see_cursor()
     entry._redraw()
@@ -13608,7 +13704,7 @@ def _entry_previous_char(entry: Entry) -> int:
 
 def _entry_next_char(entry: Entry) -> int:
     """``tk::EntryNextChar``: one on, or the end."""
-    return min(len(entry.get()), entry.index("insert") + 1)
+    return min(entry._field.length, entry.index("insert") + 1)
 
 
 def _entry_hides_words(entry: Entry) -> bool:
@@ -13625,14 +13721,14 @@ def _entry_previous_word(entry: Entry) -> int:
     """``tk::EntryPreviousWord``, and ttk's ``PrevWord``."""
     if _entry_hides_words(entry):
         return 0
-    found = start_of_previous_word(entry.get(), entry.index("insert"))
+    found = start_of_previous_word(entry._field.characters, entry.index("insert"))
     return 0 if found is None else found
 
 
 def _entry_next_word(entry: Entry) -> int:
     """``tk::EntryNextWord``, and ttk's ``NextWord``: past the end of this
     word and the space after it."""
-    text = entry.get()
+    text = entry._field.characters
     if _entry_hides_words(entry):
         return len(text)
     found = end_of_word(text, entry.index("insert"))
@@ -13644,7 +13740,7 @@ def _entry_next_word(entry: Entry) -> int:
 def _entry_select_next_word(entry: Entry) -> int:
     """``tk::EntrySelectNextWord``, and ttk's ``SelectNextWord``: to the end
     of this word only."""
-    text = entry.get()
+    text = entry._field.characters
     if _entry_hides_words(entry):
         return len(text)
     found = end_of_word(text, entry.index("insert"))
@@ -13657,7 +13753,7 @@ def _entry_start(entry: Entry) -> int:
 
 
 def _entry_end(entry: Entry) -> int:
-    return len(entry.get())
+    return entry._field.length
 
 
 def _entry_set_cursor(entry: Entry, index: int) -> None:

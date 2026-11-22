@@ -56,8 +56,19 @@ counts as one word. TkCurses-wmaq.
 from __future__ import annotations
 
 import unicodedata
+from typing import Protocol
 
-__all__ = ["end_of_word", "start_of_next_word", "start_of_previous_word"]
+__all__ = ["Characters", "end_of_word", "start_of_next_word", "start_of_previous_word"]
+
+
+class Characters(Protocol):
+    """What reading a line by character needs: a ``str``, or a hidden
+    field's contents, which never become one."""
+
+    def __len__(self) -> int: ...
+
+    def __getitem__(self, index: int, /) -> str: ...
+
 
 #: Between letters, keeps them one word (UAX #29 MidLetter and MidNumLet).
 _JOINS_LETTERS = frozenset(
@@ -87,9 +98,9 @@ def _kind(character: str) -> str:
     return "other"
 
 
-def _boundaries(text: str) -> list[int]:
+def _boundaries(text: Characters) -> list[int]:
     """Every word boundary in ``text``, 0 and its length included."""
-    kinds = [_kind(c) for c in text]
+    kinds = [_kind(text[i]) for i in range(len(text))]
     found = [0]
     for i in range(1, len(text)):
         here, before = kinds[i], kinds[i - 1]
@@ -123,7 +134,7 @@ def _before(kinds: list[str], index: int) -> int:
     return index
 
 
-def _joins(text: str, kinds: list[str], left: int, mark: int) -> bool:
+def _joins(text: Characters, kinds: list[str], left: int, mark: int) -> bool:
     """Whether ``text[mark]`` is a joining mark with the same kind of
     character on both sides of it - ``left`` before it and the next one
     after."""
@@ -149,7 +160,7 @@ def _preceding(bounds: list[int], index: int) -> int | None:
     return next((b for b in reversed(bounds) if b < index), None)
 
 
-def end_of_word(text: str, start: int) -> int | None:
+def end_of_word(text: Characters, start: int) -> int | None:
     """``tk::endOfWord``: where the word at or after ``start`` ends."""
     bounds = _boundaries(text)
     found = _following(bounds, start)
@@ -158,7 +169,7 @@ def end_of_word(text: str, start: int) -> int | None:
     return found if found is not None and found < len(text) else None
 
 
-def start_of_next_word(text: str, start: int) -> int | None:
+def start_of_next_word(text: Characters, start: int) -> int | None:
     """``tk::startOfNextWord``: where the word after ``start`` begins."""
     bounds = _boundaries(text)
     found = _following(bounds, start)
@@ -167,7 +178,7 @@ def start_of_next_word(text: str, start: int) -> int | None:
     return found if found is not None and found < len(text) else None
 
 
-def start_of_previous_word(text: str, start: int) -> int | None:
+def start_of_previous_word(text: Characters, start: int) -> int | None:
     """``tk::startOfPreviousWord``: where the word before ``start`` begins."""
     bounds = _boundaries(text)
     found = _preceding(bounds, min(start, len(text) + 1))

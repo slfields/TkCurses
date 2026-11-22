@@ -36,13 +36,17 @@ gaps is what makes off-by-one errors in editing code.
 
 from __future__ import annotations
 
+import contextlib
 import unicodedata
 from typing import TYPE_CHECKING
 
 from tkcurses._core.cells import cells
+from tkcurses._core.secret import SecretBuffer
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
+
+    from tkcurses._core.words import Characters
 
 __all__ = ["TextField", "is_word_char", "run_end", "run_start"]
 
@@ -71,7 +75,7 @@ def is_word_char(char: str) -> bool:
     return category[0] == "L" or category in ("Nd", "Pc")
 
 
-def run_start(text: str, index: int) -> int:
+def run_start(text: Characters, index: int) -> int:
     """Where the run holding the character at ``index`` begins.
 
     Tk's ``tk::wordBreakBefore``, floored at 0 as its callers floor it. Past
@@ -86,7 +90,7 @@ def run_start(text: str, index: int) -> int:
     return index
 
 
-def run_end(text: str, index: int) -> int:
+def run_end(text: Characters, index: int) -> int:
     """Where the run holding the character at ``index`` ends, exclusive.
 
     Tk's ``tk::wordBreakAfter``, with "no break after it" read as the end of
@@ -110,7 +114,11 @@ class TextField:
     """
 
     def __init__(self, text: str = "") -> None:
-        self._text = text
+        # A str, or for a hidden field a SecretBuffer: see hide().
+        self._text: str | SecretBuffer = text
+        #: Cells per character while hidden, when every one is drawn as the
+        #: same mask character and the text itself is never measured.
+        self._hidden_cells = 1
         self._cursor = len(text)
         # Tk's anchor is always somewhere: 0 until something sets it, and it
         # outlives the selection - selection_clear, a plain arrow and a delete
@@ -128,7 +136,14 @@ class TextField:
 
     @property
     def text(self) -> str:
-        """The whole contents."""
+        """The whole contents.
+
+        For a hidden field this builds a ``str``, which cannot be wiped:
+        what needs only the length or one character uses :attr:`length`
+        and :meth:`char`.
+        """
+        if isinstance(self._text, SecretBuffer):
+            return self._text.to_str()
         return self._text
 
     @text.setter
@@ -152,11 +167,81 @@ class TextField:
         that reads the anchor clamps what it selects, so one past the end is
         harmless until an edit moves it back into range.
         """
-        self._text = value
+        if isinstance(self._text, SecretBuffer):
+            self._text.clear()
+            self._text.insert(0, value)
+        else:
+            self._text = value
         self._cursor = min(self._cursor, len(value))
         if self._selection is not None:
             self._set_selection(*self._selection)
         self._clamp_view()
+
+    @property
+    def length(self) -> int:
+        """How many characters there are."""
+        return len(self._text)
+
+    def char(self, index: int) -> str:
+        """The one character at ``index``."""
+        return self._text[index]
+
+    @property
+    def characters(self) -> Characters:
+        """The contents, for reading one character at a time."""
+        return self._text
+
+    # ---------------------------------------------------------- hiding
+
+    @property
+    def hidden(self) -> bool:
+        """True while the contents are held in wipeable memory."""
+        return isinstance(self._text, SecretBuffer)
+
+    def hide(self, cells_each: int = 1) -> None:
+        """Hold the contents in wipeable memory, each drawn ``cells_each`` wide.
+
+        Text already in the field was a ``str``, and that copy stays where
+        it was: a field hidden from the start never makes one.
+        """
+        self._hidden_cells = cells_each
+        if isinstance(self._text, str):
+            self._text = SecretBuffer(self._text)
+
+    def reveal(self) -> None:
+        """Back to a ``str``, wiping the memory the contents were in."""
+        if isinstance(self._text, SecretBuffer):
+            buffer = self._text
+            self._text = buffer.to_str()
+            buffer.close()
+
+    @contextlib.contextmanager
+    def secret(self) -> Iterator[memoryview]:
+        """The contents as UTF-8 in wipeable memory, wiped when done."""
+        if isinstance(self._text, SecretBuffer):
+            with self._text.utf8() as view:
+                yield view
+            return
+        buffer = SecretBuffer(self._text)
+        try:
+            with buffer.utf8() as view:
+                yield view
+        finally:
+            buffer.close()
+
+    def close(self) -> None:
+        """Wipe hidden contents and leave the field empty."""
+        if isinstance(self._text, SecretBuffer):
+            self._text.close()
+            self._text = ""
+        self._cursor = self._anchor = self._view = 0
+        self._selection = None
+
+    def _span(self, first: int, last: int) -> int:
+        """The cells ``first`` up to ``last`` take on screen."""
+        if isinstance(self._text, SecretBuffer):
+            return self._hidden_cells * max(0, last - first)
+        return self.measure(self._text[first:last])
 
     @property
     def cursor(self) -> int:
@@ -197,7 +282,10 @@ class TextField:
         """
         index = self.clamp(index)
         added = len(string)
-        self._text = self._text[:index] + string + self._text[index:]
+        if isinstance(self._text, SecretBuffer):
+            self._text.insert(index, string)
+        else:
+            self._text = self._text[:index] + string + self._text[index:]
         if self._cursor >= index:
             self._cursor += added
         if self._selection is not None:
@@ -233,7 +321,10 @@ class TextField:
             first, last = last, first
         if first == last:
             return
-        self._text = self._text[:first] + self._text[last:]
+        if isinstance(self._text, SecretBuffer):
+            self._text.delete(first, last)
+        else:
+            self._text = self._text[:first] + self._text[last:]
 
         def moved(position: int) -> int:
             if position >= last:
@@ -362,7 +453,7 @@ class TextField:
         if self._selection is None:
             return ""
         first, last = self._selection
-        return self._text[first:last]
+        return self.text[first:last]
 
     def _set_selection(self, first: int, last: int) -> None:
         """Record a selection, normalised and dropped if it is empty."""
@@ -379,11 +470,12 @@ class TextField:
         A wide character that would straddle the right edge is left out.
         """
         used = 0
-        for index in range(self._view, len(self._text)):
-            used += self.measure(self._text[index])
+        text = self.text
+        for index in range(self._view, len(text)):
+            used += self.measure(text[index])
             if used > width:
-                return self._text[self._view : index]
-        return self._text[self._view :]
+                return text[self._view : index]
+        return text[self._view :]
 
     def scroll_into_view(self, width: int) -> None:
         """Move the window so the cursor is on screen.
@@ -403,11 +495,11 @@ class TextField:
         else:
             # The cursor's own cell must fit too: the character it is on,
             # two cells for a wide one, or one past the end.
-            text, cursor = self._text, self._cursor
-            own = self.measure(text[cursor]) if cursor < len(text) else 1
-            used = self.measure(text[self._view : cursor]) + max(1, own)
+            cursor = self._cursor
+            own = self._span(cursor, cursor + 1) if cursor < len(self._text) else 1
+            used = self._span(self._view, cursor) + max(1, own)
             while used > width and self._view < cursor:
-                used -= self.measure(text[self._view])
+                used -= self._span(self._view, self._view + 1)
                 self._view += 1
             self._skip_marks(cursor)
         self._clamp_view()
@@ -444,7 +536,7 @@ class TextField:
         start = len(self._text)
         used = 0
         while start > 0:
-            used += self.measure(self._text[start - 1])
+            used += self._span(start - 1, start)
             if used > width:
                 break
             start -= 1
@@ -453,7 +545,7 @@ class TextField:
     def _skip_marks(self, limit: int) -> None:
         """Keep the view off a combining mark, which has no cell of its own,
         moving it no further right than ``limit``."""
-        while self._view < limit and self.measure(self._text[self._view]) == 0:
+        while self._view < limit and self._span(self._view, self._view + 1) == 0:
             self._view += 1
 
     def _clamp_view(self) -> None:
@@ -467,8 +559,8 @@ class TextField:
         """
         index = self.clamp(index)
         if index >= self._view:
-            return self.measure(self._text[self._view : index])
-        return -self.measure(self._text[index : self._view])
+            return self._span(self._view, index)
+        return -self._span(index, self._view)
 
     def index_at(self, column: int) -> int:
         """The index a screen column corresponds to, for a mouse click.
@@ -476,7 +568,7 @@ class TextField:
         The character whose cells include ``column`` - either half of a wide
         one names it - or the end, past the last.
         """
-        start = self.measure(self._text[: self._view])
+        start = self._span(0, self._view)
         return self.index_at_cell(start + max(0, column))
 
     def index_at_cell(self, cell: int) -> int:
@@ -486,12 +578,12 @@ class TextField:
         fraction of the whole text lands on.
         """
         used = 0
-        for index, character in enumerate(self._text):
-            used += self.measure(character)
+        for index in range(len(self._text)):
+            used += self._span(index, index + 1)
             if cell < used:
                 return index
         return len(self._text)
 
     def cell_of(self, index: int) -> int:
         """How many cells precede ``index``, counted from the start."""
-        return self.measure(self._text[: self.clamp(index)])
+        return self._span(0, self.clamp(index))

@@ -6,6 +6,28 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+### Security
+- A password typed into an entry with `show` set stayed in the program's
+  memory after it was deleted, and after the entry was destroyed. The
+  field held it as a Python string, which cannot be wiped, and built a
+  new one for every key typed. Such a field now keeps its contents in
+  memory of its own instead: locked against swap where the system allows,
+  and overwritten with zeros as text is deleted, when `show` is turned off
+  and when the entry is destroyed. When the system has libsodium, that
+  memory comes from libsodium. Typing no longer makes a copy of the text.
+  This covers Entry, ttk.Entry, ttk.Combobox and ttk.Spinbox. `get()`, a
+  `textvariable` and validation still hand out a string, as in tkinter;
+  the API reference's new Hidden fields page lists what does, and how a
+  program should read a password instead.
+
+### Added
+- `Entry.secret()`, a TkCurses extension: in a `with` block, the entry's
+  contents as UTF-8 in a read-only `memoryview`, wiped when the block
+  ends, so a password can be passed to `hashlib`, `hmac` or
+  `cryptography` without becoming a string.
+- For contributors: the secure-coding rules the code is held to, in
+  CONTRIBUTING.md.
+
 ## [0.6.0] - 2026-11-20
 
 ### Added
