@@ -213,6 +213,90 @@ That makes this fault certain instead of occasional. A few tests fail under it
 and are correct as written - each waits for a "before" state and schedules its
 change with `after(100)` - so read the failures rather than keeping it green.
 
+## Secure coding
+
+The code is held to four rules: treat input as untrusted, keep secrets out,
+use the least privilege, and fail securely. A security finding is written
+in the vocabulary of the OWASP Top 10 and CWE, and the CI practices follow
+NIST's Secure Software Development Framework (SP 800-218). This is the
+standard the security review of November 2026 checked every module
+against. A change that breaks a rule needs a fix, not an exception.
+
+**Input is untrusted, from wherever it comes.** TkCurses runs inside the
+program that imports it, with that program's permissions. So the danger
+is data the program only shows or reads:
+
+- the text in a widget;
+- an image file;
+- the environment and configuration files;
+- the clipboard;
+- the terminal's own replies.
+
+The rules for that data:
+
+- **Nothing shown can drive the terminal.** Control characters, bidi and
+  format characters are escaped or dropped before they are written,
+  reports on stderr included.
+- **Everything read has a size limit, checked before the work it would
+  cost.** An image may have no more than `MAX_PIXELS`, its decoder stops
+  at the size its header declares, a paste is read to `MAX_PASTE` at most,
+  and the loop handles `_INPUT_BATCH` events per pass. A small hostile
+  file must not be able to make the program allocate gigabytes.
+- **A value is checked against what it may be,** at the boundary where it
+  enters. A number too long to convert, or an infinity, is a bad value,
+  not a crash.
+- **Other programs are run by absolute path, with an argument list**,
+  never through a shell or by a name looked up on a relative `PATH`.
+
+**No secret is ever committed.** No secret may appear in code, tests,
+fixtures, logs or commit messages; the repository is public. GitHub secret
+scanning and push protection are on, and `tests/test_hygiene.py` keeps
+private files out. TkCurses keeps no log, so nothing it handles is written
+to one.
+
+**A secret in memory never lives in a `str`.** A Python string cannot be
+overwritten, so a password held in one stays in memory after it is
+deleted. A field with `show` set therefore keeps its contents in locked
+memory that is zeroed after use (`_core/wipeable.py`). Code on the
+keystroke path reads them by length or one character at a time, and never
+builds the text. A new feature that would turn a hidden field's contents
+into a string is a regression; `tests/test_entry_hidden.py` fails on one.
+What tkinter's API still makes a string of is listed for programmers on
+[Hidden fields](docs/reference/hidden-fields.md).
+
+**Least privilege, in the workflows above all.** Every workflow states its
+`permissions:`, and a job asks only for what it uses. No workflow runs a
+fork's code with a secret or a write token, so there is no
+`pull_request_target` and no `${{ github.event.* }}` inside a `run:`
+step. Actions are pinned by commit SHA, with dependabot to update them. A
+release waits for the maintainer's approval in the `release`
+environment. `tkcurses-cfg` writes only through paths it has checked. It
+writes to a temporary file opened exclusively with mode `0600`, then
+moves it into place, and keeps an existing file's mode. It never widens
+what the user's umask allows.
+
+**Fail securely.** An error a program can catch is a `TclError`, never an
+exception from deep inside a decoder. A bad setting is reported and
+ignored, and the default stands, rather than stopping `Tk()` from
+starting. A message shown to the user says what to do, not the internals.
+
+**A finding names its CWE**, the file and line, the rule it breaks, and
+what resolves it. It is tracked as an issue until it is fixed. Each fix
+comes with a test that fails without it:
+
+| Concern | Tests |
+|---|---|
+| Environment values, configuration, reports on the way out | `test_input_hostile.py` |
+| Image files built to exhaust memory or crash a decoder | `test_image_hostile.py` |
+| The paths `tkcurses-cfg` writes through, and what it shows | `test_cfg_safety.py` |
+| A terminal sending faster than the program reads | `test_input_flood_tty.py` |
+| The system clipboard, over OSC 52 and the desktop's tools | `test_system_clipboard.py` |
+| A hidden field's contents in memory | `test_entry_hidden.py`, `test_wipeable.py` |
+| Private files kept out of the repository | `test_hygiene.py` |
+
+In CI, Bandit scans `src/` and pip-audit checks every lock file on each
+run. Both are part of `CI passed`.
+
 ## Borrowed code and algorithms
 
 Credit is written **in the source file**, next to the code. Commits are not

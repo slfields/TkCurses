@@ -386,6 +386,12 @@ def askfloat(title: str | None, prompt: str, **kw: Any) -> float | None:
 
 def askstring(title: str | None, prompt: str, **kw: Any) -> str | None:
     """Ask for some text. None if cancelled - which is not the same as
-    the empty string, and is why this cannot simply return what was typed."""
+    the empty string, and is why this cannot simply return what was typed.
+
+    ``show="*"`` masks the field, as for an Entry, but the answer comes
+    back as a ``str``, which cannot be wiped from memory. For a password,
+    use an Entry with ``show`` set and read it with ``secret()``; see
+    :doc:`/reference/hidden-fields`.
+    """
     result = _QueryString(title, prompt, **kw).result
     return None if result is None else str(result)

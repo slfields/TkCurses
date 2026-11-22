@@ -3030,6 +3030,37 @@ because each script checks `winfo class` for its own class. ttk.Combobox
 and ttk.Spinbox share the procedure and fail the check, so they move by word
 with `show="*"`, measured on `ab cd ef`. Classic Spinbox has no `show`.
 
+**A hidden field keeps its contents out of Python strings.** A `str`
+cannot be overwritten, and freeing one does not clear it. Measured on
+2026-11-22, before the change: ten characters typed key by key into a
+`show="*"` Entry, then `delete(0, "end")`, `destroy()` and
+`gc.collect()`, and every readable mapping scanned through
+`/proc/self/mem`. The whole password was there twice more than in a run
+that typed nothing (the control counts the probe's own search strings).
+Typing made it worse than holding one string would: `TextField` rebuilt
+its `str` on every insert, and `Entry.insert`, `delete` and the key
+bindings each built the *proposed* text for validation on every key, even
+with `validate="none"`, so each prefix was a string of its own.
+
+So with `show` set, `TextField` holds a `SecretBuffer`
+(`_core/wipeable.py`): one 32-bit code point per character, in memory from
+`sodium_malloc` when the system has libsodium, or an anonymous `mmap`
+otherwise. It is locked with `mlock` (or `sodium_mlock`), kept out of core
+dumps, and zeroed on delete, on growth, when `show` is emptied and on
+`destroy()`. The validation text is built only when a validator will read
+it. Drawing, motion and word selection read the length or one character
+at a time. `Entry.secret()` encodes UTF-8 into a second region of the
+same kind and wipes it when the `with` block ends.
+
+After the change, the same scan finds no copy in a string's form while the
+entry holds the password, where it used to find one every run; that is
+what `tests/test_entry_hidden.py` holds. Freed strings are not compared
+after the entry is gone, because whether one survives depends on what the
+allocator reuses: the first measurement found two, and a later one on the
+same code found none. `get()`, a `textvariable` and validation still hand
+out a `str`, as tkinter's API says they must, and
+`docs/reference/hidden-fields.md` says so to the programmer.
+
 **Up and Down in a Spinbox step it**, through `<<PrevLine>>` and
 `<<NextLine>>` in a classic one (`invoke buttonup`) and as the keys
 themselves in a ttk one, where `<<PrevLine>>` is TEntry's binding that does

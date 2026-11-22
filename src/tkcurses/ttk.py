@@ -2290,7 +2290,8 @@ class Combobox(Widget, _EntryCommands):
         postcommand: Called with no arguments just before the list is shown,
             to fill in ``values``.
         show: A character to show in place of each one typed, for a
-            password: ``show="*"``.
+            password: ``show="*"``. What it hides, and how long
+            the text stays in memory: :doc:`/reference/hidden-fields`.
         validate: When ``validatecommand`` is asked: ``none``, ``focus``,
             ``focusin``, ``focusout``, ``key`` or ``all``.
         validatecommand: Asked whether a change may be made; returns true to
@@ -6662,7 +6663,8 @@ class Entry(Widget, _EntryCommands):
     Options:
         invalidcommand: Called when ``validatecommand`` refuses a change.
         show: A character to show in place of each one typed, for a
-            password: ``show="*"``.
+            password: ``show="*"``. What it hides, and how long
+            the text stays in memory: :doc:`/reference/hidden-fields`.
         validate: When ``validatecommand`` is asked: ``none``, ``focus``,
             ``focusin``, ``focusout``, ``key`` or ``all``.
         validatecommand: Asked whether a change may be made; returns true to
@@ -6723,7 +6725,8 @@ class Spinbox(Widget, _EntryCommands, tkcurses.Spinbox):
         increment: The step between values.
         invalidcommand: Called when ``validatecommand`` refuses a change.
         show: A character to show in place of each one typed, for a
-            password: ``show="*"``.
+            password: ``show="*"``. What it hides, and how long
+            the text stays in memory: :doc:`/reference/hidden-fields`.
         to: The highest value.
         validate: When ``validatecommand`` is asked: ``none``, ``focus``,
             ``focusin``, ``focusout``, ``key`` or ``all``.
