@@ -15,7 +15,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Number format: how the axis and the readout write a value.
+"""Number format: how a chart writes a value, on an axis, in a readout or
+in a label.
 
 A value is rounded to a number of significant digits, optionally written
 with a fixed count of decimals, and given its units before or after. It is

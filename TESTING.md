@@ -123,7 +123,8 @@ input, not only the ones someone thought of:
 | `tests/test_bargraph_layout.py` | For any options and size, a graph's regions stay inside it and never overlap, and its natural size fits everything it draws. |
 | `tests/test_bargraph_decor.py` | A composed graph never writes outside its window or onto its border. |
 | `tests/test_bargraph_scale.py`, `tests/test_bargraph_model.py` | A value never maps past the bar's peak, and an autoscaled maximum never cuts a value off, for any sequence of values. |
-| `tests/test_bargraph_numformat.py` | A number is never written with more significant digits than asked, with no leading zeros but one before the point, and with exactly the decimals asked. |
+| `tests/test_charts_numformat.py` | A number is never written with more significant digits than asked, with no leading zeros but one before the point, and with exactly the decimals asked. |
+| `tests/test_charts_text.py` | Text cut to fit a width never takes more cells than that width. |
 | `tests/test_bargraph_gradient.py` | The shades run evenly from the start colour to the series colour. |
 | `tests/test_wipeable.py` | Any sequence of inserts and deletes leaves a hidden field's wipeable buffer holding what the same edits make of a `str`, and a hidden `TextField` keeps the same cursor, selection, view and columns as a plain one. |
 | `tests/test_core_config.py` | For any value of any setting, a program keeps what the parser accepts, clamps what is out of range, and falls back on anything else, so `tkcurses-cfg` and a program never disagree. |

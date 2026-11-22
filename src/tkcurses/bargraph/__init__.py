@@ -51,6 +51,15 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import tkcurses
 from tkcurses import TclError
+from tkcurses._charts.color import hex_color, shade_rgb
+from tkcurses._charts.numformat import (
+    PLACEMENTS,
+    ROUNDINGS,
+    UNIT_SCALES,
+    NumberFormat,
+    for_readout,
+    widest,
+)
 from tkcurses._core.cells import cells
 from tkcurses._core.colors import ColorDepth, parse_color, rgb_of
 from tkcurses._core.dispatcher import CursesDispatcher
@@ -68,9 +77,7 @@ from tkcurses.bargraph._decor import (
 from tkcurses.bargraph._glyphs import FULL, mono_pattern
 from tkcurses.bargraph._gradient import (
     default_start,
-    hex_color,
     shade_parts,
-    shade_rgb,
     shade_window,
     step_count,
 )
@@ -82,14 +89,6 @@ from tkcurses.bargraph._layout import (
     natural_size,
 )
 from tkcurses.bargraph._model import AutoScale, Model
-from tkcurses.bargraph._numformat import (
-    PLACEMENTS,
-    ROUNDINGS,
-    UNIT_SCALES,
-    NumberFormat,
-    for_readout,
-    widest,
-)
 from tkcurses.bargraph._render import BACKGROUND, Cell, Role, render_bars, series, zone
 from tkcurses.bargraph._scale import (
     Scale,
@@ -103,7 +102,7 @@ from tkcurses.bargraph._thresholds import parse_thresholds
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from tkcurses.bargraph._gradient import RGB
+    from tkcurses._charts.color import RGB
     from tkcurses.bargraph._layout import Layout
     from tkcurses.bargraph._render import Mode
 

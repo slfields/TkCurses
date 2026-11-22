@@ -8386,7 +8386,6 @@ raise `ValueError`; the widget turns that into `TclError`.
 | `_render` | values to runs and cells, with colour *roles* (series *i*, zone *j*, marker, background), never colours |
 | `_thresholds` | levels to colour zones along a bar |
 | `_decor` | baseline, ticks, gridlines, markers, peak hold, readout, the box's text; composes the window |
-| `_numformat` | how axis labels and readouts write a value |
 | `_gradient` | each series cell's shade by position |
 | `_glyphs` | the eighth-block ramps, monochrome patterns |
 
@@ -8397,6 +8396,13 @@ attributes, and writes the cells. It uses Frame's internals on purpose -
 `_request_size`, `_apply_requested_size`, `_invalidate_layout`,
 `_options` - and the application's screen, colours and
 `CursesDispatcher`; a change to any of those has this one module to fix.
+
+**What it shares with Treemap is in `tkcurses/_charts/`**, a private
+package of pure modules: `numformat` (how a value is written, on an axis,
+in a readout or a label), `color` (`shade_rgb`, `hex_color`) and `text`
+(characters to cells, and `fit`, cutting a line with `…`). They moved
+there from BarGraph when the second chart came (`TkCurses-i1rh.2`), so
+neither widget imports the other's private modules.
 
 ### Drawing in eighths
 

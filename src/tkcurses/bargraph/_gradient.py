@@ -20,7 +20,8 @@
 At zero a series is its start color, at the scale's maximum its own color,
 in at most :data:`MAX_STEPS` shades. :func:`shade_window` is a pass over a
 composed window that gives every series cell inside the bars its shade; the
-widget turns shades into color specs with :func:`shade_rgb`. Pure: errors
+widget turns shades into color specs with
+:func:`tkcurses._charts.color.shade_rgb`. Pure: errors
 are ``ValueError``.
 """
 
@@ -30,11 +31,11 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from tkcurses._charts.color import RGB
     from tkcurses.bargraph._decor import Window
     from tkcurses.bargraph._layout import Layout
     from tkcurses.bargraph._render import Role
 
-RGB = tuple[int, int, int]
 
 #: The most shades one series has. Each shade pairs with every background it
 #: meets, and curses can name only about 255 color pairs.
@@ -76,23 +77,6 @@ def default_start(color: RGB) -> RGB:
     """A series' start color when none is given: 25 % of its brightness."""
     red, green, blue = (round(channel * START_BRIGHTNESS) for channel in color)
     return red, green, blue
-
-
-def shade_rgb(start: RGB, end: RGB, step: int, steps: int) -> RGB:
-    """Shade ``step`` of ``steps``, from ``start`` (0) to ``end`` (last)."""
-    if steps <= 1:
-        return end
-    fraction = step / (steps - 1)
-    red, green, blue = (
-        round(low + (high - low) * fraction)
-        for low, high in zip(start, end, strict=True)
-    )
-    return red, green, blue
-
-
-def hex_color(color: RGB) -> str:
-    """``#rrggbb`` for an RGB triple."""
-    return "#{:02x}{:02x}{:02x}".format(*color)
 
 
 def shade_window(window: Window, layout: Layout) -> Window:

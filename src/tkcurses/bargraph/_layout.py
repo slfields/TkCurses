@@ -37,7 +37,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, replace
 
-from tkcurses._core.cells import cells, clip_cells
+from tkcurses._charts.text import fit
+from tkcurses._core.cells import cells
 from tkcurses.bargraph._glyphs import POINTS_PER_CELL, Orient
 
 #: The anchors the graph label accepts, as ``ttk.LabelFrame``'s.
@@ -49,8 +50,6 @@ HORIZONTAL_AXIS_ROWS = 2
 #: Cells of edge left visible either side of a graph label set in the box
 #: (the corner and one line cell: ``┌─ Title ─┐``).
 TITLE_INSET = 2
-
-ELLIPSIS = "…"  # …
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,10 +399,7 @@ def place_text(rect: Rect, text: str, anchor: str) -> tuple[int, str]:
     """
     if rect.width <= 0:
         return rect.x, ""
-    if cells(text) > rect.width:
-        text = (
-            clip_cells(text, rect.width - 1) + ELLIPSIS if rect.width > 1 else ELLIPSIS
-        )
+    text = fit(text, rect.width)
     spare = rect.width - cells(text)
     if anchor.endswith("w"):
         return rect.x, text

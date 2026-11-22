@@ -39,10 +39,11 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from tkcurses._core.cells import cells, char_cells
+from tkcurses._charts.numformat import NumberFormat, for_readout
+from tkcurses._charts.text import clusters
+from tkcurses._core.cells import cells
 from tkcurses.bargraph._glyphs import FULL, POINTS_PER_CELL
 from tkcurses.bargraph._layout import Rect, place_text
-from tkcurses.bargraph._numformat import NumberFormat, for_readout
 from tkcurses.bargraph._render import (
     BACKGROUND,
     EMPTY_CELL,
@@ -331,16 +332,8 @@ class _Painter:
         it, or is a space where only one cell is left; a combining mark
         goes into the cell of the character it follows.
         """
-        clusters: list[tuple[str, int]] = []
-        for char in text:
-            width = char_cells(char)
-            if width == 0 and clusters:
-                glyph, first = clusters[-1]
-                clusters[-1] = (glyph + char, first)
-            else:
-                clusters.append((char, width))
         column = x
-        for glyph, width in clusters:
+        for glyph, width in clusters(text):
             if width == 2:
                 if self.within(column + 1, y, on_border=on_border):
                     self.put(
