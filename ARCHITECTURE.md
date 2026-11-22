@@ -8561,15 +8561,19 @@ Treeview knows this, and each tile has a handle a program can update.
 
 - **Two levels.** An item under the root is a *top-level item*. An item
   under one of those is a *child*. Inserting under a child is refused:
-  `a treemap has two levels: I002 is already a child`.
+  `a treemap has two levels: I002 is already a child`. `move` refuses the
+  same, and a group going under another item.
+- **`delete` checks every name first**, as Tk does: one not found raises
+  `Item X not found` and nothing is removed. (TkCurses' Treeview skips a
+  missing name instead.)
 - **A group is a top-level item with children.** Its size is the sum of
   its children. A `value` given to it is kept but not used while it has
   children, so deleting the last child brings it back.
 - **A value is a finite number, not negative.** Negative, NaN and
   infinity are refused with `TclError`. Zero is kept, and takes no space.
 - **Order on screen is by size, largest first**, whatever the insertion
-  order; `index` and `get_children` keep insertion order, as Treeview's
-  do. Equal sizes keep insertion order, so a layout is stable.
+  order; `index` and `get_children` keep the siblings' order, as
+  Treeview's do. Equal sizes keep that order, so a layout is stable.
 - **One item is selected at most.** Kibana's click picks one value.
   `selection()` still answers a tuple, for Treeview code.
 
