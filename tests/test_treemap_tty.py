@@ -106,3 +106,51 @@ def test_a_change_to_an_item_is_drawn(terminal):
         )
 
     term.wait_for(grown, message="cache grown to the largest")
+
+
+def test_keys_move_the_focus_reverse_it_and_zoom(terminal):
+    term = run(terminal, "tree.focus_set()")
+    term.wait_for(lambda t: t.row(11) == "total 850", message="drawn")
+    term.send_keys("<Right>")  # the first arrow focuses the largest: web
+    term.wait_for(
+        lambda t: (
+            t.row(11).startswith("web   550")
+            and all(t.char_at(0, x).reverse for x in range(10))
+            and not t.char_at(1, 0).reverse
+        ),
+        message="web focused, its header reversed",
+    )
+    term.send_keys("<Return>")
+    term.wait_for(
+        lambda t: (
+            t.row(11).startswith("web \u203a nginx   330")
+            and t.text_at(0, 0, 5) == "nginx"
+            and t.char_at(0, 0).reverse
+            and not t.contains("postgres")
+        ),
+        message="zoomed into web, nginx focused",
+    )
+    term.send_keys("<Escape>")
+    term.wait_for(
+        lambda t: t.row(11).startswith("web   550") and t.contains("postgres"),
+        message="zoomed back out",
+    )
+
+
+def test_a_click_selects_and_marks_the_tile(terminal):
+    term = run(
+        terminal,
+        # The event shows on the screen: values turn to numbers.
+        'tree.bind("<<TreemapSelect>>", lambda e: tree.configure(values="value"))',
+    )
+    term.wait_for(lambda t: "postgres" in t.row(1), message="drawn")
+    column = term.row(1).index("postgres")
+    term.send_mouse(column, 1)
+    term.wait_for(
+        lambda t: (
+            "\u25cf postgres" in t.row(1)
+            and t.row(11).startswith("db \u203a postgres   140")
+            and "140" in t.row(2)
+        ),
+        message="postgres selected and focused, and the event sent",
+    )

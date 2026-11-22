@@ -79,20 +79,30 @@ def build(root, screen):
     area = _support.content_area(root, top=5)
     tree = Treemap(area)
     tree.pack(fill="both", expand=True)
-    state = {"data": "services"}
+    state = {"data": "services", "selects": 0, "zooms": 0}
     fill(tree, SERVICES)
+    tree.focus_set()
 
     def report():
         colors = root.tk.colors
         depth = int(colors.depth) if colors is not None and colors.has_colors else 0
         screen.line(0, f" {TITLE} ")
         screen.line(1, "n: 24 items   o: outline   v: values   l: labels")
-        screen.line(2, "+/-: grow/shrink nginx   t: a tiny item")
+        screen.line(
+            2,
+            "+/-: nginx   t: tiny   arrows, Space, Return, Escape, mouse: select/zoom",
+        )
         screen.line(
             3,
             f"colours {DEPTHS.get(depth, depth)}   outline={tree.cget('outline')}"
             f"   values={tree.cget('values')}   labels={int(tree.cget('labels'))}"
             f"   data={state['data']}",
+        )
+        chosen = tree.selection()[0] if tree.selection() else "-"
+        screen.line(
+            4,
+            f"selected {chosen} ({state['selects']} TreemapSelect)"
+            f"   zoom {tree.zoom() or '-'} ({state['zooms']} TreemapZoom)",
         )
         screen.footer(" Escape quits ")
         screen.refresh()
@@ -129,6 +139,13 @@ def build(root, screen):
     root.bind_all("=", lambda _event: grow(50))
     root.bind_all("-", lambda _event: grow(-50))
     root.bind_all("t", lambda _event: tiny())
+
+    def counted(name):
+        state[name] += 1
+        report()
+
+    tree.bind("<<TreemapSelect>>", lambda _event: counted("selects"))
+    tree.bind("<<TreemapZoom>>", lambda _event: counted("zooms"))
     report()
 
 

@@ -25,8 +25,10 @@ The order things are drawn in is the order they cover each other:
    in its colour or shade, inside its lines when outlined;
 2. the lines between outlined tiles, in the colour of the group they
    divide, or the widget's own between top-level tiles;
-3. headers and labels;
-4. the readout.
+3. headers and labels, the selected item's name after a ``●``;
+4. the focus: the focused tile's label row reversed, or the whole tile
+   when it has no text to reverse;
+5. the readout.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from tkcurses._charts.color import BLACK, hex_color, text_on
+from tkcurses._charts.geometry import Rect
 from tkcurses._charts.text import clusters, fit
 from tkcurses._core.cells import cells
 from tkcurses.treemap._labels import header_text, tile_text
@@ -45,14 +48,15 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from tkcurses._charts.color import RGB
-    from tkcurses._charts.geometry import Rect
     from tkcurses.treemap._layout import Regions, Tile, TileLayout
     from tkcurses.treemap._model import Model
 
-__all__ = ["EMPTY_TEXT", "Cell", "Scene", "compose"]
+__all__ = ["EMPTY_TEXT", "SELECTED", "Cell", "Scene", "compose"]
 
 #: What a treemap with nothing to lay out shows.
 EMPTY_TEXT = "nothing to show"
+#: Written before the selected item's name.
+SELECTED = "\u25cf"  # ●
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +68,7 @@ class Cell:
     fg: str = ""
     bg: str = ""
     bold: bool = False
+    reverse: bool = False
 
 
 @dataclass(frozen=True)
@@ -84,6 +89,11 @@ class Scene:
     #: How an item's value is written, or ``None`` for no value.
     value_text: Callable[[str], str | None] = field(default=lambda _iid: None)
     readout: str = ""
+    #: The focused item, drawn reversed when ``show_focus``.
+    focus: str = ""
+    show_focus: bool = False
+    #: The selected item, its name after :data:`SELECTED`.
+    selected: str = ""
 
 
 Grid = list[list[Cell]]
@@ -194,7 +204,7 @@ class _Painter:
         scene = self.scene
         for tile in scene.layout.tiles:
             paint = self.paints.get(tile.iid)
-            name = scene.model.item(tile.iid).text if scene.labels else ""
+            name = self.name(tile.iid)
             value = scene.value_text(tile.iid)
             if tile.group:
                 if tile.header is None:
@@ -211,6 +221,42 @@ class _Painter:
                 tile_text(name, value, content.width, content.height)
             ):
                 self.text(content.x, content.y + row, line, paint)
+
+    def name(self, iid: str) -> str:
+        """What is written as ``iid``'s name: its text, if labels are on,
+        after :data:`SELECTED` if it is the selected item."""
+        scene = self.scene
+        text = scene.model.item(iid).text if scene.labels else ""
+        if iid == scene.selected:
+            return f"{SELECTED} {text}" if text else SELECTED
+        return text
+
+    def focus(self) -> None:
+        scene = self.scene
+        tile = scene.layout.tile(scene.focus) if scene.focus else None
+        if tile is None or not scene.show_focus:
+            return
+        if tile.group:
+            self.reverse(tile.header or tile.rect)
+            return
+        content = inner(tile.rect) if tile.boxed else tile.rect
+        lines = tile_text(
+            self.name(tile.iid),
+            scene.value_text(tile.iid),
+            content.width,
+            content.height,
+        )
+        if lines:
+            self.reverse(Rect(content.x, content.y, content.width, 1))
+        else:
+            self.reverse(content)
+
+    def reverse(self, rect: Rect) -> None:
+        for y in range(rect.y, rect.y + rect.height):
+            for x in range(rect.x, rect.x + rect.width):
+                if 0 <= y < self.scene.height and 0 <= x < self.scene.width:
+                    cell = self.grid[y][x]
+                    self.grid[y][x] = Cell(cell.char, cell.fg, cell.bg, cell.bold, True)
 
     def empty(self) -> None:
         area = self.scene.regions.tiles
@@ -234,6 +280,7 @@ def compose(scene: Scene) -> Grid:
     painter.tiles()
     painter.lines()
     painter.labels()
+    painter.focus()
     painter.empty()
     painter.readout()
     return painter.grid

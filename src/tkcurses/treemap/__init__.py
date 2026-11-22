@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import contextlib
 import curses
+import functools
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -37,6 +38,7 @@ from tkcurses._charts.color import DEFAULT_COLORS, hex_color
 from tkcurses._charts.geometry import Rect
 from tkcurses._charts.numformat import PLACEMENTS, ROUNDINGS, UNIT_SCALES, NumberFormat
 from tkcurses._charts.options import choice, color, count, flag, items, optional_count
+from tkcurses._core.bindings import parse_sequence
 from tkcurses._core.cells import cells
 from tkcurses._core.colors import ColorDepth, parse_color, rgb_of
 from tkcurses._core.dispatcher import CursesDispatcher
@@ -44,16 +46,26 @@ from tkcurses.treemap._compose import Cell, Scene, compose
 from tkcurses.treemap._labels import percent
 from tkcurses.treemap._layout import Regions, TileLayout, lay_out, regions
 from tkcurses.treemap._model import Model
+from tkcurses.treemap._navigate import OPPOSITE, Direction, neighbour
 from tkcurses.treemap._shades import OUTLINE_MODES, outlined_levels, shades_of
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from tkcurses import Event
     from tkcurses._charts.color import RGB
 
-__all__ = ["Treemap"]
+__all__ = ["PATH_SEPARATOR", "SELECT_EVENT", "ZOOM_EVENT", "Treemap"]
 
 VALUES = ("percent", "value", "none")
+#: The events a tag binding is told about, and the item each one is for:
+#: a pointer event's is the tile under the pointer; these, as named; any
+#: other's, a key's, the focused item, as in a Treeview.
+_POINTER_EVENTS = frozenset({"Button", "ButtonRelease", "Motion"})
+SELECT_EVENT = "<<TreemapSelect>>"
+ZOOM_EVENT = "<<TreemapZoom>>"
+#: Written between a group and its child in the readout.
+PATH_SEPARATOR = " \u203a "  # a single right-pointing angle quote
 #: The size a treemap asks for when neither width nor height is given.
 NATURAL_SIZE = (40, 12)
 
@@ -112,6 +124,27 @@ class Treemap(tkcurses.Frame):
 
     A bad option value raises :class:`tkcurses.TclError` and leaves the
     treemap as it was, at creation and in :meth:`configure` alike.
+
+    **Keys and the mouse.** A treemap takes the keyboard focus, and while
+    it has it the focused item is drawn reversed: its label row, a group's
+    header, or the whole tile when it is too small for text.
+
+    - The arrow keys move the focus to the next tile that way on the same
+      level, and the opposite key comes back.
+    - Space selects the focused item. Return selects it too, or on a
+      group zooms in, so the group's children fill the treemap.
+    - Escape zooms back out, or moves from a child to its group.
+    - A click focuses and selects the tile under the pointer, a group's
+      header being the group. A double-click zooms into its group.
+
+    Selecting sends ``<<TreemapSelect>>`` and zooming in or out sends
+    ``<<TreemapZoom>>``. A treemap selects one item at most, marked with
+    a ``●`` before its name. The bottom row names the focused item, with
+    its value and its share of everything and of its group.
+
+    **Acting on one item.** Give items ``tags`` and bind to a tag, as in a
+    Treeview: ``tree.tag_bind("disk", "<<TreemapSelect>>", show)`` runs
+    ``show`` only when an item tagged ``disk`` is selected.
 
     Options:
         labels: Write each tile's name in it, cut with ``…`` to fit, or
@@ -260,6 +293,7 @@ class Treemap(tkcurses.Frame):
     _widget_options: ClassVar[dict[str, Any]] = {
         "relief": "solid",  # so borderwidth=1 alone draws the box
         "foreground": "",
+        "takefocus": True,
         "labels": True,
         "values": "percent",
         "percentdecimals": 2,
@@ -279,7 +313,7 @@ class Treemap(tkcurses.Frame):
     _not_tk_options: ClassVar[frozenset[str]] = frozenset()
 
     #: The options this class adds and :func:`_parse` checks.
-    _own_options = frozenset(_widget_options) - {"relief", "foreground"}
+    _own_options = frozenset(_widget_options) - {"relief", "foreground", "takefocus"}
 
     def __init__(
         self,
@@ -292,6 +326,16 @@ class Treemap(tkcurses.Frame):
         self._model = Model()
         self._pending: str | None = None
         self._cached: tuple[Any, TileLayout, Regions] | None = None
+        #: The group zoomed into, or "".
+        self._zoom = ""
+        #: ``(key, at, back)``: pressing ``key`` with the focus on ``at``
+        #: goes ``back`` where the last arrow came from, so Right then Left
+        #: returns whatever the geometry would pick.
+        self._back: tuple[Direction, str, str] | None = None
+        self._tag_bindings: dict[str, dict[str, Callable[[Event], Any]]] = {}
+        self._tag_dispatch: dict[str, str] = {}
+        #: The group just zoomed out of, for a ``<<TreemapZoom>>`` tag binding.
+        self._zoomed_out = ""
         options = {**self._widget_options, **(cnf or {}), **kw}
         try:
             config = _parse({key: options[key] for key in self._own_options})
@@ -299,7 +343,25 @@ class Treemap(tkcurses.Frame):
             raise TclError(str(error)) from None
         self._config = config
         super().__init__(master, cnf, name=name, **kw)
+        self._install_class_bindings()
         self._apply(config)
+
+    def _install_class_bindings(self) -> None:
+        """The keys and the mouse, bound once for the class."""
+        name = self.winfo_class()
+        if name in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add(name)
+        bind = self.bind_class
+        for key in ("Left", "Right", "Up", "Down"):
+            bind(name, f"<Key-{key}>", functools.partial(_treemap_arrow, key))
+        bind(name, "<Key-Return>", _treemap_return)
+        bind(name, "<Key-space>", _treemap_space)
+        bind(name, "<Key-Escape>", _treemap_escape)
+        bind(name, "<Button-1>", _treemap_click)
+        bind(name, "<Double-Button-1>", _treemap_double)
+        bind(name, "<FocusIn>", _treemap_refocus)
+        bind(name, "<FocusOut>", _treemap_refocus)
 
     # ------------------------------------------------------------- options
 
@@ -372,6 +434,7 @@ class Treemap(tkcurses.Frame):
         *,
         text: str = "",
         value: Any = 0,
+        tags: Any = (),
     ) -> str:
         """Add an item and return its identifier.
 
@@ -384,6 +447,9 @@ class Treemap(tkcurses.Frame):
             text: The name written in its tile.
             value: Its size: a number, not negative. Zero takes no room. A
                 group's size is its children's sum, whatever its own value.
+            tags: Names to group items by, for :meth:`tag_bind` and
+                :meth:`tag_has`: a list, or a string of names with spaces
+                between, as a Treeview's are.
 
         Raises:
             tkcurses.TclError: ``parent`` is not an item, or is a child;
@@ -391,30 +457,32 @@ class Treemap(tkcurses.Frame):
         """
         return str(
             self._do(
-                lambda: self._model.insert(parent, index, iid, text=text, value=value)
+                lambda: self._model.insert(
+                    parent, index, iid, text=text, value=value, tags=tags
+                )
             )
         )
 
     def item(self, iid: str, option: str | None = None, **kw: Any) -> Any:
-        """Read or change an item's ``text`` and ``value``.
+        """Read or change an item's ``text``, ``value`` and ``tags``.
 
-        With neither ``option`` nor keywords, a dict of both; with
+        With neither ``option`` nor keywords, a dict of all three; with
         ``option``, that one; with keywords, they are set.
         """
         entry = self._ask(lambda: self._model.item(iid))
-        unknown = set(kw) - {"text", "value"}
-        if option is not None and option not in ("text", "value"):
+        unknown = set(kw) - {"text", "value", "tags"}
+        if option is not None and option not in ("text", "value", "tags"):
             unknown.add(option)
         if unknown:
             raise TclError(f'unknown option "-{sorted(unknown)[0]}"')
         if kw:
             self._do(
                 lambda: self._model.configure(
-                    iid, text=kw.get("text"), value=kw.get("value")
+                    iid, text=kw.get("text"), value=kw.get("value"), tags=kw.get("tags")
                 )
             )
             return None
-        values = {"text": entry.text, "value": entry.value}
+        values = {"text": entry.text, "value": entry.value, "tags": entry.tags}
         return values if option is None else values[option]
 
     def delete(self, *items: str) -> None:
@@ -441,6 +509,223 @@ class Treemap(tkcurses.Frame):
     def exists(self, item: str) -> bool:
         """Whether ``item`` names an item."""
         return self._model.exists(item)
+
+    # ------------------------------------------------- focus and selection
+
+    def focus(self, item: str | None = None) -> Any:
+        """With no argument, the focused item, or ``""``; with one, focus
+        it. The arrow keys move the focus, and Return and Space act on it.
+        Focusing ``""`` focuses nothing."""
+        if item is None:
+            return self._model.focus
+        if item:
+            self._ask(lambda: self._model.item(item))
+        self._model.focus = item
+        self._back = None
+        self._changed()
+        return None
+
+    def selection(self) -> tuple[str, ...]:
+        """The selected item, as a tuple of one, or ``()``. A treemap selects
+        one item at most; the tuple is a Treeview's answer."""
+        return (self._model.selected,) if self._model.selected else ()
+
+    def selection_set(self, *items: str) -> None:
+        """Select one item, or none with no argument or ``""``, and send
+        ``<<TreemapSelect>>``.
+
+        Raises:
+            tkcurses.TclError: More than one item is named, or one is not
+                an item.
+        """
+        named = [item for item in items if item]
+        if len(named) > 1:
+            raise TclError("a treemap selects one item at most")
+        if named:
+            self._ask(lambda: self._model.item(named[0]))
+        self._select(named[0] if named else "")
+
+    def _select(self, item: str) -> None:
+        self._model.selected = item
+        self._changed()
+        self.event_generate(SELECT_EVENT)
+
+    def zoom(self, item: str | None = None) -> Any:
+        """With no argument, the group zoomed into, or ``""``; with one,
+        zoom into it so its children fill the treemap, or out with ``""``.
+        A change sends ``<<TreemapZoom>>``.
+
+        Raises:
+            tkcurses.TclError: ``item`` is not a top-level item with
+                children.
+        """
+        if item is None:
+            return self._zoom
+        if item:
+            entry = self._ask(lambda: self._model.item(item))
+            if entry.parent or not entry.children:
+                raise TclError(
+                    f"{item} is not a group: a treemap zooms into a top-level"
+                    " item with children"
+                )
+        if item == self._zoom:
+            return None
+        self._zoom = item
+        self._back = None
+        self._changed()
+        self.event_generate(ZOOM_EVENT)
+        return None
+
+    def identify(self, x: int, y: int) -> str:
+        """The item drawn at ``(x, y)``, in cells from the widget's top
+        left, or ``""``: a group's header is the group's."""
+        tile = self._layout_now().at(x, y)
+        return tile.iid if tile is not None else ""
+
+    # ------------------------------------------------------------------ tags
+
+    def tag_has(self, tagname: str, item: str | None = None) -> Any:
+        """The items carrying ``tagname``, or whether ``item`` does."""
+        if item is not None:
+            return tagname in self._ask(lambda: self._model.item(item)).tags
+        return self._model.tagged(tagname)
+
+    def tag_bind(
+        self,
+        tagname: str,
+        sequence: str | None = None,
+        callback: Callable[[Event], Any] | None = None,
+    ) -> None:
+        """Run ``callback`` for ``sequence`` on the items carrying
+        ``tagname`` only.
+
+        The item an event is for is the tile under the pointer for a mouse
+        event; the selected item for ``<<TreemapSelect>>``; the group zoomed
+        into, or out of, for ``<<TreemapZoom>>``; and the focused item for
+        a key. So ``tag_bind("disk", "<<TreemapSelect>>", show)`` runs
+        ``show`` when an item tagged ``disk`` is chosen, however it was.
+        """
+        if sequence is None or callback is None:
+            return
+        self._tag_bindings.setdefault(tagname, {})[sequence] = callback
+        if sequence not in self._tag_dispatch:
+            self._tag_dispatch[sequence] = self.bind(
+                sequence, functools.partial(_treemap_tag_event, sequence), add="+"
+            )
+
+    def _event_item(self, sequence: str, event: Event) -> str:
+        if sequence == SELECT_EVENT:
+            return self._model.selected
+        if sequence == ZOOM_EVENT:
+            return self._zoom or self._zoomed_out
+        parsed = parse_sequence(sequence)
+        if getattr(parsed, "type", None) in _POINTER_EVENTS:
+            return self.identify(int(event.x), int(event.y))
+        return self._model.focus
+
+    def _deliver_tags(self, sequence: str, event: Event) -> None:
+        item = self._event_item(sequence, event)
+        if not item or not self._model.exists(item):
+            return
+        for tag in self._model.item(item).tags:
+            callback = self._tag_bindings.get(tag, {}).get(sequence)
+            if callback is not None:
+                callback(event)
+
+    # ------------------------------------------------------------- the keys
+
+    def _layout_now(self) -> TileLayout:
+        width, height = self._rect.width, self._rect.height
+        if width <= 0 or height <= 0:
+            return TileLayout((), ())
+        return self._scene(width, height).layout
+
+    def _arrow(self, direction: Direction) -> str | None:
+        layout = self._layout_now()
+        model = self._model
+        current = layout.tile(model.focus) if model.focus else None
+        if current is None:
+            first = self._first(layout)
+            if first is None:
+                return None
+            self.focus(first)
+            return "break"
+        target = None
+        back = self._back
+        if back is not None and back[0] == direction and back[1] == current.iid:
+            target = back[2] if layout.tile(back[2]) is not None else None
+        if target is None:
+            level = [
+                (tile.iid, tile.rect)
+                for tile in layout.tiles
+                if tile.level == current.level and tile.iid != current.iid
+            ]
+            target = neighbour(current.rect, level, direction)
+        if target is None:
+            return None
+        model.focus = target
+        self._back = (OPPOSITE[direction], target, current.iid)
+        self._changed()
+        return "break"
+
+    def _first(self, layout: TileLayout) -> str | None:
+        """The tile the first arrow focuses: the largest at the top of what
+        is shown."""
+        top = 1 if self._zoom else 0
+        for tile in layout.tiles:
+            if tile.level == top:
+                return tile.iid
+        return None
+
+    def _return(self) -> str | None:
+        item = self._model.focus
+        if not item:
+            return None
+        if not self._zoom and self._model.get_children(item):
+            self._zoom_into(item)
+        else:
+            self._select(item)
+        return "break"
+
+    def _zoom_into(self, group: str) -> None:
+        self.zoom(group)
+        children = self._model.ordered(group)
+        self.focus(children[0] if children else "")
+
+    def _space(self) -> str | None:
+        if not self._model.focus:
+            return None
+        self._select(self._model.focus)
+        return "break"
+
+    def _escape(self) -> str | None:
+        if self._zoom:
+            group = self._zoom
+            self._zoomed_out = group
+            self.zoom("")
+            self.focus(group)
+            return "break"
+        focused = self._model.focus
+        if focused and self._model.exists(focused) and self._model.parent(focused):
+            self.focus(self._model.parent(focused))
+            return "break"
+        return None
+
+    def _click(self, x: int, y: int) -> None:
+        self.focus_set()
+        tile = self._layout_now().at(x, y)
+        if tile is None:
+            return
+        self.focus(tile.iid)
+        self._select(tile.iid)
+
+    def _double(self, x: int, y: int) -> None:
+        tile = self._layout_now().at(x, y)
+        if tile is None or self._zoom:
+            return
+        group = tile.iid if tile.group else self._model.parent(tile.iid)
+        if group:
+            self._zoom_into(group)
 
     # ------------------------------------------------------------ repainting
 
@@ -511,14 +796,19 @@ class Treemap(tkcurses.Frame):
         palette = self._palette()
         outlined = self._outlined(palette)
         area = self._area(width, height)
-        key = (model.version, area, outlined, config.readout)
+        if self._zoom and not (
+            model.exists(self._zoom) and model.get_children(self._zoom)
+        ):
+            self._zoom = ""  # the group, or its last child, was deleted
+        zoom = self._zoom
+        key = (model.version, area, outlined, config.readout, zoom)
         if self._cached is not None and self._cached[0] == key:
             _key, layout, cut = self._cached
         else:
             cut = regions(area, readout=config.readout)
-            layout = lay_out(model, cut.tiles, outlined=outlined)
+            layout = lay_out(model, cut.tiles, zoom=zoom, outlined=outlined)
             self._cached = (key, layout, cut)
-        whole = model.total()
+        whole = model.total(zoom)
 
         def value_text(iid: str) -> str | None:
             size = model.size(iid)
@@ -528,11 +818,7 @@ class Treemap(tkcurses.Frame):
                 return config.numbers.format(size)
             return None
 
-        readout = ""
-        if config.readout and model.get_children():
-            readout = f"total {config.numbers.format(whole)}"
-            if layout.hidden:
-                readout += f" · {len(layout.hidden)} too small to show"
+        readout = self._readout(layout) if config.readout else ""
         return Scene(
             width,
             height,
@@ -544,7 +830,38 @@ class Treemap(tkcurses.Frame):
             labels=config.labels,
             value_text=value_text,
             readout=readout,
+            focus=model.focus,
+            show_focus=self.focus_get() is self,
+            selected=model.selected,
         )
+
+    def _readout(self, layout: TileLayout) -> str:
+        """The bottom row: the focused item's place, value and shares; or,
+        with nothing focused, the total and what is too small to show."""
+        model = self._model
+        config = self._config
+        if not model.get_children():
+            return ""
+        focused = model.focus
+        if focused and model.exists(focused):
+            size = model.size(focused)
+            names = [model.item(iid).text or iid for iid in model.path(focused)]
+            text = PATH_SEPARATOR.join(names)
+            text += f"   {config.numbers.format(size)}"
+            text += f"   {percent(size, model.total(), config.percentdecimals)} of all"
+            parent = model.parent(focused)
+            if parent:
+                share = percent(size, model.size(parent), config.percentdecimals)
+                text += f"   {share} of {names[0]}"
+            return text
+        whole = model.total(self._zoom)
+        text = f"total {config.numbers.format(whole)}"
+        if self._zoom:
+            name = model.item(self._zoom).text or self._zoom
+            text = f"{name}{PATH_SEPARATOR}{text}"
+        if layout.hidden:
+            text += f" \u00b7 {len(layout.hidden)} too small to show"
+        return text
 
     def _compose(self, width: int, height: int) -> list[list[Cell]]:
         """The treemap as rows of cells, ``width`` by ``height``, border
@@ -554,6 +871,8 @@ class Treemap(tkcurses.Frame):
 
     def _attribute(self, cell: Cell) -> int:
         bold = curses.A_BOLD if cell.bold else curses.A_NORMAL
+        if cell.reverse:
+            bold |= curses.A_REVERSE
         colors = self.tk.colors
         if colors is None or not colors.has_colors:
             return bold
@@ -596,3 +915,58 @@ class Treemap(tkcurses.Frame):
             else:
                 runs.append((x, cell.char, attribute))
         return runs
+
+
+# ---------------------------------------------------------------- bindings
+
+
+def _tree(event: Event) -> Treemap | None:
+    widget = event.widget
+    return widget if isinstance(widget, Treemap) else None
+
+
+def _treemap_arrow(direction: Direction, event: Event) -> str | None:
+    tree = _tree(event)
+    return tree._arrow(direction) if tree is not None else None
+
+
+def _treemap_return(event: Event) -> str | None:
+    tree = _tree(event)
+    return tree._return() if tree is not None else None
+
+
+def _treemap_space(event: Event) -> str | None:
+    tree = _tree(event)
+    return tree._space() if tree is not None else None
+
+
+def _treemap_escape(event: Event) -> str | None:
+    tree = _tree(event)
+    return tree._escape() if tree is not None else None
+
+
+def _treemap_click(event: Event) -> None:
+    tree = _tree(event)
+    if tree is not None:
+        tree._click(int(event.x), int(event.y))
+
+
+def _treemap_double(event: Event) -> None:
+    tree = _tree(event)
+    if tree is not None:
+        tree._double(int(event.x), int(event.y))
+
+
+def _treemap_refocus(event: Event) -> None:
+    """Draw again when the keyboard focus comes or goes: the focused tile
+    is shown only while the treemap has it."""
+    tree = _tree(event)
+    if tree is not None:
+        tree._changed()
+
+
+def _treemap_tag_event(sequence: str, event: Event) -> None:
+    """Deliver one event to the tag bindings of the item it is for."""
+    tree = _tree(event)
+    if tree is not None:
+        tree._deliver_tags(sequence, event)

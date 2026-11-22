@@ -8603,7 +8603,7 @@ As BarGraph: pure modules know nothing of curses and raise `ValueError`;
 | `_labels` | what text fits in a tile, and where |
 | `_legend` | the entries, wrapped and truncated, flowed into the legend region |
 | `_navigate` | which tile an arrow key moves to |
-| `_compose` | all of that into rows of cells, each naming its colours as specs, `""` for the widget's own |
+| `_compose` | all of that into rows of cells, with the focus reversed and the selection marked, each naming its colours as specs, `""` for the widget's own |
 
 **Shared with BarGraph, moved, not copied.** These move into a private
 package `tkcurses/_charts/`, and BarGraph imports them from there:
@@ -8846,8 +8846,14 @@ Right are the items whose left edge is at or beyond the focused tile's
 right edge. Those that overlap it vertically come first; then the
 smallest gap; then the nearest centre across the move. The same holds,
 turned, for the other three keys. With no candidate the focus stays, and
-the key is not consumed. Moving right then left returns to the same tile
-wherever the overlap rule decides, which a test holds.
+the key is not consumed. With nothing focused, the first arrow focuses
+the largest item shown.
+
+**The opposite key goes back**, whatever the geometry says. The rule
+alone does not promise it: Right from a tall tile can land on a short
+neighbour whose own Left prefers a different tall tile. So each move
+remembers where it came from, and the opposite key from where it landed
+returns there; another move, or a focus set by the program, forgets.
 
 **Selecting fires `<<TreemapSelect>>`**, and zooming fires
 `<<TreemapZoom>>`. `zoom(item)` zooms in from the program, `zoom("")`
@@ -8856,7 +8862,11 @@ the view. `identify(x, y)` answers the iid under a point, or `""`, for a
 program's own mouse bindings.
 
 **How focus and selection show.** The focused tile's label row is
-reversed. The selected tile gets a `●` before its name. The readout shows
+reversed, inside its lines when it is outlined; a group's header row;
+and **the whole tile when it is too small for any text**, so the focus
+never goes unseen: such a tile is a few cells, and reversing it hides
+nothing. The focus shows only while the treemap has the keyboard focus,
+as a Treeview's does; `<FocusIn>` and `<FocusOut>` repaint it. The selected tile gets a `●` before its name. The readout shows
 the focused item:
 
 ```text
@@ -8864,8 +8874,22 @@ web › nginx   330   38.82% of all   60.00% of web
 ```
 
 With nothing focused, it shows the total, and how many tiles were too
-small to show: `total 850 · 2 too small to show`. That much comes with
-the drawing; the focused item's line comes with the interaction.
+small to show: `total 850 · 2 too small to show`; zoomed, it is the
+group's total, `db › total 200`. A line wider than the widget is cut
+with `…`, like any label.
+
+**Tags, to act on one item**, as Treeview's: an item's `tags` is a list
+or a string of names, `tag_has` answers who carries one, and
+`tag_bind(tag, sequence, callback)` runs the callback only when the item
+the event is for carries the tag. Which item that is depends on the
+event: the tile under the pointer for a mouse event, the selected item
+for `<<TreemapSelect>>`, the group zoomed into or out of for
+`<<TreemapZoom>>`, and otherwise the focused item. That makes
+`tag_bind("disk", "<<TreemapSelect>>", ...)` mean "when a disk is
+chosen", by click or key alike. An item's tags run in its own order, as
+a Treeview row's do. One widget binding per sequence carries every tag
+binding, as `Treeview.tag_bind` does it. `tag_configure` is not there
+yet: it would be the place for per-item colours.
 
 ### Repainting
 

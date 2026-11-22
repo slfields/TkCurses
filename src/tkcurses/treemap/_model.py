@@ -32,7 +32,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ["Item", "Model"]
+__all__ = ["Item", "Model", "checked_tags", "checked_value"]
 
 
 @dataclass(slots=True)
@@ -46,6 +46,17 @@ class Item:
     #: this is kept, and counts again once the last child is deleted.
     value: float = 0.0
     children: list[str] = field(default_factory=list)
+    #: Names a program groups items by, for :meth:`Model.tagged`.
+    tags: tuple[str, ...] = ()
+
+
+def checked_tags(tags: Any) -> tuple[str, ...]:
+    """``tags`` as a tuple of names: a list, or one string of names split
+    at spaces, as Tk reads a list. A tag named twice is kept once."""
+    if tags is None or tags == "":
+        return ()
+    names = tags.split() if isinstance(tags, str) else [str(tag) for tag in tags]
+    return tuple(dict.fromkeys(names))
 
 
 def checked_value(value: Any) -> float:
@@ -95,6 +106,7 @@ class Model:
         *,
         text: str = "",
         value: Any = 0,
+        tags: Any = (),
     ) -> str:
         """Add an item under ``parent`` (``""`` for the top level) and
         return its identifier, ``I001`` and on when none is given."""
@@ -112,19 +124,27 @@ class Model:
             iid = str(iid)
             if iid in self._items:
                 raise ValueError(f"Item {iid} already exists")
-        self._items[iid] = Item(iid, parent, str(text), size)
+        self._items[iid] = Item(iid, parent, str(text), size, tags=checked_tags(tags))
         _place(self._siblings(parent), iid, position)
         self.version += 1
         return iid
 
     def configure(
-        self, iid: str, *, text: str | None = None, value: Any = None
+        self,
+        iid: str,
+        *,
+        text: str | None = None,
+        value: Any = None,
+        tags: Any = None,
     ) -> None:
-        """Change an item's name or value; ``None`` leaves one as it is."""
+        """Change an item's name, value or tags; ``None`` leaves one as it
+        is."""
         item = self.item(iid)
         size = item.value if value is None else checked_value(value)
         if text is not None:
             item.text = str(text)
+        if tags is not None:
+            item.tags = checked_tags(tags)
         item.value = size
         self.version += 1
 
@@ -211,6 +231,10 @@ class Model:
         equal sizes in their order among siblings."""
         children = self.get_children(iid)
         return sorted(children, key=lambda child: -self.size(child))
+
+    def tagged(self, tag: str) -> tuple[str, ...]:
+        """The items carrying ``tag``, in the order they were inserted."""
+        return tuple(iid for iid, item in self._items.items() if tag in item.tags)
 
     def path(self, iid: str) -> tuple[str, ...]:
         """``(group, child)`` or ``(item,)``: the iids from the top level
