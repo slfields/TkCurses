@@ -2146,3 +2146,42 @@ def test_scenario_51_steps_the_bar_by_an_eighth(uat_terminal):
     term.send(ESCAPE)
     assert term.wait_for_exit(timeout=10) == 0
     assert "Traceback" not in term.stderr
+
+
+def test_scenario_52_counts_a_tile_too_small_to_show(uat_terminal):
+    """t adds an item of 0.5, which has no cell: the readout counts it, as
+    the checklist says, and t again takes it away."""
+    term = uat_terminal(cols=80, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_52_treemap"])
+    term.wait_for(
+        lambda t: t.contains("total 850") and t.contains("web 64.71%"),
+        message="the services",
+    )
+    term.send_keys("t")
+    term.wait_for(
+        lambda t: t.contains("total 850.5 · 1 too small to show"),
+        message="the tiny item counted",
+    )
+    term.send_keys("t")
+    term.wait_for(
+        lambda t: any(line.rstrip() == "total 850" for line in t.display),
+        message="the tiny item gone",
+    )
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+    assert "Traceback" not in term.stderr
+
+
+def test_scenario_52_switches_to_many_items(uat_terminal):
+    term = uat_terminal(cols=80, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_52_treemap"])
+    term.wait_for(lambda t: t.contains("data=services"), message="the services")
+    term.send_keys("n")
+    term.wait_for(
+        lambda t: (
+            t.contains("data=24 items") and t.contains("a1") and t.contains("total 792")
+        ),
+        message="24 items",
+    )
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
