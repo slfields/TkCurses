@@ -8398,12 +8398,22 @@ attributes, and writes the cells. It uses Frame's internals on purpose -
 `CursesDispatcher`; a change to any of those has this one module to fix.
 
 **What it shares with Treemap is in `tkcurses/_charts/`**, a private
-package of pure modules: `numformat` (how a value is written, on an axis,
-in a readout or a label), `color` (`shade_rgb`, `hex_color`) `text`
-(characters to cells, and `fit`, cutting a line with `…`) and
-`geometry` (`Rect`, and cutting regions off one). They moved
-there from BarGraph when the second chart came (`TkCurses-i1rh.2`), so
-neither widget imports the other's private modules.
+package. They moved there from BarGraph when the second chart came
+(`TkCurses-i1rh.2`, `.4`, `.6`), so neither widget imports the other's
+private modules:
+
+| Module | Holds |
+|---|---|
+| `numformat` | how a value is written, on an axis, in a readout or a label |
+| `color` | `DEFAULT_COLORS`; `mix`, `shade_rgb`, `hex_color`; WCAG `luminance` and `text_on` |
+| `text` | characters to cells (`clusters`), and `fit`, cutting a line with `…` |
+| `geometry` | `Rect`, and cutting regions off one |
+| `options` | checking option values, with Tk's words |
+
+All are pure but `options`, which checks a colour against the library's
+colour names. Its `items` reads one value given where a list is wanted
+as a list of one, as Tcl does: `colors=5` had raised a `TypeError` out
+of `tuple(5)` in BarGraph since 0.6.
 
 ### Drawing in eighths
 
@@ -8540,7 +8550,7 @@ algorithms.
 | Rectangles largest first | Largest first, ties in insertion order |
 | Slice labels: Show / Hide; hidden when a tile is too small | `labels`; hidden by the same test |
 | Slice values: Percentage / Integer / Hide; Decimal places, default 2 | `values`: `percent` / `value` / `none`; `percentdecimals`, default 2 |
-| Value format | `valueformat`: BarGraph's number options |
+| Value format | BarGraph's number options, by the same names: `units`, `digits`, `decimals` and the rest |
 | Legend: Visibility Auto / Show / Hide; position; Width; Nested; Line limit | `legend`, `legendposition`, `legendsize`, `nestedlegend`, `legendlines` |
 | Palette on the first level; nested levels follow their parent | `colors` on the top level; children are shades of it |
 | Hide zero values, on by default | A zero value takes no space |
@@ -8593,7 +8603,7 @@ As BarGraph: pure modules know nothing of curses and raise `ValueError`;
 | `_labels` | what text fits in a tile, and where |
 | `_legend` | the entries, wrapped and truncated, flowed into the legend region |
 | `_navigate` | which tile an arrow key moves to |
-| `_compose` | all of that into a window of cells with colour *roles* |
+| `_compose` | all of that into rows of cells, each naming its colours as specs, `""` for the widget's own |
 
 **Shared with BarGraph, moved, not copied.** These move into a private
 package `tkcurses/_charts/`, and BarGraph imports them from there:
@@ -8700,7 +8710,16 @@ the two apart. The four are, from `#cd00cd` for example, `#cd00cd`,
 nearest whole value, half to even, as Python's `round` does.
 
 **Text is black or white**, whichever contrasts more with the tile, by
-WCAG relative luminance.
+WCAG 2's relative luminance and contrast ratio (`_charts.color.text_on`):
+black on green, yellow and cyan, white on red, blue and magenta. It is
+named `black` or `white`, so a terminal of eight colours draws its own.
+
+**Cells name colours, not roles.** BarGraph's cells carry roles, series
+and zone, that the widget maps to colours. A treemap's colours come from
+the items, a shade each, so `_compose` names the spec itself: a
+`colors` entry for the colour, `#rrggbb` for a shade, `""` for the
+widget's `foreground` or `background`. The widget only turns specs into
+curses attributes.
 
 **Outlined, where shades cannot be seen.** Outlining is decided per
 *level*: the top level, or one group's children (`outlined_levels`). The
@@ -8754,6 +8773,12 @@ readout, at the default 6 colours under 40. A program with 50 top-level
 items still cycles through `colors`, so the count does not grow with the
 data.
 
+**The widget counts the shades the terminal keeps apart.** For each
+group it resolves the four shades with `parse_color` at the terminal's
+`ColorDepth`, and counts the distinct colours that come back. It must
+pass a `ColorDepth`, not its number: `parse_color` tells the tiers apart
+with `is`, so a plain `256` would be taken for none of them.
+
 ### Labels
 
 Kibana hides a label that does not fit. So does this, by these rules:
@@ -8768,7 +8793,10 @@ Kibana hides a label that does not fit. So does this, by these rules:
 - **`values="percent"` is a share of what is shown.** That is the whole
   treemap, or the group zoomed into. The readout gives both.
   `percentdecimals` sets its decimals. `value` writes the number with
-  `valueformat`, through BarGraph's `NumberFormat`.
+  BarGraph's number options - `units`, `unitplacement`, `unitspace`,
+  `digits`, `decimals`, `rounding`, `unitscale` - through the shared
+  `NumberFormat`. One option, `valueformat`, was planned; the seven keep
+  the two charts' options the same, so a program sets them alike.
 - All text is measured with `_core.cells`, so a CJK name takes the cells
   it draws in.
 
@@ -8836,7 +8864,8 @@ web › nginx   330   38.82% of all   60.00% of web
 ```
 
 With nothing focused, it shows the total, and how many tiles were too
-small to show: `total 850 · 2 too small to show`.
+small to show: `total 850 · 2 too small to show`. That much comes with
+the drawing; the focused item's line comes with the interaction.
 
 ### Repainting
 
@@ -8855,10 +8884,18 @@ show` in the middle.
 ### Options measured
 
 `record_visible_options.py` names it `treemap.Treemap`. The base is two
-groups and one plain item, enough for headers, shades, labels and a
-legend. `WIDGET_NEEDS` gives `nestedlegend` and `legendlines` a legend
-shown, and `outline` a 256-colour run. Each widget option has a `Sample
-output (option):`.
+groups and one plain item, 40 × 10, enough for headers, shades, labels
+and the readout; `cache` is 1234 so the number format has a value to
+scale. `WIDGET_NEEDS` gives the number options `values="value"`, since
+a percentage ignores them, and `relief` a border. Measured: every
+Treemap option visible but the Frame's own invisible ones. Each has a
+`Sample output (option):`, run by the docs build once the reference
+page includes the class.
+
+**Making the module public brought the convention tests in at once**,
+not at the docs story: `tkcurses.treemap` is in `EXTENSION_MODULES`, so
+its docstring is held to the samples rule, and its options to the
+measurement, from the first commit that has the widget.
 
 ### Not yet
 

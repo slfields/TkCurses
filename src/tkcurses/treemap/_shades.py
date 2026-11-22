@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
-from tkcurses._charts.color import mix
+from tkcurses._charts.color import BLACK, WHITE, mix
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -49,9 +49,6 @@ __all__ = [
 
 OutlineMode = Literal["auto", "on", "off"]
 OUTLINE_MODES: tuple[OutlineMode, ...] = ("auto", "on", "off")
-
-BLACK: RGB = (0, 0, 0)
-WHITE: RGB = (255, 255, 255)
 
 #: Each shade as ``(toward, fraction)``: shade 0 is the colour itself.
 SHADES: tuple[tuple[RGB, float], ...] = (

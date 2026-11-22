@@ -128,6 +128,7 @@ input, not only the ones someone thought of:
 | `tests/test_treemap_model.py` | A treemap's total is the sum of what takes room - a group's children, never its own value besides - and its layout order is largest first. |
 | `tests/test_treemap_layout.py` | Treemap tiles cover their area exactly once, every edge is within half a cell of its exact place, and the regions never overlap while the tiles keep their least room when the widget has it. |
 | `tests/test_treemap_shades.py` | Neighbouring treemap tiles take different shades whenever four allow it, and every cell of an outlined treemap is a line, a header or inside one tile, or else inside a group drawn as itself. |
+| `tests/test_treemap_widget.py` | A treemap tile's label never takes more lines than the tile has rows, nor more cells than it has columns. |
 | `tests/test_bargraph_gradient.py` | The shades run evenly from the start colour to the series colour. |
 | `tests/test_wipeable.py` | Any sequence of inserts and deletes leaves a hidden field's wipeable buffer holding what the same edits make of a `str`, and a hidden `TextField` keeps the same cursor, selection, view and columns as a plain one. |
 | `tests/test_core_config.py` | For any value of any setting, a program keeps what the parser accepts, clamps what is out of range, and falls back on anything else, so `tkcurses-cfg` and a program never disagree. |

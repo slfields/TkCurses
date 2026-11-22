@@ -44,14 +44,13 @@ from __future__ import annotations
 import contextlib
 import curses
 import dataclasses
-import math
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import tkcurses
 from tkcurses import TclError
-from tkcurses._charts.color import hex_color, shade_rgb
+from tkcurses._charts.color import DEFAULT_COLORS, hex_color, shade_rgb
 from tkcurses._charts.numformat import (
     PLACEMENTS,
     ROUNDINGS,
@@ -60,8 +59,29 @@ from tkcurses._charts.numformat import (
     for_readout,
     widest,
 )
+from tkcurses._charts.options import (
+    choice as _choice,
+)
+from tkcurses._charts.options import (
+    color as _color,
+)
+from tkcurses._charts.options import (
+    count as _count,
+)
+from tkcurses._charts.options import (
+    flag as _flag,
+)
+from tkcurses._charts.options import (
+    items as _items,
+)
+from tkcurses._charts.options import (
+    number as _number,
+)
+from tkcurses._charts.options import (
+    optional_count as _optional_count,
+)
 from tkcurses._core.cells import cells
-from tkcurses._core.colors import ColorDepth, parse_color, rgb_of
+from tkcurses._core.colors import ColorDepth, rgb_of
 from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses.bargraph._decor import (
     MIN_TICK_ROWS,
@@ -107,9 +127,6 @@ if TYPE_CHECKING:
     from tkcurses.bargraph._render import Mode
 
 __all__ = ["BarGraph"]
-
-#: Series colors when ``colors`` is not given, cycled by series index.
-DEFAULT_COLORS = ("green", "red", "blue", "yellow", "magenta", "cyan")
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,80 +359,6 @@ def _at_maximum(config: _Config, maximum: float) -> _Config:
         ),
         ticks=ticks,
     )
-
-
-def _count(value: Any, name: str, *, minimum: int = 1) -> int:
-    """An integer option, given as an int or its decimal string."""
-    if isinstance(value, bool) or not isinstance(value, int | str):
-        raise ValueError(f"{name} must be an integer, not {value!r}")
-    try:
-        number = int(value)
-    except ValueError:
-        raise ValueError(f"{name} must be an integer, not {value!r}") from None
-    if number < minimum:
-        raise ValueError(f"{name} must be at least {minimum}, not {number}")
-    return number
-
-
-def _number(value: Any, name: str) -> float:
-    """A number option, given as a number or its string."""
-    if isinstance(value, bool):
-        raise ValueError(f"{name} must be a number, not {value!r}")
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        raise ValueError(f"{name} must be a number, not {value!r}") from None
-    if not math.isfinite(number):
-        raise ValueError(f"{name} must be a finite number, not {value!r}")
-    return number
-
-
-def _optional_count(value: Any, name: str, *, minimum: int) -> int | None:
-    """An integer option that may be left unset, as None or ''."""
-    if value is None or value == "":
-        return None
-    return _count(value, name, minimum=minimum)
-
-
-def _choice(value: Any, name: str, allowed: tuple[str, ...]) -> str:
-    text = str(value)
-    if text not in allowed:
-        # Tcl's punctuation: "a or b" for two, "a, b, or c" for more.
-        listed = ", ".join(allowed[:-1]) + ("," if len(allowed) > 2 else "")
-        raise ValueError(f'bad {name} "{text}": must be {listed} or {allowed[-1]}')
-    return text
-
-
-def _color(value: Any) -> str:
-    """A colour, refused here rather than when a bar is first drawn in it:
-    an unknown name used to raise on every repaint and leave the whole
-    window blank. Known or not does not depend on the terminal's depth."""
-    text = str(value)
-    try:
-        parse_color(text)
-    except ValueError:
-        raise ValueError(f'unknown color name "{text}"') from None
-    return text
-
-
-def _flag(value: Any) -> bool:
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in ("1", "true", "yes", "on"):
-            return True
-        if lowered in ("0", "false", "no", "off", ""):
-            return False
-        raise ValueError(f"expected a boolean, not {value!r}")
-    return bool(value)
-
-
-def _items(value: Any) -> tuple[Any, ...]:
-    """A list option: a sequence, or empty for None or ''."""
-    if value is None or value == "":
-        return ()
-    if isinstance(value, str):
-        return tuple(value.split())
-    return tuple(value)
 
 
 def _pairs(value: Any, name: str) -> tuple[tuple[Any, Any], ...]:

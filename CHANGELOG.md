@@ -28,6 +28,12 @@ All notable changes to TkCurses. The format follows
 - For contributors: the secure-coding rules the code is held to, in
   CONTRIBUTING.md.
 
+### Fixed
+- `BarGraph(colors=5)`, or any one value that is not a list where a list
+  of colours is expected, raised a Python `TypeError` instead of a
+  `TclError`. It is now read as a list of one, as Tcl reads it, and
+  refused as an unknown colour.
+
 ## [0.6.0] - 2026-11-20
 
 ### Added

@@ -23,9 +23,25 @@ and leave the rest to the colour manager.
 
 from __future__ import annotations
 
-__all__ = ["RGB", "hex_color", "mix", "shade_rgb"]
+__all__ = [
+    "BLACK",
+    "RGB",
+    "WHITE",
+    "hex_color",
+    "luminance",
+    "mix",
+    "shade_rgb",
+    "text_on",
+]
 
 RGB = tuple[int, int, int]
+
+#: A chart's colours when ``colors`` is not given, taken in turn: by
+#: series in a bar graph, by top-level item in a treemap.
+DEFAULT_COLORS = ("green", "red", "blue", "yellow", "magenta", "cyan")
+
+BLACK: RGB = (0, 0, 0)
+WHITE: RGB = (255, 255, 255)
 
 
 def shade_rgb(start: RGB, end: RGB, step: int, steps: int) -> RGB:
@@ -55,3 +71,29 @@ def mix(color: RGB, toward: RGB, fraction: float) -> RGB:
 def hex_color(color: RGB) -> str:
     """``#rrggbb`` for an RGB triple."""
     return "#{:02x}{:02x}{:02x}".format(*color)
+
+
+def _linear(channel: int) -> float:
+    """An sRGB channel, 0-255, as linear light: the sRGB transfer function
+    of IEC 61966-2-1, with the 0.04045 threshold WCAG 2 gives."""
+    value = channel / 255
+    if value <= 0.04045:
+        return value / 12.92
+    return float(((value + 0.055) / 1.055) ** 2.4)
+
+
+def luminance(color: RGB) -> float:
+    """``color``'s relative luminance, 0 for black to 1 for white, as WCAG
+    2 defines it (W3C, *Web Content Accessibility Guidelines 2.1*,
+    "relative luminance")."""
+    red, green, blue = (_linear(channel) for channel in color)
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+def text_on(color: RGB) -> RGB:
+    """Black or white, whichever has the higher WCAG 2 contrast ratio,
+    ``(L1 + 0.05) / (L2 + 0.05)``, against ``color``; black on a tie."""
+    lit = luminance(color)
+    against_black = (lit + 0.05) / 0.05
+    against_white = 1.05 / (lit + 0.05)
+    return BLACK if against_black >= against_white else WHITE

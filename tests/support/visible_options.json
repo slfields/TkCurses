@@ -3370,6 +3370,193 @@
    "value": 3
   }
  },
+ "treemap.Treemap": {
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "backgroundimage": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "IMAGE"
+   ]
+  },
+  "borderwidth": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "class": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "Special"
+   ]
+  },
+  "colormap": {
+   "kind": "behaviour"
+  },
+  "colors": {
+   "kind": "visible",
+   "state": "plain",
+   "value": [
+    "red",
+    "blue"
+   ]
+  },
+  "container": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    1
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "decimals": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 2
+  },
+  "digits": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 1
+  },
+  "foreground": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "labels": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "outline": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "on"
+  },
+  "padx": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "pady": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "percentdecimals": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "readout": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
+  },
+  "rounding": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "down"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "tile": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    1
+   ]
+  },
+  "unitplacement": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "prefix"
+  },
+  "units": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "B"
+  },
+  "unitscale": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "binary"
+  },
+  "unitspace": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 1
+  },
+  "values": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "value"
+  },
+  "visual": {
+   "kind": "behaviour"
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  }
+ },
  "ttk.Button": {
   "class": {
    "kind": "invisible",

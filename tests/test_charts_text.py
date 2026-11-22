@@ -63,3 +63,12 @@ def test_shade_rgb_runs_from_start_to_end():
 
 def test_hex_color():
     assert hex_color((255, 0, 16)) == "#ff0010"
+
+
+def test_one_value_where_a_list_is_wanted_is_a_list_of_one():
+    from tkcurses._charts.options import items
+
+    assert items(5) == (5,)
+    assert items("red blue") == ("red", "blue")
+    assert items(("red",)) == ("red",)
+    assert items(None) == ()
