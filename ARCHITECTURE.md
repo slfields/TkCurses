@@ -8399,8 +8399,9 @@ attributes, and writes the cells. It uses Frame's internals on purpose -
 
 **What it shares with Treemap is in `tkcurses/_charts/`**, a private
 package of pure modules: `numformat` (how a value is written, on an axis,
-in a readout or a label), `color` (`shade_rgb`, `hex_color`) and `text`
-(characters to cells, and `fit`, cutting a line with `…`). They moved
+in a readout or a label), `color` (`shade_rgb`, `hex_color`) `text`
+(characters to cells, and `fit`, cutting a line with `…`) and
+`geometry` (`Rect`, and cutting regions off one). They moved
 there from BarGraph when the second chart came (`TkCurses-i1rh.2`), so
 neither widget imports the other's private modules.
 
@@ -8586,7 +8587,7 @@ As BarGraph: pure modules know nothing of curses and raise `ValueError`;
 |---|---|
 | `_model` | items, the two-level rule, sizes, order |
 | `_squarify` | weights and a rectangle to rectangles: the paper's algorithm, then snapped to cells |
-| `_layout` | the widget's size to regions: legend, readout, tiles; group headers |
+| `_layout` | the widget's size to regions: legend, readout, tiles; then the items to tiles, with group headers, zoom and the hidden ones |
 | `_shades` | which shade each child takes, so no two neighbours share one |
 | `_outline` | the lines between tiles, with their junctions, when outlined |
 | `_labels` | what text fits in a tile, and where |
@@ -8598,8 +8599,8 @@ As BarGraph: pure modules know nothing of curses and raise `ValueError`;
 package `tkcurses/_charts/`, and BarGraph imports them from there:
 `_numformat` (how a value is written), the RGB blend `shade_rgb` and
 `hex_color` from `_gradient`, the `Cell` and role types from `_render`,
-and the painter that writes text into cells by `_core.cells` widths from
-`_decor`. A second chart widget is the reason a shared package is worth
+the painter that writes text into cells by `_core.cells` widths from
+`_decor`, and `_layout`'s `Rect`. A second chart widget is the reason a shared package is worth
 having. BarGraph's behaviour does not change, and its tests hold it.
 
 ### Layout
@@ -8612,13 +8613,18 @@ back. A tile square in cells would look like a tall bar.
 The algorithm, from the paper:
 
 1. Lay tiles along the shorter side of the free rectangle, adding the
-   next largest to the current row while that improves the worst aspect
-   ratio in the row.
-2. When it would not, fix the row and continue in what is left.
+   next largest to the current row while that does not make the row's
+   worst aspect ratio worse.
+2. When it would, fix the row and continue in what is left.
+
+A tie keeps adding: the paper's test is "worse". The tests hold its own
+worked example, 6, 6, 4, 3, 2, 2, 1 in a 6 × 4 rectangle.
 
 **Snapped to whole cells by rounding edges, not sizes.** Each tile's
 edges are cumulative positions: a row's offset from the rectangle's
-start, and a tile's offset along its row. Each position is rounded once.
+start, and a tile's offset along its row. Each position is rounded once, half up. The last tile of a row ends,
+and the last row ends, exactly at the free rectangle's edge, not at a sum
+that may differ from it in the last bit.
 Two tiles that share an edge share the rounded position too, so the tiles
 cover the area exactly, with no gap and no overlap. Each edge is within
 half a cell of its exact place, so a tile's area is within one row and
@@ -8630,7 +8636,17 @@ reachable through the API.
 6 columns wide: one row with its name and value, in its colour, made
 bold. Its children are laid out in the rest. A group too small for a
 header gives its whole rectangle to its children, and its name is in the
-legend and the readout.
+legend and the readout. A header row comes out of the group's area, so
+its children share what is left: their areas are shares of the group's
+tile less its header, while a percentage is still of the values, not the
+cells.
+
+**A zoomed group's children fill the tiles region alone**, without the
+group's header: the readout names the group.
+
+**Too small to show** is an item with a size whose tile has no cells. A
+hidden group hides its children with it, and each is counted. An item
+whose size is zero is not counted: it was never meant to take room.
 
 **Regions, outside in:**
 

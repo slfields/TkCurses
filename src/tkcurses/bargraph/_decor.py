@@ -39,11 +39,12 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from tkcurses._charts.geometry import Rect
 from tkcurses._charts.numformat import NumberFormat, for_readout
 from tkcurses._charts.text import clusters
 from tkcurses._core.cells import cells
 from tkcurses.bargraph._glyphs import FULL, POINTS_PER_CELL
-from tkcurses.bargraph._layout import Rect, place_text
+from tkcurses.bargraph._layout import place_text
 from tkcurses.bargraph._render import (
     BACKGROUND,
     EMPTY_CELL,
