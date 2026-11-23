@@ -97,13 +97,30 @@ def value_range(
 
 
 def _widened(value: float, log: bool, base: float) -> tuple[float, float]:
-    """A range around one value, so it is drawn in the middle."""
+    """A range around one value, so it is drawn in the middle. At the
+    ends of what a float holds, where halving underflows to nothing or
+    widening overflows, the value is drawn at one end of the range
+    instead: a range must still span something."""
     if log:
-        return value / base, value * base
+        low, high = value / base, value * base
+        if not 0 < low < high < math.inf:
+            low, high = (
+                (value, value * base)
+                if value * base < math.inf
+                else (
+                    value / base,
+                    value,
+                )
+            )
+        return low, high
     if value == 0:
         return 0.0, 1.0
     half = abs(value) / 2
-    return value - half, value + half
+    low, high = value - half, value + half
+    if not -math.inf < low < high < math.inf:
+        # 5e-324 / 2 is 0, and 1.7e308 * 1.5 is infinite.
+        low, high = (0.0, value) if value > 0 else (value, 0.0)
+    return low, high
 
 
 def _nice(low: float, high: float, log: bool, base: float) -> tuple[float, float]:

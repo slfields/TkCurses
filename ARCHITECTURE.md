@@ -9357,7 +9357,11 @@ from what each scale and kind can show:
 ends outward to a multiple of the largest round step that gives at most
 ten steps across the range, as d3's `nice` does; on a log scale, to
 powers of the base. Custom bounds are kept exactly. A range of one value
-is widened to half its size each way, and of no values is 0 to 1.
+is widened to half its size each way, and of no values is 0 to 1. At the
+ends of a float, where half of 5e-324 is 0 and 1.7e308 widened is
+infinite, the value goes at one end of a range from zero instead (on a
+log axis, one step of the base wide): a property test found the
+single-point range, which the axis refused.
 
 The **square-root scale** places a value by its square root, signed so a
 negative value mirrors a positive one, as d3's `scaleSqrt` does: a
@@ -9485,6 +9489,11 @@ focus, and **Space** hides or shows it.
   `legendsize` gives them room.
 - The variance is Welford's, credited in `_stats`, not a sum of squares,
   which loses its precision for large values close together.
+- **The legend stays when nothing is shown.** With every series hidden
+  the chart has no x to draw, and the first build returned an empty
+  drawing there, legend and all - so the last series hidden could never
+  be shown again. Found in UAT. The legend is now laid out before the
+  chart's ranges are worked out, and drawn alone when there are none.
 
 ### Interaction
 
@@ -9527,7 +9536,10 @@ moves to the nearest one left.
   range and the legend went, which is what a click is measured against.
 - The click handler replaces the Canvas's class binding for `<Button-1>`
   and calls its routing first. A test binds a program's handler to the
-  axis's tag and clicks it.
+  axis's tag and clicks it. It is bound to `<Double-Button-1>` too: a
+  second click soon after the first is delivered as that instead, and
+  the Canvas's class binding for it would have taken it, so two legend
+  entries clicked quickly toggled only the first.
 
 ### Not yet
 

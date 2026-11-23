@@ -107,3 +107,18 @@ def test_a_log_range_holds_every_value_between_powers(values):
     for end in ends(span):
         exponent = math.log10(end)
         assert math.isclose(exponent, round(exponent), abs_tol=1e-9)
+
+
+@pytest.mark.parametrize("value", [5e-324, -5e-324, 1.7e308, -1.7e308])
+@pytest.mark.parametrize("bounds", ["data", "full"])
+def test_one_value_at_the_ends_of_a_float_still_has_a_range(value, bounds):
+    span = value_range([value], bounds=bounds, nice=False)
+    assert span.minimum < span.maximum
+    assert span.minimum <= value <= span.maximum
+
+
+@pytest.mark.parametrize("value", [5e-324, 1e-320, 1.7e308])
+def test_one_value_on_a_log_axis_at_the_ends_of_a_float(value):
+    span = value_range([value], scaletype="log", nice=False)
+    assert 0 < span.minimum < span.maximum < math.inf
+    assert span.minimum <= value <= span.maximum

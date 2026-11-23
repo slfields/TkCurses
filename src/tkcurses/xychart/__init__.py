@@ -516,7 +516,11 @@ class XYChart(tkcurses.Canvas):
         self.tk.bound_classes.add(marker)
         for key in ("Left", "Right", "Home", "End", "Up", "Down", "Escape", "space"):
             self.bind_class(name, f"<Key-{key}>", _chart_key)
+        # A second click soon after the first is a double click, which
+        # Tk sends instead of <Button-1>: two entries clicked in quick
+        # succession must both toggle.
         self.bind_class(name, "<Button-1>", _chart_click)
+        self.bind_class(name, "<Double-Button-1>", _chart_click)
         self.bind_class(name, "<FocusIn>", _chart_refocus)
         self.bind_class(name, "<FocusOut>", _chart_refocus)
 

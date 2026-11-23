@@ -166,6 +166,10 @@ class Item:
     tags: tuple[str, ...] = field(default=(TAG,))
 
 
+#: A series' xs and its own values after ``missing``.
+_Values = tuple[tuple[float, ...], tuple[float | None, ...]]
+
+
 @dataclass(frozen=True, slots=True)
 class Drawing:
     """What :func:`chart` drew, and where, so the widget can tell what a
@@ -198,24 +202,37 @@ class _Frame:
     percentage: bool
     #: Each series' own values after ``missing``, hidden ones too: what
     #: the legend's figures and the readout are of.
-    own: dict[str, tuple[tuple[float, ...], tuple[float | None, ...]]]
+    own: dict[str, _Values]
+
+
+def _colors(model: Model, config: Config) -> dict[str, str]:
+    """Each series' colour: its own, or the next of ``colors``."""
+    return {
+        name: model.get(name).color or config.colors[i % len(config.colors)]
+        for i, name in enumerate(model.names())
+    }
+
+
+def _own(model: Model, config: Config) -> dict[str, _Values]:
+    """Each series' own values after ``missing``, hidden ones too."""
+    own = {}
+    for name in model.names():
+        series = model.get(name)
+        fitted = fit(series.xs, series.ys, config.missing, config.endvalues)
+        own[name] = (tuple(series.xs), tuple(fitted.ys))
+    return own
 
 
 def _frame(
     model: Model, config: Config, references: Sequence[Reference]
 ) -> _Frame | None:
-    names = model.names()
-    colors = {
-        name: model.get(name).color or config.colors[i % len(config.colors)]
-        for i, name in enumerate(names)
-    }
+    colors = _colors(model, config)
+    own = _own(model, config)
     layers = []
-    own = {}
-    for name in names:
+    for name in model.names():
         series = model.get(name)
-        fitted = fit(series.xs, series.ys, config.missing, config.endvalues)
-        own[name] = (tuple(series.xs), tuple(fitted.ys))
         if not series.hidden:
+            fitted = fit(series.xs, series.ys, config.missing, config.endvalues)
             layers.append(
                 Layer(name, series.kind, tuple(series.xs), fitted.ys, fitted.filled)
             )
@@ -295,9 +312,25 @@ def chart(
     """
     if width < 1 or height < 1:
         return Drawing()
+    area = Rect(0, 0, width, height)
+    readout_row = None
+    if config.readout and height > MIN_PLOT[1] + 1:
+        taken, area = area.take_bottom(1)
+        readout_row = taken.y
+    colors = _colors(model, config)
+    entries = _entries(model, _own(model, config), config)
+    placed, area = _place_legend(entries, area, config)
+    ink = ""
+    grid = _dimmed("white", depth, rgb, background) if depth >= MIXES_FROM else ink
+    told: list[Item] = []
+    if placed is not None:
+        told = _legend(placed, model, colors, legend_focus, grid or "white")
+    names = tuple(entry.iid for entry in entries)
     frame = _frame(model, config, references)
     if frame is None:
-        return Drawing()
+        # Nothing shown - every series hidden, or none has a point - but
+        # the legend stays: it is how a hidden series is shown again.
+        return Drawing(told, legend=placed, entries=names)
     numbers = config.numbers
     if frame.percentage:
         numbers = dataclasses.replace(numbers, units="%", unitscale="none")
@@ -311,26 +344,6 @@ def chart(
             return 0
         return max((cells(numbers.format(t)) for t in yticks(rows)), default=0)
 
-    area = Rect(0, 0, width, height)
-    readout_row = None
-    if config.readout and height > MIN_PLOT[1] + 1:
-        taken, area = area.take_bottom(1)
-        readout_row = taken.y
-    entries = _entries(model, frame, config)
-    placed = None
-    if shown(config.legend, entries):
-        side = config.legendposition
-        size = extent(entries, side, config.legendsize, area, config.legendlines)  # type: ignore[arg-type]
-        take = {
-            "right": area.take_right,
-            "left": area.take_left,
-            "top": area.take_top,
-            "bottom": area.take_bottom,
-        }[side]
-        region, rest = take(size)
-        if size and rest.width >= MIN_PLOT[0] and rest.height >= MIN_PLOT[1]:
-            placed = place(entries, region, side, config.legendlines)  # type: ignore[arg-type]
-            area = rest
     lay = layout(
         area.width,
         area.height,
@@ -342,8 +355,6 @@ def chart(
     )
     cell_plot = lay.plot
     plot = Rect(cell_plot.x, cell_plot.y * 2, cell_plot.width, cell_plot.height * 2)
-    ink = ""
-    grid = _dimmed("white", depth, rgb, background) if depth >= MIXES_FROM else ink
 
     yrows: list[tuple[int, str]] = []
     xcols: list[tuple[int, int, str]] = []
@@ -372,9 +383,6 @@ def chart(
     marks = _cursor_marks(cursor, frame, plot, depth, rgb) if cursor in xs else []
     axes = _axes(lay, config, yrows, xcols, context, ink) if lay.axes else []
     figures = _figures(config.numbers)
-    told: list[Item] = []
-    if placed is not None:
-        told = _legend(placed, model, frame, legend_focus, grid or "white")
     if readout_row is not None:
         told.extend(
             _readout(readout_row, width, model, frame, cursor, xs, time, figures)
@@ -385,8 +393,30 @@ def chart(
         frame.xspan,
         xs,
         placed,
-        tuple(entry.iid for entry in entries),
+        names,
     )
+
+
+def _place_legend(
+    entries: list[Entry], area: Rect, config: Config
+) -> tuple[LegendLayout | None, Rect]:
+    """The legend placed at its side of ``area``, and what is left for the
+    chart; no legend when it is not to be shown, or would leave less than
+    a plot's worth."""
+    if not shown(config.legend, entries):
+        return None, area
+    side = config.legendposition
+    size = extent(entries, side, config.legendsize, area, config.legendlines)  # type: ignore[arg-type]
+    take = {
+        "right": area.take_right,
+        "left": area.take_left,
+        "top": area.take_top,
+        "bottom": area.take_bottom,
+    }[side]
+    region, rest = take(size)
+    if not size or rest.width < MIN_PLOT[0] or rest.height < MIN_PLOT[1]:
+        return None, area
+    return place(entries, region, side, config.legendlines), rest  # type: ignore[arg-type]
 
 
 # -------------------------------------------------------------- legend
@@ -401,7 +431,7 @@ def _figures(numbers: NumberFormat) -> NumberFormat:
     return numbers
 
 
-def _entries(model: Model, frame: _Frame, config: Config) -> list[Entry]:
+def _entries(model: Model, own: dict[str, _Values], config: Config) -> list[Entry]:
     """An entry for every series, hidden ones too: a hidden series' entry
     is how it is shown again."""
     figures = _figures(config.numbers)
@@ -410,7 +440,7 @@ def _entries(model: Model, frame: _Frame, config: Config) -> list[Entry]:
         series = model.get(name)
         stats = ""
         if config.legendstats:
-            values = statistics(frame.own[name][1], config.legendstats)
+            values = statistics(own[name][1], config.legendstats)
             stats = SEPARATOR.join(
                 f"{LABELS[stat]} {_figure(stat, value, figures)}"
                 for stat, value in values.items()
@@ -434,7 +464,7 @@ def _figure(stat: str, value: float | None, figures: NumberFormat) -> str:
 def _legend(
     placed: LegendLayout,
     model: Model,
-    frame: _Frame,
+    colors: dict[str, str],
     focus: str | None,
     dim: str,
 ) -> list[Item]:
@@ -451,7 +481,7 @@ def _legend(
     items = [_text("legend.edge", edge.x, edge.y, rule, "", tags)]
     for entry in placed.placed:
         series = model.get(entry.iid)
-        color = frame.colors[entry.iid]
+        color = colors[entry.iid]
         swatch = HIDDEN_SWATCH if series.hidden else SWATCH
         key = f"legend.{entry.iid}"
         items.append(

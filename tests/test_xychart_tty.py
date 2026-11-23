@@ -199,3 +199,28 @@ def test_a_click_on_the_legend_hides_its_series(terminal):
         lambda t: "░░ down" in t.row(1) and t.char_at(1, column).fg != "red",
         message="down hidden: a hollow swatch",
     )
+
+
+def click(term, column, row):
+    """A press and its release, as a terminal reports a click."""
+    term.send_mouse(column, row)
+    term.send_mouse(column, row, action="release")
+
+
+def test_a_series_hidden_last_can_be_shown_again(terminal):
+    # Both hidden: the plot is empty but the legend stays to be clicked.
+    term = run_live(terminal)
+    term.wait_for(lambda t: "██ down" in t.row(1), message="the legend")
+    up, down = term.row(0).index("up"), term.row(1).index("down")
+    click(term, up, 0)
+    term.wait_for(lambda t: "░░ up" in t.row(0), message="up hidden")
+    click(term, down, 1)
+    term.wait_for(
+        lambda t: "░░ up" in t.row(0) and "░░ down" in t.row(1),
+        message="both hidden, both entries still there",
+    )
+    click(term, up, 0)
+    term.wait_for(
+        lambda t: "██ up" in t.row(0) and t.contains("┤"),
+        message="up shown again, with its axis",
+    )

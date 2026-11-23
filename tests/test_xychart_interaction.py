@@ -341,3 +341,34 @@ def test_a_click_still_reaches_the_programs_tag_bindings(widget):
 def test_a_bad_legend_option_is_refused(root, options, message):
     with pytest.raises(tk.TclError, match=message):
         XYChart(root, **options)
+
+
+def test_with_every_series_hidden_the_legend_stays_to_show_them_again(widget):
+    widget.series_configure("cpu", hidden=True)
+    widget.series_configure("mem", hidden=True)
+    widget._update()
+    legend = widget._drawing.legend
+    assert legend is not None
+    assert widget.find_withtag(f"{TAG}.legend")
+    entry = {p.iid: p for p in legend.placed}["mem"]
+    click(widget, entry.x + 4, entry.y)
+    assert widget.series_cget("mem", "hidden") is False
+    assert widget.find_withtag(f"{TAG}.series.mem")
+
+
+def test_with_every_series_hidden_the_keys_still_reach_the_legend(widget):
+    widget.focus_set()
+    for name in ("cpu", "mem"):
+        widget.series_configure(name, hidden=True)
+    widget._update()
+    press(widget, "Down")
+    press(widget, "space")
+    assert widget.series_cget("cpu", "hidden") is False
+
+
+def test_a_quick_second_click_counts_as_a_click(widget):
+    placed = {p.iid: p for p in widget._drawing.legend.placed}
+    widget.event_generate("<Button-1>", x=placed["cpu"].x + 4, y=placed["cpu"].y)
+    widget.event_generate("<Double-Button-1>", x=placed["mem"].x + 4, y=placed["mem"].y)
+    assert widget.series_cget("cpu", "hidden") is True
+    assert widget.series_cget("mem", "hidden") is True
