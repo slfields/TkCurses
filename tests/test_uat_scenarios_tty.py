@@ -2245,8 +2245,12 @@ def _quit(term):
     assert "Traceback" not in term.stderr
 
 
+#: Scenario 53's chart: under its nine header lines, over the footer.
+CHART_53 = range(9, 23)
+
+
 def _chart_rows(t):
-    return [t.row(row) for row in range(7, 23)]
+    return [t.row(row) for row in CHART_53]
 
 
 def test_scenario_53_steps_through_its_data(uat_terminal):
@@ -2257,9 +2261,9 @@ def test_scenario_53_steps_through_its_data(uat_terminal):
     term.wait_for_idle(0.3)
     lines = _chart_rows(term)
     term.send_keys("n")
-    term.wait_for(lambda t: t.contains("data=areas   db shown"), message="the areas")
+    term.wait_for(lambda t: t.contains("data=areas  db shown"), message="the areas")
     term.send_keys("n")
-    term.wait_for(lambda t: t.contains("data=times   load shown"), message="the times")
+    term.wait_for(lambda t: t.contains("data=times  load shown"), message="the times")
     term.wait_for_idle(0.3)
     assert _chart_rows(term) != lines
     term.send_keys("h")
@@ -2279,9 +2283,7 @@ def test_scenario_53_feeds_live_times_back_in(uat_terminal):
     before = _chart_rows(term)
     term.send_keys("l")
     term.wait_for(
-        lambda t: (
-            t.contains("live=on") and [t.row(row) for row in range(7, 23)] != before
-        ),
+        lambda t: t.contains("live=on") and [t.row(row) for row in CHART_53] != before,
         message="the chart moving",
     )
     term.send_keys("l")
@@ -2306,17 +2308,68 @@ def test_scenario_53_keeps_the_note_on_top(uat_terminal):
 
 
 def test_scenario_53_sizes_by_a_share_of_the_screen(uat_terminal):
-    """z: 50% by 50% of 80 by 24 is 40 by 12, from row 7: nothing is drawn
-    right of column 39, nor below row 18."""
+    """z: 50% by 50% of 80 by 24 is 40 by 12, from row 9: nothing is drawn
+    right of column 39, nor below row 20."""
     term = _scenario_53(uat_terminal)
     term.send_keys("z")
     term.wait_for(
         lambda t: (
             t.contains("size: 50% x 50%")
-            and any(t.text_at(row, 0, 40).strip() for row in range(7, 19))
-            and all(t.text_at(row, 40, 40).strip() == "" for row in range(7, 23))
-            and all(t.text_at(row, 0, 80).strip() == "" for row in range(19, 22))
+            and any(t.text_at(row, 0, 40).strip() for row in range(9, 21))
+            and all(t.text_at(row, 40, 40).strip() == "" for row in CHART_53)
+            and all(t.text_at(row, 0, 80).strip() == "" for row in range(21, 23))
         ),
         message="the chart 40 by 12",
     )
+    _quit(term)
+
+
+def test_scenario_53_moves_the_crosshair_and_counts_its_events(uat_terminal):
+    """Pass 2: the keys reach the chart, its event reaches the program,
+    and an Escape that takes the crosshair away does not also quit."""
+    term = _scenario_53(uat_terminal)
+    term.send_keys("<End>")
+    term.wait_for(
+        lambda t: t.contains("cursor=59 (1 sent)") and t.row(22).startswith("59  cpu"),
+        message="the crosshair at the last x, read out",
+    )
+    term.send_keys("<Left>")
+    term.wait_for(lambda t: t.contains("cursor=58 (2 sent)"), message="one left")
+    term.send_keys("<Escape>")
+    term.wait_for(
+        lambda t: (
+            t.contains("cursor=- (3 sent)") and t.row(22).startswith("0 \u2013 59")
+        ),
+        message="the crosshair gone, the program still running",
+    )
+    _quit(term)
+
+
+def test_scenario_53_shows_a_series_again_after_all_are_hidden(uat_terminal):
+    """Pass 2, and the fault UAT found: with every series hidden from the
+    legend, the legend stays to show them again."""
+    term = _scenario_53(uat_terminal)
+    term.wait_for(lambda t: "\u2588\u2588 disk" in t.row(11), message="the legend")
+    column = term.row(9).index("cpu") - 3
+    for row in (9, 10, 11):
+        term.send_mouse(column, row)
+        term.send_mouse(column, row, action="release")
+    term.wait_for(
+        lambda t: (
+            all("\u2591\u2591" in t.row(row) for row in (9, 10, 11))
+            and t.contains("load hidden")
+        ),
+        message="every entry hollow, still there",
+    )
+    term.send_mouse(column, 10)
+    term.send_mouse(column, 10, action="release")
+    term.wait_for(
+        lambda t: "\u2588\u2588 load" in t.row(10) and t.contains("load shown"),
+        message="load shown again",
+    )
+    # The click left load's entry underlined: the first Escape is the
+    # chart's, taking that away, and the second the program's. Two ESC
+    # bytes together would be read as one Alt+Escape: let the first land.
+    term.send_keys("<Escape>")
+    term.wait_for_idle(0.3)
     _quit(term)

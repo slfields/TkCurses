@@ -15,7 +15,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""XYCharts: lines and areas, stacking, joining, gaps, scales and size.
+"""XYCharts: lines and areas, stacking, joining, gaps, scales and size;
+axes, references, the legend and the crosshair.
 
 What to do, pass 1: n steps the data through lines, areas and times; s
 steps stackmode, i interpolation, p points, m missing, e endvalues, d
@@ -26,12 +27,22 @@ the chart; z steps the size through filling the area, 50% by 50% of
 the screen, 60 columns by 50%, and 30 columns alone. Run it again under
 TERM=xterm and TERM=vt100.
 
+Pass 2: a puts titles on the axes, g draws gridlines, t takes the tick
+labels away, r adds reference lines and a band, u steps the units, k
+the legend's statistics, j the legend's side and then hides it, o the
+readout. Left, Right, Home and End move the crosshair and Escape takes
+it away; Up, Down and Space, or a click, hide and show series from the
+legend. Line 8 counts the <<XYChartCursor>> events the program got.
+
 What to look for: **lines are unbroken and joined where they should
 be**, areas fill to zero or to the area beneath in a dimmer shade and
 never hide a line, the gaps in the data show as the missing option
 says, the note stays on top, the live feed draws smoothly, and a
-percentage size follows the terminal when it is resized.
-TkCurses-j2ao.7.
+percentage size follows the terminal when it is resized. Pass 2: the
+axes' labels never meet each other or the plot, the legend and the
+readout name each series in its colour, and every series can be shown
+again from the legend, even after all are hidden.
+TkCurses-j2ao.7, TkCurses-j2ao.12.
 """
 
 from __future__ import annotations
@@ -39,7 +50,7 @@ from __future__ import annotations
 import datetime
 import math
 
-from tkcurses.xychart import XYChart
+from tkcurses.xychart import CURSOR_EVENT, XYChart
 from uat import _support
 
 TITLE = "53 - XYCharts"
@@ -116,6 +127,18 @@ SIZES = (
     ("width 30", (30, 0)),
 )
 DEPTHS = {0: "none", 8: "8", 16: "16", 256: "256", 1 << 24: "truecolor"}
+#: The legend's statistics, by k.
+STATS = ((), ("average", "max"), ("last", "min", "max", "average", "difference"))
+#: The units, by u: none, after the number, before it.
+UNITS = (("", "suffix"), ("%", "suffix"), ("$", "prefix"))
+#: The legend, by j: each side, then hidden.
+LEGENDS = (
+    ("auto", "right"),
+    ("auto", "bottom"),
+    ("auto", "left"),
+    ("auto", "top"),
+    ("hide", "right"),
+)
 
 
 def fill(chart, name):
@@ -127,12 +150,31 @@ def fill(chart, name):
         )
 
 
+def add_references(chart, data):
+    """An alert line at 70, a normal band from 40 to 50 with its line at
+    45, and a deploy marked down the chart at the 45th reading."""
+    chart.reference_add(70, text="alert", color="red")
+    chart.reference_add(45, text="normal", color="green", band=(40, 50))
+    chart.reference_add(x_of(data, 45), text="deploy", axis="x")
+
+
 def build(root, screen):
-    area = _support.content_area(root, top=7)
+    area = _support.content_area(root, top=9)
     # Custom bounds take these: the lines' and areas' middles.
     chart = XYChart(area, minimum=20, maximum=60)
     chart.pack(fill="both", expand=True)
-    state = {"data": "lines", "size": 0, "live": None, "next": COUNT, "note": None}
+    chart.focus_set()
+    state = {
+        "data": "lines",
+        "size": 0,
+        "live": None,
+        "next": COUNT,
+        "note": None,
+        "stats": 0,
+        "units": 0,
+        "legend": 0,
+        "cursors": 0,
+    }
     fill(chart, state["data"])
 
     def report():
@@ -151,29 +193,52 @@ def build(root, screen):
         )
         screen.line(
             3,
-            f"colours {DEPTHS.get(depth, depth)}   data={state['data']}"
-            f"   {second} {'hidden' if hidden else 'shown'}"
-            f"   live={'on' if state['live'] else 'off'}"
-            f"   note={'on' if state['note'] else 'off'}",
+            "a: titles  g: grid  t: ticks  r: refs  u: units  k: stats"
+            "  j: legend  o: readout",
         )
         screen.line(
             4,
-            f"stackmode={chart.cget('stackmode')}"
-            f" interpolation={chart.cget('interpolation')}"
-            f" points={chart.cget('points')}",
+            "Left Right Home End, click: crosshair   Up Down Space, click: legend",
         )
         screen.line(
             5,
-            f"missing={chart.cget('missing')} endvalues={chart.cget('endvalues')}"
-            f" dottedgaps={int(chart.cget('dottedgaps'))}",
+            f"colours {DEPTHS.get(depth, depth)}  data={state['data']}"
+            f"  {second} {'hidden' if hidden else 'shown'}"
+            f"  live={'on' if state['live'] else 'off'}"
+            f"  note={'on' if state['note'] else 'off'}"
+            f"  size: {SIZES[state['size']][0]}",
         )
         screen.line(
             6,
-            f"scaletype={chart.cget('scaletype')} bounds={chart.cget('bounds')}"
-            f" nicebounds={int(chart.cget('nicebounds'))}"
-            f"   size: {SIZES[state['size']][0]}",
+            f"stack={chart.cget('stackmode')}"
+            f" interp={chart.cget('interpolation')}"
+            f" missing={chart.cget('missing')} ends={chart.cget('endvalues')}"
+            f" dotted={int(chart.cget('dottedgaps'))}",
         )
-        screen.footer(" Escape quits ")
+        screen.line(
+            7,
+            f"points={chart.cget('points')} scale={chart.cget('scaletype')}"
+            f" bounds={chart.cget('bounds')} nice={int(chart.cget('nicebounds'))}"
+            f" grid={int(chart.cget('gridlines'))}"
+            f" ticks={int(chart.cget('ticklabels'))}"
+            f" titles={int(bool(chart.cget('xlabel')))}",
+        )
+        legend, side = chart.cget("legend"), chart.cget("legendposition")
+        at = chart.cursor()
+        if isinstance(at, datetime.datetime):
+            at = at.strftime("%H:%M")
+        elif at is not None:
+            at = f"{at:g}"
+        screen.line(
+            8,
+            f"legend={'hide' if legend == 'hide' else side}"
+            f"  stats={len(chart.cget('legendstats'))}"
+            f"  units={chart.cget('units') or '-'}"
+            f"  refs={'on' if chart.references() else 'off'}"
+            f"  readout={int(chart.cget('readout'))}"
+            f"  cursor={'-' if at is None else at} ({state['cursors']} sent)",
+        )
+        screen.footer(" Escape quits, once the crosshair and the underline are gone ")
         screen.refresh()
 
     def step(option, choices):
@@ -190,6 +255,31 @@ def build(root, screen):
         state["data"] = names[(names.index(state["data"]) + 1) % len(names)]
         fill(chart, state["data"])
         state["next"] = COUNT
+        if chart.references():
+            # The deploy line is at an x of the old data: put it again.
+            chart.reference_delete(*chart.references())
+            add_references(chart, state["data"])
+        report()
+
+    def titles():
+        on = not chart.cget("xlabel")
+        chart.configure(xlabel="reading" if on else "", ylabel="value" if on else "")
+        report()
+
+    def references():
+        if chart.references():
+            chart.reference_delete(*chart.references())
+        else:
+            add_references(chart, state["data"])
+        report()
+
+    def cycle(name, choices, apply):
+        state[name] = (state[name] + 1) % len(choices)
+        apply(choices[state[name]])
+        report()
+
+    def counted(_event):
+        state["cursors"] += 1
         report()
 
     def hide():
@@ -251,6 +341,36 @@ def build(root, screen):
     root.bind_all("l", lambda _event: live())
     root.bind_all("x", lambda _event: note())
     root.bind_all("z", lambda _event: size())
+    root.bind_all("a", lambda _event: titles())
+    root.bind_all("g", lambda _event: toggle("gridlines"))
+    root.bind_all("t", lambda _event: toggle("ticklabels"))
+    root.bind_all("r", lambda _event: references())
+    root.bind_all("o", lambda _event: toggle("readout"))
+    root.bind_all(
+        "u",
+        lambda _event: cycle(
+            "units", UNITS, lambda u: chart.configure(units=u[0], unitplacement=u[1])
+        ),
+    )
+    root.bind_all(
+        "k",
+        lambda _event: cycle(
+            "stats", STATS, lambda wanted: chart.configure(legendstats=wanted)
+        ),
+    )
+    root.bind_all(
+        "j",
+        lambda _event: cycle(
+            "legend",
+            LEGENDS,
+            lambda pair: chart.configure(legend=pair[0], legendposition=pair[1]),
+        ),
+    )
+    chart.bind(CURSOR_EVENT, counted)
+    # A series hidden or shown from the legend sends no event of its own:
+    # read the state again after any key or click the chart takes.
+    for sequence in ("<Key>", "<Button-1>", "<Double-Button-1>"):
+        chart.bind(sequence, lambda _event: root.after_idle(report), add="+")
     # A resize changes what a percentage asks for: show the size it got.
     root.bind(
         "<Configure>",

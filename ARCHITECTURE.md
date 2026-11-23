@@ -9540,6 +9540,12 @@ moves to the nearest one left.
   second click soon after the first is delivered as that instead, and
   the Canvas's class binding for it would have taken it, so two legend
   entries clicked quickly toggled only the first.
+- **A key the chart uses goes no further**, and one it has no use for
+  does: TreeMap's rule. Escape with a crosshair or an underlined entry
+  is the chart's; with neither, it reaches the window, so an Escape that
+  closes a dialog or quits still does. Found writing UAT pass 2, where
+  the first build's Escape took the crosshair away and quit the
+  scenario in the same press.
 
 ### Not yet
 

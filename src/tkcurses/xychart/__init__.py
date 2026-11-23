@@ -194,7 +194,10 @@ class XYChart(tkcurses.Canvas):
     :meth:`cursor` reads or sets it. **Up** and **Down** move along the
     legend's entries, and **Space** hides or shows the one underlined.
     The crosshair stays at its x as the data changes, or moves to the
-    nearest x left of it when that x has gone.
+    nearest x left of it when that x has gone. A key the chart uses goes
+    no further; one it has nothing to do with - **Escape** with no
+    crosshair and no entry underlined - reaches the window's bindings,
+    so an Escape that closes a dialog still does.
 
     **Half-cells.** A canvas draws in pixels half a cell tall, and a cell
     holds two colours at most. An area is filled in its line's colour
@@ -738,7 +741,10 @@ class XYChart(tkcurses.Canvas):
             at = bisect_right(xs, self._cursor)
             self._set_cursor(xs[at - 1] if at else xs[0], redraw=False)
 
-    def _key(self, key: str) -> None:
+    def _key(self, key: str) -> str | None:
+        """Act on a key; ``"break"`` when it was used, so it goes no
+        further, and ``None`` when the chart had nothing to do with it,
+        so the window's own binding for it still runs."""
         xs = self._model.xs()
         if key in ("Left", "Right", "Home", "End") and xs:
             now = self._cursor
@@ -752,23 +758,31 @@ class XYChart(tkcurses.Canvas):
                 at = xs.index(now) if now in xs else bisect_right(xs, now) - 1
                 step = -1 if key == "Left" else 1
                 self._set_cursor(xs[max(0, min(len(xs) - 1, at + step))])
-        elif key == "Escape":
+            return "break"
+        if key == "Escape":
+            if self._cursor is None and self._legend_focus is None:
+                return None
             self._legend_focus = None
             self._set_cursor(None)
             self._changed()
-        elif key in ("Up", "Down"):
+            return "break"
+        if key in ("Up", "Down"):
             entries = list(self._drawing.entries) if self._drawing.legend else []
-            if entries:
-                step = 1 if key == "Down" else -1
-                if self._legend_focus in entries:
-                    at = entries.index(self._legend_focus) + step
-                    at = max(0, min(len(entries) - 1, at))
-                else:
-                    at = 0 if key == "Down" else len(entries) - 1
-                self._legend_focus = entries[at]
-                self._changed()
-        elif key == "space" and self._legend_focus in self._model.names():
+            if not entries:
+                return None
+            step = 1 if key == "Down" else -1
+            if self._legend_focus in entries:
+                at = entries.index(self._legend_focus) + step
+                at = max(0, min(len(entries) - 1, at))
+            else:
+                at = 0 if key == "Down" else len(entries) - 1
+            self._legend_focus = entries[at]
+            self._changed()
+            return "break"
+        if key == "space" and self._legend_focus in self._model.names():
             self._toggle(self._legend_focus)
+            return "break"
+        return None
 
     def _toggle(self, name: str) -> None:
         hidden = self._model.get(name).hidden
@@ -1008,10 +1022,11 @@ def _chart_of(event: Event) -> XYChart | None:
     return widget if isinstance(widget, XYChart) else None
 
 
-def _chart_key(event: Event) -> None:
+def _chart_key(event: Event) -> str | None:
     chart = _chart_of(event)
-    if chart is not None:
-        chart._key(str(event.keysym))
+    if chart is None:
+        return None
+    return chart._key(str(event.keysym))
 
 
 def _chart_click(event: Event) -> None:

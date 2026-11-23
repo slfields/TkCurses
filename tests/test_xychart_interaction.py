@@ -372,3 +372,35 @@ def test_a_quick_second_click_counts_as_a_click(widget):
     widget.event_generate("<Double-Button-1>", x=placed["mem"].x + 4, y=placed["mem"].y)
     assert widget.series_cget("cpu", "hidden") is True
     assert widget.series_cget("mem", "hidden") is True
+
+
+@pytest.mark.parametrize(
+    ("key", "ready"),
+    [
+        ("Escape", lambda w: w.cursor(0)),
+        ("Left", lambda w: None),
+        ("Home", lambda w: None),
+        ("Down", lambda w: None),
+        ("space", lambda w: press(w, "Down")),
+    ],
+)
+def test_a_key_the_chart_uses_goes_no_further(root, widget, key, ready):
+    reached = []
+    root.bind(f"<Key-{key}>", lambda _e: reached.append(key))
+    ready(widget)
+    press(widget, key)
+    assert reached == []
+
+
+def test_a_key_with_nothing_to_do_reaches_the_window(root, widget):
+    # Escape with no crosshair and no legend entry chosen is the
+    # program's, as TreeMap's Escape is when it has nothing to undo.
+    reached = []
+    root.bind("<Escape>", lambda _e: reached.append("Escape"))
+    widget.cursor(0)
+    press(widget, "Escape")
+    press(widget, "Escape")
+    assert reached == ["Escape"]
+    root.bind("<Key-space>", lambda _e: reached.append("space"))
+    press(widget, "space")
+    assert reached == ["Escape", "space"]
