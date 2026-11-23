@@ -285,6 +285,7 @@ def test_the_focused_tiles_label_row_is_reversed(tree):
 
 
 def test_a_focused_group_reverses_its_header(tree):
+    tree.configure(legend="hide")
     tree.focus("web")
     header = tree._layout_now().tile("web").header
     assert reversed_cells(tree) == {
@@ -293,7 +294,7 @@ def test_a_focused_group_reverses_its_header(tree):
 
 
 def test_a_tile_with_no_room_for_text_is_reversed_whole(root):
-    widget = Treemap(root, outline="off")
+    widget = Treemap(root, outline="off", legend="hide")
     widget.insert("", "end", "big", text="big", value=1000)
     widget.insert("", "end", "tiny", text="tiny", value=40)
     widget._allocate(Rect(0, 0, 40, 10))

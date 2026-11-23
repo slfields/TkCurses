@@ -3467,6 +3467,44 @@
    "state": "plain",
    "value": 0
   },
+  "legend": {
+   "kind": "refused",
+   "tried": [
+    "0: error: bad legend \"0\": must be auto, show, or hide",
+    "3: error: bad legend \"3\": must be auto, show, or hide",
+    "9: error: bad legend \"9\": must be auto, show, or hide"
+   ]
+  },
+  "legendlines": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "legendposition": {
+   "kind": "refused",
+   "tried": [
+    "0: error: bad legendposition \"0\": must be right, left, top, or bottom",
+    "3: error: bad legendposition \"3\": must be right, left, top, or bottom",
+    "9: error: bad legendposition \"9\": must be right, left, top, or bottom"
+   ]
+  },
+  "legendsize": {
+   "kind": "refused",
+   "tried": [
+    "0: error: bad legendsize \"0\": must be auto, small, medium, large, or xlarge",
+    "3: error: bad legendsize \"3\": must be auto, small, medium, large, or xlarge",
+    "9: error: bad legendsize \"9\": must be auto, small, medium, large, or xlarge"
+   ]
+  },
+  "nestedlegend": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
   "outline": {
    "kind": "visible",
    "state": "plain",

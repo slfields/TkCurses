@@ -45,6 +45,17 @@ from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses.treemap._compose import Cell, Scene, compose
 from tkcurses.treemap._labels import percent
 from tkcurses.treemap._layout import Regions, TileLayout, lay_out, regions
+from tkcurses.treemap._legend import (
+    LEGEND_MODES,
+    LEGEND_SIZES,
+    MAX_LINES,
+    POSITIONS,
+    LegendLayout,
+    entries,
+    extent,
+    place,
+    shown,
+)
 from tkcurses.treemap._model import Model
 from tkcurses.treemap._navigate import OPPOSITE, Direction, neighbour
 from tkcurses.treemap._shades import OUTLINE_MODES, outlined_levels, shades_of
@@ -81,12 +92,20 @@ class _Config:
     outline: str
     readout: bool
     numbers: NumberFormat
+    legend: str
+    legendposition: str
+    legendsize: str
+    nestedlegend: bool
+    legendlines: int
 
 
 def _parse(options: dict[str, Any]) -> _Config:
     decimals = count(options["percentdecimals"], "percentdecimals", minimum=0)
     if decimals > 10:
         raise ValueError(f"percentdecimals must be at most 10, not {decimals}")
+    lines = count(options["legendlines"], "legendlines", minimum=1)
+    if lines > MAX_LINES:
+        raise ValueError(f"legendlines must be at most {MAX_LINES}, not {lines}")
     return _Config(
         labels=flag(options["labels"]),
         values=choice(options["values"], "values", VALUES),
@@ -103,6 +122,11 @@ def _parse(options: dict[str, Any]) -> _Config:
             rounding=choice(options["rounding"], "rounding", ROUNDINGS),  # type: ignore[arg-type]
             unitscale=choice(options["unitscale"], "unitscale", UNIT_SCALES),  # type: ignore[arg-type]
         ),
+        legend=choice(options["legend"], "legend", LEGEND_MODES),
+        legendposition=choice(options["legendposition"], "legendposition", POSITIONS),
+        legendsize=choice(options["legendsize"], "legendsize", ("auto", *LEGEND_SIZES)),
+        nestedlegend=flag(options["nestedlegend"]),
+        legendlines=lines,
     )
 
 
@@ -136,11 +160,14 @@ class Treemap(tkcurses.Frame):
     - Escape zooms back out, or moves from a child to its group.
     - A click focuses and selects the tile under the pointer, a group's
       header being the group. A double-click zooms into its group.
+    - A click on a legend entry focuses its item without selecting it,
+      so the bottom row names even an item too small to have a tile.
 
     Selecting sends ``<<TreemapSelect>>`` and zooming in or out sends
     ``<<TreemapZoom>>``. A treemap selects one item at most, marked with
     a ``●`` before its name. The bottom row names the focused item, with
-    its value and its share of everything and of its group.
+    its value and its share of everything and of its group, and its legend
+    entry is reversed too.
 
     **Acting on one item.** Give items ``tags`` and bind to a tag, as in a
     Treeview: ``tree.tag_bind("disk", "<<TreemapSelect>>", show)`` runs
@@ -164,6 +191,23 @@ class Treemap(tkcurses.Frame):
             ``"on"`` draws them everywhere, ``"off"`` nowhere.
         readout: A row at the bottom with the total, and how many items are
             too small to have a cell. Default True.
+        legend: A list beside the tiles naming each top-level item, with a
+            swatch of its colour, largest first; zoomed in, the group's
+            children. ``"auto"`` (the default) shows it when it names two
+            or more; ``"show"`` always; ``"hide"`` never. Either way it
+            gives way, before the readout, when the tiles would be left
+            fewer than 10 columns or 3 rows.
+        legendposition: ``"right"`` (the default), ``"left"``, ``"top"``
+            or ``"bottom"``. At the top or bottom the entries flow across
+            in columns, in at most a third of the height.
+        legendsize: The legend's width at the left or right, its edge
+            included: ``"small"`` 12 cells, ``"medium"`` 20, ``"large"``
+            28, ``"xlarge"`` 36; or ``"auto"`` (the default), the widest
+            entry, at most a third of the treemap.
+        nestedlegend: List each group's children under it, indented.
+            Default False.
+        legendlines: How many lines, 1 to 5, a name wraps onto before it
+            is cut with ``…``. Default 1.
         foreground: The colour of the readout and of text on no tile.
             Default white.
         background: The colour of cells no tile covers, as for any Frame.
@@ -260,6 +304,36 @@ class Treemap(tkcurses.Frame):
             for size in (5000, 3000, 1):
                 tree.insert("", "end", text=f"{size}", value=size)
 
+    Sample output (legend):
+        # size: 60x8
+        from tkcurses.treemap import Treemap
+        for legend in ("show", "hide"):
+            tree = Treemap(root, legend=legend, width=30)
+            tree.pack(side="left", fill="y")
+            for name, size in (("web", 550), ("db", 200), ("cache", 100)):
+                tree.insert("", "end", text=name, value=size)
+
+    Sample output (legendposition, legendsize):
+        # size: 60x10
+        from tkcurses.treemap import Treemap
+        for position, size in (("left", "small"), ("bottom", "auto")):
+            tree = Treemap(root, legendposition=position, legendsize=size,
+                           width=30)
+            tree.pack(side="left", fill="y")
+            for name, size in (("web", 550), ("db", 200), ("cache", 100)):
+                tree.insert("", "end", text=name, value=size)
+
+    Sample output (nestedlegend, legendlines):
+        # size: 50x10
+        from tkcurses.treemap import Treemap
+        tree = Treemap(root, nestedlegend=True, legendlines=2,
+                       legendsize="small")
+        tree.pack(fill="both", expand=True)
+        tree.insert("", "end", "web", text="web servers")
+        for name, size in (("nginx", 330), ("apache", 170)):
+            tree.insert("web", "end", text=name, value=size)
+        tree.insert("", "end", text="database", value=200)
+
     Sample output (units, unitplacement, unitspace):
         # size: 60x8
         from tkcurses.treemap import Treemap
@@ -307,6 +381,11 @@ class Treemap(tkcurses.Frame):
         "decimals": "",
         "rounding": "nearest",
         "unitscale": "si",
+        "legend": "auto",
+        "legendposition": "right",
+        "legendsize": "auto",
+        "nestedlegend": False,
+        "legendlines": 1,
     }
 
     #: Frame hides ``foreground``; a Treemap writes its readout in it.
@@ -325,7 +404,7 @@ class Treemap(tkcurses.Frame):
     ) -> None:
         self._model = Model()
         self._pending: str | None = None
-        self._cached: tuple[Any, TileLayout, Regions] | None = None
+        self._cached: tuple[Any, TileLayout, Regions, LegendLayout | None] | None = None
         #: The group zoomed into, or "".
         self._zoom = ""
         #: ``(key, at, back)``: pressing ``key`` with the focus on ``at``
@@ -578,9 +657,17 @@ class Treemap(tkcurses.Frame):
 
     def identify(self, x: int, y: int) -> str:
         """The item drawn at ``(x, y)``, in cells from the widget's top
-        left, or ``""``: a group's header is the group's."""
-        tile = self._layout_now().at(x, y)
-        return tile.iid if tile is not None else ""
+        left, or ``""``: a group's header is the group's, and a legend
+        entry its item's."""
+        scene = self._scene_now()
+        if scene is None:
+            return ""
+        tile = scene.layout.at(x, y)
+        if tile is not None:
+            return tile.iid
+        if scene.legend is not None:
+            return scene.legend.at(x, y) or ""
+        return ""
 
     # ------------------------------------------------------------------ tags
 
@@ -634,11 +721,15 @@ class Treemap(tkcurses.Frame):
 
     # ------------------------------------------------------------- the keys
 
-    def _layout_now(self) -> TileLayout:
+    def _scene_now(self) -> Scene | None:
         width, height = self._rect.width, self._rect.height
         if width <= 0 or height <= 0:
-            return TileLayout((), ())
-        return self._scene(width, height).layout
+            return None
+        return self._scene(width, height)
+
+    def _layout_now(self) -> TileLayout:
+        scene = self._scene_now()
+        return scene.layout if scene is not None else TileLayout((), ())
 
     def _arrow(self, direction: Direction) -> str | None:
         layout = self._layout_now()
@@ -713,11 +804,17 @@ class Treemap(tkcurses.Frame):
 
     def _click(self, x: int, y: int) -> None:
         self.focus_set()
-        tile = self._layout_now().at(x, y)
-        if tile is None:
+        scene = self._scene_now()
+        if scene is None:
             return
-        self.focus(tile.iid)
-        self._select(tile.iid)
+        tile = scene.layout.at(x, y)
+        if tile is not None:
+            self.focus(tile.iid)
+            self._select(tile.iid)
+            return
+        entry = scene.legend.at(x, y) if scene.legend is not None else None
+        if entry is not None:
+            self.focus(entry)  # the legend points, and does not select
 
     def _double(self, x: int, y: int) -> None:
         tile = self._layout_now().at(x, y)
@@ -801,13 +898,13 @@ class Treemap(tkcurses.Frame):
         ):
             self._zoom = ""  # the group, or its last child, was deleted
         zoom = self._zoom
-        key = (model.version, area, outlined, config.readout, zoom)
+        key = (model.version, area, outlined, config, zoom)
         if self._cached is not None and self._cached[0] == key:
-            _key, layout, cut = self._cached
+            _key, layout, cut, legend = self._cached
         else:
-            cut = regions(area, readout=config.readout)
+            cut, legend = self._regions(area, zoom)
             layout = lay_out(model, cut.tiles, zoom=zoom, outlined=outlined)
-            self._cached = (key, layout, cut)
+            self._cached = (key, layout, cut, legend)
         whole = model.total(zoom)
 
         def value_text(iid: str) -> str | None:
@@ -833,7 +930,28 @@ class Treemap(tkcurses.Frame):
             focus=model.focus,
             show_focus=self.focus_get() is self,
             selected=model.selected,
+            legend=legend,
         )
+
+    def _regions(self, area: Rect, zoom: str) -> tuple[Regions, LegendLayout | None]:
+        """``area`` cut into tiles, legend and readout, and the legend's
+        entries placed."""
+        config = self._config
+        listed = entries(self._model, zoom, config.nestedlegend)
+        side = config.legendposition
+        size = 0
+        if shown(config.legend, listed):
+            rest = area.take_bottom(1)[1] if config.readout else area
+            size = extent(listed, side, config.legendsize, rest, config.legendlines)  # type: ignore[arg-type]
+        cut = regions(
+            area,
+            readout=config.readout,
+            legend=side if size else None,  # type: ignore[arg-type]
+            legend_extent=size,
+        )
+        if cut.legend is None:
+            return cut, None
+        return cut, place(listed, cut.legend, side, config.legendlines)  # type: ignore[arg-type]
 
     def _readout(self, layout: TileLayout) -> str:
         """The bottom row: the focused item's place, value and shares; or,

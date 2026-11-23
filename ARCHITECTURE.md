@@ -8833,8 +8833,28 @@ Kibana hides a label that does not fit. So does this, by these rules:
 - **Overflow.** Entries that do not fit end with a `+N more` line.
 - **`legend="auto"`** (Kibana's default) shows it when there are two or
   more top-level items and the tiles keep room (above).
-- **The focused item's entry is drawn in reverse,** and clicking an entry
-  focuses that item.
+- **The focused item's entry is drawn in reverse,** its name and not its
+  swatch: a reversed `██` is a block of the background, so the colour
+  would vanish from the very entry being pointed at.
+- **Clicking an entry focuses that item, and does not select it.** The
+  legend points; selecting is what a tile does. It is also the one way to
+  reach an item too small to have a tile: focused from the legend, the
+  readout names it, with its value and shares. `identify(x, y)` answers
+  an entry's item, so a pointer `tag_bind` sees legend clicks too.
+- **What it lists follows what is shown.** Zoomed into a group, the
+  legend names the group's children. An item of zero is left out, as it
+  has no tile; an item too small for a tile is listed, which is the
+  point of the previous paragraph.
+- **A swatch is its tile's colour,** the shade a child was given, or the
+  group's colour for a child with no tile.
+- **The edge.** The column (or row) on the tiles' side is the legend's
+  `│` (or `─`), in the widget's foreground. Where the tiles beside it are
+  boxed in lines themselves, it is left blank instead: the box's own
+  line is already there, and two side by side read as one thick line.
+- **Sizes include the edge.** `small` is 12 cells in all, 11 for the
+  entries. A legend that cannot hold its edge, a swatch, a space and one
+  character (5 columns), or at the top or bottom its edge and one row,
+  is not drawn.
 
 ### Interaction
 

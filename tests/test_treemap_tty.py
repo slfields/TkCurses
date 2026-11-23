@@ -55,7 +55,7 @@ def run(terminal, body="", *, term="xterm-256color"):
 
 
 def test_tiles_are_drawn_in_colour_with_labels_and_shades(terminal):
-    term = run(terminal)
+    term = run(terminal, 'tree.configure(legend="hide")')
 
     def drawn(t):
         return (
@@ -153,4 +153,35 @@ def test_a_click_selects_and_marks_the_tile(terminal):
             and "140" in t.row(2)
         ),
         message="postgres selected and focused, and the event sent",
+    )
+
+
+def test_the_legend_names_each_group_in_its_colour(terminal):
+    term = run(terminal)
+
+    def drawn(t):
+        return (
+            t.text_at(0, 41, 7) == "│██ web"
+            and t.text_at(1, 42, 5) == "██ db"
+            and t.text_at(2, 42, 8) == "██ cache"
+            and t.char_at(0, 42).fg == "green"
+            and t.char_at(1, 42).fg == "red"
+            and t.char_at(2, 42).fg == "blue"
+        )
+
+    term.wait_for(drawn, message="the legend, a swatch for each group")
+
+
+def test_a_click_on_a_legend_entry_focuses_its_item(terminal):
+    term = run(terminal, "tree.focus_set()")
+    term.wait_for(lambda t: t.text_at(2, 45, 5) == "cache", message="drawn")
+    term.send_mouse(46, 2)
+    term.wait_for(
+        lambda t: (
+            t.row(11).startswith("cache   100")
+            and t.char_at(2, 45).reverse
+            and not t.char_at(2, 42).reverse
+            and "●" not in t.row(0) + t.row(1) + t.row(2)
+        ),
+        message="cache focused from the legend, its entry reversed, nothing selected",
     )

@@ -28,7 +28,9 @@ The order things are drawn in is the order they cover each other:
 3. headers and labels, the selected item's name after a ``●``;
 4. the focus: the focused tile's label row reversed, or the whole tile
    when it has no text to reverse;
-5. the readout.
+5. the legend: its edge, each entry's swatch in its item's colour and
+   its name, the focused item's name reversed, and ``+N more``;
+6. the readout.
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ from tkcurses._charts.geometry import Rect
 from tkcurses._charts.text import clusters, fit
 from tkcurses._core.cells import cells
 from tkcurses.treemap._labels import header_text, tile_text
+from tkcurses.treemap._legend import SWATCH
 from tkcurses.treemap._outline import inner, lines
 from tkcurses.treemap._shades import assign, shades_of
 
@@ -49,6 +52,7 @@ if TYPE_CHECKING:
 
     from tkcurses._charts.color import RGB
     from tkcurses.treemap._layout import Regions, Tile, TileLayout
+    from tkcurses.treemap._legend import LegendLayout
     from tkcurses.treemap._model import Model
 
 __all__ = ["EMPTY_TEXT", "SELECTED", "Cell", "Scene", "compose"]
@@ -94,6 +98,8 @@ class Scene:
     show_focus: bool = False
     #: The selected item, its name after :data:`SELECTED`.
     selected: str = ""
+    #: The legend's entries, placed in ``regions.legend``; ``None`` for none.
+    legend: LegendLayout | None = None
 
 
 Grid = list[list[Cell]]
@@ -147,11 +153,7 @@ class _Painter:
         if not scene.colors:
             return
         model = scene.model
-        order = model.ordered()
-
-        def top(iid: str) -> Paint:
-            return scene.colors[order.index(iid) % len(scene.colors)]
-
+        top = self.top
         children: dict[str, list[Tile]] = {}
         for tile in scene.layout.tiles:
             if tile.level == 0:
@@ -169,6 +171,20 @@ class _Painter:
             for tile, shade in zip(tiles, assign([t.rect for t in tiles]), strict=True):
                 spec = base[0] if shade == 0 else hex_color(shades[shade])
                 self.paints[tile.iid] = (spec, shades[shade])
+
+    def top(self, iid: str) -> Paint:
+        """The colour of the top-level item ``iid``, or of its group."""
+        scene = self.scene
+        group = scene.model.parent(iid) or iid
+        order = scene.model.ordered()
+        return scene.colors[order.index(group) % len(scene.colors)]
+
+    def swatch(self, iid: str) -> Paint | None:
+        """The colour a legend entry shows: its tile's, or, for an item
+        with no tile, its group's."""
+        if not self.scene.colors:
+            return None
+        return self.paints.get(iid) or self.top(iid)
 
     # -------------------------------------------------------------- tiles
 
@@ -266,6 +282,31 @@ class _Painter:
         x = area.x + (area.width - cells(text)) // 2
         self.text(x, area.y + (area.height - 1) // 2, text, None)
 
+    def legend(self) -> None:
+        scene = self.scene
+        legend = scene.legend
+        if legend is None or scene.regions.legend is None:
+            return
+        edge = legend.edge
+        # Boxed tiles already have a line on that side: the edge is a gap.
+        glyph = " " if scene.zoom in scene.outlined else legend.edge_glyph
+        for y in range(edge.y, edge.y + edge.height):
+            for x in range(edge.x, edge.x + edge.width):
+                self.put(x, y, Cell(glyph))
+        for entry in legend.placed:
+            paint = self.swatch(entry.iid)
+            x = entry.x + entry.indent
+            for offset, glyph in enumerate(SWATCH):
+                self.put(x + offset, entry.y, Cell(glyph, paint[0] if paint else ""))
+            text = entry.text_rect
+            for row, line in enumerate(entry.lines):
+                self.text(text.x, text.y + row, fit(line, text.width), None)
+            if scene.show_focus and entry.iid == scene.focus:
+                self.reverse(text)
+        if legend.more_at is not None:
+            x, y = legend.more_at
+            self.text(x, y, legend.more_text, None)
+
     def readout(self) -> None:
         row = self.scene.regions.readout
         if row is None or not self.scene.readout:
@@ -282,5 +323,6 @@ def compose(scene: Scene) -> Grid:
     painter.labels()
     painter.focus()
     painter.empty()
+    painter.legend()
     painter.readout()
     return painter.grid
