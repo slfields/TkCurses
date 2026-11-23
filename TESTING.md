@@ -123,7 +123,15 @@ input, not only the ones someone thought of:
 | `tests/test_bargraph_layout.py` | For any options and size, a graph's regions stay inside it and never overlap, and its natural size fits everything it draws. |
 | `tests/test_bargraph_decor.py` | A composed graph never writes outside its window or onto its border. |
 | `tests/test_bargraph_scale.py`, `tests/test_bargraph_model.py` | A value never maps past the bar's peak, and an autoscaled maximum never cuts a value off, for any sequence of values. |
-| `tests/test_bargraph_numformat.py` | A number is never written with more significant digits than asked, with no leading zeros but one before the point, and with exactly the decimals asked. |
+| `tests/test_charts_numformat.py` | A number is never written with more significant digits than asked, with no leading zeros but one before the point, and with exactly the decimals asked. |
+| `tests/test_charts_text.py` | Text cut to fit a width never takes more cells than that width. |
+| `tests/test_treemap_model.py` | A treemap's total is the sum of what takes room - a group's children, never its own value besides - and its layout order is largest first. |
+| `tests/test_treemap_layout.py` | TreeMap tiles cover their area exactly once, every edge is within half a cell of its exact place, and the regions never overlap while the tiles keep their least room when the widget has it. |
+| `tests/test_treemap_shades.py` | Neighbouring treemap tiles take different shades whenever four allow it, and every cell of an outlined treemap is a line, a header or inside one tile, or else inside a group drawn as itself. |
+| `tests/test_treemap_widget.py` | A treemap tile's label never takes more lines than the tile has rows, nor more cells than it has columns. |
+| `tests/test_treemap_interaction.py` | A treemap's arrow key moves only to a tile wholly that way, and the opposite key always comes back to where it started. |
+| `tests/test_treemap_legend.py` | A treemap legend's wrapped names never pass their width or the line limit; at any size and position the legend overlaps neither the tiles nor the readout, and every entry stays inside it. |
+| `tests/test_treemap_invariants.py` | For any two-level tree in any area: the top level tiles the area exactly, each group's children tile what its header leaves, children nest in their group, every item with a size has a tile or is counted hidden, tiles go largest first, each area is within a row and a column of its share, each tile is one colour with its text, the legend overlaps neither tiles nor readout, and only the focused item is reversed. A treemap's width and height are each cells or a share of the screen, independently. |
 | `tests/test_bargraph_gradient.py` | The shades run evenly from the start colour to the series colour. |
 | `tests/test_wipeable.py` | Any sequence of inserts and deletes leaves a hidden field's wipeable buffer holding what the same edits make of a `str`, and a hidden `TextField` keeps the same cursor, selection, view and columns as a plain one. |
 | `tests/test_core_config.py` | For any value of any setting, a program keeps what the parser accepts, clamps what is out of range, and falls back on anything else, so `tkcurses-cfg` and a program never disagree. |

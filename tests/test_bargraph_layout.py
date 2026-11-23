@@ -25,9 +25,9 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from tkcurses._charts.geometry import Rect
 from tkcurses.bargraph._layout import (
     LayoutSpec,
-    Rect,
     axis_title_spot,
     compute_layout,
     length_cells_for,

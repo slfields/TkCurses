@@ -23,13 +23,12 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from tkcurses._charts.color import hex_color, shade_rgb
 from tkcurses.bargraph._gradient import (
     MAX_STEPS,
     default_start,
-    hex_color,
     shade,
     shade_parts,
-    shade_rgb,
     shade_window,
     step_at,
     step_count,

@@ -37,7 +37,9 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, replace
 
-from tkcurses._core.cells import cells, clip_cells
+from tkcurses._charts.geometry import Rect
+from tkcurses._charts.text import fit
+from tkcurses._core.cells import cells
 from tkcurses.bargraph._glyphs import POINTS_PER_CELL, Orient
 
 #: The anchors the graph label accepts, as ``ttk.LabelFrame``'s.
@@ -49,63 +51,6 @@ HORIZONTAL_AXIS_ROWS = 2
 #: Cells of edge left visible either side of a graph label set in the box
 #: (the corner and one line cell: ``┌─ Title ─┐``).
 TITLE_INSET = 2
-
-ELLIPSIS = "…"  # …
-
-
-@dataclass(frozen=True, slots=True)
-class Rect:
-    """A rectangle in cells, relative to the widget's window."""
-
-    x: int
-    y: int
-    width: int
-    height: int
-
-    @property
-    def empty(self) -> bool:
-        return self.width <= 0 or self.height <= 0
-
-    def inset(self, cells: int) -> Rect:
-        """This rect with ``cells`` taken off every side."""
-        return Rect(
-            self.x + cells,
-            self.y + cells,
-            max(0, self.width - 2 * cells),
-            max(0, self.height - 2 * cells),
-        )
-
-    def take_top(self, rows: int) -> tuple[Rect, Rect]:
-        """``(taken, rest)`` with up to ``rows`` taken from the top."""
-        rows = min(max(0, rows), self.height)
-        return (
-            Rect(self.x, self.y, self.width, rows),
-            Rect(self.x, self.y + rows, self.width, self.height - rows),
-        )
-
-    def take_bottom(self, rows: int) -> tuple[Rect, Rect]:
-        """``(taken, rest)`` with up to ``rows`` taken from the bottom."""
-        rows = min(max(0, rows), self.height)
-        return (
-            Rect(self.x, self.y + self.height - rows, self.width, rows),
-            Rect(self.x, self.y, self.width, self.height - rows),
-        )
-
-    def take_left(self, columns: int) -> tuple[Rect, Rect]:
-        """``(taken, rest)`` with up to ``columns`` taken from the left."""
-        columns = min(max(0, columns), self.width)
-        return (
-            Rect(self.x, self.y, columns, self.height),
-            Rect(self.x + columns, self.y, self.width - columns, self.height),
-        )
-
-    def take_right(self, columns: int) -> tuple[Rect, Rect]:
-        """``(taken, rest)`` with up to ``columns`` taken from the right."""
-        columns = min(max(0, columns), self.width)
-        return (
-            Rect(self.x + self.width - columns, self.y, columns, self.height),
-            Rect(self.x, self.y, self.width - columns, self.height),
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,10 +345,7 @@ def place_text(rect: Rect, text: str, anchor: str) -> tuple[int, str]:
     """
     if rect.width <= 0:
         return rect.x, ""
-    if cells(text) > rect.width:
-        text = (
-            clip_cells(text, rect.width - 1) + ELLIPSIS if rect.width > 1 else ELLIPSIS
-        )
+    text = fit(text, rect.width)
     spare = rect.width - cells(text)
     if anchor.endswith("w"):
         return rect.x, text

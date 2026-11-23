@@ -89,7 +89,8 @@ def show() -> int:
     print("                 docs/UAT_CLASSIC_LOOKS.md (48),")
     print("                 docs/UAT_CLASSIC_BEHAVIOUR.md (49),")
     print("                 docs/UAT_MENU_IMAGES_TEAROFFS.md (50),")
-    print("                 docs/UAT_BARGRAPH.md (51)")
+    print("                 docs/UAT_BARGRAPH.md (51),")
+    print("                 docs/UAT_TREEMAP.md (52)")
     return 0
 
 

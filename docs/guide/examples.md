@@ -263,3 +263,10 @@ the same way.
 Three more programs are about `BarGraph`, a widget only TkCurses has:
 bars and series, values that change, and axes and number formats. They
 are on [their own page](bargraph.md), with what each shows.
+
+## Treemaps
+
+Three more are about `TreeMap`, also a widget only TkCurses has: groups,
+values and the legend, acting on what is chosen, and a disk's usage
+that follows the disk. They are on
+[their own page](treemap.md).

@@ -634,3 +634,9 @@ def test_an_unknown_color_is_refused_when_set(root, options):
     with pytest.raises(tk.TclError, match="notacolor"):
         graph.configure(**options)
     assert graph.cget("colors") == ()
+
+
+def test_one_colour_not_in_a_list_is_refused_as_a_colour(root):
+    """It raised a TypeError out of tuple(5) before."""
+    with pytest.raises(tk.TclError, match='unknown color name "5"'):
+        BarGraph(root, colors=5)

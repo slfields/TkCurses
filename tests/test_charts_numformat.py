@@ -25,7 +25,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from tkcurses.bargraph._numformat import NumberFormat, for_readout, widest
+from tkcurses._charts.numformat import NumberFormat, for_readout, widest
 
 
 @pytest.mark.parametrize(

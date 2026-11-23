@@ -2146,3 +2146,87 @@ def test_scenario_51_steps_the_bar_by_an_eighth(uat_terminal):
     term.send(ESCAPE)
     assert term.wait_for_exit(timeout=10) == 0
     assert "Traceback" not in term.stderr
+
+
+def test_scenario_52_counts_a_tile_too_small_to_show(uat_terminal):
+    """t adds an item of 0.5, which has no cell: the readout counts it, as
+    the checklist says, and t again takes it away."""
+    term = uat_terminal(cols=80, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_52_treemap"])
+    term.wait_for(
+        lambda t: t.contains("total 850") and t.contains("web 64.71%"),
+        message="the services",
+    )
+    term.send_keys("t")
+    term.wait_for(
+        lambda t: t.contains("total 850.5 · 1 too small to show"),
+        message="the tiny item counted",
+    )
+    term.send_keys("t")
+    term.wait_for(
+        lambda t: any(line.rstrip() == "total 850" for line in t.display),
+        message="the tiny item gone",
+    )
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+    assert "Traceback" not in term.stderr
+
+
+def test_scenario_52_switches_to_many_items(uat_terminal):
+    term = uat_terminal(cols=80, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_52_treemap"])
+    term.wait_for(lambda t: t.contains("data=services"), message="the services")
+    term.send_keys("n")
+    term.wait_for(
+        lambda t: (
+            t.contains("data=24 items") and t.contains("a1") and t.contains("total 792")
+        ),
+        message="24 items",
+    )
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+
+
+def test_scenario_52_shows_descriptions_in_the_legend(uat_terminal):
+    term = uat_terminal(cols=80, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_52_treemap"])
+    term.wait_for(lambda t: t.contains("desc=0"), message="the services")
+    term.send_keys("d")
+    term.wait_for(
+        lambda t: (
+            t.contains("desc=1")
+            and t.contains("   primary and replica")
+            and t.contains("   redis, in memory")
+        ),
+        message="the descriptions under their names",
+    )
+    term.send_keys("p")
+    term.wait_for(
+        lambda t: t.contains("legend=auto left") and t.row(7).startswith("██ web"),
+        message="the legend on the left",
+    )
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+    assert "Traceback" not in term.stderr
+
+
+def test_scenario_52_sizes_by_a_share_of_the_screen(uat_terminal):
+    """z: 50% by 50% of 80 by 24 is 40 by 12, from row 7, so its readout -
+    its bottom row - is row 18; its legend, 9 columns, starts at column 31,
+    and nothing is drawn right of column 39."""
+    term = uat_terminal(cols=80, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_52_treemap"])
+    term.wait_for(lambda t: t.contains("size: fill"), message="the services")
+    term.send_keys("z")
+    term.wait_for(
+        lambda t: (
+            t.contains("size: 50% x 50%")
+            and t.row(18).startswith("total 850")
+            and t.text_at(7, 31, 6) == "\u2502\u2588\u2588 we"  # its legend's edge
+            and t.text_at(7, 40, 40).strip() == ""
+        ),
+        message="the treemap 40 by 12",
+    )
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+    assert "Traceback" not in term.stderr
