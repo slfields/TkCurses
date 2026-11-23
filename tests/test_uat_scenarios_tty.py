@@ -2245,12 +2245,23 @@ def _quit(term):
     assert "Traceback" not in term.stderr
 
 
+def _chart_rows(t):
+    return [t.row(row) for row in range(7, 23)]
+
+
 def test_scenario_53_steps_through_its_data(uat_terminal):
+    """The times are the lines' values with a 15-minute outage, so a time
+    axis, spaced by the clock, must draw them differently: drawn the same,
+    x would be spaced by the count."""
     term = _scenario_53(uat_terminal)
+    term.wait_for_idle(0.3)
+    lines = _chart_rows(term)
     term.send_keys("n")
     term.wait_for(lambda t: t.contains("data=areas   db shown"), message="the areas")
     term.send_keys("n")
     term.wait_for(lambda t: t.contains("data=times   load shown"), message="the times")
+    term.wait_for_idle(0.3)
+    assert _chart_rows(term) != lines
     term.send_keys("h")
     term.wait_for(lambda t: t.contains("load hidden"), message="load hidden")
     _quit(term)
@@ -2265,7 +2276,7 @@ def test_scenario_53_feeds_live_times_back_in(uat_terminal):
     term.wait_for(lambda t: t.contains("data=areas"), message="the areas")
     term.send_keys("n")
     term.wait_for(lambda t: t.contains("data=times"), message="the times")
-    before = [term.row(row) for row in range(7, 23)]
+    before = _chart_rows(term)
     term.send_keys("l")
     term.wait_for(
         lambda t: (

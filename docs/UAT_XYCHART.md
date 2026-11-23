@@ -28,9 +28,11 @@ drawn; lines 4 to 6 the options in force and the size.
 
 The data is three series, never random, so two runs draw the same. In
 `lines` and `times`: **cpu** green, a fast wave; **load** red, a slower
-one with values missing; **disk** blue, a slow rise. In `areas`: **web**
-green, **db** red with values missing, **cache** blue. `load` and `db`
-miss their first two values, one alone, four together, and their last.
+one with values missing; **disk** blue, a slow rise below the other
+two. In `areas`: **web** green, **db** red with values missing, **cache**
+blue. `load` and `db` miss their first two values, one alone, four
+together, and their last. `times` is `lines` read once a minute from
+23:30, with **no readings for 15 minutes** after 23:57.
 
 | | |
 |---|---|
@@ -55,14 +57,32 @@ visible, typing echoed.
       climbs or falls steeply
 - [ ] A steep stretch of the green line reads as one line, not as a
       scatter of separate cells
-- [ ] Where two lines cross, **both are still followed by eye**: the one
-      drawn later (blue over red over green) wins the shared cell, and
-      the other picks up on the far side
-- [ ] The red line has **gaps**: none at its very start, one short, one
-      longer in the middle, and none at its very end. Nothing is drawn
-      across them
+- [ ] Where two lines cross, **both are still followed by eye**. A pixel
+      holds one colour, so the line drawn later (blue over red over
+      green) takes the pixels they share, and the other picks up on the
+      far side. That is the only place a line should look broken, apart
+      from the red line's gaps
+- [ ] The red line's **missing values** show as gaps, and nothing is
+      drawn across them: it starts a little in from the left edge (its
+      first two values), breaks for **one column** just over a quarter of
+      the way along (one value), breaks for **about five columns** past the
+      middle (four values), and stops one step short of the right edge
+      (its last). Any other break in it is a fault: say where
 - [ ] **Resize** the terminal narrower and wider. The chart draws again
       to fill it, and nothing is left behind where a line was
+
+## 53. Times
+
+**n** twice: `data=times`.
+
+- [ ] The same three series, but **not the same picture**: x is spaced by
+      the clock, not by the count. From about a third of the way along to
+      just past the middle, every line runs **straight across**:
+      the 15 minutes with no readings, joined from the last reading
+      before to the first after
+- [ ] Either side of it the waves are **squeezed** to fit, since the same
+      60 readings now share less width
+- [ ] There are no time labels yet: the axes come in pass 2
 
 ## 53. Areas and stacking
 
@@ -124,16 +144,17 @@ On `data=lines`, all the above back to their defaults.
 
 - [ ] **c**: `scaletype=log`. The lines are **squeezed toward the top**:
       a log axis gives each tenfold the same height, so values between
-      20 and 80 take a band of the height. The blue line, from about 8,
+      20 and 80 take a band of the height. The blue line, from about 4,
       climbs steeply at first. **c**: `sqrt`, between the two
 - [ ] **c** back to `linear`. **b**: `bounds=data`. **Nothing moves**:
-      the values run from 8 to 80, and rounded out to round numbers that
+      the values run from 4 to 80, and rounded out to round numbers that
       is 0 to 80, the same as `full`
 - [ ] **b**: `bounds=custom`, from 20 to 60. Lines **leave through the
       top and bottom edges and come back**, cut where they cross; none is
-      drawn squashed against an edge
+      drawn squashed against an edge. Blue, below 20 nearly all the way,
+      is gone but for the last sixth of the width
 - [ ] **b** twice, back to `data`, then **f**: `nicebounds=0`. The axis is
-      8 to 80, and the lowest and highest values touch the **very bottom
+      4 to 80, and the lowest and highest values touch the **very bottom
       and top rows**: the blue line starts on the bottom row. **f** again
       puts the rounding back
 - [ ] On `data=areas`, **b** `data` does nothing: an area is drawn from

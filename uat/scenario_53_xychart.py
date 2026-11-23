@@ -70,7 +70,9 @@ SERIES = {
     "lines": (
         ("cpu", "line", wave(50, 30, 20)),
         ("load", "line", gappy(wave(35, 10, 33, 5))),
-        ("disk", "line", wave(30, 22, 140, -35)),
+        # Below load, so the two cross rather than run together: where
+        # two lines share a pixel only the later one shows.
+        ("disk", "line", wave(14, 10, 140, -35)),
     ),
     "areas": (
         ("web", "area", wave(20, 8, 25)),
@@ -84,9 +86,20 @@ SERIES["times"] = SERIES["lines"]
 START = datetime.datetime(2026, 11, 23, 23, 30)
 
 
+#: In the times data, the readings after this one come after an outage.
+OUTAGE_AFTER = 27
+#: How long the outage is: the minutes with no reading at all.
+OUTAGE = datetime.timedelta(minutes=15)
+
+
 def x_of(data, n):
-    """Point n's x: n itself, or a minute after START for each."""
-    return START + datetime.timedelta(minutes=n) if data == "times" else n
+    """Point n's x: n itself; or, for times, a reading a minute, with
+    :data:`OUTAGE` missing after reading :data:`OUTAGE_AFTER`, so a time
+    axis, spaced by the clock, is not spaced by the count."""
+    if data != "times":
+        return n
+    at = START + datetime.timedelta(minutes=n)
+    return at + OUTAGE if n > OUTAGE_AFTER else at
 
 
 STACKS = ("stacked", "percentage", "unstacked")
