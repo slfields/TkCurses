@@ -9151,6 +9151,14 @@ shade lighter so it shows on its own line. `points="auto"` shows them
 when neighbouring points are at least four pixels apart, so a sparse
 series shows where its data is and a dense one stays a line.
 
+**One pixel is `(x, y, x + 1, y + 1)`.** A rectangle with no outline is
+filled short of its far corner, as Tk's is (`(10, 10, 16, 14)` fills
+columns 10 to 15, measured on Tk 9.0 for the Canvas), so
+`(x, y, x, y)` paints nothing. The first build drew every point that
+way, and they were missing until the visible-options recorder measured
+`points` as changing nothing. A dash one pixel long is drawn the same
+way.
+
 **More points than columns.** A column of pixels can show one x. When
 two neighbouring points of a run fall in one column, each column of that
 run keeps the first, last, lowest and highest of the points in it (M4).
@@ -9304,7 +9312,18 @@ checks are `_signed_distance`, which would refuse `"50%"`, so the chart
 uses `_charts.size.dimension` instead. And Canvas's `_apply_requested_size`
 and `_plane_size` read the options as whole cells, so the chart
 overrides both to use the cells `ScreenSize` works out. Canvas itself
-keeps Tk's rules.
+keeps Tk's rules. Its `width` and `height` default to 40 and 10, which
+`ScreenSize` would take as given; the chart's default to 0, as a
+Frame's do, which is what "not given" means to it.
+
+**Redrawing.** A change asks for one drawing once the program is idle.
+The drawing builds the scene, then for each key changes the item it
+made before with `coords` and `itemconfigure` where something differs,
+makes one where the key is new, and deletes the item of a key that went.
+Only when it made an item does it lower the chart's items, in scene
+order, beneath everything: the program's own stay on top. The canvas is
+repainted once at the end, not once per item. A resize changes the
+plot, so the paint that follows one rebuilds the scene first.
 
 ### Scales, axes and ticks
 

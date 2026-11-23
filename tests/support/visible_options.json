@@ -5173,5 +5173,269 @@
   "yscrollcommand": {
    "kind": "behaviour"
   }
+ },
+ "xychart.XYChart": {
+  "background": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "red"
+  },
+  "borderwidth": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "bounds": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "custom"
+  },
+  "closeenough": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "colors": {
+   "kind": "visible",
+   "state": "plain",
+   "value": [
+    "red",
+    "blue"
+   ]
+  },
+  "confine": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "cursor": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "hand2"
+   ]
+  },
+  "dottedgaps": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 1
+  },
+  "endvalues": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "zero"
+  },
+  "height": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "highlightbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightcolor": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "highlightthickness": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "insertbackground": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    "red"
+   ]
+  },
+  "insertborderwidth": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "insertofftime": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "insertontime": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "insertwidth": {
+   "kind": "invisible",
+   "state": "focus",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "interpolation": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "smooth"
+  },
+  "logbase": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 2
+  },
+  "maximum": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 20
+  },
+  "minimum": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 5
+  },
+  "missing": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "zero"
+  },
+  "nicebounds": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "offset": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "2,2"
+   ]
+  },
+  "points": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "show"
+  },
+  "relief": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "groove",
+    "sunken",
+    "raised"
+   ]
+  },
+  "scaletype": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "log"
+  },
+  "scrollregion": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "0 0 40 20"
+   ]
+  },
+  "selectbackground": {
+   "kind": "invisible",
+   "state": "selected",
+   "tried": [
+    "red"
+   ]
+  },
+  "selectborderwidth": {
+   "kind": "invisible",
+   "state": "selected",
+   "tried": [
+    0,
+    3,
+    9
+   ]
+  },
+  "selectforeground": {
+   "kind": "invisible",
+   "state": "selected",
+   "tried": [
+    "red"
+   ]
+  },
+  "stackmode": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "percentage"
+  },
+  "state": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "disabled"
+  },
+  "takefocus": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    0,
+    1
+   ]
+  },
+  "width": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 3
+  },
+  "xscrollcommand": {
+   "kind": "behaviour"
+  },
+  "xscrollincrement": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  },
+  "yscrollcommand": {
+   "kind": "behaviour"
+  },
+  "yscrollincrement": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    3,
+    9
+   ]
+  }
  }
 }

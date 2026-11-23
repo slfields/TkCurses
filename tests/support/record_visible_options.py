@@ -95,6 +95,13 @@ BASES = {
         " for n, v in (('postgres', 140), ('mysql', 60))];"
         " w.insert('', 'end', text='cache', value=1234)",
     ),
+    # An area under a line, both with points, and a gap in the line.
+    "xychart.XYChart": (
+        "XYChart(root, **{'width': 40, 'height': 10, **kw})",
+        "w.add_series('a', [(t, 4 + t % 5) for t in range(16)], kind='area');"
+        " w.add_series('b', [(t, None if t in (0, 6, 7) else 12 - t * 0.5)"
+        " for t in range(16)])",
+    ),
     "Button": ("tk.Button(root, **{'text': 'Sample', **kw})", ""),
     "Checkbutton": ("tk.Checkbutton(root, **{'text': 'Sample', **kw})", ""),
     "Radiobutton": ("tk.Radiobutton(root, **{'text': 'Sample', 'value': 1, **kw})", ""),
@@ -250,6 +257,19 @@ WIDGET_VALUES: dict[tuple[str, str], list[object]] = {
     ("bargraph.BarGraph", "colormode"): ["gradient"],
     ("bargraph.BarGraph", "gradientstart"): [("white",)],
     ("treemap.TreeMap", "values"): ["value", "none"],
+    ("xychart.XYChart", "colors"): [("red", "blue")],
+    ("xychart.XYChart", "stackmode"): ["percentage", "unstacked"],
+    ("xychart.XYChart", "interpolation"): ["smooth", "step"],
+    ("xychart.XYChart", "points"): ["show", "hide"],
+    ("xychart.XYChart", "missing"): ["zero", "linear"],
+    ("xychart.XYChart", "endvalues"): ["zero", "nearest"],
+    ("xychart.XYChart", "dottedgaps"): [1],
+    ("xychart.XYChart", "scaletype"): ["log", "sqrt"],
+    ("xychart.XYChart", "logbase"): [2],
+    ("xychart.XYChart", "bounds"): ["data", "custom"],
+    ("xychart.XYChart", "minimum"): [5],
+    ("xychart.XYChart", "maximum"): [20],
+    ("xychart.XYChart", "nicebounds"): [0],
     ("treemap.TreeMap", "outline"): ["on", "off"],
     ("treemap.TreeMap", "colors"): [("red", "blue")],
     ("treemap.TreeMap", "units"): ["B"],
@@ -404,6 +424,12 @@ WIDGET_NEEDS: dict[tuple[str, str], dict[str, Any]] = {
     # The number format shows in the tiles with values="value": 330, 170,
     # 50, 140, 60 and 1234, which one or three digits scale and round.
     ("treemap.TreeMap", "relief"): {"borderwidth": 1},
+    ("xychart.XYChart", "endvalues"): {"missing": "linear"},
+    ("xychart.XYChart", "dottedgaps"): {"missing": "linear"},
+    ("xychart.XYChart", "logbase"): {"scaletype": "log"},
+    ("xychart.XYChart", "bounds"): {"minimum": 5, "maximum": 10},
+    ("xychart.XYChart", "minimum"): {"bounds": "custom"},
+    ("xychart.XYChart", "maximum"): {"bounds": "custom"},
     ("treemap.TreeMap", "units"): {"values": "value"},
     ("treemap.TreeMap", "unitplacement"): {"values": "value", "units": "$"},
     ("treemap.TreeMap", "unitspace"): {"values": "value", "units": "B"},
@@ -501,9 +527,11 @@ import tkcurses as tk
 from tkcurses import ttk
 from tkcurses.bargraph import BarGraph
 from tkcurses.treemap import TreeMap
+from tkcurses.xychart import XYChart
 root = tk.Tk()
 spec = json.loads(open(sys.argv[1]).read())
-names = {"tk": tk, "ttk": ttk, "BarGraph": BarGraph, "TreeMap": TreeMap, "root": root}
+names = {"tk": tk, "ttk": ttk, "BarGraph": BarGraph, "TreeMap": TreeMap,
+         "XYChart": XYChart, "root": root}
 # A themed widget's "style" is tried as a style of its own class that
 # changes the colours, so that a style it takes is a style that shows.
 probe = eval(spec["make"], {**names, "kw": {}})
