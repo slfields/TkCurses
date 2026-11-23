@@ -3,7 +3,7 @@
 A treemap: named values drawn as rectangles, each as large as its share,
 in two levels - groups and the items in them - with a legend, the keys
 and the mouse. The [treemap guide](../../guide/treemap.md) shows it at
-work in two programs.
+work in three programs.
 
 ```{eval-rst}
 .. automodule:: tkcurses.treemap
