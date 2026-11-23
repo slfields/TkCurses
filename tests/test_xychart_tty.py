@@ -27,8 +27,11 @@ import pytest
 
 pytestmark = pytest.mark.tty
 
-# Twelve pixels tall: the area, at 1, reaches the top pixel, and the line,
-# at 0.5, is the upper half of row 3. Each program ends itself.
+# Eight rows: six of plot, twelve pixels tall, then the x axis and its
+# labels. The value axis's labels, 0, 0.5 and 1, and its line take
+# columns 0 to 3, so the plot is columns 4 to 19. The area, at 1, reaches the top
+# pixel, and the line, at 0.5, is the upper half of row 3. Each program
+# ends itself.
 PROGRAM = """
 import tkcurses as tk
 from tkcurses.xychart import XYChart
@@ -45,7 +48,7 @@ root.mainloop()
 
 
 def run(terminal, body="", *, options="", term="xterm-256color", cols=20):
-    screen = terminal(cols=cols, rows=6, env={"TERM": term})
+    screen = terminal(cols=cols, rows=8, env={"TERM": term})
     screen.run_source(PROGRAM.format(body=body, options=options))
     return screen
 
@@ -114,14 +117,32 @@ def test_the_programs_own_items_are_drawn_over_the_chart(terminal):
 
 def test_a_share_of_the_screen_follows_the_terminal(terminal):
     # Packed to keep its width: fill="both" would give it the whole row.
+    # Ten columns is too narrow for a plot with axes, so it is all plot;
+    # at twenty the axes are back, and the plot still ends at column 19.
     body = 'chart.pack_configure(side="left", fill="y", expand=False)'
     term = run(terminal, body, options=', width="50%"', cols=20)
     term.wait_for(
         lambda t: t.char_at(1, 9).data == "█" and t.char_at(1, 10).data == " ",
         message="half of 20",
     )
-    term.resize(40, 6)
+    term.resize(40, 8)
     term.wait_for(
         lambda t: t.char_at(1, 19).data == "█" and t.char_at(1, 20).data == " ",
         message="half of 40",
     )
+
+
+def test_the_axes_are_drawn_beside_and_under_the_plot(terminal):
+    term = run(terminal)
+
+    def drawn(t):
+        return (
+            t.text_at(0, 0, 4) == "  1┤"
+            and t.text_at(3, 0, 4) == "0.5┤"
+            and t.text_at(5, 0, 4) == "  0┤"
+            and t.text_at(6, 3, 2) == "└┬"
+            and t.char_at(7, 4).data == "0"
+            and t.text_at(7, 18, 2) == "10"
+        )
+
+    term.wait_for(drawn, message="0 to 1 up the left, 0 to 10 along the bottom")

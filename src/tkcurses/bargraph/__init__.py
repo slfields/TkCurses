@@ -52,9 +52,6 @@ import tkcurses
 from tkcurses import TclError
 from tkcurses._charts.color import DEFAULT_COLORS, hex_color, shade_rgb
 from tkcurses._charts.numformat import (
-    PLACEMENTS,
-    ROUNDINGS,
-    UNIT_SCALES,
     NumberFormat,
     for_readout,
     widest,
@@ -78,7 +75,7 @@ from tkcurses._charts.options import (
     number as _number,
 )
 from tkcurses._charts.options import (
-    optional_count as _optional_count,
+    number_format,
 )
 from tkcurses._charts.scale import ValueRange, auto_ticks, even_ticks, round_up
 from tkcurses._core.cells import cells
@@ -315,15 +312,7 @@ def _parse(options: dict[str, Any]) -> _Config:
 
 def _numbers(options: dict[str, Any]) -> NumberFormat:
     """The number format the axis and the readout write values in."""
-    return NumberFormat(
-        units=str(options["units"]),
-        placement=_choice(options["unitplacement"], "unitplacement", PLACEMENTS),  # type: ignore[arg-type]
-        space=_flag(options["unitspace"]),
-        digits=_optional_count(options["digits"], "digits", minimum=1),
-        decimals=_optional_count(options["decimals"], "decimals", minimum=0),
-        rounding=_choice(options["rounding"], "rounding", ROUNDINGS),  # type: ignore[arg-type]
-        unitscale=_choice(options["unitscale"], "unitscale", UNIT_SCALES),  # type: ignore[arg-type]
-    )
+    return number_format(options)
 
 
 def _at_maximum(config: _Config, maximum: float) -> _Config:

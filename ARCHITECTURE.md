@@ -9282,7 +9282,7 @@ the Canvas and raise `ValueError`; `__init__.py` holds only the widget.
 | `_path` | values to pixel polylines and outlines: `straight`, `step`, `smooth`; M4 for dense runs; clipping; dotted pieces; when points show |
 | `_axes` | the value axis's range: Kibana's bounds, rounded to nice ends |
 | `_stats` | the legend statistics, in one pass over each series |
-| `_layout` | the widget's size to regions: plot, axes, legend, readout |
+| `_layout` | the widget's size to regions: plot, axes, titles; the legend and readout to come |
 | `_scene` | all of that into the list of keyed item descriptions |
 
 **Shared, moved, not copied** (task `.2`), into `tkcurses/_charts/`:
@@ -9298,6 +9298,9 @@ the Canvas and raise `ValueError`; `__init__.py` holds only the widget.
   check, and `ScreenSize`, an object each widget holds that works out the
   cells to ask for and keeps the root binding. One piece of code, so the
   rules cannot drift apart.
+- `options.py`: `number_format` and `NUMBER_OPTIONS`, the seven number
+  options checked into a `NumberFormat`. BarGraph and TreeMap each built
+  it in a copy of their own until `.8`; all three call this now.
 
 BarGraph's and TreeMap's behaviour does not change, and their tests hold
 it.
@@ -9387,20 +9390,59 @@ tick is in: `Nov 23, 2026` for clock steps, the year for days to
 months. `nowmarker` draws a vertical line at the current time, when that
 time is on the axis.
 
-**Ticks and gridlines are text**, at the cell row or column nearest
-their value: `┤` and `┬` on the axes, and `┈` or `┊` across the plot for
+**Ticks and gridlines are text**, at the cell row or column of their
+value's pixel: `┤` and `┬` on the axes, and `┈` or `┊` across the plot for
 `gridlines`, as BarGraph draws them. They are made before the series, so
-a series drawn over a gridline takes those cells.
+a series drawn over a gridline takes those cells. Gridlines are drawn
+dimmed, mixed toward the background as a fill is, at 256 colours and
+above, and in the text's colour below.
+
+**Where the parts go** (`_layout`), from the top: a row for `ylabel`
+when there is one; the plot, with the value labels right-aligned to its
+left and the axis line between; the x axis's line; a row of its labels
+when `ticklabels` is on; and a row for `xlabel` and a time axis's
+context. The value labels' width depends on how many fit the plot's
+height, so the rows are settled first and the label width asked for
+after. A chart too small for a plot 8 columns by 2 rows with its axes is
+drawn without them, all plot: so small a chart is close to a
+sparkline, and labels would leave it nothing.
+
+Up the value axis, labels need **one blank row** between them; along
+the x axis, two blank columns. Two rows were tried first and left a
+ten-row chart with only `0` and `50`; one gives `0`, `20`, `40`, `60`.
+Labels are written in the number options' format, except on a
+percentage stack's axis, which is `%`. Numbers on the x axis are written
+plainly: the number options describe the values, not x.
+
+**Not quite Kibana's options.** Kibana has gridlines, tick labels and a
+title for each axis separately, gridlines on by default. Here `gridlines`
+and `ticklabels` are one flag each, for both axes, and gridlines are
+**off** by default, as BarGraph's are: dotted text across a plot of
+half-cells takes whole cells from the series, which costs more on a
+terminal than on a screen.
+
+`nowmarker` draws its line at the time the chart was last drawn. It
+moves only when something is redrawn: a chart fed live data moves it
+with every update, a still one does not.
 
 ### Reference lines and bands
 
-`reference_add(value, text="", color="", band=None, axis="y")` returns
-an id. It draws a line across the plot at `value` (`axis="y"`) or down it
-at an x (`axis="x"`), its `text` at the right-hand end, or the top. With
-`band=(low, high)` it also shades that range in the colour, dimmed as an
-area's fill is. A band draws under the series and a line over them, as
-Kibana's do. `reference_delete(id)` removes one, and `references()`
-lists them.
+`reference_add(value, *, text="", color="", band=None, axis="y")` returns
+an id, `ref1`, `ref2` and on. It draws a line across the plot at `value`
+(`axis="y"`) or down it at an x (`axis="x"`), its `text` at the
+right-hand end, or at the top - right of the line, or left of it when
+there is more room there. With `band=(low, high)` it also shades that
+range in the colour, dimmed as an area's fill is. A band draws under the
+series and a line over them, as Kibana's do. `reference_delete(*ids)`
+removes some, checking every id first, and `references()` lists them.
+Without a colour a reference is white.
+
+**A reference on the value axis takes part in its range**, as Kibana's
+do, so a limit above every value is still on the chart: its value and
+its band's ends count with the series' under `full` and `data`. Custom
+bounds are kept, and a reference outside them is not drawn. An x
+reference is a number or a time as the chart's x is, refused otherwise;
+it does not widen the x axis.
 
 ### Legend
 

@@ -335,7 +335,8 @@ def test_items_are_changed_in_place_and_keep_their_ids(root):
     chart._update()
     before = chart.find_withtag(TAG)
     assert before
-    chart.set_series("a", [(0, 3), (5, 1), (10, 2)])
+    # The same range, so the axes keep their ticks too.
+    chart.set_series("a", [(0, 4), (5, 1), (10, 2)])
     chart._update()
     assert chart.find_withtag(TAG) == before
     chart.delete_series("b")

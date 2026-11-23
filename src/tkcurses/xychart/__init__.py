@@ -29,22 +29,30 @@ from __future__ import annotations
 
 import contextlib
 import datetime as _dt
+import time as _time
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 import tkcurses
 from tkcurses import TclError
 from tkcurses._charts.color import DEFAULT_COLORS
-from tkcurses._charts.geometry import Rect
-from tkcurses._charts.options import choice, color, flag, items, number
+from tkcurses._charts.options import (
+    NUMBER_OPTIONS,
+    choice,
+    color,
+    flag,
+    items,
+    number,
+    number_format,
+)
 from tkcurses._charts.scale import SCALE_TYPES
 from tkcurses._charts.size import ScreenSize, dimension
 from tkcurses._core.colors import rgb_of
 from tkcurses._core.geometry import BORDER_WIDTH
 from tkcurses.xychart._axes import BOUNDS
 from tkcurses.xychart._fit import END_VALUES, MISSING
-from tkcurses.xychart._model import Model
+from tkcurses.xychart._model import Model, checked_x
 from tkcurses.xychart._path import INTERPOLATIONS, POINTS
-from tkcurses.xychart._scene import Config, Item, scene
+from tkcurses.xychart._scene import Config, Item, Reference, chart
 from tkcurses.xychart._stack import STACK_MODES
 
 if TYPE_CHECKING:
@@ -59,6 +67,8 @@ _T = TypeVar("_T")
 NATURAL_SIZE = (60, 16)
 #: What :meth:`XYChart.series_configure` reads and sets.
 _SERIES_OPTIONS = ("kind", "text", "color", "description", "hidden")
+#: The axes a reference line may be on.
+_REFERENCE_AXES = ("y", "x")
 
 
 def _optional_number(value: Any, name: str) -> float | None:
@@ -96,6 +106,12 @@ def _parse(options: dict[str, Any]) -> Config:
         minimum=minimum,
         maximum=maximum,
         nicebounds=flag(options["nicebounds"]),
+        xlabel=str(options["xlabel"]),
+        ylabel=str(options["ylabel"]),
+        ticklabels=flag(options["ticklabels"]),
+        gridlines=flag(options["gridlines"]),
+        nowmarker=flag(options["nowmarker"]),
+        numbers=number_format(options),
     )
 
 
@@ -126,6 +142,18 @@ class XYChart(tkcurses.Canvas):
     terminal when it is resized. An axis not given asks for 60 columns or
     16 rows. As for any widget, this is a request: ``fill`` and
     ``expand`` give it more.
+
+    **Axes.** The value axis is on the left and x along the bottom, each
+    with ticks at as many round values as their labels fit, and times
+    ticked at steps a clock or calendar reads: ``14:05``, ``Nov 24``,
+    with the day or year the first tick is in written once below. Text
+    takes whole cells, so the axes are drawn outside the plot. A chart
+    too small for a plot eight columns by two rows with its axes is drawn
+    without them.
+
+    **Reference lines.** :meth:`reference_add` draws a line across the
+    plot at a value, or down it at an x, with an optional shaded band;
+    the band goes under the series and the line over them.
 
     **Half-cells.** A canvas draws in pixels half a cell tall, and a cell
     holds two colours at most. An area is filled in its line's colour
@@ -173,6 +201,41 @@ class XYChart(tkcurses.Canvas):
             ``"full"``.
         nicebounds: Round the axis's ends out to round numbers, unless
             they are custom. Default True.
+        xlabel: A title under the x axis. Default none.
+        ylabel: A title above the value axis. Default none.
+        ticklabels: Write the values at the ticks. Default True; without
+            them the axes keep their lines and ticks and the plot is
+            wider and taller.
+        gridlines: Draw a dotted line across the plot at each tick of
+            both axes, under the series. Default False.
+        nowmarker: On an x axis of times, a line down the plot at the
+            time the chart was last drawn, when that is on the axis.
+            Default False.
+        units: Written with every value on the value axis: ``"%"``,
+            ``"ms"``, ``"B"``, ``"$"``. Default none. A percentage stack's
+            axis is written in ``%`` whatever this says.
+        unitplacement: ``"suffix"`` (the default), after the number; or
+            ``"prefix"``, before it, for a currency: ``$1.2k``.
+        unitspace: A space between the number and what follows it:
+            ``50 ms`` rather than ``50ms``. Default False.
+        digits: Significant digits, 1 to 15; a value whose whole part
+            needs more is scaled, with the scale's letter: with 3, 1234 is
+            ``1.23k``. Default none: up to six.
+        decimals: A fixed count of decimals, 0 to 15: with 1, 5 is
+            ``5.0``. Default none: as many as the digits need.
+        rounding: How a value cut to its digits is rounded: ``"nearest"``
+            (the default), ``"down"`` or ``"up"``. Ticks fall on round
+            values, so on the axis this rarely shows.
+        unitscale: How a value is scaled to the fewest digits. ``"si"``
+            (the default): by thousands, k, M, G, and for a unit other
+            than ``"%"`` by m, µ, n below 1. ``"binary"``: by 1024s, Ki,
+            Mi, Gi, for bytes. ``"time"``: ``units`` names the unit the
+            data is in, ``"ms"``, ``"s"``, ``"min"`` and the rest, and each
+            value is written in the largest it reaches one of, ticked at
+            steps a clock reads. ``"none"``: never.
+
+    The number format is BarGraph's and TreeMap's, by the same names. The
+    x axis writes numbers plainly.
 
     The Canvas's own options are as on :class:`tkcurses.Canvas`:
     ``closeenough``, ``confine``, ``offset``, ``scrollregion``,
@@ -239,6 +302,41 @@ class XYChart(tkcurses.Canvas):
             chart.pack(side="left", fill="y")
             chart.add_series("a", [(t, 2 ** t) for t in range(12)])
 
+    Sample output (xlabel, ylabel, gridlines):
+        # size: 60x14
+        from tkcurses.xychart import XYChart
+        chart = XYChart(root, xlabel="minute", ylabel="requests",
+                        gridlines=True)
+        chart.pack(fill="both", expand=True)
+        chart.add_series("web", [(t, 20 + (t * 7) % 30) for t in range(40)])
+        chart.reference_add(60, text="limit", color="red", band=(55, 65))
+
+    Sample output (ticklabels):
+        # size: 60x10
+        from tkcurses.xychart import XYChart
+        for labels in (True, False):
+            chart = XYChart(root, ticklabels=labels, width=30)
+            chart.pack(side="left", fill="y")
+            chart.add_series("a", [(t, 30 + (t * 13) % 40) for t in range(20)])
+
+    Sample output (units, unitplacement, unitspace):
+        # size: 60x10
+        from tkcurses.xychart import XYChart
+        for units, placement in (("ms", "suffix"), ("$", "prefix")):
+            chart = XYChart(root, units=units, unitplacement=placement,
+                            unitspace=units == "ms", width=30)
+            chart.pack(side="left", fill="y")
+            chart.add_series("a", [(t, 900 + (t * 130) % 400) for t in range(20)])
+
+    Sample output (digits, decimals, unitscale):
+        # size: 60x10
+        from tkcurses.xychart import XYChart
+        for options in ({"digits": 2, "decimals": 1},
+                        {"units": "ms", "unitscale": "time"}):
+            chart = XYChart(root, width=30, **options)
+            chart.pack(side="left", fill="y")
+            chart.add_series("a", [(t, 1000 * t * t) for t in range(20)])
+
     Sample output (bounds, minimum, maximum, nicebounds):
         # size: 60x10
         from tkcurses.xychart import XYChart
@@ -266,6 +364,12 @@ class XYChart(tkcurses.Canvas):
         "minimum": "",
         "maximum": "",
         "nicebounds": True,
+        "xlabel": "",
+        "ylabel": "",
+        "ticklabels": True,
+        "gridlines": False,
+        "nowmarker": False,
+        **NUMBER_OPTIONS,
     }
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
@@ -293,6 +397,8 @@ class XYChart(tkcurses.Canvas):
         self._syncing = False
         #: What the items were last made from.
         self._drawn_for: tuple[Any, ...] | None = None
+        self._references: dict[str, Reference] = {}
+        self._reference_count = 0
         self._size = ScreenSize(self, NATURAL_SIZE, self._apply_requested_size)
         options = {**self._widget_options, **(cnf or {}), **kw}
         try:
@@ -470,6 +576,92 @@ class XYChart(tkcurses.Canvas):
         self._do(lambda: self._model.configure(name, **options))
         return None
 
+    # ---------------------------------------------------------- references
+
+    def reference_add(
+        self,
+        value: Any,
+        *,
+        text: str = "",
+        color: str = "",
+        band: tuple[Any, Any] | None = None,
+        axis: str = "y",
+    ) -> str:
+        """Draw a reference line, and return its id.
+
+        Args:
+            value: Where the line is: a value on the value axis, or with
+                ``axis="x"`` an x, a number or a time as the series' are.
+            text: Written by the line, at its right-hand end, or at its top
+                on the x axis.
+            color: The line's colour; white when not given.
+            band: ``(low, high)``: also shade that range, in the colour
+                dimmed as an area's fill is, under the series.
+            axis: ``"y"`` (the default), a line across the plot; or
+                ``"x"``, a line down it.
+
+        Raises:
+            tkcurses.TclError: If a value is not a number, or a time on an x
+                axis of numbers, or the reverse; or the colour or axis is
+                bad. Nothing is drawn.
+        """
+        axis = self._check(lambda: choice(axis, "axis", _REFERENCE_AXES))
+        place = self._check(lambda: self._reference_value(axis))
+        where = self._check(lambda: place(value))
+        ends = None
+        if band is not None:
+            pair = self._check(lambda: items(band))
+            if len(pair) != 2:
+                raise TclError(f"band must be two values, low and high, not {band!r}")
+            ends = (
+                self._check(lambda: place(pair[0])),
+                self._check(lambda: place(pair[1])),
+            )
+        if color:
+            self._check(lambda: _checked_color(color))
+        self._reference_count += 1
+        ident = f"ref{self._reference_count}"
+        self._references[ident] = Reference(
+            ident, where, str(text), str(color), ends, axis
+        )
+        self._changed()
+        return ident
+
+    def reference_delete(self, *idents: str) -> None:
+        """Remove reference lines by id.
+
+        Raises:
+            tkcurses.TclError: If any id is not a reference. None is
+                removed.
+        """
+        for ident in idents:
+            if ident not in self._references:
+                raise TclError(f"Reference {ident} not found")
+        for ident in idents:
+            self._references.pop(ident, None)
+        self._changed()
+
+    def references(self) -> tuple[str, ...]:
+        """Every reference line's id, in the order they were added."""
+        return tuple(self._references)
+
+    def _reference_value(self, axis: str) -> Callable[[Any], float]:
+        """How a reference's value is read on ``axis``."""
+        if axis == "y":
+            return lambda value: number(value, "value")
+        kind = self._model.xkind
+
+        def place(value: Any) -> float:
+            where, given = checked_x(value)
+            if kind is not None and given != kind:
+                wanted = "a time" if kind == "time" else "a number"
+                raise ValueError(
+                    f"the x axis is of {kind}s: a reference there needs {wanted}"
+                )
+            return where
+
+        return place
+
     def _do(self, action: Callable[[], _T]) -> _T:
         result = self._check(action)
         self._changed()
@@ -501,10 +693,10 @@ class XYChart(tkcurses.Canvas):
             self._sync()  # resized since the items were made
         super()._redraw()
 
-    def _plot(self) -> Rect:
-        """Where the series are drawn, in pixels."""
+    def _cells(self) -> tuple[int, int]:
+        """The canvas's size in cells, where the chart is laid out."""
         width, height = self._plane_size()
-        return Rect(0, 0, width, height)
+        return (width, height // 2)
 
     def _depth(self) -> int:
         colors = self.tk.colors
@@ -513,20 +705,31 @@ class XYChart(tkcurses.Canvas):
         return int(colors.depth)
 
     def _drawn_key(self) -> tuple[Any, ...]:
-        return (self._model.version, self._config, self._plot(), self._depth())
+        return (
+            self._model.version,
+            self._config,
+            self._cells(),
+            self._depth(),
+            tuple(self._references.values()),
+        )
 
     def _sync(self) -> None:
         """Make the canvas items match the scene: changed in place where a
         key is still there, made where it is new, deleted where it went."""
         key = self._drawn_key()
         background = rgb_of(str(self._options["background"] or "black")) or (0, 0, 0)
-        wanted = scene(
+        width, height = self._cells()
+        wanted = chart(
             self._model,
             self._config,
-            self._plot(),
+            width,
+            height,
             depth=self._depth(),
             rgb=rgb_of,
             background=background,
+            references=tuple(self._references.values()),
+            now=_time.time(),
+            xkind=self._model.xkind or "number",
         )
         self._syncing = True
         try:

@@ -5226,6 +5226,16 @@
     "hand2"
    ]
   },
+  "decimals": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 2
+  },
+  "digits": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 1
+  },
   "dottedgaps": {
    "kind": "visible",
    "state": "plain",
@@ -5235,6 +5245,11 @@
    "kind": "visible",
    "state": "plain",
    "value": "zero"
+  },
+  "gridlines": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 1
   },
   "height": {
    "kind": "visible",
@@ -5336,6 +5351,13 @@
    "state": "plain",
    "value": 0
   },
+  "nowmarker": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    1
+   ]
+  },
   "offset": {
    "kind": "invisible",
    "state": "plain",
@@ -5355,6 +5377,14 @@
     "groove",
     "sunken",
     "raised"
+   ]
+  },
+  "rounding": {
+   "kind": "invisible",
+   "state": "plain",
+   "tried": [
+    "down",
+    "up"
    ]
   },
   "scaletype": {
@@ -5410,10 +5440,40 @@
     1
    ]
   },
+  "ticklabels": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
+  "unitplacement": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "prefix"
+  },
+  "units": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "%"
+  },
+  "unitscale": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "binary"
+  },
+  "unitspace": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 1
+  },
   "width": {
    "kind": "visible",
    "state": "plain",
    "value": 3
+  },
+  "xlabel": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "minute"
   },
   "xscrollcommand": {
    "kind": "behaviour"
@@ -5425,6 +5485,11 @@
     3,
     9
    ]
+  },
+  "ylabel": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "cpu"
   },
   "yscrollcommand": {
    "kind": "behaviour"

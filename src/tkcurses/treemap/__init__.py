@@ -46,8 +46,14 @@ from tkcurses._charts.legend import (
     place,
     shown,
 )
-from tkcurses._charts.numformat import PLACEMENTS, ROUNDINGS, UNIT_SCALES, NumberFormat
-from tkcurses._charts.options import choice, color, count, flag, items, optional_count
+from tkcurses._charts.options import (
+    choice,
+    color,
+    count,
+    flag,
+    items,
+    number_format,
+)
 from tkcurses._charts.size import ScreenSize, dimension
 from tkcurses._core.bindings import parse_sequence
 from tkcurses._core.cells import cells
@@ -65,6 +71,7 @@ if TYPE_CHECKING:
 
     from tkcurses import Event
     from tkcurses._charts.color import RGB
+    from tkcurses._charts.numformat import NumberFormat
 
 __all__ = ["NATURAL_SIZE", "PATH_SEPARATOR", "SELECT_EVENT", "ZOOM_EVENT", "TreeMap"]
 
@@ -119,15 +126,7 @@ def _parse(options: dict[str, Any]) -> _Config:
         colors=tuple(color(c) for c in items(options["colors"])) or DEFAULT_COLORS,
         outline=choice(options["outline"], "outline", OUTLINE_MODES),
         readout=flag(options["readout"]),
-        numbers=NumberFormat(
-            units=str(options["units"]),
-            placement=choice(options["unitplacement"], "unitplacement", PLACEMENTS),  # type: ignore[arg-type]
-            space=flag(options["unitspace"]),
-            digits=optional_count(options["digits"], "digits", minimum=1),
-            decimals=optional_count(options["decimals"], "decimals", minimum=0),
-            rounding=choice(options["rounding"], "rounding", ROUNDINGS),  # type: ignore[arg-type]
-            unitscale=choice(options["unitscale"], "unitscale", UNIT_SCALES),  # type: ignore[arg-type]
-        ),
+        numbers=number_format(options),
         legend=choice(options["legend"], "legend", LEGEND_MODES),
         legendposition=choice(options["legendposition"], "legendposition", POSITIONS),
         legendsize=choice(options["legendsize"], "legendsize", ("auto", *LEGEND_SIZES)),
