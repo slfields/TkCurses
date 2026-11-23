@@ -48,6 +48,8 @@ class Item:
     children: list[str] = field(default_factory=list)
     #: Names a program groups items by, for :meth:`Model.tagged`.
     tags: tuple[str, ...] = ()
+    #: Said about the item in the legend, and nowhere else.
+    description: str = ""
 
 
 def checked_tags(tags: Any) -> tuple[str, ...]:
@@ -107,6 +109,7 @@ class Model:
         text: str = "",
         value: Any = 0,
         tags: Any = (),
+        description: str = "",
     ) -> str:
         """Add an item under ``parent`` (``""`` for the top level) and
         return its identifier, ``I001`` and on when none is given."""
@@ -124,7 +127,14 @@ class Model:
             iid = str(iid)
             if iid in self._items:
                 raise ValueError(f"Item {iid} already exists")
-        self._items[iid] = Item(iid, parent, str(text), size, tags=checked_tags(tags))
+        self._items[iid] = Item(
+            iid,
+            parent,
+            str(text),
+            size,
+            tags=checked_tags(tags),
+            description=str(description),
+        )
         _place(self._siblings(parent), iid, position)
         self.version += 1
         return iid
@@ -136,15 +146,18 @@ class Model:
         text: str | None = None,
         value: Any = None,
         tags: Any = None,
+        description: str | None = None,
     ) -> None:
-        """Change an item's name, value or tags; ``None`` leaves one as it
-        is."""
+        """Change an item's name, value, tags or description; ``None``
+        leaves one as it is."""
         item = self.item(iid)
         size = item.value if value is None else checked_value(value)
         if text is not None:
             item.text = str(text)
         if tags is not None:
             item.tags = checked_tags(tags)
+        if description is not None:
+            item.description = str(description)
         item.value = size
         self.version += 1
 

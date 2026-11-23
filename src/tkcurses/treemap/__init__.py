@@ -78,6 +78,8 @@ SELECT_EVENT = "<<TreemapSelect>>"
 ZOOM_EVENT = "<<TreemapZoom>>"
 #: Written between a group and its child in the readout.
 PATH_SEPARATOR = " \u203a "  # a single right-pointing angle quote
+#: What :meth:`Treemap.item` reads and sets.
+_ITEM_OPTIONS = ("text", "value", "tags", "description")
 #: The size a treemap asks for on an axis whose width or height is not
 #: given.
 NATURAL_SIZE = (40, 12)
@@ -231,7 +233,8 @@ class Treemap(tkcurses.Frame):
             too small to have a cell. Default True.
         legend: A list beside the tiles naming each top-level item, with a
             swatch of its colour, largest first; zoomed in, the group's
-            children. ``"auto"`` (the default) shows it when it names two
+            children. An item's ``description`` is written under its name
+            here, and only here. ``"auto"`` (the default) shows it when it names two
             or more; ``"show"`` always; ``"hide"`` never. Either way it
             gives way, before the readout, when the tiles would be left
             fewer than 10 columns or 3 rows.
@@ -245,7 +248,7 @@ class Treemap(tkcurses.Frame):
         nestedlegend: List each group's children under it, indented.
             Default False.
         legendlines: How many lines, 1 to 5, a name wraps onto before it
-            is cut with ``…``. Default 1.
+            is cut with ``…``, and a description after it. Default 1.
         foreground: The colour of the readout and of text on no tile.
             Default white.
         background: The colour of cells no tile covers, as for any Frame.
@@ -365,12 +368,14 @@ class Treemap(tkcurses.Frame):
         # size: 50x10
         from tkcurses.treemap import Treemap
         tree = Treemap(root, nestedlegend=True, legendlines=2,
-                       legendsize="small")
+                       legendsize="medium")
         tree.pack(fill="both", expand=True)
-        tree.insert("", "end", "web", text="web servers")
+        tree.insert("", "end", "web", text="web servers",
+                    description="the front end")
         for name, size in (("nginx", 330), ("apache", 170)):
             tree.insert("web", "end", text=name, value=size)
-        tree.insert("", "end", text="database", value=200)
+        tree.insert("", "end", text="database", value=200,
+                    description="primary and replica")
 
     Sample output (units, unitplacement, unitspace):
         # size: 60x8
@@ -584,6 +589,7 @@ class Treemap(tkcurses.Frame):
         text: str = "",
         value: Any = 0,
         tags: Any = (),
+        description: str = "",
     ) -> str:
         """Add an item and return its identifier.
 
@@ -599,6 +605,10 @@ class Treemap(tkcurses.Frame):
             tags: Names to group items by, for :meth:`tag_bind` and
                 :meth:`tag_has`: a list, or a string of names with spaces
                 between, as a Treeview's are.
+            description: Said about the item in the legend, under its
+                name, and nowhere else: not in its tile, not in the bottom
+                row. It wraps to the legend's width, onto at most
+                ``legendlines`` lines. Default none.
 
         Raises:
             tkcurses.TclError: ``parent`` is not an item, or is a child;
@@ -607,31 +617,47 @@ class Treemap(tkcurses.Frame):
         return str(
             self._do(
                 lambda: self._model.insert(
-                    parent, index, iid, text=text, value=value, tags=tags
+                    parent,
+                    index,
+                    iid,
+                    text=text,
+                    value=value,
+                    tags=tags,
+                    description=description,
                 )
             )
         )
 
     def item(self, iid: str, option: str | None = None, **kw: Any) -> Any:
-        """Read or change an item's ``text``, ``value`` and ``tags``.
+        """Read or change an item's ``text``, ``value``, ``tags`` and
+        ``description``.
 
-        With neither ``option`` nor keywords, a dict of all three; with
+        With neither ``option`` nor keywords, a dict of all four; with
         ``option``, that one; with keywords, they are set.
         """
         entry = self._ask(lambda: self._model.item(iid))
-        unknown = set(kw) - {"text", "value", "tags"}
-        if option is not None and option not in ("text", "value", "tags"):
+        unknown = set(kw) - set(_ITEM_OPTIONS)
+        if option is not None and option not in _ITEM_OPTIONS:
             unknown.add(option)
         if unknown:
             raise TclError(f'unknown option "-{sorted(unknown)[0]}"')
         if kw:
             self._do(
                 lambda: self._model.configure(
-                    iid, text=kw.get("text"), value=kw.get("value"), tags=kw.get("tags")
+                    iid,
+                    text=kw.get("text"),
+                    value=kw.get("value"),
+                    tags=kw.get("tags"),
+                    description=kw.get("description"),
                 )
             )
             return None
-        values = {"text": entry.text, "value": entry.value, "tags": entry.tags}
+        values = {
+            "text": entry.text,
+            "value": entry.value,
+            "tags": entry.tags,
+            "description": entry.description,
+        }
         return values if option is None else values[option]
 
     def delete(self, *items: str) -> None:

@@ -8859,6 +8859,20 @@ any of that.
 - **Wrapping.** An entry wraps at word boundaries onto at most
   `legendlines` lines, from 1 to 5, Kibana's default and limit. The last
   line is cut with `…`.
+- **Descriptions.** An item's `description` (an item option, as `text`
+  is) is written under its name, from the name's column, wrapped the
+  same way onto at most `legendlines` lines of its own. The legend is the
+  only place it appears: not in a tile, not in the readout. Kibana has no
+  such thing; it was asked for, to say what a group is without crowding
+  its tile.
+  - It widens an `auto` legend, or a column at the top or bottom, by at
+    most 20 cells of text (`DESCRIPTION_WIDTH`); a longer one wraps.
+    Without that, a legend as wide as its names wrapped a description
+    into five cells a line.
+  - Short of room, descriptions are cut before names: an entry keeps its
+    name and as much of its description as fits, the last line ending
+    in `…`, before the next entry goes to `+N more`.
+  - Only the name is reversed for the focus.
 - **`legendposition`** is `right` (Kibana's default), `left`, `top` or
   `bottom`.
 - **`legendsize`** is the width on the left or right: `small` 12,

@@ -239,7 +239,12 @@ def test_the_item_methods_are_treeviews(root):
     assert tree.parent(nginx) == web
     assert tree.index(nginx) == 0
     assert tree.exists(nginx)
-    assert tree.item(nginx) == {"text": "nginx", "value": 330, "tags": ()}
+    assert tree.item(nginx) == {
+        "text": "nginx",
+        "value": 330,
+        "tags": (),
+        "description": "",
+    }
     tree.item(nginx, value=400, text="NGINX")
     assert tree.item(nginx, "value") == 400
     assert tree.item(nginx, "text") == "NGINX"

@@ -397,3 +397,137 @@ def test_an_item_too_small_for_a_tile_still_has_an_entry(root):
     scene = widget._scene_now()
     assert "tiny" in scene.layout.hidden
     assert "tiny" in [p.iid for p in scene.legend.placed]
+
+
+# ----------------------------------------------------------- descriptions
+
+
+def described(root, width=60, height=10, **kw):
+    widget = Treemap(root, **kw)
+    widget.insert(
+        "", "end", "web", text="web", value=550, description="front-end servers"
+    )
+    widget.insert(
+        "",
+        "end",
+        "db",
+        text="db",
+        value=200,
+        description="databases, primary and replica",
+    )
+    widget.insert("", "end", "cache", text="cache", value=100)
+    widget._allocate(Rect(0, 0, width, height))
+    widget._map()
+    return widget
+
+
+def test_an_item_has_a_description_to_read_and_change(root):
+    widget = described(root)
+    assert widget.item("web", "description") == "front-end servers"
+    assert widget.item("cache")["description"] == ""
+    widget.item("cache", description="redis")
+    assert widget.item("cache", "description") == "redis"
+    with pytest.raises(tk.TclError, match="unknown option"):
+        widget.item("cache", descr="x")
+
+
+def test_a_description_goes_under_the_name_in_the_legend(root):
+    widget = described(root, legendsize="medium")
+    rows = text(widget)
+    assert legend_rect(widget).x == 40
+    assert rows[0][40:] == f" {SWATCH} web".ljust(20)  # boxed tiles: no edge
+    assert rows[1][41:] == "   front-end serve…"
+    assert rows[2][41:] == f"{SWATCH} db".ljust(19)
+    assert rows[3][41:] == "   databases, prim…"
+    assert rows[4][41:].startswith(f"{SWATCH} cache")
+
+
+def test_a_description_wraps_onto_legendlines(root):
+    widget = described(root, legendsize="medium", legendlines=2)
+    db = next(p for p in widget._scene_now().legend.placed if p.iid == "db")
+    assert db.lines == ("db", "databases,", "primary and rep…")
+    assert db.name_lines == 1
+
+
+def test_a_description_is_shown_nowhere_but_the_legend(root):
+    widget = described(root, legendsize="medium")
+    widget.focus_set()
+    widget.focus("db")
+    scene = widget._scene_now()
+    tiles = scene.regions.tiles
+    rows = text(widget)
+    in_tiles = "".join(
+        row[tiles.x : tiles.x + tiles.width]
+        for row in rows[tiles.y : tiles.y + tiles.height]
+    )
+    assert "front" not in in_tiles
+    assert "databases" not in in_tiles
+    assert "databases" not in scene.readout
+    assert widget._readout(scene.layout).startswith("db   200")
+
+
+def test_only_the_name_is_reversed_for_the_focus(root):
+    widget = described(root, legendsize="medium")
+    widget.focus_set()
+    widget.focus("db")
+    grid = widget._compose(60, 10)
+    assert all(grid[2][x].reverse for x in range(45, 60))
+    assert not any(grid[3][x].reverse for x in range(41, 60))
+
+
+def test_a_description_widens_an_auto_legend_by_at_most_twenty():
+    short = [Entry("a", "a", description="tiny")]
+    assert extent(short, "right", "auto", Rect(0, 0, 90, 8), 1) == 1 + 3 + 4
+    long = [Entry("a", "a", description="a description far longer than twenty")]
+    assert extent(long, "right", "auto", Rect(0, 0, 90, 8), 1) == 1 + 3 + 20
+
+
+def test_without_room_descriptions_are_cut_before_names():
+    """Text 9 cells wide: alpha's description wraps to "one two",
+    "three", "four"."""
+    listed = [
+        Entry("a", "alpha", description="one two three four"),
+        Entry("b", "beta", description="five six"),
+    ]
+    # Three rows: one is kept for "+1 more", so alpha's description is cut.
+    laid = place(listed, Rect(0, 0, 13, 3), "left", 3)
+    assert [p.lines for p in laid.placed] == [("alpha", "one two …")]
+    assert laid.more == 1
+    # Two: the name alone.
+    laid = place(listed, Rect(0, 0, 13, 2), "left", 3)
+    assert [p.lines for p in laid.placed] == [("alpha",)]
+    # One entry and two rows: no "+N more" to keep a row for.
+    tight = place(listed[:1], Rect(0, 0, 13, 2), "left", 3)
+    assert [p.lines for p in tight.placed] == [("alpha", "one two …")]
+    assert tight.more == 0
+    # Room for all of it: nothing is cut.
+    roomy = place(listed[:1], Rect(0, 0, 13, 4), "left", 3)
+    assert roomy.placed[0].lines == ("alpha", "one two", "three", "four")
+
+
+def test_a_blank_description_takes_no_line():
+    laid = place([Entry("a", "alpha", description="   ")], Rect(0, 0, 13, 5), "left", 2)
+    assert laid.placed[0].lines == ("alpha",)
+
+
+@given(
+    st.lists(
+        st.tuples(st.text(max_size=12), st.text(max_size=40)), min_size=1, max_size=6
+    ),
+    st.integers(5, 40),
+    st.integers(1, 12),
+    st.integers(1, 5),
+)
+def test_described_entries_stay_inside_the_legend(pairs, width, height, limit):
+    listed = [
+        Entry(str(i), name, description=told) for i, (name, told) in enumerate(pairs)
+    ]
+    region = Rect(0, 0, width, height)
+    laid = place(listed, region, "left", limit)
+    inner = Rect(0, 0, width - 1, height)
+    for entry in laid.placed:
+        assert entry.y + len(entry.lines) <= inner.height
+        assert 1 <= entry.name_lines <= len(entry.lines) <= 2 * limit
+        text_width = entry.width - entry.indent - 3
+        assert all(cells(line) <= text_width for line in entry.lines)
+    assert len(laid.placed) + laid.more == len(listed)

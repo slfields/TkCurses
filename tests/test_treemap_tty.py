@@ -208,3 +208,22 @@ def test_a_share_of_the_screen_follows_the_terminal(terminal):
     term.wait_for(lambda t: t.text_at(0, 30, 3) == "END", message="half of 60")
     term.resize(80, 12)
     term.wait_for(lambda t: t.text_at(0, 40, 3) == "END", message="half of 80")
+
+
+def test_a_description_is_in_the_legend_only(terminal):
+    term = run(
+        terminal,
+        'tree.item("db", description="databases")\ntree.configure(legendsize="medium")',
+    )
+
+    def drawn(t):
+        legend = [t.text_at(row, 31, 19) for row in range(11)]
+        tiles = "".join(t.text_at(row, 0, 30) for row in range(11))
+        return (
+            "██ db" in "".join(legend)
+            and t.text_at(2, 31, 12) == "   databases"
+            and "databases" not in tiles
+            and "databases" not in t.row(11)
+        )
+
+    term.wait_for(drawn, message="the description under db, and nowhere else")

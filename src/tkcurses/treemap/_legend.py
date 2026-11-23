@@ -22,7 +22,9 @@ of the widget it takes, and :func:`place` puts each entry in that region:
 down the side at the left or right, across in columns at the top or
 bottom. An entry is a swatch, a space and the item's name, wrapped at
 word boundaries onto at most ``legendlines`` lines, the last cut with
-``…``. What does not fit ends with a ``+N more`` line.
+``…``; then its description, if it has one, wrapped the same way on lines
+of its own under the name. What does not fit ends with a ``+N more``
+line.
 """
 
 from __future__ import annotations
@@ -64,6 +66,9 @@ MAX_LINES = 5
 SWATCH = "██"  # ██
 #: Cells before an entry's name: the swatch and a space.
 LEAD = 3
+#: The most a description widens an ``auto`` legend or a column, in
+#: cells of text: a longer one wraps.
+DESCRIPTION_WIDTH = 20
 #: How far a nested entry is indented under its group.
 INDENT = 2
 #: Cells between columns at the top or bottom.
@@ -82,6 +87,9 @@ class Entry:
     text: str
     #: A group's child, indented under it.
     nested: bool = False
+    #: Written under the name. It widens :attr:`width` by at most
+    #: :data:`DESCRIPTION_WIDTH` cells; more wraps.
+    description: str = ""
 
     @property
     def indent(self) -> int:
@@ -89,8 +97,10 @@ class Entry:
 
     @property
     def width(self) -> int:
-        """The cells it takes on one line."""
-        return self.indent + LEAD + cells(self.text)
+        """The cells it would like: its name on one line, or its
+        description's first :data:`DESCRIPTION_WIDTH` cells if wider."""
+        told = min(cells(self.description.strip()), DESCRIPTION_WIDTH)
+        return self.indent + LEAD + max(cells(self.text), told)
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,8 +112,11 @@ class Placed:
     x: int
     y: int
     width: int
+    #: The name's lines, then the description's.
     lines: tuple[str, ...]
     indent: int = 0
+    #: How many of ``lines`` are the name; the rest are the description.
+    name_lines: int = 1
 
     @property
     def rect(self) -> Rect:
@@ -111,9 +124,9 @@ class Placed:
 
     @property
     def text_rect(self) -> Rect:
-        """Where its name is, swatch left out."""
+        """Where its name is: the swatch and the description left out."""
         start = self.x + self.indent + LEAD
-        return Rect(start, self.y, self.x + self.width - start, len(self.lines))
+        return Rect(start, self.y, self.x + self.width - start, self.name_lines)
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,16 +164,17 @@ def entries(model: Model, zoom: str = "", nested: bool = False) -> list[Entry]:
     out, as its tile is."""
     found: list[Entry] = []
 
-    def text(iid: str) -> str:
-        return model.item(iid).text or iid
+    def entry(iid: str, nested: bool = False) -> Entry:
+        item = model.item(iid)
+        return Entry(iid, item.text or iid, nested, item.description)
 
     for iid in model.ordered(zoom):
         if model.size(iid) <= 0:
             continue
-        found.append(Entry(iid, text(iid)))
+        found.append(entry(iid))
         if nested and not zoom:
             found.extend(
-                Entry(child, text(child), nested=True)
+                entry(child, nested=True)
                 for child in model.ordered(iid)
                 if model.size(child) > 0
             )
@@ -211,8 +225,13 @@ def wrap(text: str, width: int, limit: int) -> list[str]:
     return lines
 
 
-def _wrapped(entry: Entry, column: int, limit: int) -> tuple[str, ...]:
-    return tuple(wrap(entry.text, column - entry.indent - LEAD, limit) or [""])
+def _wrapped(entry: Entry, column: int, limit: int) -> tuple[tuple[str, ...], int]:
+    """The entry's lines in a column ``column`` wide, and how many of them
+    are its name."""
+    width = column - entry.indent - LEAD
+    name = wrap(entry.text, width, limit) or [""]
+    told = wrap(entry.description, width, limit) if entry.description.strip() else []
+    return (*name, *told), len(name)
 
 
 def _columns(listed: list[Entry], width: int) -> tuple[int, int]:
@@ -227,7 +246,7 @@ def _row_heights(
     heights = []
     for start in range(0, len(listed), across):
         row = listed[start : start + across]
-        heights.append(max(len(_wrapped(entry, column, limit)) for entry in row))
+        heights.append(max(len(_wrapped(entry, column, limit)[0]) for entry in row))
     return heights
 
 
@@ -257,6 +276,36 @@ def extent(listed: list[Entry], side: Side, size: str, area: Rect, limit: int) -
     return wanted if wanted >= MIN_ROWS else 0
 
 
+def _fill(rows: list[list[Placed]], top: int, bottom: int) -> list[Placed]:
+    """The rows of entries placed from ``top`` down while they fit above
+    ``bottom``. A row too tall keeps its names and cuts its descriptions,
+    when that fits."""
+    placed: list[Placed] = []
+    y = top
+    for row in rows:
+        height = max(len(p.lines) for p in row)
+        left = bottom - y
+        if height > left:
+            if max(p.name_lines for p in row) <= left:
+                placed.extend(_cut(p, y, left) for p in row)
+            break
+        placed.extend(_cut(p, y, height) for p in row)
+        y += height
+    return placed
+
+
+def _cut(entry: Placed, y: int, rows: int) -> Placed:
+    """``entry`` at row ``y`` in ``rows`` lines at most, its description
+    ending in ``…`` when lines of it are left out."""
+    lines = list(entry.lines[:rows])
+    if len(lines) < len(entry.lines) and len(lines) > entry.name_lines:
+        width = entry.width - entry.indent - LEAD
+        lines[-1] = fit(lines[-1] + " " + entry.lines[len(lines)], width)
+    return Placed(
+        entry.iid, entry.x, y, entry.width, tuple(lines), entry.indent, entry.name_lines
+    )
+
+
 def place(listed: list[Entry], region: Rect, side: Side, limit: int) -> LegendLayout:
     """``listed`` placed in ``region``, which :func:`extent` sized."""
     edge, inner = {
@@ -274,28 +323,23 @@ def place(listed: list[Entry], region: Rect, side: Side, limit: int) -> LegendLa
     for start in range(0, len(listed), across):
         row = []
         for offset, entry in enumerate(listed[start : start + across]):
+            lines, name_lines = _wrapped(entry, column, limit)
             row.append(
                 Placed(
                     entry.iid,
                     inner.x + offset * (column + GAP),
                     0,
                     column,
-                    _wrapped(entry, column, limit),
+                    lines,
                     entry.indent,
+                    name_lines,
                 )
             )
         rows.append(row)
-    heights = [max(len(p.lines) for p in row) for row in rows]
     bottom = inner.y + inner.height
-    fits_all = sum(heights) <= inner.height
-    room = bottom if fits_all else bottom - 1  # the last row says how many more
-    placed: list[Placed] = []
-    y = inner.y
-    for row, height in zip(rows, heights, strict=True):
-        if y + height > room:
-            break
-        placed.extend(Placed(p.iid, p.x, y, p.width, p.lines, p.indent) for p in row)
-        y += height
+    placed = _fill(rows, inner.y, bottom)
+    if len(placed) < len(listed):  # the last row says how many more
+        placed = _fill(rows, inner.y, bottom - 1)
     more = len(listed) - len(placed)
     if not more:
         return LegendLayout(tuple(placed), edge, glyph)
