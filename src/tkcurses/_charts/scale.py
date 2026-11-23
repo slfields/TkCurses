@@ -32,22 +32,27 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 __all__ = [
+    "SCALE_TYPES",
     "ScaleType",
     "Steps",
     "ValueRange",
     "as_range",
     "auto_ticks",
     "even_ticks",
+    "fitted_ticks",
+    "label_start",
     "log_ticks",
     "round_steps",
     "round_up",
     "tidy",
 ]
 
-ScaleType = Literal["linear", "log"]
+ScaleType = Literal["linear", "log", "sqrt"]
+#: The scale types, in the order an error names them.
+SCALE_TYPES = ("linear", "log", "sqrt")
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,8 +61,11 @@ class ValueRange:
 
     Linear: evenly from ``minimum`` to ``maximum``. Log: by the logarithm
     of the value, so each power of ``base`` takes the same length; then
-    ``minimum`` must be above zero. A value at or below ``minimum`` is an
-    empty bar, one at or above ``maximum`` a full one.
+    ``minimum`` must be above zero. Square root: by the square root of
+    the value, signed, so a negative value mirrors a positive one, as a
+    d3 ``scaleSqrt`` (a power scale of exponent 0.5) places it. A value at
+    or below ``minimum`` is an empty bar, one at or above ``maximum`` a
+    full one.
     """
 
     maximum: float
@@ -66,8 +74,10 @@ class ValueRange:
     base: float = 10.0
 
     def __post_init__(self) -> None:
-        if self.scaletype not in ("linear", "log"):
-            raise ValueError(f'bad scaletype "{self.scaletype}": must be linear or log')
+        if self.scaletype not in SCALE_TYPES:
+            raise ValueError(
+                f'bad scaletype "{self.scaletype}": must be linear, log or sqrt'
+            )
         for name in ("maximum", "minimum", "base"):
             if not math.isfinite(getattr(self, name)):
                 raise ValueError(f"{name} must be a finite number")
@@ -93,14 +103,32 @@ class ValueRange:
             return 0.0
         if value >= self.maximum:
             return 1.0
+        position = self.position(value)
+        assert position is not None
+        return position
+
+    def position(self, value: float) -> float | None:
+        """How far along ``value`` falls, 0 at ``minimum`` and 1 at
+        ``maximum``, and beyond them for a value outside: not clamped, so a
+        line through it can be clipped where it leaves. ``None`` for a
+        value a log scale cannot place, at or below zero."""
         if self.log:
+            if not value > 0:
+                return None
             low = math.log(self.minimum)
             return (math.log(value) - low) / (math.log(self.maximum) - low)
+        if self.scaletype == "sqrt":
+            low = _signed_root(self.minimum)
+            return (_signed_root(value) - low) / (_signed_root(self.maximum) - low)
         return (value - self.minimum) / (self.maximum - self.minimum)
 
     def to_points(self, value: float, peak_points: int) -> int:
         """``value`` as a length in points along a bar ``peak_points`` long."""
         return round(self.fraction(value) * peak_points)
+
+
+def _signed_root(value: float) -> float:
+    return math.copysign(math.sqrt(abs(value)), value)
 
 
 def as_range(maximum: float | ValueRange) -> ValueRange:
@@ -259,3 +287,69 @@ def even_ticks(maximum: float | ValueRange, count: int) -> list[float]:
         return [tidy(span.minimum * ratio ** (i / (count - 1))) for i in range(count)]
     width = span.maximum - span.minimum
     return [tidy(span.minimum + width * i / (count - 1)) for i in range(count)]
+
+
+def fitted_ticks(
+    span: ValueRange,
+    length: int,
+    width: Callable[[float], int],
+    gap: int = 2,
+    steps: Steps = "decimal",
+) -> list[float]:
+    """The most round ticks across ``span`` whose labels fit along an axis
+    ``length`` cells long: each ``width(tick)`` cells, at least ``gap``
+    apart, centred on its tick but kept on the axis.
+
+    Linear and square-root ranges step evenly in value, as a d3 power
+    scale's ticks do, taking the smallest of :func:`round_steps` whose
+    labels all fit. Log ranges take :func:`log_ticks`, as many as fit.
+    None when not even one label fits.
+    """
+    if length <= 0:
+        return []
+    if span.log:
+        for fits in range(length, 0, -1):
+            ticks = log_ticks(span, fits)
+            if len(_apart(span, ticks, length, width, gap)) == len(ticks):
+                return ticks
+        return []
+    for step in round_steps(steps):
+        first = math.ceil(span.minimum / step - 1e-9)
+        last = math.floor(span.maximum / step + 1e-9)
+        if last - first + 1 > length:
+            continue
+        ticks = [tidy(i * step) for i in range(first, last + 1)]
+        if len(_apart(span, ticks, length, width, gap)) == len(ticks):
+            return ticks
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def label_start(position: float, label: int, length: int) -> int:
+    """Where a label ``label`` cells wide starts on an axis ``length``
+    cells long, centred on ``position`` (0 to 1) but kept on the axis."""
+    centre = position * (length - 1)
+    start = round(centre - (label - 1) / 2)
+    return max(0, min(start, length - label))
+
+
+def _apart(
+    span: ValueRange,
+    ticks: list[float],
+    length: int,
+    width: Callable[[float], int],
+    gap: int,
+) -> list[float]:
+    """``ticks`` without any whose label would come within ``gap`` cells
+    of the one kept before it, or not fit on the axis at all."""
+    kept: list[float] = []
+    end = -math.inf
+    for tick in ticks:
+        position = span.position(tick)
+        label = width(tick)
+        if position is None or label > length:
+            continue
+        start = label_start(position, label, length)
+        if start >= end + gap:
+            kept.append(tick)
+            end = start + label
+    return kept

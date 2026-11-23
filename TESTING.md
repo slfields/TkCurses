@@ -132,6 +132,9 @@ input, not only the ones someone thought of:
 | `tests/test_treemap_interaction.py` | A treemap's arrow key moves only to a tile wholly that way, and the opposite key always comes back to where it started. |
 | `tests/test_xychart_model.py` | An XY chart's series hold any points sorted by x, each x once with the last y given for it. |
 | `tests/test_xychart_fit.py` | Filling missing values never changes a known value, marks exactly the values it filled, and puts a filled gap within its neighbours. |
+| `tests/test_xychart_axes.py` | An XY chart's value axis holds every value it is given, reaches zero with full bounds, and a log axis ends on powers. |
+| `tests/test_charts_scale.py` | Ticks fitted to their labels are round, inside their range, and their labels never overlap or leave the axis. |
+| `tests/test_charts_timeticks.py` | Time ticks rise, stay inside their range, and their labels never overlap. |
 | `tests/test_treemap_legend.py` | A treemap legend's wrapped names never pass their width or the line limit; at any size and position the legend overlaps neither the tiles nor the readout, and every entry stays inside it. |
 | `tests/test_treemap_invariants.py` | For any two-level tree in any area: the top level tiles the area exactly, each group's children tile what its header leaves, children nest in their group, every item with a size has a tile or is counted hidden, tiles go largest first, each area is within a row and a column of its share, each tile is one colour with its text, the legend overlaps neither tiles nor readout, and only the focused item is reversed. A treemap's width and height are each cells or a share of the screen, independently. |
 | `tests/test_bargraph_gradient.py` | The shades run evenly from the start colour to the series colour. |

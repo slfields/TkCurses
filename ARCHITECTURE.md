@@ -9226,6 +9226,7 @@ the Canvas and raise `ValueError`; `__init__.py` holds only the widget.
 | `_fit` | `missing` and `endvalues`, marking what was filled |
 | `_stack` | `stacked`, `percentage` and `unstacked` |
 | `_path` | data to pixel polylines: `straight`, `step`, `smooth`; M4 for dense series; dotted runs |
+| `_axes` | the value axis's range: Kibana's bounds, rounded to nice ends |
 | `_stats` | the legend statistics, in one pass over each series |
 | `_layout` | the widget's size to regions: plot, axes, legend, readout |
 | `_scene` | all of that into the list of keyed item descriptions |
@@ -9235,8 +9236,10 @@ the Canvas and raise `ValueError`; `__init__.py` holds only the widget.
 - `legend.py`: TreeMap's `_legend`. A statistics line is drawn as a
   description is, plain under the bold name.
 - `scale.py`: BarGraph's `_scale`, its rounding to nice values, and its
-  tick choosers (`auto_ticks`, `log_ticks`), adding `sqrt` and time
-  ticks.
+  tick choosers (`auto_ticks`, `log_ticks`). XYChart's `.4` adds the
+  square-root scale, unclamped `position`, and `fitted_ticks`, which
+  fits ticks to their labels.
+- `timeticks.py`: ticks on a time axis, new with XYChart.
 - `size.py`: TreeMap's size rules (below): the `width` and `height`
   check, and `ScreenSize`, an object each widget holds that works out the
   cells to ask for and keeps the root binding. One piece of code, so the
@@ -9267,17 +9270,56 @@ keeps Tk's rules.
 
 The **y axis** is on the left, with tick labels in the number options'
 format, ticks placed by the chosen scale (`linear`, `log` with
-`logbase`, or `sqrt`), and `ylabel` written above it. Its range is the
-data's (`bounds="data"`), or from zero (`"full"`, the default for areas,
-as Kibana's), or `minimum` and `maximum` (`"custom"`). `nicebounds`
-rounds the ends out to nice values. A percentage stack's axis is 0 to
-100%.
+`logbase`, or `sqrt`), and `ylabel` written above it.
+
+**Its range is Kibana's `bounds`** (`_axes.value_range`). `full`, the
+default, takes the axis to zero, so a value's height is its size;
+`data` spans only the values; `custom` takes `minimum` and `maximum` as
+given, an end not given falling back to `full`'s. Three rules follow
+from what each scale and kind can show:
+
+- **An area is measured from zero**, so with an area on the chart `data`
+  is `full`. Kibana offers only full and custom for areas.
+- **A log scale cannot reach zero**, so there `full` is `data`, and a
+  value at or below zero is not placed at all (`ValueRange.position`
+  says `None`): it draws as missing.
+- **A percentage stack's axis is 0 to 100**, whatever `bounds` says.
+
+`nicebounds` (on by default, Kibana's "Round to nice value") rounds the
+ends outward to a multiple of the largest round step that gives at most
+ten steps across the range, as d3's `nice` does; on a log scale, to
+powers of the base. Custom bounds are kept exactly. A range of one value
+is widened to half its size each way, and of no values is 0 to 1.
+
+The **square-root scale** places a value by its square root, signed so a
+negative value mirrors a positive one, as d3's `scaleSqrt` does: a
+quarter of the top is half the height. Its ticks step evenly in value,
+as a d3 power scale's do, so they crowd toward the top and fewer fit.
+
+**Positions are not clamped.** `ValueRange.position` gives 0 at the
+bottom and 1 at the top and goes beyond them for a value outside custom
+bounds, so a line through it is clipped where it leaves the plot rather
+than flattened along the edge. BarGraph's `fraction` still clamps.
+
+**Ticks are as many as fit their labels.** `fitted_ticks` takes the
+smallest round step - 1, 2 or 5 times a power of ten - whose labels,
+each centred on its tick but kept on the axis, all stand at least two
+cells apart. A log axis takes powers, with 2 and 5 times each when those
+fit too. Too short for even one label, an axis has no ticks.
 
 The **x axis** is along the bottom, with `xlabel` under it. Numbers get
-the same nice ticks. Times get steps from seconds to years, chosen so the
-labels fit, and labels to match the step: `14:05` for minutes, `Nov 23`
-for days, with the date written once at the left when every tick shares
-it. `nowmarker` draws a vertical line at the current time, when that
+the same ticks. **Times** (`_charts.timeticks`) take the smallest step
+whose labels fit, from these: 1, 2, 5, 10, 15 and 30 seconds and
+minutes; 1, 2, 3, 6 and 12 hours; 1 and 2 days; weeks from Monday; 1, 2,
+3 and 6 months; and 1, 2 and 5 times a power of ten years. Ticks fall on
+local time and are counted on the calendar, so midnight stays midnight
+through a change of clocks: measured with US Central time across
+1 November 2026, a 25-hour day. A label says only what changes at its
+step - `14:05`, `Nov 23`, `Nov`, `2026` - except where a larger unit
+turns over: midnight says `Nov 24` and January says `2027`. The
+*context*, written once at the left, names the larger unit the first
+tick is in: `Nov 23, 2026` for clock steps, the year for days to
+months. `nowmarker` draws a vertical line at the current time, when that
 time is on the axis.
 
 **Ticks and gridlines are text**, at the cell row or column nearest
