@@ -21,7 +21,7 @@ items are added and changed as a `ttk.Treeview`'s are. The
 [reference](../reference/exclusive/treemap.md) describes every option and
 method, each option with a picture.
 
-The two programs below are in the
+The three programs below are in the
 [`examples`](https://github.com/slfields/TkCurses/tree/master/examples)
 directory. Each picture was taken by running the program while this
 documentation was built.
@@ -82,6 +82,30 @@ databases, and flushes the cache. Click a tile, or use the arrows and
 :size: 60x14
 :keys: ["<Right>", "<Right>", " "]
 ```
+
+## Values that change
+
+Items change in place: `item(iid, value=...)` resizes one, and `insert`
+and `delete` add and remove them. The treemap draws once the program is
+idle, however many changes came first, so a loop that changes a hundred
+items draws once, and nothing flickers.
+
+This program shows what fills a directory: each directory in it a
+group, and in each the files below it, largest first. It scans again
+every three seconds and changes only what changed, so a file that grows
+grows on the screen. **Return** on a directory zooms into it, as here,
+where `_core` fills the treemap and the legend lists its files; **Escape**
+zooms out, and **k** switches between the files and the kinds of file.
+Given no directory, it looks at TkCurses itself.
+
+```{tkcurses-example} examples/diskusage.py
+:size: 72x20
+:keys: ["<Right>", "<Right>", "<Return>"]
+```
+
+The legend's last line, `+N more`, says how many entries had no room. The readout
+names the focused file, its size, and its share of everything and of its
+directory.
 
 The [reference](../reference/exclusive/treemap.md) has the options this
 page leaves out: `labels`, `percentdecimals` and the number formats for
