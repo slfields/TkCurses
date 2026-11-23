@@ -1408,6 +1408,20 @@ class InputHandler:
         return KEY_MAP.get(ch, chr(ch) if 32 <= ch <= 126 else f'keycode-{ch}')
 ```
 
+**One `KEY_MOUSE` can stand for several reports, and all of them are read.**
+The sketch above calls `getmouse()` once, and so did the code until
+`TkCurses-3uki`. When a press and its release reach the program in one read
+(over ssh or tmux, from a quick tap, or from a test harness writing both at
+once), ncurses parses both into its own event queue but `getch()` returns
+`KEY_MOUSE` only once. The second report then waited, invisible to
+`select()`, until the next bytes arrived, and every click after it was one
+event behind. Measured on ncurses 6.6 with a bare curses program, no
+TkCurses: press and release written together gave one `KEY_MOUSE`, and a
+second `getmouse()` straight after returned the release. Three such clicks
+on a Button counted 0. `_read_mouse` now drains the queue until `getmouse()`
+raises, at most `_MOUSE_QUEUE` (8, ncurses' `EV_MAX`) times, so a
+`getmouse()` that never runs dry cannot hold the loop.
+
 #### Alt from a terminal
 
 **A key read straight after an Escape is that key with Alt.** A terminal

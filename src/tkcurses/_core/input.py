@@ -324,6 +324,11 @@ class MouseDecoder:
         return None
 
 
+#: How many mouse reports one ``KEY_MOUSE`` is drained of at most: the size
+#: of ncurses' own event queue, ``EV_MAX`` in ``lib_mouse.c``.
+_MOUSE_QUEUE = 8
+
+
 class InputHandler:
     """Reads keyboard, mouse and resize input without blocking or spinning.
 
@@ -974,13 +979,31 @@ class InputHandler:
         return [self._read_key(code)]
 
     def _read_mouse(self) -> Sequence[Event]:
-        """Pull the pending mouse report and decode it."""
-        try:
-            _, x, y, _, bstate = self._dispatcher.call(curses.getmouse)
-        except curses.error:
-            # The report was consumed or malformed; nothing to deliver.
-            return []
-        return self._decoder.decode(x, y, bstate)
+        """Pull every pending mouse report and decode them, in order.
+
+        **Every one, not one.** When several reports arrive in one read - a
+        press and its release together, as over ssh or tmux, or from a
+        quick tap - ncurses parses them all into its own queue but has
+        ``getch`` return ``KEY_MOUSE`` once. One ``getmouse`` per
+        ``KEY_MOUSE`` left the rest queued where nothing could see them, so
+        the release came only with the next input and every click after it
+        was one event behind. Measured on ncurses 6.6: a press and release
+        sent together gave one ``KEY_MOUSE``, and a second ``getmouse``
+        returned the release at once.
+
+        ``getmouse`` raises once the queue is empty. The loop also stops at
+        :data:`_MOUSE_QUEUE`, the most ncurses keeps, so a ``getmouse`` that
+        never runs dry cannot hold the loop.
+        """
+        events: list[Event] = []
+        for _ in range(_MOUSE_QUEUE):
+            try:
+                _, x, y, _, bstate = self._dispatcher.call(curses.getmouse)
+            except curses.error:
+                # Nothing left, or the report was consumed or malformed.
+                break
+            events.extend(self._decoder.decode(x, y, bstate))
+        return events
 
     def _read_resize(self) -> ResizeEvent:
         """Apply a terminal resize and describe it.

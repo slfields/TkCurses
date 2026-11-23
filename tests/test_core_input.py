@@ -913,3 +913,46 @@ def test_a_closed_stream_is_not_gone(curses_stub):
             raise ValueError("I/O operation on closed file")
 
     assert make_handler(FakeScreen(), stream=Closed()).terminal_gone() is False
+
+
+# ---------------------------------------------- several reports in one read
+
+
+def queued_reports(curses_stub, *reports):
+    """A getmouse that hands out ``reports`` in turn and then runs dry, as
+    ncurses' own queue does."""
+    pending = list(reports)
+
+    def getmouse():
+        if not pending:
+            raise curses.error("no mouse event")
+        return pending.pop(0)
+
+    curses_stub.setattr(curses, "getmouse", getmouse)
+    return pending
+
+
+def test_a_press_and_release_in_one_read_are_both_delivered(curses_stub):
+    """ncurses gives one KEY_MOUSE for every report a read brought in."""
+    pending = queued_reports(
+        curses_stub,
+        (0, 3, 2, 0, curses.BUTTON1_PRESSED),
+        (0, 3, 2, 0, curses.BUTTON1_RELEASED),
+    )
+    handler = make_handler(FakeScreen([curses.KEY_MOUSE, ord("x")]))
+    events = handler.poll()
+    mice = [event for event in events if isinstance(event, MouseEvent)]
+    assert [(m.state, m.x, m.y) for m in mice] == [
+        ("pressed", 3, 2),
+        ("released", 3, 2),
+    ]
+    assert events[-1].keysym == "x"
+    assert pending == []
+
+
+def test_draining_the_mouse_queue_is_bounded(curses_stub):
+    curses_stub.setattr(
+        curses, "getmouse", lambda: (0, 1, 1, 0, curses.BUTTON1_PRESSED)
+    )
+    handler = make_handler(FakeScreen([curses.KEY_MOUSE]))
+    assert 1 <= len(handler.poll()) <= input_module._MOUSE_QUEUE
