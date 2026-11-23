@@ -266,10 +266,25 @@ def test_times_on_the_x_axis(root):
     chart = XYChart(root)
     day = datetime.date(2026, 11, 23)
     chart.add_series("a", [(day, 1)])
-    midnight = datetime.datetime(2026, 11, 23).timestamp()
+    midnight = datetime.datetime(2026, 11, 23)
     assert chart.series_points("a") == [(midnight, 1.0)]
     with pytest.raises(tk.TclError):
         chart.append("a", (5, 1))  # a number where times are
+
+
+def test_points_read_back_can_be_given_back(root):
+    """As a program feeding live data does: read, drop the oldest, add one."""
+    chart = XYChart(root)
+    start = datetime.datetime(2026, 11, 23, 23, 58)
+    minute = datetime.timedelta(minutes=1)
+    chart.add_series("a", [(start + n * minute, n) for n in range(3)])
+    points = chart.series_points("a")
+    chart.set_series("a", [*points[1:], (points[-1][0] + minute, 3)])
+    assert chart.series_points("a") == [(start + n * minute, n) for n in range(1, 4)]
+    numbers = XYChart(root)
+    numbers.add_series("a", [(1, 2)])
+    numbers.set_series("a", numbers.series_points("a"))
+    assert numbers.series_points("a") == [(1.0, 2.0)]
 
 
 @pytest.mark.parametrize(

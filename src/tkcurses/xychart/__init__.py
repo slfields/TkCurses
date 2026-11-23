@@ -28,6 +28,7 @@ TkCurses extension:
 from __future__ import annotations
 
 import contextlib
+import datetime as _dt
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 import tkcurses
@@ -430,10 +431,14 @@ class XYChart(tkcurses.Canvas):
         """Every series' name, in the order they are drawn."""
         return tuple(self._model.names())
 
-    def series_points(self, name: str) -> list[tuple[float, float | None]]:
-        """A series' points, sorted by x. A time is given back as seconds
-        since the epoch."""
-        return self._check(lambda: self._model.get(name).points())
+    def series_points(self, name: str) -> list[tuple[Any, float | None]]:
+        """A series' points, sorted by x, as :meth:`set_series` takes them:
+        on a chart of times, each x is a naive ``datetime`` in local time,
+        whatever it was given as; otherwise a float."""
+        points = self._check(lambda: self._model.get(name).points())
+        if self._model.xkind != "time":
+            return points
+        return [(_dt.datetime.fromtimestamp(x), y) for x, y in points]
 
     def series_cget(self, name: str, option: str) -> Any:
         """One option of a series: ``kind``, ``text``, ``color``,

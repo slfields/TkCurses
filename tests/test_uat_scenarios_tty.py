@@ -2230,3 +2230,82 @@ def test_scenario_52_sizes_by_a_share_of_the_screen(uat_terminal):
     term.send(ESCAPE)
     assert term.wait_for_exit(timeout=10) == 0
     assert "Traceback" not in term.stderr
+
+
+def _scenario_53(uat_terminal):
+    term = uat_terminal(cols=80, rows=24)
+    term.run([sys.executable, "-m", "uat.scenario_53_xychart"])
+    term.wait_for(lambda t: t.contains("data=lines"), message="the lines")
+    return term
+
+
+def _quit(term):
+    term.send(ESCAPE)
+    assert term.wait_for_exit(timeout=10) == 0
+    assert "Traceback" not in term.stderr
+
+
+def test_scenario_53_steps_through_its_data(uat_terminal):
+    term = _scenario_53(uat_terminal)
+    term.send_keys("n")
+    term.wait_for(lambda t: t.contains("data=areas   db shown"), message="the areas")
+    term.send_keys("n")
+    term.wait_for(lambda t: t.contains("data=times   load shown"), message="the times")
+    term.send_keys("h")
+    term.wait_for(lambda t: t.contains("load hidden"), message="load hidden")
+    _quit(term)
+
+
+def test_scenario_53_feeds_live_times_back_in(uat_terminal):
+    """The live feed reads each series and sets it again a point on: on a
+    chart of times, what series_points gives back must be what set_series
+    takes, or the first tick raises."""
+    term = _scenario_53(uat_terminal)
+    term.send_keys("n")
+    term.wait_for(lambda t: t.contains("data=areas"), message="the areas")
+    term.send_keys("n")
+    term.wait_for(lambda t: t.contains("data=times"), message="the times")
+    before = [term.row(row) for row in range(7, 23)]
+    term.send_keys("l")
+    term.wait_for(
+        lambda t: (
+            t.contains("live=on") and [t.row(row) for row in range(7, 23)] != before
+        ),
+        message="the chart moving",
+    )
+    term.send_keys("l")
+    term.wait_for(lambda t: t.contains("live=off"), message="the feed stopped")
+    _quit(term)
+
+
+def test_scenario_53_keeps_the_note_on_top(uat_terminal):
+    term = _scenario_53(uat_terminal)
+    term.send_keys("x")
+    term.wait_for(
+        lambda t: t.contains("note=on") and t.contains("a note of the program's own"),
+        message="the note",
+    )
+    term.send_keys("l")
+    term.wait_for(lambda t: t.contains("live=on"), message="live")
+    term.wait_for(
+        lambda t: t.contains("a note of the program's own"),
+        message="the note still there while the series move",
+    )
+    _quit(term)
+
+
+def test_scenario_53_sizes_by_a_share_of_the_screen(uat_terminal):
+    """z: 50% by 50% of 80 by 24 is 40 by 12, from row 7: nothing is drawn
+    right of column 39, nor below row 18."""
+    term = _scenario_53(uat_terminal)
+    term.send_keys("z")
+    term.wait_for(
+        lambda t: (
+            t.contains("size: 50% x 50%")
+            and any(t.text_at(row, 0, 40).strip() for row in range(7, 19))
+            and all(t.text_at(row, 40, 40).strip() == "" for row in range(7, 23))
+            and all(t.text_at(row, 0, 80).strip() == "" for row in range(19, 22))
+        ),
+        message="the chart 40 by 12",
+    )
+    _quit(term)

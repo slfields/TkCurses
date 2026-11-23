@@ -9179,8 +9179,14 @@ A chart holds **series**, each a name and a list of points. A point is
 - `set_series(name, points)` replaces the points, `append(name, *points)`
   adds to the end, and `delete_series(*names)` removes series.
 - `series_cget` and `series_configure` read and change one series'
-  `kind`, `text`, `color` and `description`. `series()` lists the names
-  in order.
+  `kind`, `text`, `color`, `description` and `hidden`. `series()` lists
+  the names in order.
+- `series_points(name)` gives the points back as `set_series` takes
+  them, so a program feeding live data can read, drop the oldest and set:
+  on a chart of times each x is a naive local `datetime`, whatever it was
+  given as. The first build gave epoch seconds, which `set_series` then
+  refused as a number on a time chart; UAT scenario 53's live feed found
+  it.
 - Errors are Treeview's words: `Series X not found`, `Series X already
   exists`. `delete_series` checks every name before removing any, as
   TreeMap's `delete` does.
