@@ -8872,6 +8872,10 @@ any of that.
   - Short of room, descriptions are cut before names: an entry keeps its
     name and as much of its description as fits, the last line ending
     in `…`, before the next entry goes to `+N more`.
+  - The name is **bold** and the description plain, so the two read
+    apart. Bold rather than a dim description: bold shows on every
+    terminal, `vt100` included, where dim is missing or drawn as
+    normal on many; and the group headers on the tiles are bold already.
   - Only the name is reversed for the focus.
 - **`legendposition`** is `right` (Kibana's default), `left`, `top` or
   `bottom`.

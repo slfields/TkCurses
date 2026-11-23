@@ -222,6 +222,8 @@ def test_a_description_is_in_the_legend_only(terminal):
         return (
             "██ db" in "".join(legend)
             and t.text_at(2, 31, 12) == "   databases"
+            and t.char_at(1, 34).bold  # "db", the name
+            and not t.char_at(2, 34).bold  # "databases", its description
             and "databases" not in tiles
             and "databases" not in t.row(11)
         )

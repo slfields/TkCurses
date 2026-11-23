@@ -531,3 +531,14 @@ def test_described_entries_stay_inside_the_legend(pairs, width, height, limit):
         text_width = entry.width - entry.indent - 3
         assert all(cells(line) <= text_width for line in entry.lines)
     assert len(laid.placed) + laid.more == len(listed)
+
+
+def test_a_name_is_bold_and_its_description_plain(root):
+    widget = described(root, legendsize="medium", legendlines=2)
+    grid = widget._compose(60, 10)
+    web = next(p for p in widget._scene_now().legend.placed if p.iid == "web")
+    name, description = web.text_rect.x, web.y
+    assert web.lines == ("web", "front-end", "servers")
+    assert all(grid[description][x].bold for x in range(name, name + 3))
+    assert not any(grid[description + 1][x].bold for x in range(name, name + 9))
+    assert not grid[description][name - 3].bold  # the swatch

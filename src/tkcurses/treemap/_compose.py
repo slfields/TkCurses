@@ -28,8 +28,9 @@ The order things are drawn in is the order they cover each other:
 3. headers and labels, the selected item's name after a ``●``;
 4. the focus: the focused tile's label row reversed, or the whole tile
    when it has no text to reverse;
-5. the legend: its edge, each entry's swatch in its item's colour and
-   its name, the focused item's name reversed, and ``+N more``;
+5. the legend: its edge, each entry's swatch in its item's colour, its
+   name in bold and its description plain, the focused item's name
+   reversed, and ``+N more``;
 6. the readout.
 """
 
@@ -299,8 +300,11 @@ class _Painter:
             for offset, glyph in enumerate(SWATCH):
                 self.put(x + offset, entry.y, Cell(glyph, paint[0] if paint else ""))
             text = entry.text_rect
+            width = entry.x + entry.width - text.x
             for row, line in enumerate(entry.lines):
-                self.text(text.x, text.y + row, fit(line, text.width), None)
+                # The name bold, the description under it plain.
+                bold = row < entry.name_lines
+                self.text(text.x, text.y + row, fit(line, width), None, bold=bold)
             if scene.show_focus and entry.iid == scene.focus:
                 self.reverse(text)
         if legend.more_at is not None:

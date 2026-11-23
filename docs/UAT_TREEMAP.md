@@ -153,8 +153,9 @@ services each time unless a step says otherwise.
       **indented two cells**, each swatch the shade its tile has
 - [ ] **d** (`desc=1`): a description appears **under** web, db and
       cache, and under nginx when nested, **lined up with the name**, not
-      the swatch. It appears **nowhere else**: not in any tile, not on the
-      bottom row, even with nginx focused
+      the swatch. The **name is bold and the description plain**, so the
+      two are told apart at a glance. It appears **nowhere else**: not in
+      any tile, not on the bottom row, even with nginx focused
 - [ ] With **w** at `lines=1`, the long description of web ends in `…`.
       **w** to `lines=2`: it wraps onto a second line. A name too long for
       its line wraps the same way, at a space where there is one
