@@ -32,7 +32,7 @@ from hypothesis import strategies as st
 
 import tkcurses as tk
 from tkcurses._charts.geometry import Rect
-from tkcurses.treemap import NATURAL_SIZE, Treemap
+from tkcurses.treemap import NATURAL_SIZE, TreeMap
 from tkcurses.treemap._compose import Scene, compose
 from tkcurses.treemap._layout import lay_out, regions
 from tkcurses.treemap._model import Model
@@ -222,7 +222,7 @@ def overlaps(a, b):
 def test_the_legend_never_overlaps_the_tiles_or_the_readout(
     root, tree, width, height, position, size, nested, lines, readout
 ):
-    widget = Treemap(
+    widget = TreeMap(
         root,
         legend="show",
         legendposition=position,
@@ -263,7 +263,7 @@ def test_the_legend_never_overlaps_the_tiles_or_the_readout(
 @settings(max_examples=40, deadline=None)
 @given(trees, st.integers(0, 40), st.booleans())
 def test_only_the_focused_item_is_reversed(root, tree, pick, legend):
-    widget = Treemap(root, legend="show" if legend else "hide")
+    widget = TreeMap(root, legend="show" if legend else "hide")
     try:
         for number, entry in enumerate(tree):
             iid = widget.insert("", "end", f"g{number}", text=f"g{number}")
@@ -315,11 +315,11 @@ def screen(monkeypatch):
 
 @pytest.fixture
 def make(root):
-    """Treemaps on the shared root, destroyed after the test."""
+    """TreeMaps on the shared root, destroyed after the test."""
     made = []
 
     def treemap(**options):
-        widget = Treemap(root, **options)
+        widget = TreeMap(root, **options)
         made.append(widget)
         return widget
 
@@ -374,9 +374,9 @@ def test_the_axes_are_independent(root, width, height):
         return value
 
     made = [
-        Treemap(root, width=width, height=height),
-        Treemap(root, width=width),
-        Treemap(root, height=height),
+        TreeMap(root, width=width, height=height),
+        TreeMap(root, width=width),
+        TreeMap(root, height=height),
     ]
     try:
         both, wide, tall = (widget._requested for widget in made)
@@ -423,7 +423,7 @@ def test_cells_again_stop_following_the_screen(root, screen, make):
 
 
 def test_destroying_it_stops_following_the_screen(root, screen):
-    widget = Treemap(root, width="50%")
+    widget = TreeMap(root, width="50%")
     widget.destroy()
     assert widget._screen_binding is None
     resize(root, screen, 100, 30)  # nothing raised

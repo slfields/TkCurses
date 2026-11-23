@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Treemaps: tiles, shades, outlines, labels, the legend, keys and size.
+"""TreeMaps: tiles, shades, outlines, labels, the legend, keys and size.
 
 What to do, pass 1: look at the services; press n for 24 items and n
 again to come back; o to step outline through auto, on and off; v to step
@@ -40,10 +40,10 @@ resized. TkCurses-i1rh.10, TkCurses-i1rh.11.
 
 from __future__ import annotations
 
-from tkcurses.treemap import Treemap
+from tkcurses.treemap import TreeMap
 from uat import _support
 
-TITLE = "52 - Treemaps"
+TITLE = "52 - TreeMaps"
 
 SERVICES = (
     ("web", (("nginx", 330), ("apache", 170), ("php", 50))),
@@ -117,7 +117,7 @@ def describe(tree, on):
 
 def build(root, screen):
     area = _support.content_area(root, top=7)
-    tree = Treemap(area)
+    tree = TreeMap(area)
     tree.pack(fill="both", expand=True)
     state = {
         "data": "services",
@@ -160,8 +160,8 @@ def build(root, screen):
         chosen = tree.selection()[0] if tree.selection() else "-"
         screen.line(
             6,
-            f"selected {chosen} ({state['selects']} TreemapSelect)"
-            f"   zoom {tree.zoom() or '-'} ({state['zooms']} TreemapZoom)",
+            f"selected {chosen} ({state['selects']} TreeMapSelect)"
+            f"   zoom {tree.zoom() or '-'} ({state['zooms']} TreeMapZoom)",
         )
         screen.footer(" Escape quits ")
         screen.refresh()
@@ -240,8 +240,8 @@ def build(root, screen):
         state[name] += 1
         report()
 
-    tree.bind("<<TreemapSelect>>", lambda _event: counted("selects"))
-    tree.bind("<<TreemapZoom>>", lambda _event: counted("zooms"))
+    tree.bind("<<TreeMapSelect>>", lambda _event: counted("selects"))
+    tree.bind("<<TreeMapZoom>>", lambda _event: counted("zooms"))
     report()
 
 

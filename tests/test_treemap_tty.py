@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Treemap on a real terminal: what the screen actually shows.
+"""TreeMap on a real terminal: what the screen actually shows.
 
 Every test waits for each cell it asserts on, in one predicate, so a frame
 caught half drawn is waited out rather than asserted on.
@@ -30,10 +30,10 @@ pytestmark = pytest.mark.tty
 # Each program ends itself, so a failing test cannot leave one behind.
 PROGRAM = """
 import tkcurses as tk
-from tkcurses.treemap import Treemap
+from tkcurses.treemap import TreeMap
 
 root = tk.Tk()
-tree = Treemap(root)
+tree = TreeMap(root)
 tree.pack(fill="both", expand=True)
 tree.insert("", "end", "web", text="web")
 for name, size in (("nginx", 330), ("apache", 170), ("php", 50)):
@@ -141,7 +141,7 @@ def test_a_click_selects_and_marks_the_tile(terminal):
     term = run(
         terminal,
         # The event shows on the screen: values turn to numbers.
-        'tree.bind("<<TreemapSelect>>", lambda e: tree.configure(values="value"))',
+        'tree.bind("<<TreeMapSelect>>", lambda e: tree.configure(values="value"))',
     )
     term.wait_for(lambda t: "postgres" in t.row(1), message="drawn")
     column = term.row(1).index("postgres")
@@ -189,10 +189,10 @@ def test_a_click_on_a_legend_entry_focuses_its_item(terminal):
 
 SHARE = """
 import tkcurses as tk
-from tkcurses.treemap import Treemap
+from tkcurses.treemap import TreeMap
 
 root = tk.Tk()
-tree = Treemap(root, width="50%", height=6, legend="hide")
+tree = TreeMap(root, width="50%", height=6, legend="hide")
 tree.pack(side="left", anchor="n")
 tree.insert("", "end", text="web", value=3)
 tree.insert("", "end", text="db", value=1)

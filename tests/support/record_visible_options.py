@@ -85,8 +85,8 @@ BASES = {
         " for row in rows[: int(w.cget('segments'))]])",
     ),
     # Two groups and a plain item: headers, shades, labels and values.
-    "treemap.Treemap": (
-        "Treemap(root, **{'width': 40, 'height': 10, **kw})",
+    "treemap.TreeMap": (
+        "TreeMap(root, **{'width': 40, 'height': 10, **kw})",
         "w.insert('', 'end', 'web', text='web');"
         " [w.insert('web', 'end', text=n, value=v)"
         " for n, v in (('nginx', 330), ('apache', 170), ('php', 50))];"
@@ -249,16 +249,16 @@ WIDGET_VALUES: dict[tuple[str, str], list[object]] = {
     ("bargraph.BarGraph", "thresholds"): [((50, "red"),)],
     ("bargraph.BarGraph", "colormode"): ["gradient"],
     ("bargraph.BarGraph", "gradientstart"): [("white",)],
-    ("treemap.Treemap", "values"): ["value", "none"],
-    ("treemap.Treemap", "outline"): ["on", "off"],
-    ("treemap.Treemap", "colors"): [("red", "blue")],
-    ("treemap.Treemap", "units"): ["B"],
-    ("treemap.Treemap", "unitplacement"): ["prefix"],
-    ("treemap.Treemap", "unitspace"): [1],
-    ("treemap.Treemap", "digits"): [1],
-    ("treemap.Treemap", "decimals"): [2],
-    ("treemap.Treemap", "rounding"): ["down", "up"],
-    ("treemap.Treemap", "unitscale"): ["binary", "time"],
+    ("treemap.TreeMap", "values"): ["value", "none"],
+    ("treemap.TreeMap", "outline"): ["on", "off"],
+    ("treemap.TreeMap", "colors"): [("red", "blue")],
+    ("treemap.TreeMap", "units"): ["B"],
+    ("treemap.TreeMap", "unitplacement"): ["prefix"],
+    ("treemap.TreeMap", "unitspace"): [1],
+    ("treemap.TreeMap", "digits"): [1],
+    ("treemap.TreeMap", "decimals"): [2],
+    ("treemap.TreeMap", "rounding"): ["down", "up"],
+    ("treemap.TreeMap", "unitscale"): ["binary", "time"],
     ("ttk.Treeview", "show"): ["tree", "headings"],
     ("ttk.Treeview", "columns"): [("size", "kind"), ()],
     ("ttk.Treeview", "displaycolumns"): [(), "#all"],
@@ -403,14 +403,14 @@ WIDGET_NEEDS: dict[tuple[str, str], dict[str, Any]] = {
     ("bargraph.BarGraph", "gradientstart"): {"colormode": "gradient"},
     # The number format shows in the tiles with values="value": 330, 170,
     # 50, 140, 60 and 1234, which one or three digits scale and round.
-    ("treemap.Treemap", "relief"): {"borderwidth": 1},
-    ("treemap.Treemap", "units"): {"values": "value"},
-    ("treemap.Treemap", "unitplacement"): {"values": "value", "units": "$"},
-    ("treemap.Treemap", "unitspace"): {"values": "value", "units": "B"},
-    ("treemap.Treemap", "digits"): {"values": "value"},
-    ("treemap.Treemap", "decimals"): {"values": "value"},
-    ("treemap.Treemap", "rounding"): {"values": "value", "digits": 1},
-    ("treemap.Treemap", "unitscale"): {"values": "value", "digits": 3},
+    ("treemap.TreeMap", "relief"): {"borderwidth": 1},
+    ("treemap.TreeMap", "units"): {"values": "value"},
+    ("treemap.TreeMap", "unitplacement"): {"values": "value", "units": "$"},
+    ("treemap.TreeMap", "unitspace"): {"values": "value", "units": "B"},
+    ("treemap.TreeMap", "digits"): {"values": "value"},
+    ("treemap.TreeMap", "decimals"): {"values": "value"},
+    ("treemap.TreeMap", "rounding"): {"values": "value", "digits": 1},
+    ("treemap.TreeMap", "unitscale"): {"values": "value", "digits": 3},
 }
 
 COLOURS = ("red",)
@@ -500,10 +500,10 @@ import json, sys, time, traceback
 import tkcurses as tk
 from tkcurses import ttk
 from tkcurses.bargraph import BarGraph
-from tkcurses.treemap import Treemap
+from tkcurses.treemap import TreeMap
 root = tk.Tk()
 spec = json.loads(open(sys.argv[1]).read())
-names = {"tk": tk, "ttk": ttk, "BarGraph": BarGraph, "Treemap": Treemap, "root": root}
+names = {"tk": tk, "ttk": ttk, "BarGraph": BarGraph, "TreeMap": TreeMap, "root": root}
 # A themed widget's "style" is tried as a style of its own class that
 # changes the colours, so that a style it takes is a style that shows.
 probe = eval(spec["make"], {**names, "kw": {}})

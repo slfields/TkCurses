@@ -1,6 +1,6 @@
 # Acceptance: treemaps
 
-`Treemap` is a widget only TkCurses has, after Kibana's treemap charts.
+`TreeMap` is a widget only TkCurses has, after Kibana's treemap charts.
 What it should look like is what
 [ARCHITECTURE.md](../ARCHITECTURE.md#treemap) designs. The automated tests
 check that tiles cover their area exactly, that labels fit, and which
@@ -174,11 +174,11 @@ services each time unless a step says otherwise.
 - [ ] The **arrows** move to the next tile that way on the same level, and
       the **opposite arrow comes back** to where it was
 - [ ] **Space** selects the focused item: a `●` before its name, line 6
-      counts one more `TreemapSelect`
+      counts one more `TreeMapSelect`
 - [ ] **Return** on a group **zooms in**: its children fill the treemap,
-      line 6 says `zoom web` and counts a `TreemapZoom`, and the legend
+      line 6 says `zoom web` and counts a `TreeMapZoom`, and the legend
       now lists the **children**. **Escape** zooms back out, one more
-      `TreemapZoom`, with the focus on the group
+      `TreeMapZoom`, with the focus on the group
 - [ ] Not zoomed, with the focus on a **child** (click nginx), **Escape**
       moves it to the group. With the focus on a top-level item, Escape
       ends the scenario
@@ -186,7 +186,7 @@ services each time unless a step says otherwise.
 ## 52. The mouse
 
 - [ ] **Click** a tile: it is focused and selected (`●`, one more
-      `TreemapSelect`). A click on a group's header is the group
+      `TreeMapSelect`). A click on a group's header is the group
 - [ ] **Double-click** a tile in a group: the group zooms in
 - [ ] **Click a legend entry**: that item is **focused but not selected**
       (no `●`, the count unchanged); the bottom row names it. With **t**

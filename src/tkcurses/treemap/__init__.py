@@ -67,18 +67,18 @@ if TYPE_CHECKING:
     from tkcurses import Event
     from tkcurses._charts.color import RGB
 
-__all__ = ["PATH_SEPARATOR", "SELECT_EVENT", "ZOOM_EVENT", "Treemap"]
+__all__ = ["PATH_SEPARATOR", "SELECT_EVENT", "ZOOM_EVENT", "TreeMap"]
 
 VALUES = ("percent", "value", "none")
 #: The events a tag binding is told about, and the item each one is for:
 #: a pointer event's is the tile under the pointer; these, as named; any
 #: other's, a key's, the focused item, as in a Treeview.
 _POINTER_EVENTS = frozenset({"Button", "ButtonRelease", "Motion"})
-SELECT_EVENT = "<<TreemapSelect>>"
-ZOOM_EVENT = "<<TreemapZoom>>"
+SELECT_EVENT = "<<TreeMapSelect>>"
+ZOOM_EVENT = "<<TreeMapZoom>>"
 #: Written between a group and its child in the readout.
 PATH_SEPARATOR = " \u203a "  # a single right-pointing angle quote
-#: What :meth:`Treemap.item` reads and sets.
+#: What :meth:`TreeMap.item` reads and sets.
 _ITEM_OPTIONS = ("text", "value", "tags", "description")
 #: The size a treemap asks for on an axis whose width or height is not
 #: given.
@@ -163,7 +163,7 @@ def _parse(options: dict[str, Any]) -> _Config:
     )
 
 
-class Treemap(tkcurses.Frame):
+class TreeMap(tkcurses.Frame):
     """A treemap: named values drawn as rectangles, each sized by its value.
 
     Items are added as a :class:`tkcurses.ttk.Treeview`'s are, with
@@ -174,7 +174,7 @@ class Treemap(tkcurses.Frame):
     out largest first, as near square to the eye as the squarified
     algorithm makes them.
 
-    A Treemap is a :class:`tkcurses.Frame`, placed with ``pack``, ``grid``
+    A TreeMap is a :class:`tkcurses.Frame`, placed with ``pack``, ``grid``
     or ``place`` like any widget. A change to the items is drawn once the
     program is idle, so a loop that changes a hundred of them is drawn
     once.
@@ -203,14 +203,14 @@ class Treemap(tkcurses.Frame):
     - A click on a legend entry focuses its item without selecting it,
       so the bottom row names even an item too small to have a tile.
 
-    Selecting sends ``<<TreemapSelect>>`` and zooming in or out sends
-    ``<<TreemapZoom>>``. A treemap selects one item at most, marked with
+    Selecting sends ``<<TreeMapSelect>>`` and zooming in or out sends
+    ``<<TreeMapZoom>>``. A treemap selects one item at most, marked with
     a ``●`` before its name. The bottom row names the focused item, with
     its value and its share of everything and of its group, and its legend
     entry is reversed too.
 
     **Acting on one item.** Give items ``tags`` and bind to a tag, as in a
-    Treeview: ``tree.tag_bind("disk", "<<TreemapSelect>>", show)`` runs
+    Treeview: ``tree.tag_bind("disk", "<<TreeMapSelect>>", show)`` runs
     ``show`` only when an item tagged ``disk`` is selected.
 
     Options:
@@ -287,8 +287,8 @@ class Treemap(tkcurses.Frame):
 
     Sample output:
         # size: 50x12
-        from tkcurses.treemap import Treemap
-        tree = Treemap(root)
+        from tkcurses.treemap import TreeMap
+        tree = TreeMap(root)
         tree.pack(fill="both", expand=True)
         tree.insert("", "end", "web", text="web")
         for name, size in (("nginx", 330), ("apache", 170), ("php", 50)):
@@ -300,25 +300,25 @@ class Treemap(tkcurses.Frame):
 
     Sample output (labels, values):
         # size: 60x8
-        from tkcurses.treemap import Treemap
+        from tkcurses.treemap import TreeMap
         for labels, values in ((True, "percent"), (False, "value")):
-            tree = Treemap(root, labels=labels, values=values, width=30)
+            tree = TreeMap(root, labels=labels, values=values, width=30)
             tree.pack(side="left", fill="y")
             for name, size in (("nginx", 330), ("apache", 170), ("php", 50)):
                 tree.insert("", "end", text=name, value=size)
 
     Sample output (percentdecimals):
         # size: 60x8
-        from tkcurses.treemap import Treemap
+        from tkcurses.treemap import TreeMap
         for places in (0, 3):
-            tree = Treemap(root, percentdecimals=places, width=30)
+            tree = TreeMap(root, percentdecimals=places, width=30)
             tree.pack(side="left", fill="y")
             for name, size in (("nginx", 330), ("apache", 170), ("php", 50)):
                 tree.insert("", "end", text=name, value=size)
 
     Sample output (colors):
-        from tkcurses.treemap import Treemap
-        tree = Treemap(root, colors=["#4060c0", "#c08020"])
+        from tkcurses.treemap import TreeMap
+        tree = TreeMap(root, colors=["#4060c0", "#c08020"])
         tree.pack(fill="both", expand=True)
         tree.insert("", "end", "web", text="web")
         for name, size in (("nginx", 330), ("apache", 170), ("php", 50)):
@@ -327,9 +327,9 @@ class Treemap(tkcurses.Frame):
 
     Sample output (outline):
         # size: 60x10
-        from tkcurses.treemap import Treemap
+        from tkcurses.treemap import TreeMap
         for outline in ("auto", "on"):
-            tree = Treemap(root, outline=outline, width=30)
+            tree = TreeMap(root, outline=outline, width=30)
             tree.pack(side="left", fill="y")
             tree.insert("", "end", "web", text="web")
             for name, size in (("nginx", 330), ("apache", 170), ("php", 50)):
@@ -338,27 +338,27 @@ class Treemap(tkcurses.Frame):
 
     Sample output (readout):
         # size: 50x10
-        from tkcurses.treemap import Treemap
+        from tkcurses.treemap import TreeMap
         for readout in (True, False):
-            tree = Treemap(root, readout=readout, height=5)
+            tree = TreeMap(root, readout=readout, height=5)
             tree.pack(fill="x")
             for size in (5000, 3000, 1):
                 tree.insert("", "end", text=f"{size}", value=size)
 
     Sample output (legend):
         # size: 60x8
-        from tkcurses.treemap import Treemap
+        from tkcurses.treemap import TreeMap
         for legend in ("show", "hide"):
-            tree = Treemap(root, legend=legend, width=30)
+            tree = TreeMap(root, legend=legend, width=30)
             tree.pack(side="left", fill="y")
             for name, size in (("web", 550), ("db", 200), ("cache", 100)):
                 tree.insert("", "end", text=name, value=size)
 
     Sample output (legendposition, legendsize):
         # size: 60x10
-        from tkcurses.treemap import Treemap
+        from tkcurses.treemap import TreeMap
         for position, size in (("left", "small"), ("bottom", "auto")):
-            tree = Treemap(root, legendposition=position, legendsize=size,
+            tree = TreeMap(root, legendposition=position, legendsize=size,
                            width=30)
             tree.pack(side="left", fill="y")
             for name, size in (("web", 550), ("db", 200), ("cache", 100)):
@@ -366,8 +366,8 @@ class Treemap(tkcurses.Frame):
 
     Sample output (nestedlegend, legendlines):
         # size: 50x10
-        from tkcurses.treemap import Treemap
-        tree = Treemap(root, nestedlegend=True, legendlines=2,
+        from tkcurses.treemap import TreeMap
+        tree = TreeMap(root, nestedlegend=True, legendlines=2,
                        legendsize="medium")
         tree.pack(fill="both", expand=True)
         tree.insert("", "end", "web", text="web servers",
@@ -379,9 +379,9 @@ class Treemap(tkcurses.Frame):
 
     Sample output (units, unitplacement, unitspace):
         # size: 60x8
-        from tkcurses.treemap import Treemap
+        from tkcurses.treemap import TreeMap
         for units, placement in (("B", "suffix"), ("$", "prefix")):
-            tree = Treemap(root, values="value", units=units, width=30,
+            tree = TreeMap(root, values="value", units=units, width=30,
                            unitplacement=placement, unitspace=units == "B")
             tree.pack(side="left", fill="y")
             for name, size in (("nginx", 330), ("apache", 170), ("php", 50)):
@@ -389,18 +389,18 @@ class Treemap(tkcurses.Frame):
 
     Sample output (digits, decimals, rounding):
         # size: 60x8
-        from tkcurses.treemap import Treemap
+        from tkcurses.treemap import TreeMap
         for options in ({"digits": 1, "rounding": "up"}, {"decimals": 2}):
-            tree = Treemap(root, values="value", width=30, **options)
+            tree = TreeMap(root, values="value", width=30, **options)
             tree.pack(side="left", fill="y")
             for name, size in (("nginx", 1234), ("apache", 170), ("php", 50)):
                 tree.insert("", "end", text=name, value=size)
 
     Sample output (unitscale):
         # size: 60x8
-        from tkcurses.treemap import Treemap
+        from tkcurses.treemap import TreeMap
         for scale, units in (("binary", "B"), ("time", "s")):
-            tree = Treemap(root, values="value", unitscale=scale,
+            tree = TreeMap(root, values="value", unitscale=scale,
                            units=units, digits=3, width=30)
             tree.pack(side="left", fill="y")
             for size in (400_000, 250_000, 90_000):
@@ -431,7 +431,7 @@ class Treemap(tkcurses.Frame):
         "legendlines": 1,
     }
 
-    #: Frame hides ``foreground``; a Treemap writes its readout in it.
+    #: Frame hides ``foreground``; a TreeMap writes its readout in it.
     _not_tk_options: ClassVar[frozenset[str]] = frozenset()
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
@@ -461,7 +461,7 @@ class Treemap(tkcurses.Frame):
         self._back: tuple[Direction, str, str] | None = None
         self._tag_bindings: dict[str, dict[str, Callable[[Event], Any]]] = {}
         self._tag_dispatch: dict[str, str] = {}
-        #: The group just zoomed out of, for a ``<<TreemapZoom>>`` tag binding.
+        #: The group just zoomed out of, for a ``<<TreeMapZoom>>`` tag binding.
         self._zoomed_out = ""
         #: The root's ``<Configure>`` binding, while a size is a percentage.
         self._screen_binding: str | None = None
@@ -707,7 +707,7 @@ class Treemap(tkcurses.Frame):
 
     def selection_set(self, *items: str) -> None:
         """Select one item, or none with no argument or ``""``, and send
-        ``<<TreemapSelect>>``.
+        ``<<TreeMapSelect>>``.
 
         Raises:
             tkcurses.TclError: More than one item is named, or one is not
@@ -728,7 +728,7 @@ class Treemap(tkcurses.Frame):
     def zoom(self, item: str | None = None) -> Any:
         """With no argument, the group zoomed into, or ``""``; with one,
         zoom into it so its children fill the treemap, or out with ``""``.
-        A change sends ``<<TreemapZoom>>``.
+        A change sends ``<<TreeMapZoom>>``.
 
         Raises:
             tkcurses.TclError: ``item`` is not a top-level item with
@@ -783,9 +783,9 @@ class Treemap(tkcurses.Frame):
         ``tagname`` only.
 
         The item an event is for is the tile under the pointer for a mouse
-        event; the selected item for ``<<TreemapSelect>>``; the group zoomed
-        into, or out of, for ``<<TreemapZoom>>``; and the focused item for
-        a key. So ``tag_bind("disk", "<<TreemapSelect>>", show)`` runs
+        event; the selected item for ``<<TreeMapSelect>>``; the group zoomed
+        into, or out of, for ``<<TreeMapZoom>>``; and the focused item for
+        a key. So ``tag_bind("disk", "<<TreeMapSelect>>", show)`` runs
         ``show`` when an item tagged ``disk`` is chosen, however it was.
         """
         if sequence is None or callback is None:
@@ -1135,9 +1135,9 @@ class Treemap(tkcurses.Frame):
 # ---------------------------------------------------------------- bindings
 
 
-def _tree(event: Event) -> Treemap | None:
+def _tree(event: Event) -> TreeMap | None:
     widget = event.widget
-    return widget if isinstance(widget, Treemap) else None
+    return widget if isinstance(widget, TreeMap) else None
 
 
 def _treemap_arrow(direction: Direction, event: Event) -> str | None:

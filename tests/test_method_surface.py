@@ -597,8 +597,8 @@ _NOT_A_TABLE = frozenset(
         "Text is measured in cells",
         "How its options are measured",
         "Not yet",
-        # Treemap's design, likewise a widget tkinter lacks.
-        "Treemap",
+        # TreeMap's design, likewise a widget tkinter lacks.
+        "TreeMap",
         "What comes from Kibana, and what does not",
         "The data: Treeview's item API, two levels",
         "Modules",

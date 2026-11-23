@@ -26,7 +26,7 @@ from hypothesis import strategies as st
 import tkcurses as tk
 from tkcurses._charts.geometry import Rect
 from tkcurses.treemap import PATH_SEPARATOR as PATH
-from tkcurses.treemap import Treemap
+from tkcurses.treemap import TreeMap
 from tkcurses.treemap._compose import SELECTED
 from tkcurses.treemap._navigate import DIRECTIONS, OPPOSITE, neighbour
 from tkcurses.treemap._outline import inner
@@ -100,7 +100,7 @@ def root():
 @pytest.fixture
 def tree(root):
     """The services, placed 49 by 11, with the keyboard focus."""
-    widget = Treemap(root)
+    widget = TreeMap(root)
     web = widget.insert("", "end", "web", text="web")
     widget.insert(web, "end", "nginx", text="nginx", value=330, tags="front")
     widget.insert(web, "end", "apache", text="apache", value=170, tags=("front", "old"))
@@ -146,7 +146,7 @@ def text(widget):
 
 
 def test_it_takes_the_focus(root):
-    assert Treemap(root).cget("takefocus")
+    assert TreeMap(root).cget("takefocus")
 
 
 def test_the_first_arrow_focuses_the_largest(tree):
@@ -177,18 +177,18 @@ def test_arrows_stay_on_one_level(tree):
 
 
 def test_space_and_return_select_and_send_the_event(tree):
-    seen = events(tree, "<<TreemapSelect>>")
+    seen = events(tree, "<<TreeMapSelect>>")
     tree.focus("nginx")
     key(tree, "space")
     assert tree.selection() == ("nginx",)
     tree.focus("cache")
     key(tree, "Return")
     assert tree.selection() == ("cache",)
-    assert seen == ["<<TreemapSelect>>"] * 2
+    assert seen == ["<<TreeMapSelect>>"] * 2
 
 
 def test_return_on_a_group_zooms_in_and_escape_comes_out(tree):
-    seen = events(tree, "<<TreemapZoom>>")
+    seen = events(tree, "<<TreeMapZoom>>")
     tree.focus("db")
     key(tree, "Return")
     assert tree.zoom() == "db"
@@ -198,7 +198,7 @@ def test_return_on_a_group_zooms_in_and_escape_comes_out(tree):
     key(tree, "Escape")
     assert tree.zoom() == ""
     assert tree.focus() == "db"
-    assert seen == ["<<TreemapZoom>>"] * 2
+    assert seen == ["<<TreeMapZoom>>"] * 2
 
 
 def test_escape_from_a_child_goes_to_its_group(tree):
@@ -208,11 +208,11 @@ def test_escape_from_a_child_goes_to_its_group(tree):
 
 
 def test_a_click_focuses_and_selects(tree):
-    seen = events(tree, "<<TreemapSelect>>")
+    seen = events(tree, "<<TreeMapSelect>>")
     click(tree, "postgres")
     assert tree.focus() == "postgres"
     assert tree.selection() == ("postgres",)
-    assert seen == ["<<TreemapSelect>>"]
+    assert seen == ["<<TreeMapSelect>>"]
 
 
 def test_a_click_on_a_header_is_the_group(tree):
@@ -230,7 +230,7 @@ def test_a_double_click_zooms_into_the_group(tree):
 def test_identify_outside_any_tile_is_empty(root, tree):
     assert tree.identify(100, 100) == ""
     assert tree.identify(5, 10) == ""  # the readout
-    boxed = Treemap(root, borderwidth=1)
+    boxed = TreeMap(root, borderwidth=1)
     boxed.insert("", "end", text="only", value=1)
     boxed._allocate(Rect(0, 0, 20, 6))
     boxed._map()
@@ -294,7 +294,7 @@ def test_a_focused_group_reverses_its_header(tree):
 
 
 def test_a_tile_with_no_room_for_text_is_reversed_whole(root):
-    widget = Treemap(root, outline="off", legend="hide")
+    widget = TreeMap(root, outline="off", legend="hide")
     widget.insert("", "end", "big", text="big", value=1000)
     widget.insert("", "end", "tiny", text="tiny", value=40)
     widget._allocate(Rect(0, 0, 40, 10))
@@ -351,7 +351,7 @@ def test_tags_are_kept_as_a_tuple(tree):
 def test_a_tag_binding_runs_only_for_its_items(tree):
     chosen = []
     tree.tag_bind(
-        "disk", "<<TreemapSelect>>", lambda _e: chosen.append(tree.selection()[0])
+        "disk", "<<TreeMapSelect>>", lambda _e: chosen.append(tree.selection()[0])
     )
     tree.selection_set("nginx")
     tree.selection_set("mysql")
@@ -381,8 +381,8 @@ def test_a_tag_binding_on_a_key_goes_to_the_focused_item(tree):
 
 def test_every_tag_of_an_item_runs_in_its_order(tree):
     order = []
-    tree.tag_bind("old", "<<TreemapSelect>>", lambda _e: order.append("old"))
-    tree.tag_bind("front", "<<TreemapSelect>>", lambda _e: order.append("front"))
+    tree.tag_bind("old", "<<TreeMapSelect>>", lambda _e: order.append("old"))
+    tree.tag_bind("front", "<<TreeMapSelect>>", lambda _e: order.append("front"))
     tree.selection_set("apache")
     assert order == ["front", "old"]
 
@@ -390,7 +390,7 @@ def test_every_tag_of_an_item_runs_in_its_order(tree):
 def test_a_tag_binding_on_zoom_is_for_the_group(root, tree):
     zoomed = []
     tree.item("db", tags="data")
-    tree.tag_bind("data", "<<TreemapZoom>>", lambda _e: zoomed.append(tree.zoom()))
+    tree.tag_bind("data", "<<TreeMapZoom>>", lambda _e: zoomed.append(tree.zoom()))
     tree.zoom("web")
     tree.zoom("")
     tree.zoom("db")
@@ -408,7 +408,7 @@ def test_a_tag_binding_on_zoom_is_for_the_group(root, tree):
 def test_the_opposite_key_always_goes_back(sizes, width, height, direction):
     window = tk.Tk(useTk=False)
     try:
-        widget = Treemap(window, outline="off", readout=False)
+        widget = TreeMap(window, outline="off", readout=False)
         for size in sizes:
             widget.insert("", "end", text="x", value=size)
         widget._allocate(Rect(0, 0, width, height))

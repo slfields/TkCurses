@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""The Treemap widget, its labels and its drawing, without a terminal."""
+"""The TreeMap widget, its labels and its drawing, without a terminal."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ import tkcurses as tk
 from tkcurses._charts.color import BLACK, WHITE, luminance, text_on
 from tkcurses._charts.geometry import Rect
 from tkcurses._core.cells import cells
-from tkcurses.treemap import Treemap
+from tkcurses.treemap import TreeMap
 from tkcurses.treemap._compose import EMPTY_TEXT, Scene, compose
 from tkcurses.treemap._labels import MIN_LABEL, header_text, percent, tile_text
 from tkcurses.treemap._layout import lay_out, regions
@@ -202,7 +202,7 @@ def root():
 
 
 def test_defaults(root):
-    tree = Treemap(root)
+    tree = TreeMap(root)
     assert tree.cget("values") == "percent"
     assert tree.cget("percentdecimals") == 2
     assert tree.cget("outline") == "auto"
@@ -222,15 +222,15 @@ def test_defaults(root):
 )
 def test_a_bad_option_is_refused_at_creation_and_in_configure(root, options, message):
     with pytest.raises(tk.TclError, match=f"^{message}$".replace("(", r"\(")):
-        Treemap(root, **options)
-    tree = Treemap(root)
+        TreeMap(root, **options)
+    tree = TreeMap(root)
     with pytest.raises(tk.TclError):
         tree.configure(**options)
     assert tree.cget("values") == "percent"
 
 
 def test_the_item_methods_are_treeviews(root):
-    tree = Treemap(root)
+    tree = TreeMap(root)
     web = tree.insert("", "end", text="web")
     nginx = tree.insert(web, "end", text="nginx", value=330)
     assert (web, nginx) == ("I001", "I002")
@@ -269,7 +269,7 @@ def test_the_item_methods_are_treeviews(root):
     ],
 )
 def test_refusals_are_tcl_errors(root, call, message):
-    tree = Treemap(root)
+    tree = TreeMap(root)
     group = tree.insert("", "end")
     tree.insert(group, "end", value=1)
     with pytest.raises(tk.TclError, match=message):
@@ -278,7 +278,7 @@ def test_refusals_are_tcl_errors(root, call, message):
 
 def test_many_changes_ask_for_one_repaint(root, monkeypatch):
     asked = []
-    tree = Treemap(root)
+    tree = TreeMap(root)
     monkeypatch.setattr(tree, "after_idle", lambda f: asked.append(f) or "after#1")
     tree._pending = None
     for n in range(100):
@@ -290,14 +290,14 @@ def test_many_changes_ask_for_one_repaint(root, monkeypatch):
 
 
 def test_the_natural_size_is_40_by_12(root):
-    tree = Treemap(root)
+    tree = TreeMap(root)
     assert (tree.winfo_reqwidth(), tree.winfo_reqheight()) == (40, 12)
-    sized = Treemap(root, width=20, height=5)
+    sized = TreeMap(root, width=20, height=5)
     assert (sized.winfo_reqwidth(), sized.winfo_reqheight()) == (20, 5)
 
 
 def test_values_none_and_value(root):
-    tree = Treemap(root, values="value", units="B", digits=3)
+    tree = TreeMap(root, values="value", units="B", digits=3)
     tree.insert("", "end", text="big", value=12345)
     assert any("12.3kB" in line for line in rows(tree._compose(40, 12)))
     tree.configure(values="none")
@@ -307,7 +307,7 @@ def test_values_none_and_value(root):
 
 
 def test_labels_off_leaves_the_values(root):
-    tree = Treemap(root, labels=False)
+    tree = TreeMap(root, labels=False)
     tree.insert("", "end", text="big", value=1)
     first = rows(tree._compose(40, 12))[1]
     assert "big" not in first
@@ -315,7 +315,7 @@ def test_labels_off_leaves_the_values(root):
 
 
 def test_the_readout_counts_what_is_too_small(root):
-    tree = Treemap(root)
+    tree = TreeMap(root)
     tree.insert("", "end", value=100000)
     tree.insert("", "end", value=1)
     assert (
@@ -326,7 +326,7 @@ def test_the_readout_counts_what_is_too_small(root):
 
 
 def test_a_border_is_left_to_the_frame(root):
-    tree = Treemap(root, borderwidth=1)
+    tree = TreeMap(root, borderwidth=1)
     tree.insert("", "end", text="all", value=1)
     screen = rows(tree._compose(20, 6))
     # Row 0 and column 0 are the frame's; without colour the tile is

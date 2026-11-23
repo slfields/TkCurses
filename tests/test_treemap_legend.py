@@ -27,7 +27,7 @@ from hypothesis import strategies as st
 import tkcurses as tk
 from tkcurses._charts.geometry import Rect
 from tkcurses._core.cells import cells
-from tkcurses.treemap import Treemap
+from tkcurses.treemap import TreeMap
 from tkcurses.treemap._compose import Scene, compose
 from tkcurses.treemap._layout import lay_out, regions
 from tkcurses.treemap._legend import (
@@ -255,7 +255,7 @@ def root():
 
 
 def placed(root, width=60, height=8, **kw):
-    widget = Treemap(root, **kw)
+    widget = TreeMap(root, **kw)
     web = widget.insert("", "end", "web", text="web")
     for name, value in (("nginx", 330), ("apache", 170), ("php", 50)):
         widget.insert(web, "end", name, text=name, value=value)
@@ -284,7 +284,7 @@ def test_by_default_it_is_on_the_right(root):
 
 
 def test_auto_hides_it_for_one_top_level_item(root):
-    widget = Treemap(root)
+    widget = TreeMap(root)
     widget.insert("", "end", "only", text="only", value=1)
     widget._allocate(Rect(0, 0, 60, 8))
     widget._map()
@@ -334,15 +334,15 @@ def test_it_never_overlaps_the_tiles_or_the_readout(root, position, width, heigh
 
 def test_bad_values_are_refused(root):
     with pytest.raises(tk.TclError, match="legend"):
-        Treemap(root, legend="sometimes")
+        TreeMap(root, legend="sometimes")
     with pytest.raises(tk.TclError, match="legendposition"):
-        Treemap(root, legendposition="middle")
+        TreeMap(root, legendposition="middle")
     with pytest.raises(tk.TclError, match="legendsize"):
-        Treemap(root, legendsize="huge")
+        TreeMap(root, legendsize="huge")
     with pytest.raises(tk.TclError, match="at most 5"):
-        Treemap(root, legendlines=6)
+        TreeMap(root, legendlines=6)
     with pytest.raises(tk.TclError):
-        Treemap(root, legendlines=0)
+        TreeMap(root, legendlines=0)
 
 
 def test_configure_moves_it(root):
@@ -381,7 +381,7 @@ def test_without_the_keyboard_focus_the_entry_is_not_reversed(root):
 def test_a_click_on_an_entry_focuses_and_does_not_select(root):
     widget = placed(root)
     seen = []
-    widget.bind("<<TreemapSelect>>", lambda _e: seen.append("select"))
+    widget.bind("<<TreeMapSelect>>", lambda _e: seen.append("select"))
     widget.event_generate("<Button-1>", x=55, y=2)
     assert widget.focus() == "cache"
     assert widget.focus_get() is widget
@@ -403,7 +403,7 @@ def test_an_item_too_small_for_a_tile_still_has_an_entry(root):
 
 
 def described(root, width=60, height=10, **kw):
-    widget = Treemap(root, **kw)
+    widget = TreeMap(root, **kw)
     widget.insert(
         "", "end", "web", text="web", value=550, description="front-end servers"
     )

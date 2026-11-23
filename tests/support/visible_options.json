@@ -3370,7 +3370,7 @@
    "value": 3
   }
  },
- "treemap.Treemap": {
+ "treemap.TreeMap": {
   "background": {
    "kind": "visible",
    "state": "plain",

@@ -19,5 +19,5 @@
 is blended, and how text is laid into character cells.
 
 Private, and pure: nothing here knows curses or a widget, and errors are
-``ValueError``. BarGraph and Treemap each build on it.
+``ValueError``. BarGraph and TreeMap each build on it.
 """

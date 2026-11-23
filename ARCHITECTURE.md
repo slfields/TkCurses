@@ -8411,7 +8411,7 @@ attributes, and writes the cells. It uses Frame's internals on purpose -
 `_options` - and the application's screen, colours and
 `CursesDispatcher`; a change to any of those has this one module to fix.
 
-**What it shares with Treemap is in `tkcurses/_charts/`**, a private
+**What it shares with TreeMap is in `tkcurses/_charts/`**, a private
 package. They moved there from BarGraph when the second chart came
 (`TkCurses-i1rh.2`, `.4`, `.6`), so neither widget imports the other's
 private modules:
@@ -8530,9 +8530,9 @@ Negative values. The origin left room: a bar split at a zero line, the
 negative side drawn with the complementary glyph in swapped colours,
 since the block has no eighth steps growing down or left.
 
-## Treemap
+## TreeMap
 
-`tkcurses.treemap.Treemap` is the second widget neither tkinter nor Tk
+`tkcurses.treemap.TreeMap` is the second widget neither tkinter nor Tk
 has. It draws a hierarchy of values as nested rectangles, each sized by
 its value, after Kibana's treemap charts. Like BarGraph it is an extension
 module: listed in `EXTENSION_MODULES`, and documented with
@@ -8833,7 +8833,7 @@ An axis not given asks for 40 columns or 12 rows (`NATURAL_SIZE`). A
 Frame instead leaves such an axis to its children, which is what makes a
 fixed-width sidebar of any height. A treemap has no children, so it
 asked for 0 on that axis: `width=30` alone asked for 30 × 0 and vanished
-unless packed with `fill`. Measured before the fix: `Treemap(root,
+unless packed with `fill`. Measured before the fix: `TreeMap(root,
 width=30)._requested` was `Size(30, 0)`.
 
 **Following the terminal.** While either axis is a percentage, the
@@ -8943,8 +8943,8 @@ neighbour whose own Left prefers a different tall tile. So each move
 remembers where it came from, and the opposite key from where it landed
 returns there; another move, or a focus set by the program, forgets.
 
-**Selecting fires `<<TreemapSelect>>`**, and zooming fires
-`<<TreemapZoom>>`. `zoom(item)` zooms in from the program, `zoom("")`
+**Selecting fires `<<TreeMapSelect>>`**, and zooming fires
+`<<TreeMapZoom>>`. `zoom(item)` zooms in from the program, `zoom("")`
 zooms out, and `zoom()` answers the current one, as `xview()` answers
 the view. `identify(x, y)` answers the iid under a point, or `""`, for a
 program's own mouse bindings.
@@ -8971,9 +8971,9 @@ or a string of names, `tag_has` answers who carries one, and
 `tag_bind(tag, sequence, callback)` runs the callback only when the item
 the event is for carries the tag. Which item that is depends on the
 event: the tile under the pointer for a mouse event, the selected item
-for `<<TreemapSelect>>`, the group zoomed into or out of for
-`<<TreemapZoom>>`, and otherwise the focused item. That makes
-`tag_bind("disk", "<<TreemapSelect>>", ...)` mean "when a disk is
+for `<<TreeMapSelect>>`, the group zoomed into or out of for
+`<<TreeMapZoom>>`, and otherwise the focused item. That makes
+`tag_bind("disk", "<<TreeMapSelect>>", ...)` mean "when a disk is
 chosen", by click or key alike. An item's tags run in its own order, as
 a Treeview row's do. One widget binding per sequence carries every tag
 binding, as `Treeview.tag_bind` does it. `tag_configure` is not there
@@ -8995,12 +8995,12 @@ show` in the middle.
 
 ### Options measured
 
-`record_visible_options.py` names it `treemap.Treemap`. The base is two
+`record_visible_options.py` names it `treemap.TreeMap`. The base is two
 groups and one plain item, 40 × 10, enough for headers, shades, labels
 and the readout; `cache` is 1234 so the number format has a value to
 scale. `WIDGET_NEEDS` gives the number options `values="value"`, since
 a percentage ignores them, and `relief` a border. Measured: every
-Treemap option visible but the Frame's own invisible ones. Each has a
+TreeMap option visible but the Frame's own invisible ones. Each has a
 `Sample output (option):`, run by the docs build once the reference
 page includes the class.
 
