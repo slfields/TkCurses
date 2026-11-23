@@ -26,13 +26,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from tkcurses.bargraph._scale import (
-    Scale,
-    ValueRange,
-    parse_level,
-    parse_scale,
-    to_points,
-)
+from tkcurses._charts.scale import ValueRange
+from tkcurses.bargraph._scale import Scale, parse_level, parse_scale, to_points
 
 
 @pytest.mark.parametrize("value", [8, "8", 64, " 20 "])

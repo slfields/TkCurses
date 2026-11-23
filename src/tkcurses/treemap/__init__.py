@@ -29,16 +29,26 @@ from __future__ import annotations
 import contextlib
 import curses
 import functools
-import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import tkcurses
-from tkcurses import TclError, _signed_distance
+from tkcurses import TclError
 from tkcurses._charts.color import DEFAULT_COLORS, hex_color
 from tkcurses._charts.geometry import Rect
+from tkcurses._charts.legend import (
+    LEGEND_MODES,
+    LEGEND_SIZES,
+    MAX_LINES,
+    POSITIONS,
+    LegendLayout,
+    extent,
+    place,
+    shown,
+)
 from tkcurses._charts.numformat import PLACEMENTS, ROUNDINGS, UNIT_SCALES, NumberFormat
 from tkcurses._charts.options import choice, color, count, flag, items, optional_count
+from tkcurses._charts.size import ScreenSize, dimension
 from tkcurses._core.bindings import parse_sequence
 from tkcurses._core.cells import cells
 from tkcurses._core.colors import ColorDepth, parse_color, rgb_of
@@ -46,18 +56,7 @@ from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses.treemap._compose import Cell, Scene, compose
 from tkcurses.treemap._labels import percent
 from tkcurses.treemap._layout import Regions, TileLayout, lay_out, regions
-from tkcurses.treemap._legend import (
-    LEGEND_MODES,
-    LEGEND_SIZES,
-    MAX_LINES,
-    POSITIONS,
-    LegendLayout,
-    entries,
-    extent,
-    place,
-    shown,
-)
-from tkcurses.treemap._model import Model
+from tkcurses.treemap._model import Model, legend_entries
 from tkcurses.treemap._navigate import OPPOSITE, Direction, neighbour
 from tkcurses.treemap._shades import OUTLINE_MODES, outlined_levels, shades_of
 
@@ -86,35 +85,6 @@ _ITEM_OPTIONS = ("text", "value", "tags", "description")
 #: The size a treemap asks for on an axis whose width or height is not
 #: given.
 NATURAL_SIZE = (40, 12)
-
-
-def _dimension(widget: Any, value: Any) -> Any:
-    """``width`` or ``height``: a distance in cells, as any Frame's, or a
-    percentage of the screen, ``"50%"``, kept as written."""
-    if isinstance(value, str) and value.strip().endswith("%"):
-        try:
-            share = float(value.strip()[:-1])
-        except ValueError:
-            share = math.nan
-        if not 0 < share <= 100:  # also refuses nan
-            raise TclError(
-                "expected screen distance or percentage above 0 and at most 100"
-                f' but got "{value}"'
-            )
-        return f"{share:g}%"
-    return _signed_distance(widget, value)
-
-
-def _cells(value: Any, screen: int) -> int:
-    """A ``width`` or ``height`` in cells against a ``screen`` that long;
-    0 for one not given."""
-    if isinstance(value, str) and value.endswith("%"):
-        return max(1, round(screen * float(value[:-1]) / 100))
-    return max(0, int(value))
-
-
-def _is_share(value: Any) -> bool:
-    return isinstance(value, str) and value.endswith("%")
 
 
 @dataclass(frozen=True)
@@ -438,8 +408,8 @@ class TreeMap(tkcurses.Frame):
     _not_tk_options: ClassVar[frozenset[str]] = frozenset()
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
-        "width": _dimension,
-        "height": _dimension,
+        "width": dimension,
+        "height": dimension,
     }
 
     #: The options this class adds and :func:`_parse` checks.
@@ -466,8 +436,9 @@ class TreeMap(tkcurses.Frame):
         self._tag_dispatch: dict[str, str] = {}
         #: The group just zoomed out of, for a ``<<TreeMapZoom>>`` tag binding.
         self._zoomed_out = ""
-        #: The root's ``<Configure>`` binding, while a size is a percentage.
-        self._screen_binding: str | None = None
+        #: ``width`` and ``height`` in cells, following the terminal while
+        #: either is a share of it.
+        self._size = ScreenSize(self, NATURAL_SIZE, self._apply_requested_size)
         options = {**self._widget_options, **(cnf or {}), **kw}
         try:
             config = _parse({key: options[key] for key in self._own_options})
@@ -535,35 +506,8 @@ class TreeMap(tkcurses.Frame):
 
     def _apply_requested_size(self) -> None:
         """Ask for ``width`` by ``height``, each in cells or a share of the
-        screen, and :data:`NATURAL_SIZE` on an axis not given.
-
-        Unlike a Frame's, an axis left out is not left to children: a
-        treemap has none, and would ask for nothing on it.
-        """
-        width, height = self._options["width"], self._options["height"]
-        screen_width, screen_height = self._screen_size()
-        self._request_size(
-            _cells(width, screen_width) or NATURAL_SIZE[0],
-            _cells(height, screen_height) or NATURAL_SIZE[1],
-        )
-        self._follow_screen(_is_share(width) or _is_share(height))
-
-    def _follow_screen(self, follow: bool) -> None:
-        """Ask again whenever the terminal is resized, while a size is a
-        percentage of it."""
-        root = self._root()
-        if follow and self._screen_binding is None:
-            self._screen_binding = root.bind(
-                "<Configure>", self._screen_resized, add="+"
-            )
-        elif not follow and self._screen_binding is not None:
-            root.unbind("<Configure>", self._screen_binding)
-            self._screen_binding = None
-
-    def _screen_resized(self, event: Event) -> None:
-        # The root's tag is on every widget's bindtags: only its own counts.
-        if event.widget is self._root() and self.winfo_exists():
-            self._apply_requested_size()
+        screen, and :data:`NATURAL_SIZE` on an axis not given."""
+        self._request_size(*self._size.requested())
 
     # ---------------------------------------------------------------- items
 
@@ -940,7 +884,7 @@ class TreeMap(tkcurses.Frame):
             with contextlib.suppress(TclError):
                 self.after_cancel(self._pending)
             self._pending = None
-        self._follow_screen(False)
+        self._size.follow(False)
         super().destroy()
 
     # --------------------------------------------------------------- drawing
@@ -1037,7 +981,7 @@ class TreeMap(tkcurses.Frame):
         """``area`` cut into tiles, legend and readout, and the legend's
         entries placed."""
         config = self._config
-        listed = entries(self._model, zoom, config.nestedlegend)
+        listed = legend_entries(self._model, zoom, config.nestedlegend)
         side = config.legendposition
         size = 0
         if shown(config.legend, listed):

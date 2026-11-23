@@ -26,21 +26,20 @@ from hypothesis import strategies as st
 
 import tkcurses as tk
 from tkcurses._charts.geometry import Rect
-from tkcurses._core.cells import cells
-from tkcurses.treemap import TreeMap
-from tkcurses.treemap._compose import Scene, compose
-from tkcurses.treemap._layout import lay_out, regions
-from tkcurses.treemap._legend import (
+from tkcurses._charts.legend import (
     LEGEND_SIZES,
     SWATCH,
     Entry,
-    entries,
     extent,
     place,
     shown,
     wrap,
 )
-from tkcurses.treemap._model import Model
+from tkcurses._core.cells import cells
+from tkcurses.treemap import TreeMap
+from tkcurses.treemap._compose import Scene, compose
+from tkcurses.treemap._layout import lay_out, regions
+from tkcurses.treemap._model import Model, legend_entries
 
 
 def services():
@@ -92,11 +91,11 @@ def test_wide_characters_wrap_by_cells():
 
 
 def test_entries_are_the_top_level_largest_first():
-    assert [e.iid for e in entries(services())] == ["web", "db", "cache"]
+    assert [e.iid for e in legend_entries(services())] == ["web", "db", "cache"]
 
 
 def test_a_nested_legend_lists_each_groups_children_under_it():
-    listed = entries(services(), nested=True)
+    listed = legend_entries(services(), nested=True)
     assert [e.iid for e in listed] == [
         "web", "nginx", "apache", "php", "db", "postgres", "mysql", "cache",
     ]  # fmt: skip
@@ -104,7 +103,7 @@ def test_a_nested_legend_lists_each_groups_children_under_it():
 
 
 def test_zoomed_the_legend_names_the_groups_children():
-    assert [e.iid for e in entries(services(), "db", nested=True)] == [
+    assert [e.iid for e in legend_entries(services(), "db", nested=True)] == [
         "postgres",
         "mysql",
     ]
@@ -113,13 +112,13 @@ def test_zoomed_the_legend_names_the_groups_children():
 def test_an_item_of_zero_has_no_entry():
     model = services()
     model.configure("cache", value=0)
-    assert "cache" not in [e.iid for e in entries(model)]
+    assert "cache" not in [e.iid for e in legend_entries(model)]
 
 
 def test_an_unnamed_item_is_listed_by_its_iid():
     model = Model()
     model.insert("", "end", "I9", value=3)
-    assert entries(model)[0].text == "I9"
+    assert legend_entries(model)[0].text == "I9"
 
 
 def test_auto_shows_it_for_two_or_more_at_the_top():
@@ -191,7 +190,9 @@ def test_at_the_left_the_edge_is_on_the_right():
 
 
 def test_too_many_end_with_how_many_more():
-    laid = place(entries(services(), nested=True), Rect(50, 0, 13, 7), "right", 1)
+    laid = place(
+        legend_entries(services(), nested=True), Rect(50, 0, 13, 7), "right", 1
+    )
     assert len(laid.placed) == 6  # the last row says how many more
     assert laid.more == 2
     assert laid.more_at == (51, 6)
@@ -206,7 +207,7 @@ def test_wrapped_entries_take_their_lines():
 
 
 def test_a_nested_entry_is_indented():
-    listed = entries(services(), nested=True)
+    listed = legend_entries(services(), nested=True)
     laid = place(listed, Rect(40, 0, 20, 10), "right", 1)
     nginx = next(p for p in laid.placed if p.iid == "nginx")
     assert nginx.indent == 2
@@ -237,7 +238,7 @@ def test_a_swatch_is_its_items_colour():
     model = services()
     cut = regions(Rect(0, 0, 60, 8), legend="right", legend_extent=9)
     layout = lay_out(model, cut.tiles)
-    legend = place(entries(model), cut.legend, "right", 1)
+    legend = place(legend_entries(model), cut.legend, "right", 1)
     grid = compose(Scene(60, 8, cut, layout, model, colors=PALETTE, legend=legend))
     rows = ["".join(c.char for c in row) for row in grid]
     assert rows[0][51:] == f"│{SWATCH} web  "

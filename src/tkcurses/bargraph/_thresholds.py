@@ -28,10 +28,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from tkcurses.bargraph._scale import ValueRange, parse_level, to_points
+from tkcurses.bargraph._scale import parse_level, to_points
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+    from tkcurses._charts.scale import ValueRange
 
 
 @dataclass(frozen=True, slots=True)

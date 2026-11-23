@@ -8395,11 +8395,11 @@ raise `ValueError`; the widget turns that into `TclError`.
 | Module | Does |
 |--------|------|
 | `_model` | segments × series values, validation; `AutoScale` |
-| `_scale` | `"64"` and `"75%"` scales, `ValueRange` (linear or log, from `minimum`), value to points, round numbers |
+| `_scale` | `"64"` and `"75%"` scales, value to points; `ValueRange` and the round numbers are in `_charts.scale`, shared since XYChart |
 | `_layout` | the frame's size to regions: bars, axis, readout, labels, box |
 | `_render` | values to runs and cells, with colour *roles* (series *i*, zone *j*, marker, background), never colours |
 | `_thresholds` | levels to colour zones along a bar |
-| `_decor` | baseline, ticks, gridlines, markers, peak hold, readout, the box's text; composes the window |
+| `_decor` | baseline, ticks, gridlines, markers, peak hold, readout, the box's text; composes the window. The tick choosers are `_charts.scale`'s |
 | `_gradient` | each series cell's shade by position |
 | `_glyphs` | the eighth-block ramps, monochrome patterns |
 
@@ -8494,7 +8494,7 @@ steps land between bursts. Peak hold and autoscale read
 
 Round numbers are the 1-2-5 series - times powers of ten, or of 1024 for
 `unitscale="binary"`, or steps a clock reads (15 s, 1 min, 1 h) for
-time units - from one generator, `_scale.round_steps`, which ticks and
+time units - from one generator, `_charts.scale.round_steps`, which ticks and
 autoscale share.
 
 ### Text is measured in cells
@@ -8615,7 +8615,7 @@ As BarGraph: pure modules know nothing of curses and raise `ValueError`;
 | `_shades` | the four shades, which each child takes so no two neighbours share one, and which levels are outlined |
 | `_outline` | the lines between outlined tiles, with their junctions |
 | `_labels` | what text fits in a tile, and where |
-| `_legend` | the entries, wrapped and truncated, flowed into the legend region |
+| `_charts.legend` | the entries, wrapped and truncated, flowed into the legend region; shared with XYChart since its `.2`, and the entries a treemap lists are `_model.legend_entries` |
 | `_navigate` | which tile an arrow key moves to |
 | `_compose` | all of that into rows of cells, with the focus reversed and the selection marked, each naming its colours as specs, `""` for the widget's own |
 
@@ -8841,7 +8841,7 @@ treemap binds the root's `<Configure>`, which `_handle_resize` sends
 after every resize, and asks again. The root's tag is on every widget's
 bindtags, so a child's `<Configure>` reaches it too; only the root's
 own counts. Setting both axes back to cells, or destroying the treemap,
-removes the binding. The layout pass that the resize runs comes first
+removes the binding. The rules are `_charts.size`'s, shared with XYChart. The layout pass that the resize runs comes first
 and uses the old request, so a resize lays out twice: once at once, and
 again when the new request is idle.
 
@@ -9228,8 +9228,10 @@ the Canvas and raise `ValueError`; `__init__.py` holds only the widget.
 - `scale.py`: BarGraph's `_scale`, its rounding to nice values, and its
   tick choosers (`auto_ticks`, `log_ticks`), adding `sqrt` and time
   ticks.
-- `size.py`: TreeMap's size rules (below), as a mixin both widgets use,
-  so the rules are one piece of code and cannot drift apart.
+- `size.py`: TreeMap's size rules (below): the `width` and `height`
+  check, and `ScreenSize`, an object each widget holds that works out the
+  cells to ask for and keeps the root binding. One piece of code, so the
+  rules cannot drift apart.
 
 BarGraph's and TreeMap's behaviour does not change, and their tests hold
 it.
@@ -9247,9 +9249,9 @@ destroying the chart removes the binding.
 
 The Canvas needs two more changes for it. Its `width` and `height`
 checks are `_signed_distance`, which would refuse `"50%"`, so the chart
-uses the size mixin's check instead. And Canvas's `_apply_requested_size`
+uses `_charts.size.dimension` instead. And Canvas's `_apply_requested_size`
 and `_plane_size` read the options as whole cells, so the chart
-overrides both to use the cells the mixin works out. Canvas itself
+overrides both to use the cells `ScreenSize` works out. Canvas itself
 keeps Tk's rules.
 
 ### Scales, axes and ticks

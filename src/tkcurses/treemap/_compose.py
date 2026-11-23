@@ -41,10 +41,10 @@ from typing import TYPE_CHECKING
 
 from tkcurses._charts.color import BLACK, hex_color, text_on
 from tkcurses._charts.geometry import Rect
+from tkcurses._charts.legend import SWATCH
 from tkcurses._charts.text import clusters, fit
 from tkcurses._core.cells import cells
 from tkcurses.treemap._labels import header_text, tile_text
-from tkcurses.treemap._legend import SWATCH
 from tkcurses.treemap._outline import inner, lines
 from tkcurses.treemap._shades import assign, shades_of
 
@@ -52,8 +52,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from tkcurses._charts.color import RGB
+    from tkcurses._charts.legend import LegendLayout
     from tkcurses.treemap._layout import Regions, Tile, TileLayout
-    from tkcurses.treemap._legend import LegendLayout
     from tkcurses.treemap._model import Model
 
 __all__ = ["EMPTY_TEXT", "SELECTED", "Cell", "Scene", "compose"]

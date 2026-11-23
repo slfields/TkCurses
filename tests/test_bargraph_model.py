@@ -25,8 +25,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from tkcurses._charts.scale import round_up
 from tkcurses.bargraph._model import AutoScale, Model
-from tkcurses.bargraph._scale import round_up
 
 
 def test_starts_zeroed_and_dirty():

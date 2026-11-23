@@ -80,6 +80,7 @@ from tkcurses._charts.options import (
 from tkcurses._charts.options import (
     optional_count as _optional_count,
 )
+from tkcurses._charts.scale import ValueRange, auto_ticks, even_ticks, round_up
 from tkcurses._core.cells import cells
 from tkcurses._core.colors import ColorDepth, rgb_of
 from tkcurses._core.dispatcher import CursesDispatcher
@@ -88,9 +89,7 @@ from tkcurses.bargraph._decor import (
     Decor,
     PeakHold,
     Window,
-    auto_ticks,
     compose,
-    even_ticks,
     readout_value,
     spaced,
 )
@@ -110,13 +109,7 @@ from tkcurses.bargraph._layout import (
 )
 from tkcurses.bargraph._model import AutoScale, Model
 from tkcurses.bargraph._render import BACKGROUND, Cell, Role, render_bars, series, zone
-from tkcurses.bargraph._scale import (
-    Scale,
-    ValueRange,
-    parse_level,
-    parse_scale,
-    round_up,
-)
+from tkcurses.bargraph._scale import Scale, parse_level, parse_scale
 from tkcurses.bargraph._thresholds import parse_thresholds
 
 if TYPE_CHECKING:
