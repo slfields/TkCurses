@@ -9179,7 +9179,10 @@ A chart holds **series**, each a name and a list of points. A point is
 **x is a number or a time**, the same kind for every point of every
 series, or `TclError`. A time is a `datetime` (naive is local time) or a
 `date`, held as epoch seconds; numbers are any finite real. The first
-series decides which kind the chart has, until every series is deleted.
+point decides which kind the chart has, until no series has a point; a
+series whose points are being replaced by `set_series` does not count.
+Every point of a call is checked before any is kept, so a refused call
+changes nothing.
 Points are kept sorted by x. An x given twice in one series keeps the
 last, as a re-sent bucket would.
 
@@ -9191,9 +9194,15 @@ scale draws a value at or below zero as missing, as Kibana does.
 `missing` fills a gap *between* two known points: `hide` leaves it, so
 the line breaks; `zero` drops to zero; `linear` joins the neighbours;
 `last` carries the one before forward; `next` brings the one after
-back. `endvalues` covers the gaps at the ends, before the first known
-point and after the last: `hide`, `zero` or `nearest`. Filled values
-are marked, and with `dottedgaps` the segments through them are dotted.
+back. `linear` goes by x, not by position, so uneven buckets join in a
+straight line. `endvalues` covers the gaps at the ends, before the first
+known point and after the last: `hide`, `zero` or `nearest`. As in
+Kibana, where the end-values choice appears only once a fitting is
+chosen, it applies only while `missing` fills something: with `hide` the
+ends stay hidden too. With no known value at all, `endvalues="zero"`
+makes every value zero and anything else leaves them missing. Filled
+values are marked, and with `dottedgaps` the segments through them are
+dotted.
 
 A gap is a missing `y`. The chart does not make up x values a series
 lacks: the program sends one per bucket, with `None` where the bucket is
