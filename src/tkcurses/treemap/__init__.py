@@ -29,11 +29,12 @@ from __future__ import annotations
 import contextlib
 import curses
 import functools
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import tkcurses
-from tkcurses import TclError
+from tkcurses import TclError, _signed_distance
 from tkcurses._charts.color import DEFAULT_COLORS, hex_color
 from tkcurses._charts.geometry import Rect
 from tkcurses._charts.numformat import PLACEMENTS, ROUNDINGS, UNIT_SCALES, NumberFormat
@@ -77,8 +78,38 @@ SELECT_EVENT = "<<TreemapSelect>>"
 ZOOM_EVENT = "<<TreemapZoom>>"
 #: Written between a group and its child in the readout.
 PATH_SEPARATOR = " \u203a "  # a single right-pointing angle quote
-#: The size a treemap asks for when neither width nor height is given.
+#: The size a treemap asks for on an axis whose width or height is not
+#: given.
 NATURAL_SIZE = (40, 12)
+
+
+def _dimension(widget: Any, value: Any) -> Any:
+    """``width`` or ``height``: a distance in cells, as any Frame's, or a
+    percentage of the screen, ``"50%"``, kept as written."""
+    if isinstance(value, str) and value.strip().endswith("%"):
+        try:
+            share = float(value.strip()[:-1])
+        except ValueError:
+            share = math.nan
+        if not 0 < share <= 100:  # also refuses nan
+            raise TclError(
+                "expected screen distance or percentage above 0 and at most 100"
+                f' but got "{value}"'
+            )
+        return f"{share:g}%"
+    return _signed_distance(widget, value)
+
+
+def _cells(value: Any, screen: int) -> int:
+    """A ``width`` or ``height`` in cells against a ``screen`` that long;
+    0 for one not given."""
+    if isinstance(value, str) and value.endswith("%"):
+        return max(1, round(screen * float(value[:-1]) / 100))
+    return max(0, int(value))
+
+
+def _is_share(value: Any) -> bool:
+    return isinstance(value, str) and value.endswith("%")
 
 
 @dataclass(frozen=True)
@@ -148,6 +179,13 @@ class Treemap(tkcurses.Frame):
 
     A bad option value raises :class:`tkcurses.TclError` and leaves the
     treemap as it was, at creation and in :meth:`configure` alike.
+
+    **Size.** ``width`` and ``height`` are each given on their own, in
+    cells or as a percentage of the terminal: ``width="50%", height=10``
+    asks for half the terminal's width and ten rows, and follows the
+    terminal when it is resized. An axis not given asks for 40 columns or
+    12 rows. As for any widget, this is a request: ``fill`` and
+    ``expand`` give it more.
 
     **Keys and the mouse.** A treemap takes the keyboard focus, and while
     it has it the focused item is drawn reversed: its label row, a group's
@@ -391,6 +429,11 @@ class Treemap(tkcurses.Frame):
     #: Frame hides ``foreground``; a Treemap writes its readout in it.
     _not_tk_options: ClassVar[frozenset[str]] = frozenset()
 
+    _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
+        "width": _dimension,
+        "height": _dimension,
+    }
+
     #: The options this class adds and :func:`_parse` checks.
     _own_options = frozenset(_widget_options) - {"relief", "foreground", "takefocus"}
 
@@ -415,6 +458,8 @@ class Treemap(tkcurses.Frame):
         self._tag_dispatch: dict[str, str] = {}
         #: The group just zoomed out of, for a ``<<TreemapZoom>>`` tag binding.
         self._zoomed_out = ""
+        #: The root's ``<Configure>`` binding, while a size is a percentage.
+        self._screen_binding: str | None = None
         options = {**self._widget_options, **(cnf or {}), **kw}
         try:
             config = _parse({key: options[key] for key in self._own_options})
@@ -481,11 +526,36 @@ class Treemap(tkcurses.Frame):
         self._changed()
 
     def _apply_requested_size(self) -> None:
-        """Ask for :data:`NATURAL_SIZE` unless width or height is set."""
-        if int(self._options["width"]) or int(self._options["height"]):
-            super()._apply_requested_size()
-            return
-        self._request_size(*NATURAL_SIZE)
+        """Ask for ``width`` by ``height``, each in cells or a share of the
+        screen, and :data:`NATURAL_SIZE` on an axis not given.
+
+        Unlike a Frame's, an axis left out is not left to children: a
+        treemap has none, and would ask for nothing on it.
+        """
+        width, height = self._options["width"], self._options["height"]
+        screen_width, screen_height = self._screen_size()
+        self._request_size(
+            _cells(width, screen_width) or NATURAL_SIZE[0],
+            _cells(height, screen_height) or NATURAL_SIZE[1],
+        )
+        self._follow_screen(_is_share(width) or _is_share(height))
+
+    def _follow_screen(self, follow: bool) -> None:
+        """Ask again whenever the terminal is resized, while a size is a
+        percentage of it."""
+        root = self._root()
+        if follow and self._screen_binding is None:
+            self._screen_binding = root.bind(
+                "<Configure>", self._screen_resized, add="+"
+            )
+        elif not follow and self._screen_binding is not None:
+            root.unbind("<Configure>", self._screen_binding)
+            self._screen_binding = None
+
+    def _screen_resized(self, event: Event) -> None:
+        # The root's tag is on every widget's bindtags: only its own counts.
+        if event.widget is self._root() and self.winfo_exists():
+            self._apply_requested_size()
 
     # ---------------------------------------------------------------- items
 
@@ -841,6 +911,7 @@ class Treemap(tkcurses.Frame):
             with contextlib.suppress(TclError):
                 self.after_cancel(self._pending)
             self._pending = None
+        self._follow_screen(False)
         super().destroy()
 
     # --------------------------------------------------------------- drawing

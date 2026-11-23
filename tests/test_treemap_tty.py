@@ -185,3 +185,26 @@ def test_a_click_on_a_legend_entry_focuses_its_item(terminal):
         ),
         message="cache focused from the legend, its entry reversed, nothing selected",
     )
+
+
+SHARE = """
+import tkcurses as tk
+from tkcurses.treemap import Treemap
+
+root = tk.Tk()
+tree = Treemap(root, width="50%", height=6, legend="hide")
+tree.pack(side="left", anchor="n")
+tree.insert("", "end", text="web", value=3)
+tree.insert("", "end", text="db", value=1)
+tk.Label(root, text="END").pack(side="left", anchor="n")
+root.after(8000, root.destroy)
+root.mainloop()
+"""
+
+
+def test_a_share_of_the_screen_follows_the_terminal(terminal):
+    term = terminal(cols=60, rows=12)
+    term.run_source(SHARE)
+    term.wait_for(lambda t: t.text_at(0, 30, 3) == "END", message="half of 60")
+    term.resize(80, 12)
+    term.wait_for(lambda t: t.text_at(0, 40, 3) == "END", message="half of 80")

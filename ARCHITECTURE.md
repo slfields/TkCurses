@@ -8814,6 +8814,34 @@ Kibana hides a label that does not fit. So does this, by these rules:
 - All text is measured with `_core.cells`, so a CJK name takes the cells
   it draws in.
 
+### Size
+
+`width` and `height` are independent, and each is cells (any Tk
+distance, `2c` included) or a percentage of the terminal, `"50%"`, kept
+as written so it reads back that way. A percentage is above 0 and at most
+100, and asks for at least one cell.
+
+An axis not given asks for 40 columns or 12 rows (`NATURAL_SIZE`). A
+Frame instead leaves such an axis to its children, which is what makes a
+fixed-width sidebar of any height. A treemap has no children, so it
+asked for 0 on that axis: `width=30` alone asked for 30 × 0 and vanished
+unless packed with `fill`. Measured before the fix: `Treemap(root,
+width=30)._requested` was `Size(30, 0)`.
+
+**Following the terminal.** While either axis is a percentage, the
+treemap binds the root's `<Configure>`, which `_handle_resize` sends
+after every resize, and asks again. The root's tag is on every widget's
+bindtags, so a child's `<Configure>` reaches it too; only the root's
+own counts. Setting both axes back to cells, or destroying the treemap,
+removes the binding. The layout pass that the resize runs comes first
+and uses the old request, so a resize lays out twice: once at once, and
+again when the new request is idle.
+
+This is not BarGraph's percentage. BarGraph's `scale="75%"` is a share
+of the space the graph is *given*, after `fill` and `expand`; a
+treemap's `width="50%"` is a share of the *terminal*, asked for before
+any of that.
+
 ### Legend
 
 - **Entries** are the top-level items, largest first: a two-cell swatch
