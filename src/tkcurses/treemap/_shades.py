@@ -90,15 +90,31 @@ def adjacent(rects: Sequence[Rect]) -> list[set[int]]:
     return near
 
 
-def assign(rects: Sequence[Rect], count: int = len(SHADES)) -> list[int]:
-    """A shade for each of ``rects``, given largest first.
+#: How many tries :func:`assign` makes at giving neighbours different
+#: shades before it settles for sharing one.
+SEARCH_STEPS = 20_000
 
-    Each takes the lowest of ``count`` shades no neighbour has yet. When
-    all are taken - rare, since it needs five tiles round one - it takes
-    the shade of its smallest neighbour, the one a reader least confuses
-    it with.
+
+def assign(rects: Sequence[Rect], count: int = len(SHADES)) -> list[int]:
+    """A shade for each of ``rects``, given largest first, no two
+    neighbours alike.
+
+    Each takes the lowest of ``count`` shades no earlier neighbour has.
+    When one finds all of them taken, the earlier ones are tried with other
+    shades, backtracking, until every tile has one its neighbours lack.
+    Tiles that only meet at edges never need more than four (the four
+    colour theorem), so with four this succeeds; trying the lowest shade
+    first gives every layout that never runs out the same shades as taking
+    the lowest free one would.
+
+    With fewer shades, or after :data:`SEARCH_STEPS` tries, a tile left
+    with none takes the shade of its smallest neighbour, the one a reader
+    least confuses it with.
     """
     near = adjacent(rects)
+    found = _search(near, count)
+    if found is not None:
+        return found
     shades: list[int | None] = [None] * len(rects)
     for i in range(len(rects)):
         taken = {shades[j] for j in near[i] if shades[j] is not None}
@@ -112,6 +128,31 @@ def assign(rects: Sequence[Rect], count: int = len(SHADES)) -> list[int]:
             )
             shades[i] = shades[smallest]
     return [shade or 0 for shade in shades]
+
+
+def _search(near: list[set[int]], count: int) -> list[int] | None:
+    """Shades for tiles ``0..n`` with no two neighbours alike, lowest
+    first, by depth-first search; ``None`` if there are none, or none
+    within :data:`SEARCH_STEPS`. Iterative, so a group of hundreds of
+    tiles does not meet the recursion limit."""
+    shades = [-1] * len(near)
+    i = 0
+    steps = 0
+    while 0 <= i < len(near):
+        steps += 1
+        if steps > SEARCH_STEPS:
+            return None
+        taken = {shades[j] for j in near[i] if j < i}
+        shade = shades[i] + 1
+        while shade < count and shade in taken:
+            shade += 1
+        if shade < count:
+            shades[i] = shade
+            i += 1
+        else:
+            shades[i] = -1
+            i -= 1
+    return shades if i == len(near) else None
 
 
 def outlined_levels(

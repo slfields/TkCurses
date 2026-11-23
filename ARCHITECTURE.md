@@ -8713,13 +8713,21 @@ in RGB:
 | 2 | 30% of the way to white |
 | 3 | half way to black |
 
-**Neighbours never share a shade, where four allow it.** Shades are not
-dealt out in order, since two children next to each other could then
-match. `_shades` builds the adjacency of the group's tiles (rectangles
-sharing an edge). It gives each tile, largest first, the lowest shade no
-neighbour has. A dissection that needs a fifth shade is rare. It then
-reuses the shade its smallest neighbour has, and the label still tells
-the two apart. The four are, from `#cd00cd` for example, `#cd00cd`,
+**Neighbours never share a shade.** Shades are not dealt out in order,
+since two children next to each other could then match. `_shades` builds
+the adjacency of the group's tiles (rectangles sharing an edge). It gives
+each tile, largest first, the lowest shade no earlier neighbour has.
+
+That alone is not enough. Hypothesis found 11 tiles in 46 × 23 where it
+gave a tile shade 0 with shade 2 free, and a later tile then met all four
+among its neighbours and had to share one. Tiles that only meet at edges
+can always be told apart with four (the four colour theorem). So when
+a tile finds none free, the search backs up and tries the earlier tiles
+with their next shades, depth first. Lowest first means a layout that
+never ran out keeps exactly the shades it had. After 20,000 tries
+(`SEARCH_STEPS`), or with fewer than four shades, a tile left with none
+takes its smallest neighbour's shade, and the label still tells the two
+apart. The four are, from `#cd00cd` for example, `#cd00cd`,
 `#9a009a`, `#dc4cdc` and `#660066`; each channel is rounded to the
 nearest whole value, half to even, as Python's `round` does.
 

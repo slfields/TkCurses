@@ -19,7 +19,7 @@
 
 from __future__ import annotations
 
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from tkcurses._charts.color import mix
@@ -74,13 +74,38 @@ weights = st.lists(st.integers(1, 1000), min_size=1, max_size=14).map(
 
 
 @given(weights, st.integers(4, 80), st.integers(2, 30))
-def test_neighbours_differ_whenever_four_shades_allow(ws, width, height):
+def test_neighbours_never_share_a_shade(ws, width, height):
+    """Four shades are always enough for tiles that meet at edges."""
     rects = [r for r in tiles(ws, Rect(0, 0, width, height)) if r and not r.empty]
     shades = assign(rects)
-    near = adjacent(rects)
-    for i, neighbours in enumerate(near):
-        if len({shades[k] for k in neighbours}) < 4:
-            assert all(shades[i] != shades[j] for j in neighbours)
+    for i, neighbours in enumerate(adjacent(rects)):
+        assert all(shades[i] != shades[j] for j in neighbours)
+
+
+def test_a_tile_the_lowest_free_shade_would_corner_still_gets_its_own():
+    """Found by Hypothesis: taking the lowest free shade, the tile at
+    (35, 14) met all four among its neighbours and shared one with the tile
+    left of it. Backtracking gives the earlier tile another."""
+    ws = sorted([152, 183, 149, 100, 1, 94, 155, 103, 94, 43, 544], reverse=True)
+    rects = [r for r in tiles(ws, Rect(0, 0, 46, 23)) if r and not r.empty]
+    shades = assign(rects)
+    for i, neighbours in enumerate(adjacent(rects)):
+        assert all(shades[i] != shades[j] for j in neighbours)
+
+
+@settings(max_examples=300, deadline=None)
+@given(
+    st.lists(st.integers(1, 1000), min_size=1, max_size=60).map(
+        lambda ws: sorted(ws, reverse=True)
+    ),
+    st.integers(4, 200),
+    st.integers(2, 60),
+)
+def test_many_tiles_still_never_share_a_shade(ws, width, height):
+    rects = [r for r in tiles(ws, Rect(0, 0, width, height)) if r and not r.empty]
+    shades = assign(rects)
+    for i, neighbours in enumerate(adjacent(rects)):
+        assert all(shades[i] != shades[j] for j in neighbours)
 
 
 # ---------------------------------------------------------------- outlines
