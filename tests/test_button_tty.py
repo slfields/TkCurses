@@ -301,3 +301,44 @@ def test_a_click_that_leaves_the_button_is_cancelled(terminal, tmp_path):
     term.send_mouse(30, 9, action="release")
     term.wait_for_idle()
     assert "should not happen" not in "\n".join(term.display)
+
+
+def test_clicks_whose_press_and_release_arrive_together_all_count(terminal, tmp_path):
+    """A press and its release in one read - over ssh or tmux, or a quick
+    tap - are two reports ncurses queues behind one KEY_MOUSE. Only the
+    first used to be read: the release waited for the next input, and every
+    click after it was one event behind. Three such clicks counted 0."""
+    term = terminal(cols=30, rows=8)
+    term.run_source(
+        """
+import tkcurses
+
+root = tkcurses.Tk()
+count = tkcurses.IntVar(root, 0)
+tkcurses.Button(root, text="press me", command=lambda: count.set(count.get() + 1)).pack()
+tkcurses.Label(root, textvariable=count).pack()
+root.after(8000, root.quit)
+root.mainloop()
+""",
+        workdir=tmp_path,
+    )
+    term.wait_for(
+        lambda t: t.contains("press me") and t.contains("0"), message="the button"
+    )
+    row = next(i for i, line in enumerate(term.display) if "press me" in line)
+    column = term.display[row].index("press")
+    for clicks in range(1, 4):
+        term.send(
+            _sgr(column, row, "M") + _sgr(column, row, "m")  # in one write
+        )
+        term.wait_for(
+            lambda t, clicks=clicks: any(
+                line.strip() == str(clicks) for line in t.display[row + 2 :]
+            ),
+            message=f"{clicks} clicks counted",
+        )
+
+
+def _sgr(x: int, y: int, final: str) -> bytes:
+    """Button 1 at a cell, SGR-encoded: ``M`` a press, ``m`` a release."""
+    return f"\x1b[<0;{x + 1};{y + 1}{final}".encode()
