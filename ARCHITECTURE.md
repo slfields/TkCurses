@@ -9000,9 +9000,13 @@ groups and one plain item, 40 × 10, enough for headers, shades, labels
 and the readout; `cache` is 1234 so the number format has a value to
 scale. `WIDGET_NEEDS` gives the number options `values="value"`, since
 a percentage ignores them, and `relief` a border. Measured: every
-TreeMap option visible but the Frame's own invisible ones. Each has a
-`Sample output (option):`, run by the docs build once the reference
-page includes the class.
+TreeMap option visible but the Frame's own invisible ones, and three
+exceptions that are the recorder's, not the widget's. `legend`,
+`legendposition` and `legendsize` are recorded `refused`, since it tries
+numbers and they take names; `legendlines` `invisible`, since the short
+names it draws never wrap. Each has a `Sample output (option):` all the
+same, run by the docs build: `docs/reference/exclusive/treemap.md`
+includes the class.
 
 **Making the module public brought the convention tests in at once**,
 not at the docs story: `tkcurses.treemap` is in `EXTENSION_MODULES`, so

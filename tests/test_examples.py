@@ -34,7 +34,11 @@ ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
 PAGE = ROOT / "docs" / "guide" / "examples.md"
 #: The bar graph examples are shown on their guide page instead.
-PAGES = (PAGE, ROOT / "docs" / "guide" / "bargraph.md")
+PAGES = (
+    PAGE,
+    ROOT / "docs" / "guide" / "bargraph.md",
+    ROOT / "docs" / "guide" / "treemap.md",
+)
 TIMES = "\N{MULTIPLICATION SIGN}"
 DIRECTIVE = re.compile(r"^```\{tkcurses-example\} (\S+)$", re.M)
 
@@ -58,7 +62,7 @@ def test_every_example_is_on_the_page_and_nothing_else_is():
     shown = [found for page in PAGES for found in DIRECTIVE.findall(page.read_text())]
     files = sorted(f"examples/{path.name}" for path in EXAMPLES.glob("*.py"))
     assert sorted(shown) == files
-    assert len(files) == 19
+    assert len(files) == 21
 
 
 def test_every_example_carries_the_notice():
@@ -843,3 +847,39 @@ def test_the_scales_write_each_unit_and_space_log_powers_evenly(terminal, tmp_pa
         ),
         message="the thresholds' colours",
     )
+
+
+@pytest.mark.tty
+def test_the_services_step_values_and_move_the_legend(terminal, tmp_path):
+    term = start(terminal, tmp_path, "services", cols=60, rows=16)
+    term.wait_for(
+        lambda t: t.contains("percent | right") and t.contains("the front end"),
+        message="the services, with the legend's descriptions",
+    )
+    term.send_keys("v")
+    term.wait_for(
+        lambda t: t.contains("value | right") and t.contains("330 MB"),
+        message="values in megabytes",
+    )
+    term.send_keys("p")
+    term.wait_for(lambda t: t.contains("value | bottom"), message="the legend below")
+    term.send_keys("n")
+    term.wait_for(lambda t: t.contains("██ nginx"), message="nested")
+
+
+@pytest.mark.tty
+def test_the_actions_say_what_was_chosen_and_act_on_tags(terminal, tmp_path):
+    term = start(terminal, tmp_path, "actions", cols=60, rows=14)
+    term.wait_for_text("Click a tile")
+    # The first arrow focuses web, the largest; Right goes to db.
+    term.send_keys("<Right>", "<Right>", " ")
+    term.wait_for_text("group db: 200")
+    term.send_keys("<Return>")
+    term.wait_for_text("zoomed into db")
+    term.send_keys("<Right>", " ")
+    term.wait_for(
+        lambda t: t.contains("(checking its disk)") and t.contains("item "),
+        message="a tagged item chosen",
+    )
+    term.send_keys("<Escape>")
+    term.wait_for_text("zoomed out")

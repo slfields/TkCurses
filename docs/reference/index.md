@@ -52,7 +52,7 @@ tkinter.
 
 **TkCurses extension** marks API that tkinter does not have at all - the
 `tkcurses.curses` and `tkcurses.panel` modules, the
-[widgets only TkCurses has](exclusive/index.md) such as `BarGraph`, and a
+[widgets only TkCurses has](exclusive/index.md) such as `BarGraph` and `TreeMap`, and a
 few methods such as `winfo_colordepth`. A program that uses one runs only
 on TkCurses.
 

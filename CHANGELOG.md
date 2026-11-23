@@ -21,6 +21,28 @@ All notable changes to TkCurses. The format follows
   program should read a password instead.
 
 ### Added
+- `TreeMap`, a treemap widget, imported with
+  `from tkcurses.treemap import TreeMap`. It is a TkCurses widget, after
+  Kibana's treemap charts: neither tkinter nor Tk has one, so a program
+  that uses it runs on TkCurses only. Named values are drawn as
+  rectangles as large as their share, laid out by the squarified
+  algorithm so they look near square in a terminal's tall cells, in two
+  levels: groups, and the items in them in shades of the group's colour.
+  - Items are added and changed as a `ttk.Treeview`'s are - `insert`,
+    `item`, `delete`, `move`, `get_children` - with a `value`, `tags`
+    and an optional `description`.
+  - Labels and values that fit their tiles or are left out, as
+    percentages or numbers in BarGraph's number formats; lines between
+    tiles where shades cannot be told apart, and on terminals without
+    colour.
+  - A legend at any side, of any width, optionally listing each group's
+    items, and showing descriptions, which appear nowhere else.
+  - The arrow keys, Space, Return, Escape and the mouse focus, select
+    and zoom into a group; `<<TreeMapSelect>>` and `<<TreeMapZoom>>`
+    report it, and `tag_bind` acts on chosen items only. The bottom row
+    names the focused item, its value and its shares.
+  - `width` and `height` each in cells or as a percentage of the
+    terminal, followed when it is resized.
 - `Entry.secret()`, a TkCurses extension: in a `with` block, the entry's
   contents as UTF-8 in a read-only `memoryview`, wiped when the block
   ends, so a password can be passed to `hashlib`, `hmac` or

@@ -7,6 +7,7 @@ imported from a module of its own rather than from `tkcurses`:
 ```python
 import tkcurses as tk
 from tkcurses.bargraph import BarGraph
+from tkcurses.treemap import TreeMap
 ```
 
 Each one is marked **TkCurses extension** throughout. Otherwise it is
@@ -18,4 +19,5 @@ documented, and behaves, as the classic widgets do: it is placed with
 :maxdepth: 1
 
 bargraph
+treemap
 ```

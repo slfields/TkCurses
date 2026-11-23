@@ -67,14 +67,17 @@ if TYPE_CHECKING:
     from tkcurses import Event
     from tkcurses._charts.color import RGB
 
-__all__ = ["PATH_SEPARATOR", "SELECT_EVENT", "ZOOM_EVENT", "TreeMap"]
+__all__ = ["NATURAL_SIZE", "PATH_SEPARATOR", "SELECT_EVENT", "ZOOM_EVENT", "TreeMap"]
 
 VALUES = ("percent", "value", "none")
 #: The events a tag binding is told about, and the item each one is for:
 #: a pointer event's is the tile under the pointer; these, as named; any
 #: other's, a key's, the focused item, as in a Treeview.
 _POINTER_EVENTS = frozenset({"Button", "ButtonRelease", "Motion"})
+#: Sent when an item is selected, by a key, a click or
+#: :meth:`TreeMap.selection_set`.
 SELECT_EVENT = "<<TreeMapSelect>>"
+#: Sent when the treemap zooms into a group or back out.
 ZOOM_EVENT = "<<TreeMapZoom>>"
 #: Written between a group and its child in the readout.
 PATH_SEPARATOR = " \u203a "  # a single right-pointing angle quote
