@@ -28,6 +28,13 @@ All notable changes to TkCurses. The format follows
 - For contributors: the secure-coding rules the code is held to, in
   CONTRIBUTING.md.
 
+### Fixed
+- A mouse click whose press and release reached the program together, as
+  they can over ssh or tmux or from a quick tap, lost its release until the
+  next input arrived, and every click after it was one event behind: three
+  such clicks on a Button pressed it no times. Every report that arrives at
+  once is now read.
+
 ## [0.6.0] - 2026-11-20
 
 ### Added
