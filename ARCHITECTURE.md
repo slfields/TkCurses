@@ -9281,7 +9281,7 @@ the Canvas and raise `ValueError`; `__init__.py` holds only the widget.
 | `_stack` | `stacked`, `percentage` and `unstacked` |
 | `_path` | values to pixel polylines and outlines: `straight`, `step`, `smooth`; M4 for dense runs; clipping; dotted pieces; when points show |
 | `_axes` | the value axis's range: Kibana's bounds, rounded to nice ends |
-| `_stats` | the legend statistics, in one pass over each series |
+| `_stats` | the legend statistics, in one pass over each series (Welford's variance) |
 | `_layout` | the widget's size to regions: plot, axes, titles; the legend and readout to come |
 | `_scene` | all of that into the list of keyed item descriptions |
 
@@ -9462,8 +9462,29 @@ its place in a stack.
 
 **Clicking an entry hides or shows its series**, as elastic-charts'
 legend does. A hidden series is left out of the stack, the scale and the
-readout, and its entry is drawn dim. Space on the focused entry does the
-same.
+readout, and its entry stays, so it can be shown again: a hollow swatch
+`░░` and a dim name, not bold. **Up** and **Down** move along the
+entries, the one with the keyboard underlined while the chart has the
+focus, and **Space** hides or shows it.
+
+**As built** (`.9`):
+
+- The legend takes its side of the canvas first, after the readout's
+  row, and the axes and plot are laid out in what is left. If that
+  would leave less than a minimum plot, the legend is not drawn.
+- The figures are written to **three significant digits** when the
+  number options give neither `digits` nor `decimals`: the axis's six
+  would write `54.3333%`. `count` and `distinctcount` are whole numbers,
+  `differencepercent` is in `%`, and `variance` is written without the
+  units, which it has squared.
+- A figure with nothing to work out from is `–`. `last` and `first` are
+  the series' first and last values, gaps included; the `nonnull` ones
+  skip them.
+- An `auto` legend is at most a third of the chart, as TreeMap's, so
+  figures longer than that are cut with `…`: `legendlines` or a
+  `legendsize` gives them room.
+- The variance is Welford's, credited in `_stats`, not a sum of squares,
+  which loses its precision for large values close together.
 
 ### Interaction
 
@@ -9483,6 +9504,30 @@ turns it off.
 `cursor()` reads its x, or `None`, and `cursor(x)` sets it. The
 crosshair stays at the same x across updates. If that x is gone, it
 moves to the nearest one left.
+
+**As built** (`.10`):
+
+- **Left** with no crosshair starts it at the last x, **Right** at the
+  first, as a reader looking for the latest value would want. At either
+  end it stays.
+- `cursor(x)` snaps to the x of a shown series nearest the one given,
+  and on a time chart reads back as a naive local `datetime`, as
+  `series_points` does.
+- The readout writes the crosshair's x, then each shown series that has
+  a point there, `name value`, in its colour, two spaces apart. A value
+  missing is `–`. A time is `Nov 23 23:57`, with seconds when the
+  chart's times have any. What does not fit ends in `…`: a series that
+  has no room at all cuts the one before it, so none is dropped without
+  a sign.
+- The crosshair is kept as part of the drawing: when new data moves it,
+  the drawing pass moves it and draws it there in the same pass, and
+  sends the event. Moving it with the usual path would have scheduled a
+  second drawing from inside the first.
+- `chart()` returns a `Drawing`: the items, and where the plot, the x
+  range and the legend went, which is what a click is measured against.
+- The click handler replaces the Canvas's class binding for `<Button-1>`
+  and calls its routing first. A test binds a program's handler to the
+  axis's tag and clicks it.
 
 ### Not yet
 

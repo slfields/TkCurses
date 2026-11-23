@@ -31,11 +31,21 @@ on a plot given in pixels.
 from __future__ import annotations
 
 import dataclasses
+import datetime as _dt
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from tkcurses._charts.color import hex_color, mix
 from tkcurses._charts.geometry import Rect
+from tkcurses._charts.legend import (
+    LEAD,
+    SWATCH,
+    Entry,
+    LegendLayout,
+    extent,
+    place,
+    shown,
+)
 from tkcurses._charts.numformat import NumberFormat
 from tkcurses._charts.scale import ScaleType, ValueRange, fitted_ticks, label_start
 from tkcurses._charts.text import fit as fit_text
@@ -43,7 +53,7 @@ from tkcurses._charts.timeticks import time_ticks
 from tkcurses._core.cells import cells
 from tkcurses.xychart._axes import value_range
 from tkcurses.xychart._fit import fit
-from tkcurses.xychart._layout import Layout, layout
+from tkcurses.xychart._layout import MIN_PLOT, Layout, layout
 from tkcurses.xychart._path import (
     area,
     clip_line,
@@ -55,6 +65,7 @@ from tkcurses.xychart._path import (
     trace,
 )
 from tkcurses.xychart._stack import Band, Layer, stack
+from tkcurses.xychart._stats import LABELS, statistics
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -68,6 +79,7 @@ __all__ = [
     "REFERENCE_COLOR",
     "TAG",
     "Config",
+    "Drawing",
     "Item",
     "Reference",
     "chart",
@@ -90,6 +102,12 @@ REFERENCE_COLOR = "white"
 #: value axis.
 XGAP = 2
 YGAP = 1
+#: A hidden series' swatch in the legend.
+HIDDEN_SWATCH = "\u2591\u2591"
+#: Between two figures in the legend, and two series in the readout.
+SEPARATOR = " \u00b7 "
+#: A figure there is nothing to work out from.
+NO_VALUE = "\u2013"
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +133,12 @@ class Config:
     gridlines: bool = False
     nowmarker: bool = False
     numbers: NumberFormat = field(default_factory=NumberFormat)
+    legend: str = "auto"
+    legendposition: str = "right"
+    legendsize: str = "auto"
+    legendlines: int = 1
+    legendstats: tuple[str, ...] = ()
+    readout: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +167,23 @@ class Item:
 
 
 @dataclass(frozen=True, slots=True)
+class Drawing:
+    """What :func:`chart` drew, and where, so the widget can tell what a
+    click is on."""
+
+    items: list[Item] = field(default_factory=list)
+    #: The plot, in cells; ``None`` with nothing drawn.
+    plot: Rect | None = None
+    #: The x axis's range; ``None`` with one x or none.
+    xspan: ValueRange | None = None
+    #: Every x of the shown series, sorted, each once.
+    xs: tuple[float, ...] = ()
+    legend: LegendLayout | None = None
+    #: The series the legend names, in its order.
+    entries: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class _Frame:
     """What the series and the axes share: the bands to draw, each
     series' colour, and the two axes' ranges."""
@@ -155,6 +196,9 @@ class _Frame:
     xlow: float
     xhigh: float
     percentage: bool
+    #: Each series' own values after ``missing``, hidden ones too: what
+    #: the legend's figures and the readout are of.
+    own: dict[str, tuple[tuple[float, ...], tuple[float | None, ...]]]
 
 
 def _frame(
@@ -166,11 +210,15 @@ def _frame(
         for i, name in enumerate(names)
     }
     layers = []
-    for series in model.shown():
+    own = {}
+    for name in names:
+        series = model.get(name)
         fitted = fit(series.xs, series.ys, config.missing, config.endvalues)
-        layers.append(
-            Layer(series.name, series.kind, tuple(series.xs), fitted.ys, fitted.filled)
-        )
+        own[name] = (tuple(series.xs), tuple(fitted.ys))
+        if not series.hidden:
+            layers.append(
+                Layer(name, series.kind, tuple(series.xs), fitted.ys, fitted.filled)
+            )
     bands = stack(layers, config.stackmode)
     has_area = any(band.kind == "area" for band in bands)
     percentage = config.stackmode == "percentage" and has_area
@@ -195,7 +243,7 @@ def _frame(
         return None
     low, high = min(xs), max(xs)
     xspan = ValueRange(high, low) if high > low else None
-    return _Frame(bands, colors, yspan, xspan, low, high, percentage)
+    return _Frame(bands, colors, yspan, xspan, low, high, percentage, own)
 
 
 def scene(
@@ -234,18 +282,22 @@ def chart(
     references: Sequence[Reference] = (),
     now: float | None = None,
     xkind: str = "number",
-) -> list[Item]:
+    cursor: float | None = None,
+    legend_focus: str | None = None,
+) -> Drawing:
     """Everything the chart draws on a canvas ``width`` by ``height``
-    cells: the series, their axes, gridlines and references.
+    cells: the series, their axes, gridlines and references, the legend,
+    the crosshair and the readout.
 
     ``now`` is the time for ``nowmarker``, in epoch seconds; ``xkind`` is
-    ``"time"`` when x is a time.
+    ``"time"`` when x is a time. ``cursor`` is the crosshair's x, and
+    ``legend_focus`` the series whose legend entry has the keyboard.
     """
     if width < 1 or height < 1:
-        return []
+        return Drawing()
     frame = _frame(model, config, references)
     if frame is None:
-        return []
+        return Drawing()
     numbers = config.numbers
     if frame.percentage:
         numbers = dataclasses.replace(numbers, units="%", unitscale="none")
@@ -259,13 +311,34 @@ def chart(
             return 0
         return max((cells(numbers.format(t)) for t in yticks(rows)), default=0)
 
+    area = Rect(0, 0, width, height)
+    readout_row = None
+    if config.readout and height > MIN_PLOT[1] + 1:
+        taken, area = area.take_bottom(1)
+        readout_row = taken.y
+    entries = _entries(model, frame, config)
+    placed = None
+    if shown(config.legend, entries):
+        side = config.legendposition
+        size = extent(entries, side, config.legendsize, area, config.legendlines)  # type: ignore[arg-type]
+        take = {
+            "right": area.take_right,
+            "left": area.take_left,
+            "top": area.take_top,
+            "bottom": area.take_bottom,
+        }[side]
+        region, rest = take(size)
+        if size and rest.width >= MIN_PLOT[0] and rest.height >= MIN_PLOT[1]:
+            placed = place(entries, region, side, config.legendlines)  # type: ignore[arg-type]
+            area = rest
     lay = layout(
-        width,
-        height,
+        area.width,
+        area.height,
         ylabel=bool(config.ylabel),
         ticklabels=config.ticklabels,
         title=bool(config.xlabel) or (time and config.ticklabels),
         label_width=label_width,
+        origin=(area.x, area.y),
     )
     cell_plot = lay.plot
     plot = Rect(cell_plot.x, cell_plot.y * 2, cell_plot.width, cell_plot.height * 2)
@@ -292,9 +365,259 @@ def chart(
         over.extend(_reference(reference, span, plot, color))
     if config.nowmarker and time and now is not None and frame.xspan is not None:
         under.extend(_now(now, frame.xspan, plot, ink))
+    xs = tuple(sorted({x for band in frame.bands for x in band.xs}))
+    if cursor is not None and cursor in xs:
+        under.extend(_crosshair(cursor, frame, plot, grid or "white"))
     fills, lines, dots = _series(frame, config, plot, depth, rgb, background)
+    marks = _cursor_marks(cursor, frame, plot, depth, rgb) if cursor in xs else []
     axes = _axes(lay, config, yrows, xcols, context, ink) if lay.axes else []
-    return under + fills + lines + over + dots + axes
+    figures = _figures(config.numbers)
+    told: list[Item] = []
+    if placed is not None:
+        told = _legend(placed, model, frame, legend_focus, grid or "white")
+    if readout_row is not None:
+        told.extend(
+            _readout(readout_row, width, model, frame, cursor, xs, time, figures)
+        )
+    return Drawing(
+        under + fills + lines + over + dots + marks + axes + told,
+        cell_plot,
+        frame.xspan,
+        xs,
+        placed,
+        tuple(entry.iid for entry in entries),
+    )
+
+
+# -------------------------------------------------------------- legend
+
+
+def _figures(numbers: NumberFormat) -> NumberFormat:
+    """How the legend and readout write a value: the number options, to
+    three significant digits when they give neither digits nor decimals,
+    since a figure is read rather than lined up on an axis."""
+    if numbers.digits is None and numbers.decimals is None:
+        return dataclasses.replace(numbers, digits=3)
+    return numbers
+
+
+def _entries(model: Model, frame: _Frame, config: Config) -> list[Entry]:
+    """An entry for every series, hidden ones too: a hidden series' entry
+    is how it is shown again."""
+    figures = _figures(config.numbers)
+    entries = []
+    for name in model.names():
+        series = model.get(name)
+        stats = ""
+        if config.legendstats:
+            values = statistics(frame.own[name][1], config.legendstats)
+            stats = SEPARATOR.join(
+                f"{LABELS[stat]} {_figure(stat, value, figures)}"
+                for stat, value in values.items()
+            )
+        entries.append(Entry(name, series.label, False, series.description, stats))
+    return entries
+
+
+def _figure(stat: str, value: float | None, figures: NumberFormat) -> str:
+    if value is None:
+        return NO_VALUE
+    if stat in ("count", "distinctcount"):
+        return str(int(value))
+    if stat == "differencepercent":
+        return NumberFormat(units="%", digits=3, unitscale="none").format(value)
+    if stat == "variance":  # in the units squared: written without them
+        return figures.plain(value)
+    return figures.format(value)
+
+
+def _legend(
+    placed: LegendLayout,
+    model: Model,
+    frame: _Frame,
+    focus: str | None,
+    dim: str,
+) -> list[Item]:
+    """The legend's edge, then each entry: its swatch in the series'
+    colour, its name in bold, and under it the description and figures.
+    A hidden series' entry has a hollow swatch and a dim name; the entry
+    with the keyboard is underlined."""
+    tags = (TAG, f"{TAG}.legend")
+    edge = placed.edge
+    if placed.edge_glyph == "\u2502":
+        rule = "\n".join(placed.edge_glyph for _ in range(edge.height))
+    else:
+        rule = placed.edge_glyph * edge.width
+    items = [_text("legend.edge", edge.x, edge.y, rule, "", tags)]
+    for entry in placed.placed:
+        series = model.get(entry.iid)
+        color = frame.colors[entry.iid]
+        swatch = HIDDEN_SWATCH if series.hidden else SWATCH
+        key = f"legend.{entry.iid}"
+        items.append(
+            _text(f"{key}.swatch", entry.x + entry.indent, entry.y, swatch, color, tags)
+        )
+        start = entry.x + entry.indent + LEAD
+        name = "\n".join(entry.lines[: entry.name_lines])
+        font = "" if series.hidden else "bold"
+        if entry.iid == focus:
+            font = f"{font} underline".strip()
+        fill = dim if series.hidden else ""
+        items.append(_text(f"{key}.name", start, entry.y, name, fill, tags, font))
+        rest = entry.lines[entry.name_lines :]
+        if rest:
+            below = entry.y + entry.name_lines
+            items.append(
+                _text(f"{key}.told", start, below, "\n".join(rest), fill, tags)
+            )
+    if placed.more and placed.more_at is not None:
+        x, y = placed.more_at
+        items.append(_text("legend.more", x, y, placed.more_text, "", tags))
+    return items
+
+
+def _text(
+    key: str,
+    column: int,
+    row: int,
+    words: str,
+    fill: str,
+    tags: tuple[str, ...],
+    font: str = "",
+) -> Item:
+    """Text from cell ``(column, row)``, in ``fill`` ('' is the canvas's
+    own colour)."""
+    options: tuple[tuple[str, Any], ...] = (
+        ("text", words),
+        ("anchor", "nw"),
+        ("fill", fill),
+    )
+    if font:
+        options = (*options, ("font", font))
+    return Item(key, "text", (column, row * 2), options, tags)
+
+
+# ------------------------------------------------- crosshair and readout
+
+
+def _crosshair(cursor: float, frame: _Frame, plot: Rect, color: str) -> list[Item]:
+    """A line down the plot at the crosshair's x, under the series."""
+    column = _xcolumn(cursor, frame, plot)
+    bottom = plot.y + plot.height - 1
+    return [
+        Item(
+            "cursor.line",
+            "line",
+            (column, plot.y, column, bottom),
+            (("fill", color),),
+            (TAG, f"{TAG}.cursor"),
+        )
+    ]
+
+
+def _xcolumn(x: float, frame: _Frame, plot: Rect) -> int:
+    position = 0.5 if frame.xspan is None else frame.xspan.position(x)
+    return _xpixel(position or 0.0, plot)
+
+
+def _cursor_marks(
+    cursor: float | None,
+    frame: _Frame,
+    plot: Rect,
+    depth: int,
+    rgb: Callable[[str], RGB | None],
+) -> list[Item]:
+    """Each shown series' point at the crosshair's x, a lighter pixel over
+    everything."""
+    marks: list[Item] = []
+    if cursor is None:
+        return marks
+    tags = (TAG, f"{TAG}.cursor")
+    right, bottom = plot.x + plot.width - 1, plot.y + plot.height - 1
+    for band in frame.bands:
+        if cursor not in band.xs:
+            continue
+        at = band.xs.index(cursor)
+        (point,) = project((cursor,), (band.highs[at],), frame.xspan, frame.yspan, plot)
+        if point is None:
+            continue
+        x, y = round(point[0]), round(point[1])
+        if plot.x <= x <= right and plot.y <= y <= bottom:
+            light = _lightened(frame.colors[band.name], depth, rgb)
+            marks.append(_dot(f"cursor.{band.name}", (x, y), light, tags))
+    return marks
+
+
+def x_text(x: float, xs: Sequence[float], time: bool) -> str:
+    """An x as the readout writes it: a number plainly; a time to the
+    minute, with seconds when the chart has any, and the day first."""
+    if not time:
+        return NumberFormat().format(x)
+
+    at = _dt.datetime.fromtimestamp(x)
+    seconds = any(_dt.datetime.fromtimestamp(v).second for v in xs)
+    clock = f"{at:%H:%M:%S}" if seconds else f"{at:%H:%M}"
+    return f"{at:%b} {at.day} {clock}"
+
+
+def _readout(
+    row: int,
+    width: int,
+    model: Model,
+    frame: _Frame,
+    cursor: float | None,
+    xs: tuple[float, ...],
+    time: bool,
+    figures: NumberFormat,
+) -> list[Item]:
+    """The bottom row: the crosshair's x and each shown series' value
+    there, in its colour; with no crosshair, the range of x shown. What
+    does not fit is cut with ``…``."""
+    tags = (TAG, f"{TAG}.readout")
+    pieces: list[tuple[str, str, str]] = []
+    if cursor is None or cursor not in xs:
+        first, last = x_text(xs[0], xs, time), x_text(xs[-1], xs, time)
+        pieces.append(
+            ("readout.x", first if first == last else f"{first} \u2013 {last}", "")
+        )
+    else:
+        pieces.append(("readout.x", x_text(cursor, xs, time), ""))
+        for band in frame.bands:
+            own_xs, own_ys = frame.own[band.name]
+            if cursor not in own_xs:
+                continue
+            value = own_ys[own_xs.index(cursor)]
+            shown_value = NO_VALUE if value is None else figures.format(value)
+            label = model.get(band.name).label
+            pieces.append(
+                (
+                    f"readout.{band.name}",
+                    f"{label} {shown_value}",
+                    frame.colors[band.name],
+                )
+            )
+    items: list[Item] = []
+    column = 0
+    for n, (key, words, fill) in enumerate(pieces):
+        lead = "  " if n else ""
+        room = width - column - cells(lead)
+        if room <= 1 and items:
+            # No room for any of it: the piece before ends in "…", so a
+            # series left out is never left out silently.
+            previous = items[-1]
+            before = dict(previous.options)["text"]
+            cut = fit_text(before + lead + words, cells(before))
+            items[-1] = dataclasses.replace(
+                previous, options=(("text", cut), *previous.options[1:])
+            )
+            break
+        text = fit_text(words, room)
+        column += cells(lead)
+        items.append(_text(key, column, row, text, fill, tags))
+        column += cells(text)
+        if text != words:
+            break
+    return items
 
 
 def _series(
@@ -484,11 +807,11 @@ def _axes(
             )
     right = plot.x + plot.width
     if lay.title_row is not None:
-        used = 0
+        used = lay.left
         if context and config.ticklabels:
-            shown = fit_text(context, right)
-            items.append(text("context", 0, lay.title_row, shown))
-            used = cells(shown) + XGAP
+            shown = fit_text(context, right - lay.left)
+            items.append(text("context", lay.left, lay.title_row, shown))
+            used = lay.left + cells(shown) + XGAP
         if config.xlabel and right - used > 0:
             label = fit_text(config.xlabel, right - used)
             size = cells(label)
@@ -496,7 +819,14 @@ def _axes(
             start = min(start, right - size)
             items.append(text("xlabel", start, lay.title_row, label))
     if lay.ylabel_row is not None and config.ylabel:
-        items.append(text("ylabel", 0, lay.ylabel_row, fit_text(config.ylabel, right)))
+        items.append(
+            text(
+                "ylabel",
+                lay.left,
+                lay.ylabel_row,
+                fit_text(config.ylabel, right - lay.left),
+            )
+        )
     return items
 
 

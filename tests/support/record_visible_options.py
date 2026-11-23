@@ -282,6 +282,12 @@ WIDGET_VALUES: dict[tuple[str, str], list[object]] = {
     ("xychart.XYChart", "decimals"): [2],
     ("xychart.XYChart", "rounding"): ["down", "up"],
     ("xychart.XYChart", "unitscale"): ["binary", "time"],
+    ("xychart.XYChart", "legend"): ["show", "hide"],
+    ("xychart.XYChart", "legendposition"): ["left", "bottom"],
+    ("xychart.XYChart", "legendsize"): ["small", "xlarge"],
+    ("xychart.XYChart", "legendlines"): [2],
+    ("xychart.XYChart", "legendstats"): [("average", "max")],
+    ("xychart.XYChart", "readout"): [0],
     ("treemap.TreeMap", "outline"): ["on", "off"],
     ("treemap.TreeMap", "colors"): [("red", "blue")],
     ("treemap.TreeMap", "units"): ["B"],
@@ -443,8 +449,7 @@ WIDGET_NEEDS: dict[tuple[str, str], dict[str, Any]] = {
     ("xychart.XYChart", "minimum"): {"bounds": "custom"},
     ("xychart.XYChart", "maximum"): {"bounds": "custom"},
     # The value axis's labels are 0, 5 and 10 on the sample: units show
-    # there, and one digit rounds a custom 0 to 12.5. Rounding shows only
-    # off round values, which ticks never are: it shows in the legend.
+    # there, and one digit rounds a custom 0 to 12.5.
     ("xychart.XYChart", "unitplacement"): {"units": "$"},
     ("xychart.XYChart", "unitspace"): {"units": "ms"},
     ("xychart.XYChart", "unitscale"): {
@@ -453,10 +458,18 @@ WIDGET_NEEDS: dict[tuple[str, str], dict[str, Any]] = {
         "maximum": 120000,
     },
     ("xychart.XYChart", "digits"): {"bounds": "custom", "maximum": 12.5},
+    # Long names, so a second line shows.
+    ("xychart.XYChart", "legendlines"): {
+        "legendsize": "small",
+        "legendstats": ("average", "max"),
+    },
+    # The legend's average of a, 5.875, to one digit: 6 to the nearest,
+    # 5 rounded down. At the bottom, as an xlarge legend at the side
+    # would leave too little of a 40-column chart to draw it at all.
     ("xychart.XYChart", "rounding"): {
-        "bounds": "custom",
-        "maximum": 12.5,
         "digits": 1,
+        "legendstats": ("average",),
+        "legendposition": "bottom",
     },
     ("treemap.TreeMap", "units"): {"values": "value"},
     ("treemap.TreeMap", "unitplacement"): {"values": "value", "units": "$"},

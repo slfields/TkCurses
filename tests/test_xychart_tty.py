@@ -27,7 +27,8 @@ import pytest
 
 pytestmark = pytest.mark.tty
 
-# Eight rows: six of plot, twelve pixels tall, then the x axis and its
+# No readout or legend, which have tests of their own below: eight rows
+# are then six of plot, twelve pixels tall, then the x axis and its
 # labels. The value axis's labels, 0, 0.5 and 1, and its line take
 # columns 0 to 3, so the plot is columns 4 to 19. The area, at 1, reaches the top
 # pixel, and the line, at 0.5, is the upper half of row 3. Each program
@@ -37,7 +38,7 @@ import tkcurses as tk
 from tkcurses.xychart import XYChart
 
 root = tk.Tk()
-chart = XYChart(root{options})
+chart = XYChart(root, readout=False, legend="hide"{options})
 chart.pack(fill="both", expand=True)
 chart.add_series("a", [(0, 1), (10, 1)], kind="area")
 chart.add_series("b", [(0, 0.5), (10, 0.5)])
@@ -146,3 +147,55 @@ def test_the_axes_are_drawn_beside_and_under_the_plot(terminal):
         )
 
     term.wait_for(drawn, message="0 to 1 up the left, 0 to 10 along the bottom")
+
+
+# Two lines, with the legend and the readout: 40 by 10.
+LIVE = """
+import tkcurses as tk
+from tkcurses.xychart import XYChart
+
+root = tk.Tk()
+chart = XYChart(root)
+chart.pack(fill="both", expand=True)
+chart.add_series("up", [(t, t) for t in range(10)])
+chart.add_series("down", [(t, 9 - t) for t in range(10)])
+chart.focus_set()
+{body}
+root.after(8000, root.destroy)
+root.mainloop()
+"""
+
+
+def run_live(terminal, body=""):
+    screen = terminal(cols=40, rows=10, env={"TERM": "xterm-256color"})
+    screen.run_source(LIVE.format(body=body))
+    return screen
+
+
+def test_the_keys_move_the_crosshair_and_the_readout_follows(terminal):
+    term = run_live(terminal)
+    term.wait_for(lambda t: t.row(9).startswith("0 \u2013 9"), message="the range")
+    term.send_keys("<Right>")
+    term.wait_for(
+        lambda t: (
+            t.row(9).startswith("0  up 0  down 9")
+            and t.char_at(9, 3).fg == "green"
+            and t.char_at(9, 9).fg == "red"
+        ),
+        message="the crosshair at 0, each value in its colour",
+    )
+    term.send_keys("<End>")
+    term.wait_for(lambda t: t.row(9).startswith("9  up 9  down 0"), message="at 9")
+    term.send_keys("<Escape>")
+    term.wait_for(lambda t: t.row(9).startswith("0 \u2013 9"), message="gone again")
+
+
+def test_a_click_on_the_legend_hides_its_series(terminal):
+    term = run_live(terminal)
+    term.wait_for(lambda t: "██ down" in t.row(1), message="the legend")
+    column = term.row(1).index("down")
+    term.send_mouse(column, 1)
+    term.wait_for(
+        lambda t: "░░ down" in t.row(1) and t.char_at(1, column).fg != "red",
+        message="down hidden: a hollow swatch",
+    )

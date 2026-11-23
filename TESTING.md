@@ -136,7 +136,8 @@ input, not only the ones someone thought of:
 | `tests/test_xychart_stack.py` | Each stacked area is exactly its own value tall, the sides add up from zero, and a percentage stack spans 100. |
 | `tests/test_xychart_path.py` | A smooth line never overshoots the points it joins, whatever is clipped stays inside the plot, and M4 keeps each column's first, last, lowest and highest point. |
 | `tests/test_xychart_widget.py` | Every item an XY chart draws is on its plot, whatever its series, interpolation, stacking and bounds. |
-| `tests/test_xychart_layout.py` | Every label an XY chart writes is on the canvas, the axes' labels and titles never meet, and value labels are a row apart, whatever its size, data, titles and units. |
+| `tests/test_xychart_layout.py` | Every label an XY chart writes is on the canvas; the axes, the legend and the readout never meet each other or the plot, and value labels are a row apart, whatever its size, data, titles and units. |
+| `tests/test_xychart_stats.py` | Each legend statistic equals the plain way of working it out - mean, median, sum, population variance, least, greatest, first and last - whatever values and gaps a series has. |
 | `tests/test_charts_scale.py` | Ticks fitted to their labels are round, inside their range, and their labels never overlap or leave the axis. |
 | `tests/test_charts_timeticks.py` | Time ticks rise, stay inside their range, and their labels never overlap. |
 | `tests/test_treemap_legend.py` | A treemap legend's wrapped names never pass their width or the line limit; at any size and position the legend overlaps neither the tiles nor the readout, and every entry stays inside it. |

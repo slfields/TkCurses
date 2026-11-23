@@ -5326,6 +5326,34 @@
    "state": "plain",
    "value": "smooth"
   },
+  "legend": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "hide"
+  },
+  "legendlines": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 2
+  },
+  "legendposition": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "left"
+  },
+  "legendsize": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "small"
+  },
+  "legendstats": {
+   "kind": "visible",
+   "state": "plain",
+   "value": [
+    "average",
+    "max"
+   ]
+  },
   "logbase": {
    "kind": "visible",
    "state": "plain",
@@ -5370,6 +5398,11 @@
    "state": "plain",
    "value": "show"
   },
+  "readout": {
+   "kind": "visible",
+   "state": "plain",
+   "value": 0
+  },
   "relief": {
    "kind": "invisible",
    "state": "plain",
@@ -5380,12 +5413,9 @@
    ]
   },
   "rounding": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    "down",
-    "up"
-   ]
+   "value": "down"
   },
   "scaletype": {
    "kind": "visible",

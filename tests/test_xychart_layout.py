@@ -49,6 +49,17 @@ def model_of(*series):
 
 
 def draw(model, width=40, height=12, *, depth=256, refs=(), now=None, **options):
+    """The items, with no readout or legend unless asked for."""
+    return drawing(
+        model, width, height, depth=depth, refs=refs, now=now, **options
+    ).items
+
+
+def drawing(
+    model, width=40, height=12, *, depth=256, refs=(), now=None, cursor=None, **options
+):
+    options.setdefault("readout", False)
+    options.setdefault("legend", "hide")
     config = Config(colors=COLORS, **options)
     return chart(
         model,
@@ -61,6 +72,7 @@ def draw(model, width=40, height=12, *, depth=256, refs=(), now=None, **options)
         references=refs,
         now=now,
         xkind=model.xkind or "number",
+        cursor=cursor,
     )
 
 
@@ -344,9 +356,23 @@ def test_the_current_time_is_marked_on_a_time_axis():
     xlabel=st.sampled_from(["", "minute", "a very long title for the x axis"]),
     ylabel=st.sampled_from(["", "load", "a title longer than most charts are wide"]),
     units=st.sampled_from(["", "%", "B"]),
+    readout=st.booleans(),
+    legend=st.sampled_from(["hide", "right", "left", "top", "bottom"]),
+    stats=st.sampled_from([(), ("average", "max", "lastnonnull")]),
 )
 def test_every_label_is_on_the_canvas_and_none_meet(
-    width, height, count, scale, time, ticklabels, xlabel, ylabel, units
+    width,
+    height,
+    count,
+    scale,
+    time,
+    ticklabels,
+    xlabel,
+    ylabel,
+    units,
+    readout,
+    legend,
+    stats,
 ):
     if time:
         points = [
@@ -354,23 +380,38 @@ def test_every_label_is_on_the_canvas_and_none_meet(
         ]
     else:
         points = [(n * scale, (n % 7) * scale) for n in range(count)]
-    items = draw(
-        model_of(("a", points, "line")),
+    model = model_of(("a", points, "line"), ("b", points[::2], "line"))
+    made = drawing(
+        model,
         width,
         height,
         ticklabels=ticklabels,
         xlabel=xlabel,
         ylabel=ylabel,
         numbers=NumberFormat(units=units),
+        readout=readout,
+        legend="hide" if legend == "hide" else "show",
+        legendposition="right" if legend == "hide" else legend,
+        legendstats=stats,
+        cursor=points[count // 2][0] if not time else None,
     )
+    items = made.items
+    plot = made.plot
+    inside = {
+        (r, c)
+        for r in range(plot.y, plot.y + plot.height)
+        for c in range(plot.x, plot.x + plot.width)
+    }
+    outside_tags = {f"{TAG}.axis", f"{TAG}.legend", f"{TAG}.readout"}
     taken: set[tuple[int, int]] = set()
     for item in items:
         if item.kind != "text":
             continue
         covered = text_cells(item)
         assert all(0 <= r < height and 0 <= c < width for r, c in covered), item
-        if TAG + ".axis" in item.tags:
+        if outside_tags & set(item.tags):
             assert not covered & taken, item
+            assert not covered & inside, item
             taken |= covered
     ylabels = [
         min(r for r, _ in text_cells(i)) for i in items if i.key.startswith("tick.y.")

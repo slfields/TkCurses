@@ -30,15 +30,18 @@ from __future__ import annotations
 import contextlib
 import datetime as _dt
 import time as _time
+from bisect import bisect_right
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 import tkcurses
 from tkcurses import TclError
 from tkcurses._charts.color import DEFAULT_COLORS
+from tkcurses._charts.legend import LEGEND_MODES, LEGEND_SIZES, MAX_LINES, POSITIONS
 from tkcurses._charts.options import (
     NUMBER_OPTIONS,
     choice,
     color,
+    count,
     flag,
     items,
     number,
@@ -52,13 +55,16 @@ from tkcurses.xychart._axes import BOUNDS
 from tkcurses.xychart._fit import END_VALUES, MISSING
 from tkcurses.xychart._model import Model, checked_x
 from tkcurses.xychart._path import INTERPOLATIONS, POINTS
-from tkcurses.xychart._scene import Config, Item, Reference, chart
+from tkcurses.xychart._scene import Config, Drawing, Item, Reference, chart
 from tkcurses.xychart._stack import STACK_MODES
+from tkcurses.xychart._stats import STATISTICS
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
-__all__ = ["NATURAL_SIZE", "XYChart"]
+    from tkcurses import Event
+
+__all__ = ["CURSOR_EVENT", "NATURAL_SIZE", "XYChart"]
 
 _T = TypeVar("_T")
 
@@ -67,6 +73,11 @@ _T = TypeVar("_T")
 NATURAL_SIZE = (60, 16)
 #: What :meth:`XYChart.series_configure` reads and sets.
 _SERIES_OPTIONS = ("kind", "text", "color", "description", "hidden")
+#: Sent when the crosshair moves or goes.
+CURSOR_EVENT = "<<XYChartCursor>>"
+#: Stands for "not given" to :meth:`XYChart.cursor`, where ``None``
+#: removes the crosshair.
+_NOT_GIVEN: Any = object()
 #: The axes a reference line may be on.
 _REFERENCE_AXES = ("y", "x")
 
@@ -92,6 +103,13 @@ def _parse(options: dict[str, Any]) -> Config:
         raise ValueError(f"maximum ({maximum:g}) must be above minimum ({minimum:g})")
     if scaletype == "log" and minimum is not None and not minimum > 0:
         raise ValueError(f"a log scale needs a minimum above 0, not {minimum:g}")
+    lines = count(options["legendlines"], "legendlines", minimum=1)
+    if lines > MAX_LINES:
+        raise ValueError(f"legendlines must be at most {MAX_LINES}, not {lines}")
+    stats = tuple(
+        choice(stat, "legendstats", STATISTICS)
+        for stat in items(options["legendstats"])
+    )
     return Config(
         colors=colors or DEFAULT_COLORS,
         stackmode=choice(options["stackmode"], "stackmode", STACK_MODES),
@@ -112,6 +130,12 @@ def _parse(options: dict[str, Any]) -> Config:
         gridlines=flag(options["gridlines"]),
         nowmarker=flag(options["nowmarker"]),
         numbers=number_format(options),
+        legend=choice(options["legend"], "legend", LEGEND_MODES),
+        legendposition=choice(options["legendposition"], "legendposition", POSITIONS),
+        legendsize=choice(options["legendsize"], "legendsize", ("auto", *LEGEND_SIZES)),
+        legendlines=lines,
+        legendstats=stats,
+        readout=flag(options["readout"]),
     )
 
 
@@ -154,6 +178,23 @@ class XYChart(tkcurses.Canvas):
     **Reference lines.** :meth:`reference_add` draws a line across the
     plot at a value, or down it at an x, with an optional shaded band;
     the band goes under the series and the line over them.
+
+    **Legend.** With two series or more, a legend beside the chart names
+    each in its colour, with its description and any of the figures
+    ``legendstats`` asks for. Clicking an entry hides its series, and
+    clicking again shows it; a hidden series keeps a hollow entry.
+
+    **Crosshair and readout.** The chart takes the focus. **Left** and
+    **Right** move a crosshair to the previous or next x of any series,
+    **Home** and **End** to the first and last, and a click puts it at
+    the x nearest the mouse; **Escape** removes it. Each series' point
+    there is marked, and the bottom row reads out the x and each value
+    in its series' colour; with no crosshair, it names the range of x.
+    ``<<XYChartCursor>>`` is sent when the crosshair moves or goes, and
+    :meth:`cursor` reads or sets it. **Up** and **Down** move along the
+    legend's entries, and **Space** hides or shows the one underlined.
+    The crosshair stays at its x as the data changes, or moves to the
+    nearest x left of it when that x has gone.
 
     **Half-cells.** A canvas draws in pixels half a cell tall, and a cell
     holds two colours at most. An area is filled in its line's colour
@@ -225,7 +266,7 @@ class XYChart(tkcurses.Canvas):
             ``5.0``. Default none: as many as the digits need.
         rounding: How a value cut to its digits is rounded: ``"nearest"``
             (the default), ``"down"`` or ``"up"``. Ticks fall on round
-            values, so on the axis this rarely shows.
+            values, so it shows in the legend's figures and the readout.
         unitscale: How a value is scaled to the fewest digits. ``"si"``
             (the default): by thousands, k, M, G, and for a unit other
             than ``"%"`` by m, µ, n below 1. ``"binary"``: by 1024s, Ki,
@@ -234,8 +275,29 @@ class XYChart(tkcurses.Canvas):
             value is written in the largest it reaches one of, ticked at
             steps a clock reads. ``"none"``: never.
 
+        legend: ``"auto"`` (the default) shows the legend for two series
+            or more; ``"show"``; or ``"hide"``.
+        legendposition: ``"right"`` (the default), ``"left"``, ``"top"``
+            or ``"bottom"``.
+        legendsize: The legend's width at the left or right: ``"auto"``
+            (the default), as wide as its widest entry up to a third of
+            the chart; or ``"small"``, ``"medium"``, ``"large"`` or
+            ``"xlarge"``, 12, 20, 28 or 36 columns.
+        legendlines: The most lines a name, a description or the figures
+            wrap onto, 1 to 5. Default 1.
+        legendstats: Figures written under each series' name, over the
+            values it draws: any of ``"average"``, ``"median"``,
+            ``"min"``, ``"max"``, ``"range"``, ``"last"``,
+            ``"lastnonnull"``, ``"first"``, ``"firstnonnull"``,
+            ``"difference"``, ``"differencepercent"``, ``"sum"``,
+            ``"count"``, ``"distinctcount"``, ``"variance"`` and
+            ``"stddev"``. Default none.
+        readout: Give the bottom row to the readout. Default True.
+
     The number format is BarGraph's and TreeMap's, by the same names. The
-    x axis writes numbers plainly.
+    x axis writes numbers plainly. The legend's figures and the readout
+    are written to three significant digits when neither ``digits`` nor
+    ``decimals`` is given.
 
     The Canvas's own options are as on :class:`tkcurses.Canvas`:
     ``closeenough``, ``confine``, ``offset``, ``scrollregion``,
@@ -337,6 +399,25 @@ class XYChart(tkcurses.Canvas):
             chart.pack(side="left", fill="y")
             chart.add_series("a", [(t, 1000 * t * t) for t in range(20)])
 
+    Sample output (legend, legendstats, readout, rounding):
+        # size: 72x12
+        from tkcurses.xychart import XYChart
+        chart = XYChart(root, legendstats=["average", "max"], units="%",
+                        digits=2, rounding="down")
+        chart.pack(fill="both", expand=True)
+        chart.add_series("cpu", [(t, 40 + (t * 7) % 30) for t in range(30)])
+        chart.add_series("load", [(t, 10 + t) for t in range(30)])
+        chart.cursor(12)
+
+    Sample output (legendposition, legendsize, legendlines):
+        # size: 60x12
+        from tkcurses.xychart import XYChart
+        chart = XYChart(root, legendposition="left", legendsize="small",
+                        legendlines=2, readout=False)
+        chart.pack(fill="both", expand=True)
+        chart.add_series("requests per second", [(t, t % 7) for t in range(30)])
+        chart.add_series("errors", [(t, t % 3) for t in range(30)])
+
     Sample output (bounds, minimum, maximum, nicebounds):
         # size: 60x10
         from tkcurses.xychart import XYChart
@@ -370,6 +451,14 @@ class XYChart(tkcurses.Canvas):
         "gridlines": False,
         "nowmarker": False,
         **NUMBER_OPTIONS,
+        "legend": "auto",
+        "legendposition": "right",
+        "legendsize": "auto",
+        "legendlines": 1,
+        "legendstats": (),
+        "readout": True,
+        # The chart takes the focus, for its keys.
+        "takefocus": True,
     }
 
     _value_checks: ClassVar[dict[str, Callable[[Any, Any], Any]]] = {
@@ -378,7 +467,7 @@ class XYChart(tkcurses.Canvas):
     }
 
     #: The options this class adds, which :func:`_parse` checks.
-    _own_options = frozenset(_widget_options) - {"width", "height"}
+    _own_options = frozenset(_widget_options) - {"width", "height", "takefocus"}
 
     def __init__(
         self,
@@ -399,6 +488,12 @@ class XYChart(tkcurses.Canvas):
         self._drawn_for: tuple[Any, ...] | None = None
         self._references: dict[str, Reference] = {}
         self._reference_count = 0
+        #: What was last drawn, and where: what a click is on.
+        self._drawing = Drawing()
+        #: The crosshair's x, or None.
+        self._cursor: float | None = None
+        #: The series whose legend entry has the keyboard.
+        self._legend_focus: str | None = None
         self._size = ScreenSize(self, NATURAL_SIZE, self._apply_requested_size)
         options = {**self._widget_options, **(cnf or {}), **kw}
         try:
@@ -407,6 +502,23 @@ class XYChart(tkcurses.Canvas):
             raise TclError(str(error)) from None
         self._config = config
         super().__init__(master, cnf, name=name, **kw)
+        self._install_chart_bindings()
+
+    def _install_chart_bindings(self) -> None:
+        """The keys and the click, bound once for the class. The Canvas
+        bound its own mouse routing to this class already; the click
+        handler here replaces it, and calls it first, so a program's
+        ``tag_bind`` on a chart item still fires."""
+        name = self.winfo_class()
+        marker = f"{name}:chart"
+        if marker in self.tk.bound_classes:
+            return
+        self.tk.bound_classes.add(marker)
+        for key in ("Left", "Right", "Home", "End", "Up", "Down", "Escape", "space"):
+            self.bind_class(name, f"<Key-{key}>", _chart_key)
+        self.bind_class(name, "<Button-1>", _chart_click)
+        self.bind_class(name, "<FocusIn>", _chart_refocus)
+        self.bind_class(name, "<FocusOut>", _chart_refocus)
 
     # ------------------------------------------------------------- options
 
@@ -576,6 +688,114 @@ class XYChart(tkcurses.Canvas):
         self._do(lambda: self._model.configure(name, **options))
         return None
 
+    # ----------------------------------------------------------- crosshair
+
+    def cursor(self, x: Any = _NOT_GIVEN) -> Any:
+        """The crosshair's x, or ``None`` when there is none; with ``x``,
+        put it at the x of any shown series nearest that, or remove it
+        with ``None``. On a chart of times the x is a naive ``datetime``
+        in local time.
+
+        Raises:
+            tkcurses.TclError: If ``x`` is not a number or a time.
+        """
+        if x is _NOT_GIVEN:
+            if self._cursor is None:
+                return None
+            if self._model.xkind == "time":
+                return _dt.datetime.fromtimestamp(self._cursor)
+            return self._cursor
+        if x is None:
+            self._set_cursor(None)
+            return None
+        where, _ = self._check(lambda: checked_x(x))
+        xs = self._model.xs()
+        if xs:
+            self._set_cursor(min(xs, key=lambda each: abs(each - where)))
+        return None
+
+    def _set_cursor(self, x: float | None, *, redraw: bool = True) -> None:
+        if x != self._cursor:
+            self._cursor = x
+            if redraw:
+                self._changed()
+            self.event_generate(CURSOR_EVENT)
+
+    def _keep_cursor(self) -> None:
+        """After a change to the data, keep the crosshair at its x, or move
+        it to the nearest x left of it when that has gone. Called while
+        drawing, which then draws it where it went."""
+        if self._cursor is None:
+            return
+        xs = self._model.xs()
+        if not xs:
+            self._set_cursor(None, redraw=False)
+        elif self._cursor not in xs:
+            at = bisect_right(xs, self._cursor)
+            self._set_cursor(xs[at - 1] if at else xs[0], redraw=False)
+
+    def _key(self, key: str) -> None:
+        xs = self._model.xs()
+        if key in ("Left", "Right", "Home", "End") and xs:
+            now = self._cursor
+            if key == "Home":
+                self._set_cursor(xs[0])
+            elif key == "End":
+                self._set_cursor(xs[-1])
+            elif now is None:
+                self._set_cursor(xs[-1] if key == "Left" else xs[0])
+            else:
+                at = xs.index(now) if now in xs else bisect_right(xs, now) - 1
+                step = -1 if key == "Left" else 1
+                self._set_cursor(xs[max(0, min(len(xs) - 1, at + step))])
+        elif key == "Escape":
+            self._legend_focus = None
+            self._set_cursor(None)
+            self._changed()
+        elif key in ("Up", "Down"):
+            entries = list(self._drawing.entries) if self._drawing.legend else []
+            if entries:
+                step = 1 if key == "Down" else -1
+                if self._legend_focus in entries:
+                    at = entries.index(self._legend_focus) + step
+                    at = max(0, min(len(entries) - 1, at))
+                else:
+                    at = 0 if key == "Down" else len(entries) - 1
+                self._legend_focus = entries[at]
+                self._changed()
+        elif key == "space" and self._legend_focus in self._model.names():
+            self._toggle(self._legend_focus)
+
+    def _toggle(self, name: str) -> None:
+        hidden = self._model.get(name).hidden
+        self.series_configure(name, hidden=not hidden)
+
+    def _click(self, column: int, row: int) -> None:
+        """A click on the legend hides or shows its series; on the plot, it
+        puts the crosshair at the nearest x."""
+        drawing = self._drawing
+        if drawing.legend is not None:
+            name = drawing.legend.at(column, row)
+            if name is not None and name in self._model.names():
+                self._legend_focus = name
+                self._toggle(name)
+                return
+        plot = drawing.plot
+        if plot is None or not drawing.xs:
+            return
+        if not (
+            plot.x <= column < plot.x + plot.width
+            and plot.y <= row < plot.y + plot.height
+        ):
+            return
+        span = drawing.xspan
+        if span is None:
+            self._set_cursor(drawing.xs[0])
+            return
+        fraction = (column - plot.x) / max(1, plot.width - 1)
+        where = span.minimum + fraction * (span.maximum - span.minimum)
+        self._set_cursor(min(drawing.xs, key=lambda each: abs(each - where)))
+
     # ---------------------------------------------------------- references
 
     def reference_add(
@@ -683,6 +903,7 @@ class XYChart(tkcurses.Canvas):
     def _update(self) -> None:
         self._pending = None
         if self.winfo_exists():
+            self._keep_cursor()  # drawn in this same pass
             self._sync()
             self._redraw()
 
@@ -711,7 +932,15 @@ class XYChart(tkcurses.Canvas):
             self._cells(),
             self._depth(),
             tuple(self._references.values()),
+            self._cursor,
+            self._legend_focus if self._has_focus() else None,
         )
+
+    def _has_focus(self) -> bool:
+        try:
+            return self.focus_get() is self
+        except (KeyError, TclError):
+            return False
 
     def _sync(self) -> None:
         """Make the canvas items match the scene: changed in place where a
@@ -719,7 +948,7 @@ class XYChart(tkcurses.Canvas):
         key = self._drawn_key()
         background = rgb_of(str(self._options["background"] or "black")) or (0, 0, 0)
         width, height = self._cells()
-        wanted = chart(
+        drawing = chart(
             self._model,
             self._config,
             width,
@@ -730,7 +959,11 @@ class XYChart(tkcurses.Canvas):
             references=tuple(self._references.values()),
             now=_time.time(),
             xkind=self._model.xkind or "number",
+            cursor=self._cursor,
+            legend_focus=self._legend_focus if self._has_focus() else None,
         )
+        self._drawing = drawing
+        wanted = drawing.items
         self._syncing = True
         try:
             made_new = False
@@ -764,3 +997,34 @@ class XYChart(tkcurses.Canvas):
 
 def _checked_color(spec: str) -> str:
     return color(spec)
+
+
+def _chart_of(event: Event) -> XYChart | None:
+    widget = event.widget
+    return widget if isinstance(widget, XYChart) else None
+
+
+def _chart_key(event: Event) -> None:
+    chart = _chart_of(event)
+    if chart is not None:
+        chart._key(str(event.keysym))
+
+
+def _chart_click(event: Event) -> None:
+    """The Canvas's routing to items first, then the chart's own."""
+    chart = _chart_of(event)
+    if chart is None:
+        return
+    tkcurses._canvas_mouse(event)
+    chart.focus_set()
+    column = int(chart.canvasx(event.x))
+    row = int(chart.canvasy(event.y)) // 2
+    chart._click(column, row)
+
+
+def _chart_refocus(event: Event) -> None:
+    """Draw again when the focus comes or goes: the legend's focused
+    entry shows only while the chart has it."""
+    chart = _chart_of(event)
+    if chart is not None:
+        chart._changed()

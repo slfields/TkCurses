@@ -60,6 +60,8 @@ class Layout:
     title_row: int | None = None
     #: ``ylabel``, above the value axis.
     ylabel_row: int | None = None
+    #: The chart's left edge, where the titles start.
+    left: int = 0
 
     @property
     def axes(self) -> bool:
@@ -74,14 +76,17 @@ def layout(
     ticklabels: bool,
     title: bool,
     label_width: Callable[[int], int],
+    origin: tuple[int, int] = (0, 0),
 ) -> Layout:
-    """The parts of a chart ``width`` by ``height`` cells.
+    """The parts of a chart ``width`` by ``height`` cells, its top left
+    corner at ``origin``.
 
     ``ylabel`` and ``title`` say whether those rows have anything in them;
     ``ticklabels`` whether the x axis has a row of labels. ``label_width``
     is how wide the value axis's labels are on a plot of so many rows.
     """
-    bare = Layout(Rect(0, 0, max(0, width), max(0, height)))
+    left, top_row = origin
+    bare = Layout(Rect(left, top_row, max(0, width), max(0, height)), left=left)
     top = 1 if ylabel else 0
     below = 1 + (1 if ticklabels else 0) + (1 if title else 0)
     rows = height - top - below
@@ -91,14 +96,15 @@ def layout(
     columns = width - labels - 1
     if columns < MIN_PLOT[0]:
         return bare
-    axis_row = top + rows
+    axis_row = top_row + top + rows
     tick_row = axis_row + 1 if ticklabels else None
     title_row = axis_row + (2 if ticklabels else 1) if title else None
     return Layout(
-        plot=Rect(labels + 1, top, columns, rows),
-        axis_column=labels,
+        plot=Rect(left + labels + 1, top_row + top, columns, rows),
+        axis_column=left + labels,
         axis_row=axis_row,
         tick_row=tick_row,
         title_row=title_row,
-        ylabel_row=0 if ylabel else None,
+        ylabel_row=top_row if ylabel else None,
+        left=left,
     )
