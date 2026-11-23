@@ -9151,12 +9151,13 @@ shade lighter so it shows on its own line. `points="auto"` shows them
 when neighbouring points are at least four pixels apart, so a sparse
 series shows where its data is and a dense one stays a line.
 
-**More points than columns.** A column of pixels can show one x. When a
-series has more points than the plot has columns, each column keeps the
-first, last, smallest and largest of the points that fall in it (M4).
-The line through those four is the same set of pixels the full series
-would draw, so nothing is lost on screen and the canvas holds a few
-hundred coordinates rather than many thousands.
+**More points than columns.** A column of pixels can show one x. When
+two neighbouring points of a run fall in one column, each column of that
+run keeps the first, last, lowest and highest of the points in it (M4).
+The line through those four is the same set of pixels the full run would
+draw, so nothing is lost on screen and the canvas holds a few hundred
+coordinates rather than many thousands. A run that dense is drawn
+straight: steps and smoothing are finer than a pixel there.
 
 ### The data: series
 
@@ -9208,12 +9209,51 @@ A gap is a missing `y`. The chart does not make up x values a series
 lacks: the program sends one per bucket, with `None` where the bucket is
 empty, as Kibana's "include empty rows" does.
 
-**Stacked series stack at the x values they share.** A stacked or
-percentage area adds each series' value at an x to the ones below it.
-A series with no point at that x adds nothing there, and its missing
-`y` is filled by `missing` first, so `hide` adds zero in a stack, as
-Kibana's does. `percentage` divides each x by its total, and an x whose
-total is zero is left out.
+### Stacking
+
+**Only areas stack** (`_stack`); a line is drawn at its own values in
+every mode, on the same axis. `stacked` puts each area on the ones
+before it, `percentage` does the same with each x's total made 100, and
+`unstacked` draws each from zero.
+
+- **Areas stack at every x any of them has.** At an x each adds its
+  value, after `missing` has filled what it fills. An area with no value
+  there adds nothing and has a gap, and the areas above close up over
+  it, as elastic-charts draws a missing value in a stack. With
+  `missing="hide"` that gap is the series' own; with any other rule its
+  value is filled first and it stacks.
+- **Negative values stack down from zero, positive ones up**, each side
+  on its own, as d3's diverging offset does, so a negative value never
+  hides a positive one.
+- **A percentage is of the values' sizes**, their absolute values, so a
+  stack of positive and negative values still spans 100. An x whose
+  total is zero is a gap in every area. Each value is divided by the
+  total before it is multiplied by 100: the other order overflowed to
+  infinity for a total near the smallest float, found by a property
+  test.
+
+### Joining points
+
+`_path` places values on the plot in float pixels and rounds once, at
+the end. `straight` joins each point to the next. `step` holds each
+value until the next x, a step *after* the point, as Kibana draws its
+step lines. `smooth` is Fritsch and Carlson's monotone cubic, sampled at
+every pixel column: it never rises above or dips below the two points it
+joins, so a smoothed chart shows no peak the data does not have. A
+slope under a billionth of a pixel per column counts as flat, since the
+method divides by it.
+
+A series' line is cut into **runs** at each value that cannot be placed,
+a gap, and each run into **pieces**, solid or dotted: a segment is dotted
+when either end was filled in. An area is one outline per run, along its
+top and back along the area below it, joined the same way so stacked
+areas share their edges, or along the axis's zero.
+
+**Clipping** happens after joining, in float pixels: a line by Liang and
+Barsky, an area's outline as a polygon by Sutherland and Hodgman, both
+implemented from their papers and credited beside the code. So a line
+through a value beyond custom bounds leaves the plot where it crosses
+the edge.
 
 ### Modules
 
@@ -9225,7 +9265,7 @@ the Canvas and raise `ValueError`; `__init__.py` holds only the widget.
 | `_model` | series, their points kept sorted, x's kind, the Treeview-style errors |
 | `_fit` | `missing` and `endvalues`, marking what was filled |
 | `_stack` | `stacked`, `percentage` and `unstacked` |
-| `_path` | data to pixel polylines: `straight`, `step`, `smooth`; M4 for dense series; dotted runs |
+| `_path` | values to pixel polylines and outlines: `straight`, `step`, `smooth`; M4 for dense runs; clipping; dotted pieces; when points show |
 | `_axes` | the value axis's range: Kibana's bounds, rounded to nice ends |
 | `_stats` | the legend statistics, in one pass over each series |
 | `_layout` | the widget's size to regions: plot, axes, legend, readout |

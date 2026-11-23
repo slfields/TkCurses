@@ -133,6 +133,8 @@ input, not only the ones someone thought of:
 | `tests/test_xychart_model.py` | An XY chart's series hold any points sorted by x, each x once with the last y given for it. |
 | `tests/test_xychart_fit.py` | Filling missing values never changes a known value, marks exactly the values it filled, and puts a filled gap within its neighbours. |
 | `tests/test_xychart_axes.py` | An XY chart's value axis holds every value it is given, reaches zero with full bounds, and a log axis ends on powers. |
+| `tests/test_xychart_stack.py` | Each stacked area is exactly its own value tall, the sides add up from zero, and a percentage stack spans 100. |
+| `tests/test_xychart_path.py` | A smooth line never overshoots the points it joins, whatever is clipped stays inside the plot, and M4 keeps each column's first, last, lowest and highest point. |
 | `tests/test_charts_scale.py` | Ticks fitted to their labels are round, inside their range, and their labels never overlap or leave the axis. |
 | `tests/test_charts_timeticks.py` | Time ticks rise, stay inside their range, and their labels never overlap. |
 | `tests/test_treemap_legend.py` | A treemap legend's wrapped names never pass their width or the line limit; at any size and position the legend overlaps neither the tiles nor the readout, and every entry stays inside it. |

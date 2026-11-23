@@ -615,6 +615,8 @@ _NOT_A_TABLE = frozenset(
         "Missing values",
         "Scales, axes and ticks",
         "Reference lines and bands",
+        "Stacking",
+        "Joining points",
         "The pixel",
         "What an option value is",
         "Image files",
