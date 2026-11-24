@@ -34,6 +34,7 @@ import datetime as _dt
 import functools
 import time as _time
 from bisect import bisect_right
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 import tkcurses
@@ -69,6 +70,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
 
     from tkcurses import Event
+    from tkcurses._core.attributes import BorderStyle
 
 __all__ = ["CURSOR_EVENT", "LEGEND_EVENT", "NATURAL_SIZE", "XYChart"]
 
@@ -213,7 +215,9 @@ class XYChart(tkcurses.Canvas):
     ``legendstats`` asks for. Clicking an entry hides its series, and
     clicking again shows it; a hidden series keeps a hollow entry.
 
-    **Crosshair and readout.** The chart takes the focus. **Left** and
+    **Crosshair and readout.** The chart takes the focus, and while it
+    has it its box and label are bold, as a focused Entry's box is, and
+    its legend marks an entry. **Left** and
     **Right** move a crosshair to the previous or next x of any series,
     **Home** and **End** to the first and last, and a click puts it at
     the x nearest the mouse; **Escape** removes it. Each series' point
@@ -1096,8 +1100,23 @@ class XYChart(tkcurses.Canvas):
         if not words:
             return
         base = self._background_attribute() | self._font_attribute()
+        if self._has_focus():
+            base |= curses.A_BOLD
         with contextlib.suppress(curses.error):
             self._write_line(CursesDispatcher.get(), window, row, x, words, base)
+
+    def _border_style(self) -> BorderStyle:
+        """The box, bold while the chart has the focus, as an Entry's is.
+
+        Tk shows the focus with a highlight ring, which a cell has no room
+        for; the legend's focused entry shows it too, but not on a chart
+        with ``legend="hide"``, and two such charts in one window gave no
+        sign of which one the arrow keys would move.
+        """
+        style = super()._border_style()
+        if not self._has_focus():
+            return style
+        return replace(style, attr=(style.attr & ~curses.A_DIM) | curses.A_BOLD)
 
     def _cells(self) -> tuple[int, int]:
         """The canvas's size in cells, where the chart is laid out."""

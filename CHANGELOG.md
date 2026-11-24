@@ -43,7 +43,8 @@ All notable changes to TkCurses. The format follows
   - `width` and `height` each in cells or as a percentage of the
     terminal, followed when it is resized.
   - A box with `borderwidth=1`, and a `label` in its edge or on a row
-    of its own, as BarGraph's.
+    of its own, as BarGraph's; the box and label
+    are bold while the chart has the focus.
   - BarGraph's refresh: `refreshinterval` draws new data at most that
     often, `refresh()` draws at once, and `source` is a function the
     chart calls for its data.

@@ -9129,6 +9129,16 @@ loop would keep a processor busy. A raised error stops the calls, as
 BarGraph's does. `None` given to `configure` is dropped, as in tkinter,
 so `source=""` is what takes a source away; BarGraph has no way to.
 
+**A focused chart's box is bold.** Tk shows the focus with a highlight
+ring, which a cell has no room for. The chart showed it only by marking
+an entry in its legend, so with `legend="hide"` nothing did: the user,
+tabbing between the two charts of `examples/crosshair.py`, could not
+tell which one the arrows would move. The box and its label are drawn
+bold while the chart has the focus, which is the rule a focused Entry
+already follows. A chart with neither a box nor a legend still shows
+nothing. BarGraph does not take the focus (`takefocus` is false and it
+has no keys), so it needs no sign of it.
+
 **The box is BarGraph's.** Canvas defaults `relief` to `flat`, so
 `borderwidth=1` drew nothing on the chart, while on BarGraph and TreeMap
 it draws a box. The recorder of visible options had measured

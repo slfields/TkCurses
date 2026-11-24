@@ -1031,6 +1031,39 @@ def test_crosshair_is_followed_by_the_other_chart_the_panel_and_the_scale(
 
 
 @pytest.mark.tty
+def test_crosshair_shows_which_chart_has_the_focus(terminal, tmp_path):
+    """Neither chart has a legend, so the box is what says which one the
+    arrows move: bold, with its label, on the chart with the focus."""
+    term = start(terminal, tmp_path, "crosshair", cols=80, rows=24)
+    term.wait_for_text("no crosshair")
+    lower = next(r for r, line in enumerate(term.display) if "Humidity" in line)
+    title = term.row(0).index("Temperature")
+
+    def focused(upper):
+        def check(t):
+            top, bottom = (0, lower) if upper else (lower, 0)
+            return all(
+                (
+                    t.attrs_at(top, 0)["bold"],
+                    t.attrs_at(top, title)["bold"],
+                    not t.attrs_at(bottom, 0)["bold"],
+                    not t.attrs_at(bottom, title)["bold"],
+                )
+            )
+
+        return check
+
+    term.wait_for(focused(True), message="the temperature chart's box bold")
+    term.send_keys("<Tab>")
+    term.wait_for(focused(False), message="the humidity chart's box bold")
+    term.send_keys("<Tab>")  # to the scale: neither box bold
+    term.wait_for(
+        lambda t: not t.attrs_at(0, 0)["bold"] and not t.attrs_at(lower, 0)["bold"],
+        message="neither box bold",
+    )
+
+
+@pytest.mark.tty
 def test_sensors_fill_their_gaps_and_count_what_they_draw(terminal, tmp_path):
     term = start(terminal, tmp_path, "sensors", cols=60, rows=16)
     term.wait_for(
