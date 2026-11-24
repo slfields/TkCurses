@@ -68,29 +68,25 @@ each on the one before, so the top line is the total. With
 `stackmode="percentage"` each is its share of the total, and with
 `"unstacked"` each is filled from zero on its own.
 
-Data that keeps coming is the program's to fetch, on its own timer:
-`append` adds a point to a series, and `set_series` replaces them all,
-here to drop the oldest. However many changes come at once, the chart
-draws once the program is idle, so nothing flickers. Press **s** to step
-the stacking.
+Data that keeps coming can be pushed or pulled. A program pushes it
+whenever it has some - from its own `after` timer, or a socket or file
+handler: `append` adds a point to a series, and `set_series` replaces
+them all. However many changes come at once, the chart draws once the
+program is idle, so nothing flickers. `refreshinterval=250` draws new
+data at most four times a second, however often it changes, and
+`refresh()` draws at once; a key, a click or a change of option is
+always drawn straight away.
 
-The same calls serve data from anywhere the program hears of it: a
-socket or file handler calls `append` when a reading arrives. Data
-arriving faster than anyone can read it can be drawn less often:
-`refreshinterval=250` draws new data at most four times a second,
-however often it changes, and `refresh()` draws at once. A key, a click
-or a change of option is always drawn straight away. A chart can also
-fetch for itself: `source` is a function it calls every
-`refreshinterval`, returning the series to replace and their points.
-
-```python
-chart = XYChart(root, refreshinterval=500,
-                source=lambda: {"cpu": read_cpu_history()})
-```
+This program has the chart pull instead. `source` is a function the
+chart calls every `refreshinterval`, returning the series to replace and
+their points - here each service's last minute, one second on each
+time. Press **r** to step how often, and **p** to pause: that takes the
+source away with `source=""`, since `None` given to `configure` is
+ignored, as in tkinter. **s** steps the stacking.
 
 As with every widget, these calls belong on the thread running
-`mainloop`. A worker thread puts its readings on a `queue.Queue`, and an
-`after` timer, or `source`, takes them off.
+`mainloop`. A worker thread puts its readings on a `queue.Queue`, and
+`source`, or an `after` timer, takes them off.
 
 ```{tkcurses-example} examples/traffic.py
 :size: 60x16

@@ -9,13 +9,16 @@ a line in your font, whether a dimmed fill is told apart from its line on
 your terminal, or whether a stack makes sense to look at. This checklist
 is for those.
 
-There are two passes over the same scenario. **Pass 1**, run as soon as
+There are three passes over the same scenario. **Pass 1**, run as soon as
 lines drew, checks the series: lines and areas, stacking, joining, gaps,
 scales, bounds, the live feed and size. **Pass 2** checks what came
 after it: the axes and their titles, gridlines, reference lines, units,
 the legend and its statistics, and the crosshair and readout, with the
-keys and the mouse. The sections are marked with their pass; pass 1's
-are unchanged but for the names on the status lines, and still hold.
+keys and the mouse. **Pass 3** checks the box, the label, and how new
+data reaches the chart: `refreshinterval`, `refresh()` and `source`. The
+sections are marked with their pass; pass 1's and 2's are unchanged but
+for the names on the status lines and the live feed's key, and still
+hold.
 
 **How to run**, from the repository root:
 
@@ -29,10 +32,13 @@ Escape ends it, once there is no crosshair and no legend entry
 underlined: until then, Escape is the chart's, and takes those away.
 Use a terminal at least 80×24. Lines 1 to 4 of the screen list the
 keys. Line 5 says which colours TkCurses found, the data set, whether
-the second series is hidden, live, the note and the size; lines 6 and 7
+the second series is hidden, the live feed, the note and the size; lines 6 and 7
 the series options in force; line 8 the legend, statistics, units,
 references and readout, and where the crosshair is with **how many
-`<<XYChartCursor>>` events the program has had**.
+`<<XYChartCursor>>` events the program has had**. Line 9 lists pass 3's
+keys, and line 10 says whether there is a box, where the label is, the
+`refreshinterval`, the live feed, and how many times the chart has
+called its source.
 
 The data is three series, never random, so two runs draw the same. In
 `lines` and `times`: **cpu** green, a fast wave; **load** red, a slower
@@ -170,12 +176,13 @@ On `data=lines`, all the above back to their defaults.
 
 ## 53. Live data and the program's own items (pass 1)
 
-- [ ] **l**: `live=on`. Every 200 ms each series moves **one point to the
+- [ ] **l**: `feed=timer`. Every 200 ms each series moves **one point to the
       left**, a new value coming in at the right, and the gaps in red move
       with it. The motion is **steady**: no flicker, no frame where the
       chart is blank or half drawn
 - [ ] **n** to `times` with the feed on, and on to `lines`: the feed goes
-      on, **with no error**. **l** stops it
+      on, **with no error**. **l** twice stops it: `feed=source`, then
+      `feed=off`
 - [ ] **x**: `note=on`. "a note of the program's own" is written over
       the chart near its top left. It stays **on top of every series**,
       with the live feed running and after **s**, **i** and **n** change
@@ -316,7 +323,7 @@ stays fixed.
 - [ ] **l**, live, with the crosshair on: it **stays at its x** as
       the points move under it, until that x leaves the chart, when it
       moves to the **nearest x on its left**, or to the first x if
-      there is none left of it. **l** stops it
+      there is none left of it. **l** twice stops it
 - [ ] **n** to `times`, **End**: the readout begins `Nov 24 00:44`
 - [ ] **Escape** takes the crosshair away (`cursor=-`), and the program
       is **still running**. Escape again quits
@@ -351,3 +358,58 @@ stays fixed.
       third of the width**, its figures cut short with `…` (`avg 5…`),
       and the chart keeps its axes, with fewer labels along the bottom.
       Write down whether a legend that narrow helps or is better hidden
+
+---
+
+# Pass 3
+
+The box, the label, and how new data reaches the chart. Start from a
+fresh `python3 -m uat 53`; the sections follow on from each other.
+
+## 53. Box and label (pass 3)
+
+- [ ] **w**: `box=1`. A box closes round the chart, legend and readout
+      included, in the ordinary ink. **Nothing is cut** by it: the axis
+      labels, the legend's names and the readout sit inside
+- [ ] **y**: `label=n`. "scenario 53" sits in the **middle of the top
+      edge**, a space either side, the line running on to the corners
+- [ ] **y**: `label=se`. It moves to the **right of the bottom edge**,
+      clear of the corner
+- [ ] **w**: `box=0`, **y**: `label=sw`. With no box, the label takes
+      **a row of its own** at the bottom left, under the readout, and
+      the chart is a row shorter for it
+- [ ] **y**: `label=-`. The row goes back to the chart
+- [ ] `TERM=vt100 python3 -m uat 53`, **w**, **y**: the box and label
+      are drawn the same, in the one ink
+
+## 53. Pushed data and the refresh interval (pass 3)
+
+- [ ] **v** twice: `interval=3000ms`. **l**: `feed=timer`. The program
+      still pushes a point every 200 ms, but the chart now **moves in a
+      jump every three seconds**, fifteen points at a time, and is
+      still between
+- [ ] **R** in the middle of a wait: the chart **jumps at once** to
+      where the data is, without waiting for the three seconds
+- [ ] With the chart waiting, **Left** or a click: the crosshair is
+      drawn **at once**, and the points waiting are drawn with it. Keys
+      and clicks never wait for the interval. **Escape** takes the
+      crosshair away
+- [ ] **v**: `interval=0ms`. The chart moves **every 200 ms again**,
+      smoothly, as in pass 1
+
+## 53. The chart's source (pass 3)
+
+- [ ] **v**: `interval=1000ms`. **l**: `feed=source`. The program's
+      timer has stopped; the chart **calls its source once a second**,
+      `source calls=` counting up by one, and moves **one point** each
+      time
+- [ ] **v**: `interval=3000ms`. The calls, and the moves, slow to
+      **one every three seconds**
+- [ ] **v**: `interval=0ms`. With no interval the source is called
+      100 ms after the last call was drawn: **several calls a second**
+      (measured: five or six), the chart moving smoothly
+- [ ] **n** with the source on: the data set changes and the feed goes
+      on from it, **with no error**
+- [ ] **l**: `feed=off`. The source is taken away (`source=""`): the
+      chart **stops**, and `source calls=` **stops counting**
+

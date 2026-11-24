@@ -21,8 +21,9 @@ axes, references, the legend and the crosshair.
 What to do, pass 1: n steps the data through lines, areas and times; s
 steps stackmode, i interpolation, p points, m missing, e endvalues, d
 dottedgaps, c scaletype, b bounds, f nicebounds; h hides and shows the
-second series; l starts and stops a live feed, one point every 200 ms
-from the program's own timer; x draws a note of the program's own on
+second series; l starts a live feed, one point every 200 ms from the
+program's own timer, and steps it on to the chart's source and then
+off (pass 3); x draws a note of the program's own on
 the chart; z steps the size through filling the area, 50% by 50% of
 the screen, 60 columns by 50%, and 30 columns alone. Run it again under
 TERM=xterm and TERM=vt100.
@@ -34,6 +35,14 @@ readout. Left, Right, Home and End move the crosshair and Escape takes
 it away; Up, Down and Space, or a click, hide and show series from the
 legend. Line 8 counts the <<XYChartCursor>> events the program got.
 
+Pass 3: w puts the chart in a box and takes it away; y steps the label
+through none, the top edge, the bottom right and the bottom left; v
+steps refreshinterval through 0, 1000 and 3000 ms; R draws at once
+with refresh(). l steps the live feed through off, the program's own
+timer, which pushes a point every 200 ms with set_series, and the
+chart's source, which the chart calls every refreshinterval (every
+100 ms at 0) for a point more; line 10 counts the calls.
+
 What to look for: **lines are unbroken and joined where they should
 be**, areas fill to zero or to the area beneath in a dimmer shade and
 never hide a line, the gaps in the data show as the missing option
@@ -41,8 +50,13 @@ says, the note stays on top, the live feed draws smoothly, and a
 percentage size follows the terminal when it is resized. Pass 2: the
 axes' labels never meet each other or the plot, the legend and the
 readout name each series in its colour, and every series can be shown
-again from the legend, even after all are hidden.
-TkCurses-j2ao.7, TkCurses-j2ao.12.
+again from the legend, even after all are hidden. Pass 3: the box
+closes round the chart with the label in its edge, or the label takes
+a row of its own; with the timer feed and an interval, the chart moves
+in steps of that interval however often points come, and R moves it
+at once; with the source feed, it moves once per interval, and taking
+the feed away stops it and the count.
+TkCurses-j2ao.7, TkCurses-j2ao.12, TkCurses-j2ao.18.
 """
 
 from __future__ import annotations
@@ -131,6 +145,13 @@ DEPTHS = {0: "none", 8: "8", 16: "16", 256: "256", 1 << 24: "truecolor"}
 STATS = ((), ("average", "max"), ("last", "min", "max", "average", "difference"))
 #: The units, by u: none, after the number, before it.
 UNITS = (("", "suffix"), ("%", "suffix"), ("$", "prefix"))
+#: The label, by y: none, then at three of its anchors.
+LABELS = (("", "n"), ("scenario 53", "n"), ("scenario 53", "se"), ("scenario 53", "sw"))
+#: How often new data is drawn, by v, in milliseconds.
+INTERVALS = (0, 1000, 3000)
+#: The live feed, by l.
+FEEDS = ("off", "timer", "source")
+
 #: The legend, by j: each side, then hidden.
 LEGENDS = (
     ("auto", "right"),
@@ -159,7 +180,7 @@ def add_references(chart, data):
 
 
 def build(root, screen):
-    area = _support.content_area(root, top=9)
+    area = _support.content_area(root, top=11)
     # Custom bounds take these: the lines' and areas' middles.
     chart = XYChart(area, minimum=20, maximum=60)
     chart.pack(fill="both", expand=True)
@@ -168,6 +189,9 @@ def build(root, screen):
         "data": "lines",
         "size": 0,
         "live": None,
+        "feed": "off",
+        "calls": 0,
+        "label": 0,
         "next": COUNT,
         "note": None,
         "stats": 0,
@@ -189,7 +213,7 @@ def build(root, screen):
             "  e: ends  d: dotted",
         )
         screen.line(
-            2, "c: scale  b: bounds  f: nice  h: hide 2nd  l: live  x: note  z: size"
+            2, "c: scale  b: bounds  f: nice  h: hide 2nd  l: feed  x: note  z: size"
         )
         screen.line(
             3,
@@ -204,7 +228,7 @@ def build(root, screen):
             5,
             f"colours {DEPTHS.get(depth, depth)}  data={state['data']}"
             f"  {second} {'hidden' if hidden else 'shown'}"
-            f"  live={'on' if state['live'] else 'off'}"
+            f"  feed={state['feed']}"
             f"  note={'on' if state['note'] else 'off'}"
             f"  size: {SIZES[state['size']][0]}",
         )
@@ -238,11 +262,26 @@ def build(root, screen):
             f"  readout={int(chart.cget('readout'))}"
             f"  cursor={'-' if at is None else at} ({state['cursors']} sent)",
         )
+        screen.line(
+            9, "w: box  y: label  v: interval  R: draw now  l: feed off, timer, source"
+        )
+        screen.line(
+            10,
+            f"box={int(chart.cget('borderwidth'))}"
+            f"  label={chart.cget('labelanchor') if chart.cget('label') else '-'}"
+            f"  interval={chart.cget('refreshinterval')}ms"
+            f"  feed={state['feed']}  source calls={state['calls']}",
+        )
         screen.footer(" Escape quits, once the crosshair and the underline are gone ")
         screen.refresh()
 
     def step(option, choices):
         now = str(chart.cget(option))
+        chart.configure(**{option: choices[(choices.index(now) + 1) % len(choices)]})
+        report()
+
+    def step_number(option, choices):
+        now = int(chart.cget(option))
         chart.configure(**{option: choices[(choices.index(now) + 1) % len(choices)]})
         report()
 
@@ -287,22 +326,48 @@ def build(root, screen):
         chart.series_configure(second, hidden=not chart.series_cget(second, "hidden"))
         report()
 
-    def feed():
-        """One more point on every series, the oldest dropped: what a
-        program's own timer does to show live data."""
+    def moved_on():
+        """Every series a point on, the oldest dropped."""
         n = state["next"]
         state["next"] += 1
-        for series, _kind, value in SERIES[state["data"]]:
-            points = chart.series_points(series)
-            chart.set_series(series, [*points[1:], (x_of(state["data"], n), value(n))])
+        return {
+            series: [
+                *chart.series_points(series)[1:],
+                (x_of(state["data"], n), value(n)),
+            ]
+            for series, _kind, value in SERIES[state["data"]]
+        }
+
+    def feed():
+        """What a program's own timer does to show live data: pushes it."""
+        for series, points in moved_on().items():
+            chart.set_series(series, points)
         state["live"] = root.after(200, feed)
+
+    def source():
+        """What the chart calls for its data, every refreshinterval."""
+        state["calls"] += 1
+        root.after_idle(report)
+        return moved_on()
 
     def live():
         if state["live"]:
             root.after_cancel(state["live"])
             state["live"] = None
-        else:
+        # "" takes the source away: None given to configure is ignored.
+        chart.configure(source="")
+        state["feed"] = FEEDS[(FEEDS.index(state["feed"]) + 1) % len(FEEDS)]
+        if state["feed"] == "timer":
             feed()
+        elif state["feed"] == "source":
+            state["calls"] = 0
+            chart.configure(source=source)
+        report()
+
+    def label():
+        state["label"] = (state["label"] + 1) % len(LABELS)
+        text, anchor = LABELS[state["label"]]
+        chart.configure(label=text, labelanchor=anchor)
         report()
 
     def note():
@@ -346,6 +411,16 @@ def build(root, screen):
     root.bind_all("t", lambda _event: toggle("ticklabels"))
     root.bind_all("r", lambda _event: references())
     root.bind_all("o", lambda _event: toggle("readout"))
+    root.bind_all(
+        "w",
+        lambda _event: (
+            chart.configure(borderwidth=0 if chart.cget("borderwidth") else 1),
+            report(),
+        ),
+    )
+    root.bind_all("y", lambda _event: label())
+    root.bind_all("v", lambda _event: step_number("refreshinterval", INTERVALS))
+    root.bind_all("R", lambda _event: chart.refresh())
     root.bind_all(
         "u",
         lambda _event: cycle(

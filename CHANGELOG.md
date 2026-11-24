@@ -49,7 +49,7 @@ All notable changes to TkCurses. The format follows
     chart calls for its data.
   - Its reference, and a guide to it with three new example programs:
     a day of response times with a target and a crosshair, live
-    traffic as stacked areas, and sensors that miss readings.
+    traffic as stacked areas the chart fetches itself, and sensors that miss readings.
 - `TreeMap`, a treemap widget, imported with
   `from tkcurses.treemap import TreeMap`. It is a TkCurses widget, after
   Kibana's treemap charts: neither tkinter nor Tk has one, so a program

@@ -275,5 +275,5 @@ that follows the disk. They are on
 
 Three more are about `XYChart`, also a widget only TkCurses has: a day
 of response times with a target and a crosshair, live traffic as
-stacked areas, and sensors that miss readings. They are on
+stacked areas the chart fetches itself, and sensors that miss readings. They are on
 [their own page](xychart.md).

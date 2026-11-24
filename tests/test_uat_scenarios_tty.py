@@ -2245,8 +2245,8 @@ def _quit(term):
     assert "Traceback" not in term.stderr
 
 
-#: Scenario 53's chart: under its nine header lines, over the footer.
-CHART_53 = range(9, 23)
+#: Scenario 53's chart: under its eleven header lines, over the footer.
+CHART_53 = range(11, 23)
 
 
 def _chart_rows(t):
@@ -2283,11 +2283,15 @@ def test_scenario_53_feeds_live_times_back_in(uat_terminal):
     before = _chart_rows(term)
     term.send_keys("l")
     term.wait_for(
-        lambda t: t.contains("live=on") and [t.row(row) for row in CHART_53] != before,
+        lambda t: (
+            t.contains("feed=timer") and [t.row(row) for row in CHART_53] != before
+        ),
         message="the chart moving",
     )
     term.send_keys("l")
-    term.wait_for(lambda t: t.contains("live=off"), message="the feed stopped")
+    term.wait_for(lambda t: t.contains("feed=source"), message="the chart's source")
+    term.send_keys("l")
+    term.wait_for(lambda t: t.contains("feed=off"), message="the feed stopped")
     _quit(term)
 
 
@@ -2299,7 +2303,7 @@ def test_scenario_53_keeps_the_note_on_top(uat_terminal):
         message="the note",
     )
     term.send_keys("l")
-    term.wait_for(lambda t: t.contains("live=on"), message="live")
+    term.wait_for(lambda t: t.contains("feed=timer"), message="live")
     term.wait_for(
         lambda t: t.contains("a note of the program's own"),
         message="the note still there while the series move",
@@ -2308,16 +2312,15 @@ def test_scenario_53_keeps_the_note_on_top(uat_terminal):
 
 
 def test_scenario_53_sizes_by_a_share_of_the_screen(uat_terminal):
-    """z: 50% by 50% of 80 by 24 is 40 by 12, from row 9: nothing is drawn
-    right of column 39, nor below row 20."""
+    """z: 50% by 50% of 80 by 24 is 40 by 12, from row 11: nothing is
+    drawn right of column 39."""
     term = _scenario_53(uat_terminal)
     term.send_keys("z")
     term.wait_for(
         lambda t: (
             t.contains("size: 50% x 50%")
-            and any(t.text_at(row, 0, 40).strip() for row in range(9, 21))
+            and any(t.text_at(row, 0, 40).strip() for row in CHART_53)
             and all(t.text_at(row, 40, 40).strip() == "" for row in CHART_53)
-            and all(t.text_at(row, 0, 80).strip() == "" for row in range(21, 23))
         ),
         message="the chart 40 by 12",
     )
@@ -2349,22 +2352,22 @@ def test_scenario_53_shows_a_series_again_after_all_are_hidden(uat_terminal):
     """Pass 2, and the fault UAT found: with every series hidden from the
     legend, the legend stays to show them again."""
     term = _scenario_53(uat_terminal)
-    term.wait_for(lambda t: "\u2588\u2588 disk" in t.row(11), message="the legend")
-    column = term.row(9).index("cpu") - 3
-    for row in (9, 10, 11):
+    term.wait_for(lambda t: "\u2588\u2588 disk" in t.row(13), message="the legend")
+    column = term.row(11).index("cpu") - 3
+    for row in (11, 12, 13):
         term.send_mouse(column, row)
         term.send_mouse(column, row, action="release")
     term.wait_for(
         lambda t: (
-            all("\u2591\u2591" in t.row(row) for row in (9, 10, 11))
+            all("\u2591\u2591" in t.row(row) for row in (11, 12, 13))
             and t.contains("load hidden")
         ),
         message="every entry hollow, still there",
     )
-    term.send_mouse(column, 10)
-    term.send_mouse(column, 10, action="release")
+    term.send_mouse(column, 12)
+    term.send_mouse(column, 12, action="release")
     term.wait_for(
-        lambda t: "\u2588\u2588 load" in t.row(10) and t.contains("load shown"),
+        lambda t: "\u2588\u2588 load" in t.row(12) and t.contains("load shown"),
         message="load shown again",
     )
     # The click left load's entry underlined: the first Escape is the
@@ -2372,4 +2375,90 @@ def test_scenario_53_shows_a_series_again_after_all_are_hidden(uat_terminal):
     # bytes together would be read as one Alt+Escape: let the first land.
     term.send_keys("<Escape>")
     term.wait_for_idle(0.3)
+    _quit(term)
+
+
+def test_scenario_53_boxes_the_chart_and_places_its_label(uat_terminal):
+    """Pass 3: w and y. In the box the label is in its edge; without one,
+    on a row of its own."""
+    term = _scenario_53(uat_terminal)
+    term.send_keys("w")
+    term.wait_for(
+        lambda t: t.contains("box=1") and t.row(11).startswith("\u250c\u2500"),
+        message="the box",
+    )
+    term.send_keys("y")
+    term.wait_for(
+        lambda t: t.contains("label=n") and " scenario 53 " in t.row(11),
+        message="the label in the top edge",
+    )
+    term.send_keys("y")
+    term.wait_for(
+        lambda t: (
+            t.contains("label=se")
+            and t.row(22).rstrip().endswith(" scenario 53 \u2500\u2518")
+            and "scenario" not in t.row(11)
+        ),
+        message="the label at the right of the bottom edge",
+    )
+    term.send_keys("w")
+    term.wait_for(lambda t: t.contains("box=0"), message="no box")
+    term.send_keys("y")
+    term.wait_for(
+        lambda t: t.contains("label=sw") and t.row(22).startswith("scenario 53"),
+        message="the label on a row of its own",
+    )
+    _quit(term)
+
+
+def _readout_start(t):
+    """The first x the readout names: the chart's range, '0 - 59'."""
+    return int(t.row(22).split()[0])
+
+
+def test_scenario_53_holds_pushed_data_for_the_interval(uat_terminal):
+    """Pass 3: v and R. The timer pushes a point every 200 ms; at 3000 ms
+    the chart waits, and R draws at once."""
+    term = _scenario_53(uat_terminal)
+    term.send_keys("v")
+    term.wait_for(lambda t: t.contains("interval=1000ms"), message="1000")
+    term.send_keys("v")
+    term.wait_for(lambda t: t.contains("interval=3000ms"), message="3000")
+    term.send_keys("l")
+    term.wait_for(
+        lambda t: t.contains("feed=timer") and _readout_start(t) >= 1,
+        message="the first point drawn",
+    )
+    term.wait_for_idle(1.0)  # points pushed, none drawn
+    held = _readout_start(term)
+    term.send_keys("R")
+    term.wait_for(
+        lambda t: _readout_start(t) >= held + 3,
+        message="refresh() drawing what waited",
+        # The next drawing of its own is two seconds off at least: the
+        # first point was drawn at once, the second armed three seconds.
+        timeout=1.0,
+    )
+    _quit(term)
+
+
+def test_scenario_53_calls_its_source_and_stops_without_one(uat_terminal):
+    """Pass 3: l to the chart's source, at 1000 ms, then off."""
+    term = _scenario_53(uat_terminal)
+    term.send_keys("v")
+    term.wait_for(lambda t: t.contains("interval=1000ms"), message="1000")
+    term.send_keys("l")
+    term.wait_for(lambda t: t.contains("feed=timer"), message="the timer")
+    term.send_keys("l")
+    term.wait_for(
+        lambda t: t.contains("feed=source  source calls=2"),
+        message="two calls",
+        timeout=10,
+    )
+    term.send_keys("l")
+    term.wait_for(lambda t: t.contains("feed=off"), message="off")
+    term.wait_for_idle(0.3)
+    calls = term.row(10)
+    term.wait_for_idle(1.5)  # longer than the interval: no more calls
+    assert term.row(10) == calls
     _quit(term)

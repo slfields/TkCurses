@@ -954,19 +954,40 @@ def test_latency_follows_the_crosshair_and_the_legend(terminal, tmp_path):
 
 @pytest.mark.tty
 def test_traffic_moves_along_and_steps_its_stacking(terminal, tmp_path):
+    """The chart calls its source every refreshinterval; r steps that, p
+    takes the source away and gives it back."""
     term = start(terminal, tmp_path, "traffic", cols=60, rows=16)
-    term.wait_for_text("0 \u2013 59")
     term.wait_for(
-        lambda t: any(f"{n} \u2013 {n + 59}" in t.display[14] for n in range(1, 50)),
+        lambda t: (
+            "Requests a second" in t.display[0]
+            and t.display[0].startswith("\u250c")
+            and t.contains("every 500ms")
+        ),
+        message="the box, its label and the rate",
+    )
+    term.wait_for(
+        lambda t: any(f"{n} \u2013 {n + 59}" in t.display[13] for n in range(1, 50)),
         message="new seconds coming in, the oldest dropped",
     )
+    term.send_keys("r")
+    term.wait_for_text("every 2000ms")
+    term.send_keys("p")
+    term.wait_for_text("stacked  paused")
+    term.wait_for_idle(0.3)  # a second fetched just before p is drawn
+    paused = term.display[13]
     term.send_keys("s")
     term.wait_for(
-        lambda t: t.contains("percentage  s:") and t.contains("100%"),
+        lambda t: t.contains("percentage  paused") and t.contains("100%"),
         message="each area its share",
     )
-    term.send_keys("s")
-    term.wait_for_text("unstacked  s:")
+    term.wait_for_idle(2.5)  # longer than the rate: nothing is fetched
+    assert term.display[13] == paused
+    term.send_keys("p")
+    term.wait_for(
+        lambda t: t.contains("percentage  every 2000ms") and t.display[13] != paused,
+        message="fetching again",
+        timeout=10,
+    )
 
 
 @pytest.mark.tty
