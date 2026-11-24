@@ -27,7 +27,7 @@ import pytest
 import tkcurses as tk
 from tkcurses._charts.numformat import NumberFormat
 from tkcurses._core.colors import rgb_of
-from tkcurses.xychart import CURSOR_EVENT, XYChart
+from tkcurses.xychart import CURSOR_EVENT, LEGEND_EVENT, XYChart
 from tkcurses.xychart._model import Model
 from tkcurses.xychart._scene import TAG, Config, chart
 
@@ -404,3 +404,45 @@ def test_a_key_with_nothing_to_do_reaches_the_window(root, widget):
     root.bind("<Key-space>", lambda _e: reached.append("space"))
     press(widget, "space")
     assert reached == ["Escape", "space"]
+
+
+def test_a_legend_click_sends_the_legend_event_naming_its_series(widget):
+    heard = []
+    widget.bind(
+        LEGEND_EVENT,
+        lambda _e: heard.append(
+            (widget.legend_focus(), widget.series_cget(widget.legend_focus(), "hidden"))
+        ),
+    )
+    placed = {p.iid: p for p in widget._drawing.legend.placed}
+    click(widget, placed["mem"].x + 4, placed["mem"].y)
+    click(widget, placed["mem"].x + 4, placed["mem"].y)
+    assert heard == [("mem", True), ("mem", False)]
+
+
+def test_space_on_the_legend_sends_it_too(widget):
+    heard = []
+    widget.bind(LEGEND_EVENT, lambda _e: heard.append(widget.legend_focus()))
+    widget.focus_set()
+    press(widget, "space")  # nothing underlined: nothing changes
+    press(widget, "Down")
+    press(widget, "space")
+    assert heard == ["cpu"]
+
+
+def test_the_programs_own_change_sends_no_legend_event(widget):
+    # As Tk reports no configure a program makes itself.
+    heard = []
+    widget.bind(LEGEND_EVENT, lambda _e: heard.append(1))
+    widget.series_configure("cpu", hidden=True)
+    widget._update()
+    assert heard == []
+
+
+def test_legend_focus_is_empty_until_an_entry_is_chosen(widget):
+    assert widget.legend_focus() == ""
+    widget.focus_set()
+    press(widget, "Down")
+    assert widget.legend_focus() == "cpu"
+    press(widget, "Escape")
+    assert widget.legend_focus() == ""

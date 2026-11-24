@@ -64,7 +64,7 @@ if TYPE_CHECKING:
 
     from tkcurses import Event
 
-__all__ = ["CURSOR_EVENT", "NATURAL_SIZE", "XYChart"]
+__all__ = ["CURSOR_EVENT", "LEGEND_EVENT", "NATURAL_SIZE", "XYChart"]
 
 _T = TypeVar("_T")
 
@@ -75,6 +75,9 @@ NATURAL_SIZE = (60, 16)
 _SERIES_OPTIONS = ("kind", "text", "color", "description", "hidden")
 #: Sent when the crosshair moves or goes.
 CURSOR_EVENT = "<<XYChartCursor>>"
+#: Sent when a click or Space on the legend hides or shows a series;
+#: :meth:`XYChart.legend_focus` names it.
+LEGEND_EVENT = "<<XYChartLegend>>"
 #: Stands for "not given" to :meth:`XYChart.cursor`, where ``None``
 #: removes the crosshair.
 _NOT_GIVEN: Any = object()
@@ -193,6 +196,8 @@ class XYChart(tkcurses.Canvas):
     ``<<XYChartCursor>>`` is sent when the crosshair moves or goes, and
     :meth:`cursor` reads or sets it. **Up** and **Down** move along the
     legend's entries, and **Space** hides or shows the one underlined.
+    Hiding or showing a series from the legend, by Space or a click,
+    sends ``<<XYChartLegend>>``, and :meth:`legend_focus` names it.
     The crosshair stays at its x as the data changes, or moves to the
     nearest x left of it when that x has gone. A key the chart uses goes
     no further; one it has nothing to do with - **Escape** with no
@@ -697,6 +702,13 @@ class XYChart(tkcurses.Canvas):
 
     # ----------------------------------------------------------- crosshair
 
+    def legend_focus(self) -> str:
+        """The series whose legend entry was last chosen - by Up or Down,
+        or by a click - or ``""`` when none is. In a handler for
+        ``<<XYChartLegend>>``, it is the series just hidden or shown.
+        """
+        return self._legend_focus or ""
+
     def cursor(self, x: Any = _NOT_GIVEN) -> Any:
         """The crosshair's x, or ``None`` when there is none; with ``x``,
         put it at the x of any shown series nearest that, or remove it
@@ -785,8 +797,12 @@ class XYChart(tkcurses.Canvas):
         return None
 
     def _toggle(self, name: str) -> None:
+        """Hide or show ``name`` from the legend, and say so: the
+        program's own :meth:`series_configure` sends nothing, as Tk
+        reports no configure a program makes itself."""
         hidden = self._model.get(name).hidden
         self.series_configure(name, hidden=not hidden)
+        self.event_generate(LEGEND_EVENT)
 
     def _click(self, column: int, row: int) -> None:
         """A click on the legend hides or shows its series; on the plot, it

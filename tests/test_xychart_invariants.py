@@ -38,7 +38,7 @@ from hypothesis import strategies as st
 import tkcurses as tk
 from tkcurses._charts.numformat import NumberFormat
 from tkcurses._core.colors import rgb_of
-from tkcurses.xychart import CURSOR_EVENT, NATURAL_SIZE, XYChart
+from tkcurses.xychart import CURSOR_EVENT, LEGEND_EVENT, NATURAL_SIZE, XYChart
 from tkcurses.xychart._model import Model
 from tkcurses.xychart._scene import TAG, Config, Reference, chart
 
@@ -300,8 +300,9 @@ def test_after_anything_the_canvas_holds_the_chart_and_the_programs_items(
     the canvas holds exactly the items the chart says it made, one per
     key; the program's own items are untouched and above them; the
     crosshair is at an x of a shown series, or nowhere; a change to the
-    data keeps it at its x or moves it left; and the event is sent
-    exactly when it moves."""
+    data keeps it at its x or moves it left; the cursor event is sent
+    exactly when it moves; and the legend event exactly when a key or
+    click hides or shows a series, naming it."""
     widget = XYChart(root, width=60, height=16)
     try:
         widget.focus_set()
@@ -314,15 +315,30 @@ def test_after_anything_the_canvas_holds_the_chart_and_the_programs_items(
         mine = {line: widget.coords(line), note: widget.coords(note)}
         sent = []
         widget.bind(CURSOR_EVENT, lambda _e: sent.append(widget._cursor))
+        legend = []
+        widget.bind(LEGEND_EVENT, lambda _e: legend.append(widget.legend_focus()))
+
+        def hidden():
+            return {n: widget.series_cget(n, "hidden") for n in widget.series()}
+
         for operation in history:
             before = widget._cursor
+            was = hidden()
             sent.clear()
+            legend.clear()
             apply(widget, operation)
             widget._update()
             after = widget._cursor
             assert bool(sent) == (after != before), (operation, before, after)
             if operation[0] not in ("key", "click"):
                 assert after == kept(before, widget._model.xs()), operation
+                assert legend == [], operation
+            else:
+                now = hidden()
+                changed = [
+                    n for n in now if was.get(n) is not None and now[n] != was[n]
+                ]
+                assert legend == changed, (operation, was, now)
             made = {ident for ident, _ in widget._made.values()}
             assert set(widget.find_withtag(TAG)) == made
             assert len(made) == len(widget._made)

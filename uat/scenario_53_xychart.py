@@ -50,7 +50,7 @@ from __future__ import annotations
 import datetime
 import math
 
-from tkcurses.xychart import CURSOR_EVENT, XYChart
+from tkcurses.xychart import CURSOR_EVENT, LEGEND_EVENT, XYChart
 from uat import _support
 
 TITLE = "53 - XYCharts"
@@ -367,10 +367,8 @@ def build(root, screen):
         ),
     )
     chart.bind(CURSOR_EVENT, counted)
-    # A series hidden or shown from the legend sends no event of its own:
-    # read the state again after any key or click the chart takes.
-    for sequence in ("<Key>", "<Button-1>", "<Double-Button-1>"):
-        chart.bind(sequence, lambda _event: root.after_idle(report), add="+")
+    # A series hidden or shown from the legend: line 5 says which.
+    chart.bind(LEGEND_EVENT, lambda _event: report())
     # A resize changes what a percentage asks for: show the size it got.
     root.bind(
         "<Configure>",

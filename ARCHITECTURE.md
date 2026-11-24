@@ -9546,6 +9546,13 @@ moves to the nearest one left.
   closes a dialog or quits still does. Found writing UAT pass 2, where
   the first build's Escape took the crosshair away and quit the
   scenario in the same press.
+- **`<<XYChartLegend>>`** is sent after a click or Space on the legend
+  hides or shows a series, and `legend_focus()` names it: a virtual
+  event carries no data here, so the handler reads the widget, as a
+  `<<TreeviewSelect>>` handler reads `selection()`. The program's own
+  `series_configure(hidden=...)` sends nothing, as Tk reports no
+  configure a program makes itself. Without it, UAT scenario 53 had to
+  re-read the state after every key and click.
 
 ### Not yet
 
