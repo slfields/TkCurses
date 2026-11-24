@@ -6,6 +6,8 @@ All notable changes to TkCurses. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-24
+
 ### Security
 - A password typed into an entry with `show` set stayed in the program's
   memory after it was deleted, and after the entry was destroyed. The
@@ -1067,7 +1069,8 @@ Phase 2 of the original codebase: the base widget classes, `Tk` and `Toplevel`,
 the variable classes and the panel stack. Superseded by the rebuild; it has no
 `Entry` or `Text`.
 
-[Unreleased]: https://github.com/slfields/TkCurses/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/slfields/TkCurses/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/slfields/TkCurses/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/slfields/TkCurses/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/slfields/TkCurses/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/slfields/TkCurses/compare/v0.4.1...v0.4.2
