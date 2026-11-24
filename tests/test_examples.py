@@ -33,11 +33,12 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
 PAGE = ROOT / "docs" / "guide" / "examples.md"
-#: The bar graph examples are shown on their guide page instead.
+#: The bar graph, treemap and chart examples are on their guide pages instead.
 PAGES = (
     PAGE,
     ROOT / "docs" / "guide" / "bargraph.md",
     ROOT / "docs" / "guide" / "treemap.md",
+    ROOT / "docs" / "guide" / "xychart.md",
 )
 TIMES = "\N{MULTIPLICATION SIGN}"
 DIRECTIVE = re.compile(r"^```\{tkcurses-example\} (\S+)$", re.M)
@@ -62,7 +63,7 @@ def test_every_example_is_on_the_page_and_nothing_else_is():
     shown = [found for page in PAGES for found in DIRECTIVE.findall(page.read_text())]
     files = sorted(f"examples/{path.name}" for path in EXAMPLES.glob("*.py"))
     assert sorted(shown) == files
-    assert len(files) == 22
+    assert len(files) == 25
 
 
 def test_every_example_carries_the_notice():
@@ -920,3 +921,73 @@ def test_disk_usage_follows_the_disk_and_zooms(terminal, tmp_path):
         lambda t: t.contains("src \u203a .py"),
         message="zoomed into src, its kind focused",
     )
+
+
+@pytest.mark.tty
+def test_latency_follows_the_crosshair_and_the_legend(terminal, tmp_path):
+    term = start(terminal, tmp_path, "latency", cols=72, rows=20)
+    term.wait_for(
+        lambda t: t.contains("target") and t.contains("deploy") and t.contains("06:00"),
+        message="a day against the clock, with its references",
+    )
+    term.send_keys("<Home>")
+    term.wait_for(
+        lambda t: (
+            t.contains("00:00  p95 within target")
+            and t.contains("Nov 23 00:00  median")
+        ),
+        message="the crosshair's event, read by the program",
+    )
+    # From the last reading, 23:50, back 48 to 15:50: the deploy's hour.
+    term.send_keys("<End>", *["<Left>"] * 48)
+    term.wait_for_text("15:50  p95 over target")
+    row = next(r for r in range(20) if "██ p95" in term.row(r))
+    term.send_mouse(term.row(row).index("p95"), row)
+    term.send_mouse(term.row(row).index("p95"), row, action="release")
+    term.wait_for_text("p95 hidden")
+    term.send_keys("r")
+    term.wait_for(
+        lambda t: not t.contains("target") and not t.contains("deploy"),
+        message="the references gone",
+    )
+
+
+@pytest.mark.tty
+def test_traffic_moves_along_and_steps_its_stacking(terminal, tmp_path):
+    term = start(terminal, tmp_path, "traffic", cols=60, rows=16)
+    term.wait_for_text("0 \u2013 59")
+    term.wait_for(
+        lambda t: any(f"{n} \u2013 {n + 59}" in t.display[14] for n in range(1, 50)),
+        message="new seconds coming in, the oldest dropped",
+    )
+    term.send_keys("s")
+    term.wait_for(
+        lambda t: t.contains("percentage  s:") and t.contains("100%"),
+        message="each area its share",
+    )
+    term.send_keys("s")
+    term.wait_for_text("unstacked  s:")
+
+
+@pytest.mark.tty
+def test_sensors_fill_their_gaps_and_count_what_they_draw(terminal, tmp_path):
+    term = start(terminal, tmp_path, "sensors", cols=60, rows=16)
+    term.wait_for(
+        lambda t: (
+            t.contains("missing=hide dotted=0")
+            and t.contains("count 44")
+            and t.contains("count 40")
+        ),
+        message="the readings sent",
+    )
+    term.send_keys("m", "m")
+    term.wait_for(
+        lambda t: (
+            t.contains("missing=linear")
+            and t.contains("count 48")
+            and t.contains("count 46")
+        ),
+        message="the gaps joined, the ends still left",
+    )
+    term.send_keys("d")
+    term.wait_for_text("dotted=1")

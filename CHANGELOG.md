@@ -42,6 +42,9 @@ All notable changes to TkCurses. The format follows
     and `<<XYChartCursor>>` reports it.
   - `width` and `height` each in cells or as a percentage of the
     terminal, followed when it is resized.
+  - Its reference, and a guide to it with three new example programs:
+    a day of response times with a target and a crosshair, live
+    traffic as stacked areas, and sensors that miss readings.
 - `TreeMap`, a treemap widget, imported with
   `from tkcurses.treemap import TreeMap`. It is a TkCurses widget, after
   Kibana's treemap charts: neither tkinter nor Tk has one, so a program
