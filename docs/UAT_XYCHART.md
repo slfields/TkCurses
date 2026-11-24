@@ -335,6 +335,12 @@ stays fixed.
 - [ ] `TERM=vt100 python3 -m uat 53`: the swatches are all `██`, and a
       hidden series' `░░` is **still told apart** from a shown one's.
       The readout is one ink: the series are told apart **by name**
+- [ ] Under `TERM=vt100` **the mouse does nothing**: a VT100 had none,
+      its terminfo entry has no mouse capability, and so ncurses never
+      asks the terminal to report clicks. That is expected, for every
+      widget. Do the legend with the keys instead: **Down** and **Up**
+      underline an entry, **Space** hides and shows it, and the
+      crosshair is all keys anyway
 
 ## 53. Size (pass 2)
 
