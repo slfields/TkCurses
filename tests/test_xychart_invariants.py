@@ -50,7 +50,9 @@ SHARED = [HealthCheck.function_scoped_fixture]
 
 # -------------------------------------------------------------- strategies
 
-values = st.one_of(st.none(), st.floats(-1e4, 1e4, allow_nan=False, width=32))
+#: The ends of what a float holds, where sums overflow and halves vanish.
+EXTREMES = st.sampled_from([5e-324, -5e-324, 1e-310, 1.7e308, -1.7e308])
+values = st.one_of(st.none(), st.floats(-1e4, 1e4, allow_nan=False, width=32), EXTREMES)
 series = st.lists(
     st.tuples(
         st.sampled_from(["line", "area"]),
@@ -77,11 +79,13 @@ configs = st.fixed_dictionaries(
         "readout": st.booleans(),
         "xlabel": st.sampled_from(["", "x"]),
         "ylabel": st.sampled_from(["", "y"]),
+        "label": st.sampled_from(["", "chart"]),
+        "labelanchor": st.sampled_from(["n", "sw"]),
     }
 )
 references = st.lists(
     st.tuples(
-        st.floats(-2e4, 2e4, allow_nan=False),
+        st.one_of(st.floats(-2e4, 2e4, allow_nan=False), EXTREMES),
         st.sampled_from(["y", "x"]),
         st.booleans(),  # a band
     ),

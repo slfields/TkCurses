@@ -29,11 +29,13 @@ draws a missing value in a stack. Positive values stack up from zero and
 negative ones down from it, each side on its own, as d3's diverging
 offset does, so a negative value never hides a positive one. A
 percentage divides by the total of the values' sizes, and an x whose
-total is zero is a gap in every area.
+total is zero is a gap in every area. An area whose running total passes
+the largest float there is a gap there too, as a missing value is.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -104,6 +106,12 @@ def _stacked(areas: Sequence[Layer], *, percentage: bool) -> dict[str, Band]:
     for x in xs:
         values = [values.get(x) for values in at]
         total = sum(abs(v) for v in values if v is not None)
+        if percentage and not math.isfinite(total):
+            # Shares are the same of values scaled down first, and their
+            # total fits.
+            biggest = max(abs(v) for v in values if v is not None)
+            values = [None if v is None else v / biggest for v in values]
+            total = sum(abs(v) for v in values if v is not None)
         if percentage and total == 0:
             for i in range(len(areas)):
                 highs[i].append(None)
@@ -119,12 +127,18 @@ def _stacked(areas: Sequence[Layer], *, percentage: bool) -> dict[str, Band]:
             size = value / total * 100 if percentage else value
             if size >= 0:
                 lows[i].append(up)
-                up += size
-                highs[i].append(up)
+                if math.isfinite(up + size):
+                    up += size
+                    highs[i].append(up)
+                else:
+                    highs[i].append(None)
             else:
                 lows[i].append(down)
-                down += size
-                highs[i].append(down)
+                if math.isfinite(down + size):
+                    down += size
+                    highs[i].append(down)
+                else:
+                    highs[i].append(None)
     return {
         layer.name: Band(
             layer.name,

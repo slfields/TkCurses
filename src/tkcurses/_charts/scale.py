@@ -55,6 +55,12 @@ ScaleType = Literal["linear", "log", "sqrt"]
 SCALE_TYPES = ("linear", "log", "sqrt")
 
 
+#: How many axis lengths beyond its ends :meth:`ValueRange.position`
+#: places a value at most. A line to a point that far off leaves the plot
+#: as near vertically as makes no difference in whole pixels.
+REACH = 1e6
+
+
 @dataclass(frozen=True, slots=True)
 class ValueRange:
     """The values a bar spans, and how they are spaced along it.
@@ -110,8 +116,16 @@ class ValueRange:
     def position(self, value: float) -> float | None:
         """How far along ``value`` falls, 0 at ``minimum`` and 1 at
         ``maximum``, and beyond them for a value outside: not clamped, so a
-        line through it can be clipped where it leaves. ``None`` for a
-        value a log scale cannot place, at or below zero."""
+        line through it can be clipped where it leaves - except at
+        :data:`REACH` lengths beyond either end, so a value far off the
+        axis, 1e308 on an axis to 10, is still somewhere a pixel can be.
+        ``None`` for a value a log scale cannot place, at or below zero."""
+        position = self._unbounded(value)
+        if position is None or math.isnan(position):
+            return None
+        return max(-REACH, min(1 + REACH, position))
+
+    def _unbounded(self, value: float) -> float | None:
         if self.log:
             if not value > 0:
                 return None
@@ -120,7 +134,12 @@ class ValueRange:
         if self.scaletype == "sqrt":
             low = _signed_root(self.minimum)
             return (_signed_root(value) - low) / (_signed_root(self.maximum) - low)
-        return (value - self.minimum) / (self.maximum - self.minimum)
+        width = self.maximum - self.minimum
+        if not math.isfinite(width):
+            # Wider than a float holds: the same fraction, of halves.
+            half = self.maximum / 2 - self.minimum / 2
+            return (value / 2 - self.minimum / 2) / half
+        return (value - self.minimum) / width
 
     def to_points(self, value: float, peak_points: int) -> int:
         """``value`` as a length in points along a bar ``peak_points`` long."""
@@ -247,8 +266,13 @@ def auto_ticks(
     if span.log:
         return log_ticks(span, fits)
     for step in round_steps(steps):
-        first = math.ceil(span.minimum / step - 1e-9)
-        last = math.floor(span.maximum / step + 1e-9)
+        if not math.isfinite(step):
+            return []  # steps past the largest float: none fitted
+        low, high = span.minimum / step, span.maximum / step
+        if not (math.isfinite(low) and math.isfinite(high)):
+            continue  # a step so small the count overflows: a larger one
+        first = math.ceil(low - 1e-9)
+        last = math.floor(high + 1e-9)
         if last - first <= fits:
             return [tidy(i * step) for i in range(first, last + 1)]
     raise AssertionError("unreachable")  # pragma: no cover
@@ -314,8 +338,13 @@ def fitted_ticks(
                 return ticks
         return []
     for step in round_steps(steps):
-        first = math.ceil(span.minimum / step - 1e-9)
-        last = math.floor(span.maximum / step + 1e-9)
+        if not math.isfinite(step):
+            return []  # steps past the largest float: none fitted
+        low, high = span.minimum / step, span.maximum / step
+        if not (math.isfinite(low) and math.isfinite(high)):
+            continue  # a step so small the count overflows: a larger one
+        first = math.ceil(low - 1e-9)
+        last = math.floor(high + 1e-9)
         if last - first + 1 > length:
             continue
         ticks = [tidy(i * step) for i in range(first, last + 1)]

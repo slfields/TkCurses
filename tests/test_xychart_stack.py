@@ -119,3 +119,15 @@ def test_a_percentage_stack_spans_a_hundred_of_sizes(series):
             assert sum(sizes) == pytest.approx(100, abs=1e-6)
         else:
             assert sizes == []
+
+
+def test_an_area_whose_total_overflows_is_a_gap_there():
+    big = 1.7e308
+    a, b = stack([layer("a", [big, 1]), layer("b", [big, 1])])
+    assert a.highs == (big, 1)
+    assert b.lows == (big, 1) and b.highs == (None, 2)
+
+
+def test_a_percentage_of_a_total_past_the_largest_float():
+    a, b = stack([layer("a", [1.7e308]), layer("b", [1.7e308])], "percentage")
+    assert a.highs == (50.0,) and b.highs == (100.0,)

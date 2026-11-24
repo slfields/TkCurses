@@ -94,3 +94,16 @@ def test_each_figure_is_the_plain_one(given_values):
     )
     assert got["min"] == min(known) and got["max"] == max(known)
     assert got["last"] == given_values[-1] and got["lastnonnull"] == known[-1]
+
+
+def test_a_figure_past_the_largest_float_is_none():
+    figures = statistics([1.7e308, 1.7e308, -1.7e308], STATISTICS)
+    for name in ("sum", "range", "variance", "stddev", "difference"):
+        assert figures[name] is None, name
+    assert figures["max"] == 1.7e308
+    assert figures["count"] == 3
+
+
+def test_the_median_of_the_largest_and_smallest_floats():
+    assert statistics([1.7e308, 1.7e308], ["median"])["median"] == 1.7e308
+    assert statistics([5e-324, 5e-324], ["median"])["median"] == 5e-324

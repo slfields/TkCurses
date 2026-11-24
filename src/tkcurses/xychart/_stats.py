@@ -29,6 +29,8 @@ collected on the way.
 A value missing, ``None``, counts only for ``first`` and ``last``,
 which are the first and last values whatever they are; every other
 figure is of the values there are, and is ``None`` when there are none.
+A figure past the largest float - the sum of two values near it, say -
+is ``None`` too, rather than an infinity no one can read.
 """
 
 from __future__ import annotations
@@ -94,7 +96,7 @@ def statistics(
     as Kibana's are.
     """
     count = 0
-    total = 0.0
+    total = 0.0  # may overflow; checked at the end
     mean = 0.0
     squares = 0.0  # Welford's running sum of squared differences
     low = math.inf
@@ -141,9 +143,15 @@ def statistics(
         "count": float(count),
         "distinctcount": float(len(set(seen))),
         "variance": squares / count if known else None,
-        "stddev": math.sqrt(squares / count) if known else None,
+        "stddev": (
+            math.sqrt(squares / count) if known and squares / count >= 0 else None
+        ),
     }
-    return {name: figures[name] for name in wanted}
+    return {name: _finite(figures[name]) for name in wanted}
+
+
+def _finite(figure: float | None) -> float | None:
+    return figure if figure is not None and math.isfinite(figure) else None
 
 
 def _median(values: list[float]) -> float:
@@ -151,4 +159,9 @@ def _median(values: list[float]) -> float:
     middle = len(ordered) // 2
     if len(ordered) % 2:
         return ordered[middle]
-    return (ordered[middle - 1] + ordered[middle]) / 2
+    both = ordered[middle - 1] + ordered[middle]
+    if math.isfinite(both):
+        return both / 2
+    # Two values near the largest float: halved first, which would lose
+    # the smallest ones, whose halves are 0.
+    return ordered[middle - 1] / 2 + ordered[middle] / 2

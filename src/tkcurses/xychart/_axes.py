@@ -126,16 +126,38 @@ def _widened(value: float, log: bool, base: float) -> tuple[float, float]:
 def _nice(low: float, high: float, log: bool, base: float) -> tuple[float, float]:
     if log:
         return (
-            tidy(base ** math.floor(math.log(low, base) + 1e-9)),
-            tidy(base ** math.ceil(math.log(high, base) - 1e-9)),
+            _power(base, math.floor(math.log(low, base) + 1e-9), low),
+            _power(base, math.ceil(math.log(high, base) - 1e-9), high),
         )
+    if not math.isfinite(high - low):
+        # Wider than a float holds - from near the most negative float to
+        # near the most positive - so no step fits: left as it is.
+        return low, high
     for step in round_steps():
         if (high - low) / step <= NICE_TICKS:
             nice_low = _outward(low, step, math.floor, -1)
             nice_high = _outward(high, step, math.ceil, 1)
             # Below the smallest round step, both ends can round together.
-            return nice_low, max(nice_high, tidy(nice_low + step))
+            nice_high = max(nice_high, tidy(nice_low + step))
+            # Rounding out past the largest float is infinite: the end
+            # stays where the values put it.
+            if not math.isfinite(nice_low):
+                nice_low = low
+            if not math.isfinite(nice_high):
+                nice_high = high
+            return nice_low, nice_high
     raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _power(base: float, exponent: int, end: float) -> float:
+    """``base`` to ``exponent``, a log axis's round end - or ``end`` as it
+    is, where that power is past what a float holds: ``10 ** -324`` is 0
+    and ``10 ** 309`` overflows."""
+    try:
+        power = tidy(base**exponent)
+    except OverflowError:
+        return end
+    return power if 0 < power < math.inf else end
 
 
 def _outward(

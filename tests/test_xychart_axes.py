@@ -109,16 +109,29 @@ def test_a_log_range_holds_every_value_between_powers(values):
         assert math.isclose(exponent, round(exponent), abs_tol=1e-9)
 
 
+@pytest.mark.parametrize("nice", [False, True])
 @pytest.mark.parametrize("value", [5e-324, -5e-324, 1.7e308, -1.7e308])
 @pytest.mark.parametrize("bounds", ["data", "full"])
-def test_one_value_at_the_ends_of_a_float_still_has_a_range(value, bounds):
-    span = value_range([value], bounds=bounds, nice=False)
+def test_one_value_at_the_ends_of_a_float_still_has_a_range(value, bounds, nice):
+    span = value_range([value], bounds=bounds, nice=nice)
     assert span.minimum < span.maximum
     assert span.minimum <= value <= span.maximum
 
 
+@pytest.mark.parametrize("nice", [False, True])
 @pytest.mark.parametrize("value", [5e-324, 1e-320, 1.7e308])
-def test_one_value_on_a_log_axis_at_the_ends_of_a_float(value):
-    span = value_range([value], scaletype="log", nice=False)
+def test_one_value_on_a_log_axis_at_the_ends_of_a_float(value, nice):
+    span = value_range([value], scaletype="log", nice=nice)
     assert 0 < span.minimum < span.maximum < math.inf
     assert span.minimum <= value <= span.maximum
+
+
+@pytest.mark.parametrize(
+    "values", [[5e-324, 1e-300], [1e308, 1.7e308], [5e-324, 1.7e308]]
+)
+def test_a_log_axis_rounds_out_no_further_than_a_float_holds(values):
+    """A power of the base past a float's ends is 0 or overflows; the end
+    stays where the values put it instead."""
+    span = value_range(values, scaletype="log")
+    assert 0 < span.minimum <= min(values)
+    assert max(values) <= span.maximum < math.inf

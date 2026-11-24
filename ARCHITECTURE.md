@@ -9404,6 +9404,31 @@ as a d3 power scale's do, so they crowd toward the top and fewer fit.
 bottom and 1 at the top and goes beyond them for a value outside custom
 bounds, so a line through it is clipped where it leaves the plot rather
 than flattened along the edge. BarGraph's `fraction` still clamps.
+Only at `REACH`, a million axis lengths beyond either end, is it held:
+1e308 on an axis to 10 would otherwise be an infinite pixel. A line to a
+point that far off crosses the plot as near vertically as whole pixels
+can tell.
+
+**The ends of what a float holds** were not reached by the property
+tests, whose values stayed within ±10,000, until a reference at 5e-324
+on a log axis came up by chance: `_nice` rounded the bottom to
+`10 ** -324`, which is 0, and the axis refused it. Probing from there
+(`TkCurses-j2ao.17`) found the rest, each now handled where it arises:
+
+- `_nice` keeps an end whose power of the base is 0 or overflows, and
+  leaves alone a range wider than a float, where no step fits and the
+  search for one never ended.
+- `fitted_ticks` skips a step whose count of ticks overflows, and stops
+  at a step that is itself infinite (where `0 * inf` is NaN and the
+  search never ended): no ticks, as when none fit.
+- `position` on an axis wider than a float works in halves.
+- A stacked area whose running total overflows is a gap there, as a
+  missing value is; a percentage of an infinite total is of the values
+  scaled down first.
+- A legend statistic that overflows - the sum or range of values near
+  the largest float - is `None`, shown as a missing figure.
+
+The property tests' values now include 5e-324, 1e-310 and ±1.7e308.
 
 **Ticks are as many as fit their labels.** `fitted_ticks` takes the
 smallest round step - 1, 2 or 5 times a power of ten - whose labels,

@@ -26,6 +26,7 @@ from hypothesis import assume, given
 from hypothesis import strategies as st
 
 from tkcurses._charts.scale import (
+    REACH,
     ValueRange,
     fitted_ticks,
     label_start,
@@ -123,3 +124,29 @@ def test_labels_never_overlap_and_ticks_are_round_and_inside(pair, length, kind)
 
 def _steps_near(step):
     return [r for r in takewhile(lambda r: r < step * 2, round_steps()) if r > step / 2]
+
+
+@pytest.mark.parametrize("scaletype", ["linear", "sqrt", "log"])
+def test_a_value_far_off_the_axis_is_placed_a_finite_way_off(scaletype):
+    span = ValueRange(10, 1, scaletype)
+    assert span.position(1.7e308) == 1 + REACH or scaletype == "log"
+    assert 1 < span.position(1.7e308) <= 1 + REACH
+    if scaletype != "log":
+        assert span.position(-1.7e308) == -REACH
+
+
+def test_an_axis_wider_than_a_float_places_values_by_halves():
+    span = ValueRange(1.7e308, -1.7e308)
+    assert span.position(0) == 0.5
+    assert span.position(1.7e308) == 1.0
+    assert span.position(-1.7e308) == 0.0
+
+
+def test_ticks_on_an_axis_of_the_largest_floats():
+    """The smallest round steps count past what a float holds there, and
+    a larger one is taken; past the largest round step a float holds,
+    none fits, and there are none."""
+    assert fitted_ticks(ValueRange(0, -1.7e308), 10, lambda _: 1) == [-1e308, 0.0]
+    wide = ValueRange(1.7e308, -1.7e308)
+    assert fitted_ticks(wide, 40, lambda _: 6) == [-1e308, 0.0, 1e308]
+    assert fitted_ticks(wide, 10, lambda _: 1) == []
