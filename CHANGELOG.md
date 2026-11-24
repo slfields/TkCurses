@@ -42,6 +42,11 @@ All notable changes to TkCurses. The format follows
     and `<<XYChartCursor>>` reports it.
   - `width` and `height` each in cells or as a percentage of the
     terminal, followed when it is resized.
+  - A box with `borderwidth=1`, and a `label` in its edge or on a row
+    of its own, as BarGraph's.
+  - BarGraph's refresh: `refreshinterval` draws new data at most that
+    often, `refresh()` draws at once, and `source` is a function the
+    chart calls for its data.
   - Its reference, and a guide to it with three new example programs:
     a day of response times with a target and a crosshair, live
     traffic as stacked areas, and sensors that miss readings.

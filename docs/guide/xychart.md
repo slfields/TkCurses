@@ -52,6 +52,10 @@ whether the slowest requests were over the target.
 :keys: ["<End>", "<Left>", "<Left>", "<Left>"]
 ```
 
+`borderwidth=1` puts the chart in a box, and `label` writes its name in
+the box's top edge - or, with `labelanchor`, at either end of the top or
+bottom edge. Without a box, the label takes a row of its own.
+
 The legend, at the bottom here, names each series in its colour, with
 any of sixteen statistics - here the highest value. A click on an
 entry hides its series, and another shows it again; that sends
@@ -69,6 +73,24 @@ Data that keeps coming is the program's to fetch, on its own timer:
 here to drop the oldest. However many changes come at once, the chart
 draws once the program is idle, so nothing flickers. Press **s** to step
 the stacking.
+
+The same calls serve data from anywhere the program hears of it: a
+socket or file handler calls `append` when a reading arrives. Data
+arriving faster than anyone can read it can be drawn less often:
+`refreshinterval=250` draws new data at most four times a second,
+however often it changes, and `refresh()` draws at once. A key, a click
+or a change of option is always drawn straight away. A chart can also
+fetch for itself: `source` is a function it calls every
+`refreshinterval`, returning the series to replace and their points.
+
+```python
+chart = XYChart(root, refreshinterval=500,
+                source=lambda: {"cpu": read_cpu_history()})
+```
+
+As with every widget, these calls belong on the thread running
+`mainloop`. A worker thread puts its readings on a `queue.Queue`, and an
+`after` timer, or `source`, takes them off.
 
 ```{tkcurses-example} examples/traffic.py
 :size: 60x16

@@ -17,7 +17,7 @@
 
 """Latency: a day of response times as lines against the clock, with
 a target line, the hour after a deploy shaded, and a readout that
-follows the crosshair.
+follows the crosshair, in a box with the chart's label in its edge.
 
 A TkCurses widget: neither tkinter nor Tk has a chart. The left and
 right arrows move the crosshair from reading to reading, Home and End
@@ -60,7 +60,14 @@ root = tk.Tk()
 root.title("Latency")
 status = tk.Label(root, anchor="w")
 status.pack(side="bottom", fill="x")
-chart = XYChart(root, units="ms", legendstats=("max",), legendposition="bottom")
+chart = XYChart(
+    root,
+    units="ms",
+    legendstats=("max",),
+    legendposition="bottom",
+    borderwidth=1,
+    label=f"Response times, {DAY.day} {DAY:%B %Y}",
+)
 chart.pack(fill="both", expand=True)
 chart.add_series("median", [(t, median(n)) for n, t in enumerate(TIMES)])
 chart.add_series("p95", [(t, p95(n)) for n, t in enumerate(TIMES)], color="red")

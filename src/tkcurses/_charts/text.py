@@ -25,11 +25,30 @@ runs past its space or sits off centre.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from tkcurses._core.cells import cells, char_cells, clip_cells
 
-__all__ = ["ELLIPSIS", "clusters", "fit"]
+if TYPE_CHECKING:
+    from tkcurses._charts.geometry import Rect
+
+__all__ = [
+    "ELLIPSIS",
+    "LABEL_ANCHORS",
+    "TITLE_INSET",
+    "clusters",
+    "fit",
+    "place_text",
+]
 
 ELLIPSIS = "\u2026"  # …
+
+#: The anchors a chart's label accepts, as ``ttk.LabelFrame``'s.
+LABEL_ANCHORS = ("n", "nw", "ne", "s", "sw", "se")
+
+#: Cells of edge left visible either side of a chart's label set in its
+#: box (the corner and one line cell: ``┌─ Title ─┐``).
+TITLE_INSET = 2
 
 
 def clusters(text: str) -> list[tuple[str, int]]:
@@ -56,3 +75,21 @@ def fit(text: str, width: int) -> str:
     if cells(text) <= width:
         return text
     return clip_cells(text, width - 1) + ELLIPSIS if width > 1 else ELLIPSIS
+
+
+def place_text(rect: Rect, text: str, anchor: str) -> tuple[int, str]:
+    """Where a one-row ``text`` goes in ``rect``: ``(x, text)``.
+
+    Measured in cells, so a wide character counts two and a combining mark
+    none. Cut with ``…`` when it doesn't fit. The anchor's ``w`` puts it at the
+    left, ``e`` at the right, and neither centres it.
+    """
+    if rect.width <= 0:
+        return rect.x, ""
+    text = fit(text, rect.width)
+    spare = rect.width - cells(text)
+    if anchor.endswith("w"):
+        return rect.x, text
+    if anchor.endswith("e"):
+        return rect.x + spare, text
+    return rect.x + spare // 2, text

@@ -29,7 +29,9 @@ TkCurses extension:
 from __future__ import annotations
 
 import contextlib
+import curses
 import datetime as _dt
+import functools
 import time as _time
 from bisect import bisect_right
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
@@ -37,6 +39,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 import tkcurses
 from tkcurses import TclError
 from tkcurses._charts.color import DEFAULT_COLORS
+from tkcurses._charts.geometry import Rect
 from tkcurses._charts.legend import LEGEND_MODES, LEGEND_SIZES, MAX_LINES, POSITIONS
 from tkcurses._charts.options import (
     NUMBER_OPTIONS,
@@ -50,7 +53,9 @@ from tkcurses._charts.options import (
 )
 from tkcurses._charts.scale import SCALE_TYPES
 from tkcurses._charts.size import ScreenSize, dimension
+from tkcurses._charts.text import LABEL_ANCHORS, TITLE_INSET, place_text
 from tkcurses._core.colors import rgb_of
+from tkcurses._core.dispatcher import CursesDispatcher
 from tkcurses._core.geometry import BORDER_WIDTH
 from tkcurses.xychart._axes import BOUNDS
 from tkcurses.xychart._fit import END_VALUES, MISSING
@@ -61,7 +66,7 @@ from tkcurses.xychart._stack import STACK_MODES
 from tkcurses.xychart._stats import STATISTICS
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Mapping
 
     from tkcurses import Event
 
@@ -84,6 +89,9 @@ LEGEND_EVENT = "<<XYChartLegend>>"
 _NOT_GIVEN: Any = object()
 #: The axes a reference line may be on.
 _REFERENCE_AXES = ("y", "x")
+#: How often ``source`` is called, in milliseconds, when
+#: ``refreshinterval`` is 0.
+SOURCE_INTERVAL = 100
 
 
 def _optional_number(value: Any, name: str) -> float | None:
@@ -114,6 +122,11 @@ def _parse(options: dict[str, Any]) -> Config:
         choice(stat, "legendstats", STATISTICS)
         for stat in items(options["legendstats"])
     )
+    # Not the scene's: the widget reads these from its options.
+    count(options["refreshinterval"], "refreshinterval", minimum=0)
+    source = options["source"]
+    if source is not None and source != "" and not callable(source):
+        raise ValueError(f"source must be a function, not {source!r}")
     return Config(
         colors=colors or DEFAULT_COLORS,
         stackmode=choice(options["stackmode"], "stackmode", STACK_MODES),
@@ -140,6 +153,8 @@ def _parse(options: dict[str, Any]) -> Config:
         legendlines=lines,
         legendstats=stats,
         readout=flag(options["readout"]),
+        label=str(options["label"]),
+        labelanchor=choice(options["labelanchor"], "labelanchor", LABEL_ANCHORS),
     )
 
 
@@ -160,6 +175,16 @@ class XYChart(tkcurses.Canvas):
     change is drawn once the program is idle, so a loop that appends a
     hundred points draws once, and the chart's items keep their ids from
     one drawing to the next.
+
+    **New data.** The program changes the data whenever it has some -
+    from an ``after`` timer, a file or socket handler - with
+    :meth:`set_series` and :meth:`append`, or gives ``source``, a
+    function the chart calls itself. With ``refreshinterval``, new data
+    is drawn at most that often however fast it comes; :meth:`refresh`
+    draws at once. A key, a click or a change of option is drawn without
+    waiting, and the data with it. As for any widget, these are called
+    from the thread running the main loop; another thread hands its data
+    over, through a queue the loop reads from an ``after`` timer.
 
     A bad option value raises :class:`tkcurses.TclError` and leaves the
     chart as it was, at creation and in :meth:`configure` alike.
@@ -302,6 +327,25 @@ class XYChart(tkcurses.Canvas):
             ``"count"``, ``"distinctcount"``, ``"variance"`` and
             ``"stddev"``. Default none.
         readout: Give the bottom row to the readout. Default True.
+        label: The chart's label. In the top or bottom edge of the box
+            when there is one, otherwise on a row of its own. Default
+            none.
+        labelanchor: Where the label goes: ``"n"`` (the default),
+            ``"nw"``, ``"ne"``, ``"s"``, ``"sw"`` or ``"se"``.
+        borderwidth: ``1`` draws a box around the chart, with the label
+            in its edge. Default 0.
+        relief: The box's style, as for any Frame. Default ``"solid"``.
+        refreshinterval: The shortest time between drawings of new data,
+            in milliseconds. Default 0, which draws once the program is
+            idle.
+        source: A function of no arguments returning series names and
+            their points - ``{"cpu": [(x, y), ...]}`` - each named series
+            given those points as by :meth:`set_series`, and the others
+            left as they are. Called every ``refreshinterval``, or every
+            100 milliseconds when that is 0. Default ``None``; ``""``
+            takes it away, since ``None`` given to :meth:`configure` is
+            ignored, as in tkinter. An error it raises, or a bad point,
+            stops the calls.
 
     The number format is BarGraph's and TreeMap's, by the same names. The
     x axis writes numbers plainly. The legend's figures and the readout
@@ -427,6 +471,15 @@ class XYChart(tkcurses.Canvas):
         chart.add_series("requests per second", [(t, t % 7) for t in range(30)])
         chart.add_series("errors", [(t, t % 3) for t in range(30)])
 
+    Sample output (borderwidth, relief, label, labelanchor):
+        # size: 60x10
+        from tkcurses.xychart import XYChart
+        for options in ({"borderwidth": 1, "label": "requests"},
+                        {"label": "errors", "labelanchor": "sw"}):
+            chart = XYChart(root, width=30, readout=False, **options)
+            chart.pack(side="left", fill="y")
+            chart.add_series("a", [(t, 30 + (t * 13) % 40) for t in range(20)])
+
     Sample output (bounds, minimum, maximum, nicebounds):
         # size: 60x10
         from tkcurses.xychart import XYChart
@@ -466,6 +519,12 @@ class XYChart(tkcurses.Canvas):
         "legendlines": 1,
         "legendstats": (),
         "readout": True,
+        "label": "",
+        "labelanchor": "n",
+        "refreshinterval": 0,
+        "source": None,
+        # So that borderwidth=1 alone draws the box, as BarGraph's does.
+        "relief": "solid",
         # The chart takes the focus, for its keys.
         "takefocus": True,
     }
@@ -476,7 +535,12 @@ class XYChart(tkcurses.Canvas):
     }
 
     #: The options this class adds, which :func:`_parse` checks.
-    _own_options = frozenset(_widget_options) - {"width", "height", "takefocus"}
+    _own_options = frozenset(_widget_options) - {
+        "width",
+        "height",
+        "takefocus",
+        "relief",
+    }
 
     def __init__(
         self,
@@ -488,6 +552,10 @@ class XYChart(tkcurses.Canvas):
     ) -> None:
         self._model = Model()
         self._pending: str | None = None
+        #: Whether the drawing pending waits for ``refreshinterval``.
+        self._paced = False
+        #: The timer that next calls ``source``.
+        self._polling: str | None = None
         #: The canvas item made for each scene key, with what it was given.
         self._made: dict[str, tuple[int, Item]] = {}
         #: Set while the chart changes its items, so each change does not
@@ -512,6 +580,7 @@ class XYChart(tkcurses.Canvas):
         self._config = config
         super().__init__(master, cnf, name=name, **kw)
         self._install_chart_bindings()
+        self._poll_again()
 
     def _install_chart_bindings(self) -> None:
         """The keys and the click, bound once for the class. The Canvas
@@ -558,6 +627,8 @@ class XYChart(tkcurses.Canvas):
         result = super().configure(cnf, **kw)
         if config is not None:
             self._config = config
+        if "source" in given or "refreshinterval" in given:
+            self._poll_again()
         self._changed()
         return result
 
@@ -582,11 +653,10 @@ class XYChart(tkcurses.Canvas):
         return (max(1, width), max(1, height) * 2)
 
     def destroy(self) -> None:
-        """Cancel a pending drawing, then destroy the chart as any canvas."""
-        if self._pending is not None:
-            with contextlib.suppress(TclError):
-                self.after_cancel(self._pending)
-            self._pending = None
+        """Cancel a pending drawing and the calls to ``source``, then
+        destroy the chart as any canvas."""
+        self._cancel_pending()
+        self._stop_polling()
         self._size.follow(False)
         super().destroy()
 
@@ -637,7 +707,7 @@ class XYChart(tkcurses.Canvas):
             tkcurses.TclError: If there is no such series or a point is
                 bad. The series keeps the points it had.
         """
-        self._do(lambda: self._model.set(name, points))
+        self._do(lambda: self._model.set(name, points), paced=True)
 
     def append(self, name: str, *points: Any) -> None:
         """Add points to a series. A point at an x the series has replaces
@@ -647,7 +717,7 @@ class XYChart(tkcurses.Canvas):
             tkcurses.TclError: If there is no such series or a point is
                 bad. None of them is added.
         """
-        self._do(lambda: self._model.append(name, *points))
+        self._do(lambda: self._model.append(name, *points), paced=True)
 
     def delete_series(self, *names: str) -> None:
         """Remove series.
@@ -917,9 +987,9 @@ class XYChart(tkcurses.Canvas):
 
         return place
 
-    def _do(self, action: Callable[[], _T]) -> _T:
+    def _do(self, action: Callable[[], _T], *, paced: bool = False) -> _T:
         result = self._check(action)
-        self._changed()
+        self._changed(paced=paced)
         return result
 
     def _check(self, action: Callable[[], _T]) -> _T:
@@ -930,10 +1000,72 @@ class XYChart(tkcurses.Canvas):
 
     # ------------------------------------------------------------- drawing
 
-    def _changed(self) -> None:
-        """Draw again once the program is idle."""
-        if getattr(self, "_pending", "") is None:
+    def refresh(self) -> None:
+        """Draw now, without waiting for ``refreshinterval`` or for the
+        program to be idle."""
+        self._cancel_pending()
+        self._update()
+
+    def _changed(self, *, paced: bool = False) -> None:
+        """Draw again once the program is idle - or, for new data with a
+        ``refreshinterval``, once that has passed."""
+        pending = getattr(self, "_pending", "")
+        if pending == "":
+            return  # not yet made
+        interval = int(self._options["refreshinterval"])
+        if pending is not None:
+            if paced or not self._paced:
+                return  # drawn soon enough already
+            # Something other than data changed: draw it, and the data
+            # with it, without waiting.
+            self._cancel_pending()
+        if paced and interval > 0:
+            self._pending = self.after(interval, self._update)
+        else:
             self._pending = self.after_idle(self._update)
+        self._paced = paced and interval > 0
+
+    def _cancel_pending(self) -> None:
+        if self._pending is not None:
+            with contextlib.suppress(TclError):
+                self.after_cancel(self._pending)
+            self._pending = None
+        self._paced = False
+
+    # -------------------------------------------------------------- source
+
+    def _poll_again(self) -> None:
+        """Call ``source`` from now on, every ``refreshinterval``."""
+        self._stop_polling()
+        if self._options["source"] not in (None, ""):
+            self._polling = self.after(self._source_interval(), self._poll)
+
+    def _stop_polling(self) -> None:
+        if self._polling is not None:
+            with contextlib.suppress(TclError):
+                self.after_cancel(self._polling)
+            self._polling = None
+
+    def _source_interval(self) -> int:
+        return int(self._options["refreshinterval"]) or SOURCE_INTERVAL
+
+    def _poll(self) -> None:
+        """Call ``source``, give each series it names its points, and
+        call it again after ``refreshinterval``. An error stops the calls,
+        as it would end a loop."""
+        self._polling = None
+        source = self._options["source"]
+        if source in (None, "") or not self.winfo_exists():
+            return
+        given: Mapping[str, Iterable[Any]] = source()
+        if not hasattr(given, "items"):
+            raise TclError(
+                f"source must return series names and their points, not {given!r}"
+            )
+        for name, points in given.items():
+            self._check(functools.partial(self._model.set, name, points))
+        self._changed()
+        self._polling = self.after(self._source_interval(), self._poll)
 
     def _update(self) -> None:
         self._pending = None
@@ -948,6 +1080,24 @@ class XYChart(tkcurses.Canvas):
         if self._drawn_for is not None and self._drawn_for != self._drawn_key():
             self._sync()  # resized since the items were made
         super()._redraw()
+        self._draw_label()
+
+    def _draw_label(self) -> None:
+        """The label in the box's top or bottom edge, clear of the corners
+        and with a space either side, as BarGraph's is."""
+        config = self._config
+        window = self._window
+        if not (config.label and self._border_drawn) or window is None:
+            return
+        width, height = self._rect.width, self._rect.height
+        row = 0 if config.labelanchor.startswith("n") else height - 1
+        span = Rect(TITLE_INSET, row, width - 2 * TITLE_INSET, 1)
+        x, words = place_text(span, f" {config.label} ", config.labelanchor)
+        if not words:
+            return
+        base = self._background_attribute() | self._font_attribute()
+        with contextlib.suppress(curses.error):
+            self._write_line(CursesDispatcher.get(), window, row, x, words, base)
 
     def _cells(self) -> tuple[int, int]:
         """The canvas's size in cells, where the chart is laid out."""
@@ -969,6 +1119,7 @@ class XYChart(tkcurses.Canvas):
             tuple(self._references.values()),
             self._cursor,
             self._legend_focus if self._has_focus() else None,
+            self._border_drawn,
         )
 
     def _has_focus(self) -> bool:
@@ -996,6 +1147,7 @@ class XYChart(tkcurses.Canvas):
             xkind=self._model.xkind or "number",
             cursor=self._cursor,
             legend_focus=self._legend_focus if self._has_focus() else None,
+            boxed=self._border_drawn,
         )
         self._drawing = drawing
         wanted = drawing.items

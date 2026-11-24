@@ -391,3 +391,188 @@ def test_destroy_cancels_the_pending_drawing(root):
     chart.destroy()
     assert chart._pending is None
     assert chart._size.binding is None
+
+
+# ------------------------------------------------- border, label, refresh
+
+
+def test_borderwidth_alone_draws_the_box(root):
+    """As BarGraph's and TreeMap's: the relief is solid unless changed."""
+    chart = XYChart(root, borderwidth=1)
+    assert chart.cget("relief") == "solid"
+    assert chart._bordered
+    assert not XYChart(root)._bordered
+
+
+def _label_items(chart):
+    chart._update()
+    return [
+        (chart.coords(ident), chart.itemcget(ident, "text"))
+        for key, (ident, _item) in chart._made.items()
+        if key == "label"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("anchor", "row"), [("n", 0), ("nw", 0), ("s", NATURAL_SIZE[1] - 1)]
+)
+def test_without_a_box_the_label_takes_a_row(root, anchor, row):
+    chart = XYChart(root, label="CPU", labelanchor=anchor)
+    chart.add_series("a", [(0, 1), (10, 2)])
+    [(coords, words)] = _label_items(chart)
+    assert words == "CPU"
+    assert coords[1] == row * 2
+    if anchor == "nw":
+        assert coords[0] == 0
+    else:
+        assert coords[0] == (NATURAL_SIZE[0] - 3) // 2
+
+
+def test_in_a_box_the_label_is_not_a_canvas_item(root):
+    chart = XYChart(root, label="CPU", borderwidth=1)
+    chart.place(x=0, y=0, width=30, height=10)
+    chart._rect = type(chart._rect)(0, 0, 30, 10)
+    chart.add_series("a", [(0, 1), (10, 2)])
+    assert chart._border_drawn
+    assert _label_items(chart) == []
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"labelanchor": "w"}, "labelanchor"),
+        ({"refreshinterval": -1}, "refreshinterval must be at least 0"),
+        ({"source": 3}, "source must be a function"),
+    ],
+)
+def test_bad_label_and_refresh_options_are_refused(root, options, message):
+    with pytest.raises(tk.TclError, match=message):
+        XYChart(root, **options)
+    chart = XYChart(root)
+    with pytest.raises(tk.TclError, match=message):
+        chart.configure(**options)
+
+
+class _Timers:
+    """Records what a chart asks ``after`` and ``after_idle`` for."""
+
+    def __init__(self, chart, monkeypatch):
+        self.calls: list[tuple[object, object]] = []
+        self.cancelled: list[str] = []
+        monkeypatch.setattr(chart, "after", self.after)
+        monkeypatch.setattr(chart, "after_idle", self.idle)
+        monkeypatch.setattr(chart, "after_cancel", self.cancelled.append)
+
+    def after(self, ms, function):
+        self.calls.append((ms, function))
+        return f"after#{len(self.calls)}"
+
+    def idle(self, function):
+        self.calls.append(("idle", function))
+        return f"after#{len(self.calls)}"
+
+
+def test_new_data_waits_for_the_refresh_interval(root, monkeypatch):
+    chart = XYChart(root, refreshinterval=200)
+    chart.add_series("a")
+    chart._update()
+    timers = _Timers(chart, monkeypatch)
+    for n in range(50):
+        chart.append("a", (n, n))
+    chart.set_series("a", [(0, 1)])
+    assert [ms for ms, _ in timers.calls] == [200]
+
+
+def test_anything_else_is_drawn_without_waiting(root, monkeypatch):
+    chart = XYChart(root, refreshinterval=200)
+    chart.add_series("a")
+    chart._update()
+    timers = _Timers(chart, monkeypatch)
+    chart.append("a", (0, 1))
+    chart.cursor(0)
+    assert [ms for ms, _ in timers.calls] == [200, "idle"]
+    assert timers.cancelled == ["after#1"]
+    chart.append("a", (1, 1))  # drawn with it, soon enough
+    assert len(timers.calls) == 2
+
+
+def test_without_an_interval_new_data_is_drawn_when_idle(root, monkeypatch):
+    chart = XYChart(root)
+    chart.add_series("a")
+    chart._update()
+    timers = _Timers(chart, monkeypatch)
+    chart.append("a", (0, 1))
+    assert [ms for ms, _ in timers.calls] == ["idle"]
+
+
+def test_refresh_draws_at_once(root, monkeypatch):
+    chart = XYChart(root, refreshinterval=200)
+    chart.add_series("a")
+    chart._update()
+    timers = _Timers(chart, monkeypatch)
+    chart.append("a", (0, 1), (10, 2))
+    assert chart.find_withtag(f"{TAG}.series.a") == ()
+    chart.refresh()
+    assert chart.find_withtag(f"{TAG}.series.a")
+    assert timers.cancelled == ["after#1"]
+    assert chart._pending is None
+
+
+def test_source_gives_the_series_it_names_their_points(root, monkeypatch):
+    chart = XYChart(root, refreshinterval=250)
+    chart.add_series("a", [(0, 1)])
+    chart.add_series("b", [(0, 5)])
+    timers = _Timers(chart, monkeypatch)
+    readings = iter([{"a": [(0, 2), (1, 3)]}, {"a": [(0, 4)]}])
+    chart.configure(source=lambda: next(readings))
+    [(ms, poll)] = [call for call in timers.calls if call[0] != "idle"]
+    assert ms == 250
+    poll()
+    assert chart.series_points("a") == [(0.0, 2.0), (1.0, 3.0)]
+    assert chart.series_points("b") == [(0.0, 5.0)]
+    polls = [call for call in timers.calls if call[0] != "idle"]
+    assert len(polls) == 2  # and again
+    polls[-1][1]()
+    assert chart.series_points("a") == [(0.0, 4.0)]
+
+
+def test_source_without_an_interval_is_called_every_100_ms(root, monkeypatch):
+    chart = XYChart(root)
+    timers = _Timers(chart, monkeypatch)
+    chart.configure(source=dict)
+    assert [ms for ms, _ in timers.calls if ms != "idle"] == [100]
+
+
+@pytest.mark.parametrize(
+    ("given", "message"),
+    [([1, 2], "source must return series names"), ({"z": []}, "z")],
+)
+def test_a_bad_source_stops_being_called(root, monkeypatch, given, message):
+    chart = XYChart(root, refreshinterval=50)
+    chart.add_series("a")
+    timers = _Timers(chart, monkeypatch)
+    chart.configure(source=lambda: given)
+    poll = next(f for ms, f in timers.calls if ms == 50)
+    before = len(timers.calls)
+    with pytest.raises(tk.TclError, match=message):
+        poll()
+    assert all(ms != 50 for ms, _ in timers.calls[before:])
+
+
+def test_taking_the_source_away_stops_the_calls(root, monkeypatch):
+    chart = XYChart(root, source=dict)
+    timers = _Timers(chart, monkeypatch)
+    assert chart._polling is not None
+    first = chart._polling
+    chart.configure(source="")
+    assert first in timers.cancelled
+    assert chart._polling is None
+
+
+def test_destroy_stops_the_calls_to_source(root, monkeypatch):
+    chart = XYChart(root, source=dict)
+    timers = _Timers(chart, monkeypatch)
+    first = chart._polling
+    chart.destroy()
+    assert first in timers.cancelled
+    assert chart._polling is None

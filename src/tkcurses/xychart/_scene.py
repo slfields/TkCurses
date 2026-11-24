@@ -49,6 +49,7 @@ from tkcurses._charts.legend import (
 from tkcurses._charts.numformat import NumberFormat
 from tkcurses._charts.scale import ScaleType, ValueRange, fitted_ticks, label_start
 from tkcurses._charts.text import fit as fit_text
+from tkcurses._charts.text import place_text
 from tkcurses._charts.timeticks import time_ticks
 from tkcurses._core.cells import cells
 from tkcurses.xychart._axes import value_range
@@ -139,6 +140,8 @@ class Config:
     legendlines: int = 1
     legendstats: tuple[str, ...] = ()
     readout: bool = True
+    label: str = ""
+    labelanchor: str = "n"
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,6 +304,7 @@ def chart(
     xkind: str = "number",
     cursor: float | None = None,
     legend_focus: str | None = None,
+    boxed: bool = False,
 ) -> Drawing:
     """Everything the chart draws on a canvas ``width`` by ``height``
     cells: the series, their axes, gridlines and references, the legend,
@@ -309,10 +313,18 @@ def chart(
     ``now`` is the time for ``nowmarker``, in epoch seconds; ``xkind`` is
     ``"time"`` when x is a time. ``cursor`` is the crosshair's x, and
     ``legend_focus`` the series whose legend entry has the keyboard.
+    ``boxed`` says the label is written in the box's edge, by the widget,
+    rather than in a row of its own here.
     """
     if width < 1 or height < 1:
         return Drawing()
     area = Rect(0, 0, width, height)
+    titled: list[Item] = []
+    if config.label and not boxed and height > MIN_PLOT[1] + 1:
+        top = config.labelanchor.startswith("n")
+        row, area = area.take_top(1) if top else area.take_bottom(1)
+        x, words = place_text(row, config.label, config.labelanchor)
+        titled.append(_text("label", x, row.y, words, "", (TAG,)))
     readout_row = None
     if config.readout and height > MIN_PLOT[1] + 1:
         taken, area = area.take_bottom(1)
@@ -330,7 +342,7 @@ def chart(
     if frame is None:
         # Nothing shown - every series hidden, or none has a point - but
         # the legend stays: it is how a hidden series is shown again.
-        return Drawing(told, legend=placed, entries=names)
+        return Drawing(titled + told, legend=placed, entries=names)
     numbers = config.numbers
     if frame.percentage:
         numbers = dataclasses.replace(numbers, units="%", unitscale="none")
@@ -388,7 +400,7 @@ def chart(
             _readout(readout_row, width, model, frame, cursor, xs, time, figures)
         )
     return Drawing(
-        under + fills + lines + over + dots + marks + axes + told,
+        under + fills + lines + over + dots + marks + axes + titled + told,
         cell_plot,
         frame.xspan,
         xs,

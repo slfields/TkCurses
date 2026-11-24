@@ -44,10 +44,9 @@ from tkcurses._charts.scale import (
     ValueRange,
     as_range,
 )
-from tkcurses._charts.text import clusters
+from tkcurses._charts.text import clusters, place_text
 from tkcurses._core.cells import cells
 from tkcurses.bargraph._glyphs import FULL, POINTS_PER_CELL
-from tkcurses.bargraph._layout import place_text
 from tkcurses.bargraph._render import (
     BACKGROUND,
     EMPTY_CELL,

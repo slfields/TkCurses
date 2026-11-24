@@ -5181,12 +5181,9 @@
    "value": "red"
   },
   "borderwidth": {
-   "kind": "invisible",
+   "kind": "visible",
    "state": "plain",
-   "tried": [
-    3,
-    9
-   ]
+   "value": 3
   },
   "bounds": {
    "kind": "visible",
@@ -5326,6 +5323,16 @@
    "state": "plain",
    "value": "smooth"
   },
+  "label": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "Chart"
+  },
+  "labelanchor": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "s"
+  },
   "legend": {
    "kind": "visible",
    "state": "plain",
@@ -5403,14 +5410,17 @@
    "state": "plain",
    "value": 0
   },
-  "relief": {
+  "refreshinterval": {
    "kind": "invisible",
    "state": "plain",
    "tried": [
-    "groove",
-    "sunken",
-    "raised"
+    500
    ]
+  },
+  "relief": {
+   "kind": "visible",
+   "state": "plain",
+   "value": "groove"
   },
   "rounding": {
    "kind": "visible",
@@ -5451,6 +5461,9 @@
    "tried": [
     "red"
    ]
+  },
+  "source": {
+   "kind": "behaviour"
   },
   "stackmode": {
    "kind": "visible",

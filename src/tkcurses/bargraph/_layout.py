@@ -38,19 +38,12 @@ import math
 from dataclasses import dataclass, field, replace
 
 from tkcurses._charts.geometry import Rect
-from tkcurses._charts.text import fit
+from tkcurses._charts.text import LABEL_ANCHORS, TITLE_INSET, place_text
 from tkcurses._core.cells import cells
 from tkcurses.bargraph._glyphs import POINTS_PER_CELL, Orient
 
-#: The anchors the graph label accepts, as ``ttk.LabelFrame``'s.
-LABEL_ANCHORS = ("n", "nw", "ne", "s", "sw", "se")
-
 #: Rows a horizontal graph's axis takes: the ruler and the tick labels.
 HORIZONTAL_AXIS_ROWS = 2
-
-#: Cells of edge left visible either side of a graph label set in the box
-#: (the corner and one line cell: ``┌─ Title ─┐``).
-TITLE_INSET = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -334,21 +327,3 @@ def natural_size(spec: LayoutSpec, length_cells: int) -> tuple[int, int]:
 def length_cells_for(points: int) -> int:
     """Cells an absolute scale of ``points`` needs along the bars."""
     return math.ceil(points / POINTS_PER_CELL)
-
-
-def place_text(rect: Rect, text: str, anchor: str) -> tuple[int, str]:
-    """Where a one-row ``text`` goes in ``rect``: ``(x, text)``.
-
-    Measured in cells, so a wide character counts two and a combining mark
-    none. Cut with ``…`` when it doesn't fit. The anchor's ``w`` puts it at the
-    left, ``e`` at the right, and neither centres it.
-    """
-    if rect.width <= 0:
-        return rect.x, ""
-    text = fit(text, rect.width)
-    spare = rect.width - cells(text)
-    if anchor.endswith("w"):
-        return rect.x, text
-    if anchor.endswith("e"):
-        return rect.x + spare, text
-    return rect.x + spare // 2, text

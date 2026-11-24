@@ -78,6 +78,7 @@ from tkcurses._charts.options import (
     number_format,
 )
 from tkcurses._charts.scale import ValueRange, auto_ticks, even_ticks, round_up
+from tkcurses._charts.text import LABEL_ANCHORS
 from tkcurses._core.cells import cells
 from tkcurses._core.colors import ColorDepth, rgb_of
 from tkcurses._core.dispatcher import CursesDispatcher
@@ -98,7 +99,6 @@ from tkcurses.bargraph._gradient import (
     step_count,
 )
 from tkcurses.bargraph._layout import (
-    LABEL_ANCHORS,
     LayoutSpec,
     compute_layout,
     length_cells_for,

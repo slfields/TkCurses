@@ -224,3 +224,52 @@ def test_a_series_hidden_last_can_be_shown_again(terminal):
         lambda t: "██ up" in t.row(0) and t.contains("┤"),
         message="up shown again, with its axis",
     )
+
+
+def test_a_box_alone_has_the_label_in_its_edge(terminal):
+    term = run(terminal, options=', borderwidth=1, label="cpu"')
+
+    def boxed(t):
+        top, bottom = t.display[0], t.display[7]
+        return (
+            top.startswith("┌")
+            and top.endswith("┐")
+            and " cpu " in top
+            and bottom.startswith("└")
+            and bottom.endswith("┘")
+            and all(t.display[row][0] == "│" for row in range(1, 7))
+        )
+
+    term.wait_for(boxed, message="a box with cpu in its top edge")
+
+
+SOURCE = """
+import tkcurses as tk
+from tkcurses.xychart import XYChart
+
+root = tk.Tk()
+calls = []
+
+def readings():
+    calls.append(1)
+    return {"a": [(0, 1), (len(calls) * 10, 2)]}
+
+chart = XYChart(root, legend="hide", refreshinterval=50, source=readings)
+chart.pack(fill="both", expand=True)
+chart.add_series("a", [(0, 1)])
+root.after(8000, root.destroy)
+root.mainloop()
+"""
+
+
+def test_a_source_is_called_and_drawn_on_its_own(terminal):
+    screen = terminal(cols=30, rows=8)
+    screen.run_source(SOURCE)
+    for reach in (10, 30):
+        screen.wait_for(
+            lambda t, reach=reach: any(
+                t.display[7].startswith(f"0 \u2013 {n}  ")
+                for n in range(reach, reach + 60, 10)
+            ),
+            message=f"the readout's range reaching {reach} or more",
+        )

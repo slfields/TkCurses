@@ -9112,6 +9112,35 @@ crosshair and the focus are kept, which the user asked for with live
 data in mind (version 2). Changes are drawn once, when the program goes
 idle, however many came first.
 
+**New data can wait; nothing else does.** BarGraph repaints on a timer,
+`refreshinterval`, which it also uses to poll `source`. The chart was
+built without one - every change drawn when the program goes idle - and
+the user asked, on reviewing the examples, for BarGraph's three:
+`refreshinterval`, `refresh()` and `source`. They are added with the
+default `refreshinterval=0`, which is the behaviour before, so the
+crosshair and keys answer as fast as they did. A positive interval
+delays only `set_series` and `append`: the first arms
+`after(refreshinterval)`, and later ones ride on it. Anything else - a
+key, a click, a change of option, a reference - cancels the timer and
+draws at idle, the data with it, since holding a keypress back for new
+data's sake would make the chart feel slow. `source` is called every
+`refreshinterval`, or every 100 ms when that is 0: BarGraph's `after(0)`
+loop would keep a processor busy. A raised error stops the calls, as
+BarGraph's does. `None` given to `configure` is dropped, as in tkinter,
+so `source=""` is what takes a source away; BarGraph has no way to.
+
+**The box is BarGraph's.** Canvas defaults `relief` to `flat`, so
+`borderwidth=1` drew nothing on the chart, while on BarGraph and TreeMap
+it draws a box. The recorder of visible options had measured
+`borderwidth` as invisible on the chart, and that was taken as true
+rather than looked at; the user noticed none of the examples had a
+border. The chart's `relief` now defaults to `solid`, as theirs do. The
+label goes in the box's top or bottom edge, written by the widget after
+the Canvas draws its border, since canvas items cannot reach the
+border. Without a box the scene gives the label a row of its own, so
+it is a canvas item tagged `xychart`. `place_text`, `LABEL_ANCHORS` and
+`TITLE_INSET` moved from BarGraph's layout to `_charts.text` for both.
+
 **Mouse bindings chain with the Canvas's.** The Canvas binds its class's
 mouse events to route them to items. The chart's class is `XYChart`,
 so it binds its own, and its click handler first calls the Canvas's

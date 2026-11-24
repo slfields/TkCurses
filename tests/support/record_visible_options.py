@@ -204,7 +204,7 @@ BEHAVIOUR = {
     "command", "variable", "textvariable", "listvariable", "validatecommand",
     "invalidcommand", "xscrollcommand", "yscrollcommand", "postcommand",
     "tearoffcommand", "menu", "labelwidget",
-    # BarGraph's: a function it calls for values.
+    # BarGraph's and XYChart's: a function it calls for values.
     "source",
     # Values compared with the variable's. One can look visible - an onvalue
     # equal to the variable's current value shows the button selected - but
@@ -288,6 +288,9 @@ WIDGET_VALUES: dict[tuple[str, str], list[object]] = {
     ("xychart.XYChart", "legendlines"): [2],
     ("xychart.XYChart", "legendstats"): [("average", "max")],
     ("xychart.XYChart", "readout"): [0],
+    ("xychart.XYChart", "label"): ["Chart"],
+    ("xychart.XYChart", "labelanchor"): ["s", "nw"],
+    ("xychart.XYChart", "refreshinterval"): [500],
     ("treemap.TreeMap", "outline"): ["on", "off"],
     ("treemap.TreeMap", "colors"): [("red", "blue")],
     ("treemap.TreeMap", "units"): ["B"],
@@ -406,6 +409,8 @@ WIDGET_NEEDS: dict[tuple[str, str], dict[str, Any]] = {
     ("bargraph.BarGraph", "relief"): {"borderwidth": 1},
     ("bargraph.BarGraph", "foreground"): {"axis": 1},
     ("bargraph.BarGraph", "labelanchor"): {"label": "Graph"},
+    ("xychart.XYChart", "relief"): {"borderwidth": 1},
+    ("xychart.XYChart", "labelanchor"): {"label": "Chart"},
     ("bargraph.BarGraph", "labelwidth"): {
         "orient": "horizontal",
         "labels": ("alpha", "beta", "gamma"),
