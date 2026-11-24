@@ -9032,9 +9032,12 @@ already draws bars, so this has no bar series. Like the other two it is
 an extension module, listed in `EXTENSION_MODULES` and documented with
 `TkCurses extension:`.
 
-**This section is the design, written before the code** for review.
-Each heading names a decision and why. `Not yet` lists what was left out
-on purpose, and what version 2 is to add.
+**This section was the design, written before the code** for review,
+and is now the record of what was built: where the building changed a
+decision, or found something the design did not say, a note beside
+it - some headed **As built** - says what and why. Each heading names a decision and
+why. `Not yet` lists what was left out on purpose, and what version 2
+is to add.
 
 ### What comes from Kibana, and what does not
 
@@ -9282,7 +9285,7 @@ the Canvas and raise `ValueError`; `__init__.py` holds only the widget.
 | `_path` | values to pixel polylines and outlines: `straight`, `step`, `smooth`; M4 for dense runs; clipping; dotted pieces; when points show |
 | `_axes` | the value axis's range: Kibana's bounds, rounded to nice ends |
 | `_stats` | the legend statistics, in one pass over each series (Welford's variance) |
-| `_layout` | the widget's size to regions: plot, axes, titles; the legend and readout to come |
+| `_layout` | plot, axes and titles, in what the legend and readout leave; `_scene` places those two first |
 | `_scene` | all of that into the list of keyed item descriptions |
 
 **Shared, moved, not copied** (task `.2`), into `tkcurses/_charts/`:

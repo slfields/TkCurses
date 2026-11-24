@@ -20,9 +20,10 @@
 TkCurses extension:
     Neither tkinter nor Tk has a chart. This one follows the behaviour of
     Kibana's line and area charts - stacked, percentage and unstacked
-    areas, straight, smooth and step lines, missing values, and Kibana's
-    axis bounds - and is a :class:`tkcurses.Canvas`, drawing with canvas
-    items a program can add to.
+    areas, straight, smooth and step lines, missing values, Kibana's
+    axis bounds, reference lines, a legend with statistics, and a
+    crosshair with a readout - and is a :class:`tkcurses.Canvas`,
+    drawing with canvas items a program can add to.
 """
 
 from __future__ import annotations

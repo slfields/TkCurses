@@ -21,6 +21,27 @@ All notable changes to TkCurses. The format follows
   program should read a password instead.
 
 ### Added
+- `XYChart`, a line and area chart, imported with
+  `from tkcurses.xychart import XYChart`. It is a TkCurses widget, after
+  Kibana's line and area charts, and a `Canvas`: a program can draw its
+  own items on it, and they stay on top.
+  - Series of numbers against numbers or times, added and changed by
+    name - `add_series`, `set_series`, `append` for live data - as lines
+    or areas, stacked, as percentages, or each from zero; joined
+    straight, smooth or in steps, in half-cell pixels.
+  - Missing values hidden, set to zero, or filled from their
+    neighbours, and optionally dotted; linear, log and square-root
+    scales; Kibana's full, data and custom bounds.
+  - Axes with numbers or clock times, titles, gridlines and BarGraph's
+    number formats; reference lines and bands on either axis.
+  - A legend at any side naming each series in its colour, with any of
+    sixteen statistics; a click or Space hides and shows a series, and
+    sends `<<XYChartLegend>>`.
+  - A crosshair moved by the arrow keys, Home, End and the mouse, with a
+    readout of each series' value at it; `cursor()` reads and sets it,
+    and `<<XYChartCursor>>` reports it.
+  - `width` and `height` each in cells or as a percentage of the
+    terminal, followed when it is resized.
 - `TreeMap`, a treemap widget, imported with
   `from tkcurses.treemap import TreeMap`. It is a TkCurses widget, after
   Kibana's treemap charts: neither tkinter nor Tk has one, so a program
