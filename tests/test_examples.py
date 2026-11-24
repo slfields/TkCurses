@@ -63,7 +63,7 @@ def test_every_example_is_on_the_page_and_nothing_else_is():
     shown = [found for page in PAGES for found in DIRECTIVE.findall(page.read_text())]
     files = sorted(f"examples/{path.name}" for path in EXAMPLES.glob("*.py"))
     assert sorted(shown) == files
-    assert len(files) == 25
+    assert len(files) == 26
 
 
 def test_every_example_carries_the_notice():
@@ -987,6 +987,46 @@ def test_traffic_moves_along_and_steps_its_stacking(terminal, tmp_path):
         lambda t: t.contains("percentage  every 2000ms") and t.display[13] != paused,
         message="fetching again",
         timeout=10,
+    )
+
+
+@pytest.mark.tty
+def test_crosshair_is_followed_by_the_other_chart_the_panel_and_the_scale(
+    terminal, tmp_path
+):
+    """One <<XYChartCursor>> handler on the window keeps both charts, the
+    panel and the scale at one hour, whichever of them moved."""
+    term = start(terminal, tmp_path, "crosshair", cols=80, rows=24)
+    term.wait_for_text("no crosshair")
+
+    def at(hour, outdoor, humidity):
+        def check(t):
+            scale = t.row(21)
+            return (
+                t.contains(f"at {hour:02d}:00")
+                and t.contains(outdoor)
+                and t.contains(humidity)
+                and scale.startswith("hour")
+                and scale.split()[-1] == str(hour)
+            )
+
+        return check
+
+    term.send_keys("<End>")  # the temperature chart has the focus
+    term.wait_for(at(23, "outdoor    6.3°C", "humidity  76.9%"), message="all at 23:00")
+    term.send_keys("<Tab>")
+    term.send_keys("<Left>")  # now the humidity chart's crosshair
+    term.wait_for(at(22, "outdoor    7.5°C", "humidity  73.0%"), message="all at 22:00")
+    term.send_keys("<Tab>")
+    term.send_keys("<Left>")  # the scale moves the crosshairs
+    term.wait_for(at(21, "outdoor    8.7°C", "humidity  69.1%"), message="all at 21:00")
+    term.send_mouse(25, 4)  # on the temperature chart, at eight o'clock
+    term.send_mouse(25, 4, action="release")
+    term.wait_for(at(8, "outdoor    5.2°C", "humidity  80.5%"), message="all at 08:00")
+    term.send_keys("<Escape>")  # the clicked chart has the focus now
+    term.wait_for(
+        lambda t: t.contains("no crosshair") and t.contains("humidity -"),
+        message="both crosshairs gone, the panel empty",
     )
 
 

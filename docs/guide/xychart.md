@@ -22,7 +22,7 @@ and they stay on top of the chart. The
 [reference](../reference/exclusive/xychart.md) describes every option
 and method, each option with a picture.
 
-The three programs below are in the
+The four programs below are in the
 [`examples`](https://github.com/slfields/TkCurses/tree/master/examples)
 directory. Each picture was taken by running the program while this
 documentation was built.
@@ -91,6 +91,40 @@ As with every widget, these calls belong on the thread running
 ```{tkcurses-example} examples/traffic.py
 :size: 60x16
 :live: 3
+```
+
+## Other widgets following the crosshair
+
+`<<XYChartCursor>>` is how the rest of a program hears the crosshair.
+It is sent whenever the crosshair moves - by a key, a click, new data,
+or the program's own `cursor(x)` - and when it goes. It carries no data:
+the handler asks `event.widget.cursor()` where the crosshair is, `None`
+when there is none, and `series_points` for the values there.
+
+Like any event, it passes through the chart's bindtags: the chart, its
+class, its toplevel and `all`. So one handler bound on the window,
+`root.bind(CURSOR_EVENT, follow)`, hears every chart in it, and
+`event.widget` says which. This program has two charts of one day's
+weather, a panel of Labels, and a Scale for the hour, and that one
+handler keeps them together:
+
+- it puts the **other chart's crosshair** at the same hour with
+  `cursor(x)`. That sends the other chart's own event, which comes back
+  to the same handler and puts the first chart's crosshair where it
+  already is. A chart sends its event only when its crosshair actually
+  moves, so that sends nothing, and the two never chase each other;
+- it writes **each reading at that hour** into the panel;
+- it moves the **Scale** with `set`, which calls the Scale's `command`
+  only when the value changes.
+
+The Scale works the other way too: its `command` puts the crosshair at
+its hour, and the chart's event does the rest. Press **End** and the
+arrows on a chart, **Tab** to the other chart or the Scale, and
+**Escape** to take the crosshairs away.
+
+```{tkcurses-example} examples/crosshair.py
+:size: 80x24
+:keys: ["<End>", "<Left>", "<Left>", "<Left>"]
 ```
 
 ## Missing values

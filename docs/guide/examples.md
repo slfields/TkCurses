@@ -273,7 +273,8 @@ that follows the disk. They are on
 
 ## Line and area charts
 
-Three more are about `XYChart`, also a widget only TkCurses has: a day
+Four more are about `XYChart`, also a widget only TkCurses has: a day
 of response times with a target and a crosshair, live traffic as
-stacked areas the chart fetches itself, and sensors that miss readings. They are on
+stacked areas the chart fetches itself, two charts and the widgets
+around them following one crosshair, and sensors that miss readings. They are on
 [their own page](xychart.md).
