@@ -35,16 +35,18 @@ first cell, it would sit a cell closer to the next tick than every other pair.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from tkcurses._charts.geometry import Rect
 from tkcurses._charts.numformat import NumberFormat, for_readout
-from tkcurses._charts.text import clusters
+from tkcurses._charts.scale import (
+    ValueRange,
+    as_range,
+)
+from tkcurses._charts.text import clusters, place_text
 from tkcurses._core.cells import cells
 from tkcurses.bargraph._glyphs import FULL, POINTS_PER_CELL
-from tkcurses.bargraph._layout import place_text
 from tkcurses.bargraph._render import (
     BACKGROUND,
     EMPTY_CELL,
@@ -55,14 +57,7 @@ from tkcurses.bargraph._render import (
     Role,
     marker,
 )
-from tkcurses.bargraph._scale import (
-    Steps,
-    ValueRange,
-    as_range,
-    round_steps,
-    tidy,
-    to_points,
-)
+from tkcurses.bargraph._scale import to_points
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -130,73 +125,6 @@ class PeakHold:
 
 
 # ---------------------------------------------------------------- ticks ----
-
-
-def auto_ticks(
-    maximum: float | ValueRange,
-    length_cells: int,
-    min_spacing: int,
-    steps: Steps = "decimal",
-) -> list[float]:
-    """Round tick values across the range that fit ``length_cells``.
-
-    Linear: the step is the smallest of :func:`~scale.round_steps` that
-    keeps ticks at least ``min_spacing`` cells apart on average - 1, 2 or 5
-    times a power of ten; for ``"binary"`` steps, times a power of 1024;
-    for a time unit, steps a clock reads well, 15 s, 1 min, 1 h - from the
-    first multiple of it at or above the minimum. Log: see
-    :func:`log_ticks`. Rounding to cells can still bring two together, so
-    :func:`spaced` then drops any that land too close.
-    """
-    if not isinstance(maximum, ValueRange) and maximum <= 0:
-        return [0.0]
-    span = as_range(maximum)
-    if length_cells <= 0:
-        return [span.minimum]
-    fits = max(1, length_cells // max(1, min_spacing))
-    if span.log:
-        return log_ticks(span, fits)
-    for step in round_steps(steps):
-        first = math.ceil(span.minimum / step - 1e-9)
-        last = math.floor(span.maximum / step + 1e-9)
-        if last - first <= fits:
-            return [tidy(i * step) for i in range(first, last + 1)]
-    raise AssertionError("unreachable")  # pragma: no cover
-
-
-def log_ticks(span: ValueRange, fits: int) -> list[float]:
-    """Ticks for a log range, at most about ``fits`` of them: each power of
-    the base, and 2 and 5 times each when there is room for those too and
-    the base is above 5. With too many powers, every second, third...
-    """
-    low = math.ceil(math.log(span.minimum, span.base) - 1e-9)
-    high = math.floor(math.log(span.maximum, span.base) + 1e-9)
-    powers = [tidy(span.base**k) for k in range(low, high + 1)]
-    if not powers:
-        return [span.minimum]
-    between = [m for m in (2, 5) if m < span.base]
-    if between and len(powers) * (1 + len(between)) <= fits:
-        ticks = [
-            tidy(power * m)
-            for power in [tidy(span.base ** (low - 1)), *powers]
-            for m in (1, *between)
-        ]
-        return sorted(t for t in set(ticks) if span.minimum <= t <= span.maximum)
-    every = max(1, math.ceil(len(powers) / max(1, fits)))
-    return powers[::every]
-
-
-def even_ticks(maximum: float | ValueRange, count: int) -> list[float]:
-    """``count`` ticks spread evenly along the bar (``ticks=N``): evenly
-    spaced values on a linear range, a geometric series on a log one."""
-    span = as_range(maximum)
-    if count < 2:
-        return [span.minimum]
-    if span.log:
-        ratio = span.maximum / span.minimum
-        return [tidy(span.minimum * ratio ** (i / (count - 1))) for i in range(count)]
-    width = span.maximum - span.minimum
-    return [tidy(span.minimum + width * i / (count - 1)) for i in range(count)]
 
 
 def level_cell(value: float, maximum: float | ValueRange, peak_points: int) -> int:

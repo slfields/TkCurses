@@ -52,9 +52,6 @@ import tkcurses
 from tkcurses import TclError
 from tkcurses._charts.color import DEFAULT_COLORS, hex_color, shade_rgb
 from tkcurses._charts.numformat import (
-    PLACEMENTS,
-    ROUNDINGS,
-    UNIT_SCALES,
     NumberFormat,
     for_readout,
     widest,
@@ -78,8 +75,10 @@ from tkcurses._charts.options import (
     number as _number,
 )
 from tkcurses._charts.options import (
-    optional_count as _optional_count,
+    number_format,
 )
+from tkcurses._charts.scale import ValueRange, auto_ticks, even_ticks, round_up
+from tkcurses._charts.text import LABEL_ANCHORS
 from tkcurses._core.cells import cells
 from tkcurses._core.colors import ColorDepth, rgb_of
 from tkcurses._core.dispatcher import CursesDispatcher
@@ -88,9 +87,7 @@ from tkcurses.bargraph._decor import (
     Decor,
     PeakHold,
     Window,
-    auto_ticks,
     compose,
-    even_ticks,
     readout_value,
     spaced,
 )
@@ -102,7 +99,6 @@ from tkcurses.bargraph._gradient import (
     step_count,
 )
 from tkcurses.bargraph._layout import (
-    LABEL_ANCHORS,
     LayoutSpec,
     compute_layout,
     length_cells_for,
@@ -110,13 +106,7 @@ from tkcurses.bargraph._layout import (
 )
 from tkcurses.bargraph._model import AutoScale, Model
 from tkcurses.bargraph._render import BACKGROUND, Cell, Role, render_bars, series, zone
-from tkcurses.bargraph._scale import (
-    Scale,
-    ValueRange,
-    parse_level,
-    parse_scale,
-    round_up,
-)
+from tkcurses.bargraph._scale import Scale, parse_level, parse_scale
 from tkcurses.bargraph._thresholds import parse_thresholds
 
 if TYPE_CHECKING:
@@ -322,15 +312,7 @@ def _parse(options: dict[str, Any]) -> _Config:
 
 def _numbers(options: dict[str, Any]) -> NumberFormat:
     """The number format the axis and the readout write values in."""
-    return NumberFormat(
-        units=str(options["units"]),
-        placement=_choice(options["unitplacement"], "unitplacement", PLACEMENTS),  # type: ignore[arg-type]
-        space=_flag(options["unitspace"]),
-        digits=_optional_count(options["digits"], "digits", minimum=1),
-        decimals=_optional_count(options["decimals"], "decimals", minimum=0),
-        rounding=_choice(options["rounding"], "rounding", ROUNDINGS),  # type: ignore[arg-type]
-        unitscale=_choice(options["unitscale"], "unitscale", UNIT_SCALES),  # type: ignore[arg-type]
-    )
+    return number_format(options)
 
 
 def _at_maximum(config: _Config, maximum: float) -> _Config:

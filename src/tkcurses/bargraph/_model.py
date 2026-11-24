@@ -26,7 +26,7 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from tkcurses.bargraph._scale import ScaleType, Steps, round_up
+from tkcurses._charts.scale import ScaleType, Steps, round_up
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence

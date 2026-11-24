@@ -38,12 +38,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from tkcurses.bargraph._glyphs import EMPTY, FULL, POINTS_PER_CELL, Orient, partial
-from tkcurses.bargraph._scale import ValueRange, to_points
+from tkcurses.bargraph._scale import to_points
 from tkcurses.bargraph._thresholds import zones
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from tkcurses._charts.scale import ValueRange
     from tkcurses.bargraph._layout import Layout
 
 Mode = Literal["stacked", "overlay"]

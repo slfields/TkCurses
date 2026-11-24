@@ -15,29 +15,28 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""A treemap's legend: its entries, wrapped, sized and placed. Pure.
+"""A chart's legend: its entries, wrapped, sized and placed. Pure, and
+shared by the chart widgets.
 
-:func:`entries` lists what the legend names, :func:`extent` says how much
-of the widget it takes, and :func:`place` puts each entry in that region:
+A widget lists what its legend names as :class:`Entry` values,
+:func:`extent` says how much of the widget it takes, and :func:`place`
+puts each entry in that region:
 down the side at the left or right, across in columns at the top or
 bottom. An entry is a swatch, a space and the item's name, wrapped at
 word boundaries onto at most ``legendlines`` lines, the last cut with
-``…``; then its description, if it has one, wrapped the same way on lines
-of its own under the name. What does not fit ends with a ``+N more``
-line.
+``…``; then its description, if it has one, and then its statistics,
+each wrapped the same way on lines of their own under the name. What does
+not fit ends with a ``+N more`` line.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from tkcurses._charts.geometry import Rect
 from tkcurses._charts.text import fit
 from tkcurses._core.cells import cells, clip_cells
-
-if TYPE_CHECKING:
-    from tkcurses.treemap._model import Model
 
 __all__ = [
     "LEGEND_MODES",
@@ -48,7 +47,6 @@ __all__ = [
     "Entry",
     "LegendLayout",
     "Placed",
-    "entries",
     "extent",
     "place",
     "shown",
@@ -90,6 +88,9 @@ class Entry:
     #: Written under the name. It widens :attr:`width` by at most
     #: :data:`DESCRIPTION_WIDTH` cells; more wraps.
     description: str = ""
+    #: Figures about the item, such as ``avg 41% · max 72%``, written under
+    #: the description, plain, and measured as it is.
+    stats: str = ""
 
     @property
     def indent(self) -> int:
@@ -97,10 +98,11 @@ class Entry:
 
     @property
     def width(self) -> int:
-        """The cells it would like: its name on one line, or its
-        description's first :data:`DESCRIPTION_WIDTH` cells if wider."""
-        told = min(cells(self.description.strip()), DESCRIPTION_WIDTH)
-        return self.indent + LEAD + max(cells(self.text), told)
+        """The cells it would like: its name on one line, or the first
+        :data:`DESCRIPTION_WIDTH` cells of its description or statistics,
+        if wider."""
+        told = max(cells(self.description.strip()), cells(self.stats.strip()))
+        return self.indent + LEAD + max(cells(self.text), min(told, DESCRIPTION_WIDTH))
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,10 +114,11 @@ class Placed:
     x: int
     y: int
     width: int
-    #: The name's lines, then the description's.
+    #: The name's lines, then the description's and the statistics'.
     lines: tuple[str, ...]
     indent: int = 0
-    #: How many of ``lines`` are the name; the rest are the description.
+    #: How many of ``lines`` are the name; the rest are the description and
+    #: the statistics.
     name_lines: int = 1
 
     @property
@@ -155,30 +158,6 @@ class LegendLayout:
             if rect.x <= x < rect.x + rect.width and rect.y <= y < rect.y + rect.height:
                 return entry.iid
         return None
-
-
-def entries(model: Model, zoom: str = "", nested: bool = False) -> list[Entry]:
-    """What the legend names, largest first: the top-level items, each
-    group's children under it when ``nested``; or, zoomed into a group,
-    its children. An item whose size is zero takes no room and is left
-    out, as its tile is."""
-    found: list[Entry] = []
-
-    def entry(iid: str, nested: bool = False) -> Entry:
-        item = model.item(iid)
-        return Entry(iid, item.text or iid, nested, item.description)
-
-    for iid in model.ordered(zoom):
-        if model.size(iid) <= 0:
-            continue
-        found.append(entry(iid))
-        if nested and not zoom:
-            found.extend(
-                entry(child, nested=True)
-                for child in model.ordered(iid)
-                if model.size(child) > 0
-            )
-    return found
 
 
 def shown(mode: str, listed: list[Entry]) -> bool:
@@ -230,7 +209,12 @@ def _wrapped(entry: Entry, column: int, limit: int) -> tuple[tuple[str, ...], in
     are its name."""
     width = column - entry.indent - LEAD
     name = wrap(entry.text, width, limit) or [""]
-    told = wrap(entry.description, width, limit) if entry.description.strip() else []
+    told = [
+        line
+        for text in (entry.description, entry.stats)
+        if text.strip()
+        for line in wrap(text, width, limit)
+    ]
     return (*name, *told), len(name)
 
 

@@ -32,7 +32,9 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ["Item", "Model", "checked_tags", "checked_value"]
+from tkcurses._charts.legend import Entry
+
+__all__ = ["Item", "Model", "checked_tags", "checked_value", "legend_entries"]
 
 
 @dataclass(slots=True)
@@ -291,3 +293,27 @@ def _place(siblings: list[str], iid: str, position: int | None) -> None:
         siblings.append(iid)
     else:
         siblings.insert(max(0, min(position, len(siblings))), iid)
+
+
+def legend_entries(model: Model, zoom: str = "", nested: bool = False) -> list[Entry]:
+    """What the legend names, largest first: the top-level items, each
+    group's children under it when ``nested``; or, zoomed into a group,
+    its children. An item whose size is zero takes no room and is left
+    out, as its tile is."""
+    found: list[Entry] = []
+
+    def entry(iid: str, nested: bool = False) -> Entry:
+        item = model.item(iid)
+        return Entry(iid, item.text or iid, nested, item.description)
+
+    for iid in model.ordered(zoom):
+        if model.size(iid) <= 0:
+            continue
+        found.append(entry(iid))
+        if nested and not zoom:
+            found.extend(
+                entry(child, nested=True)
+                for child in model.ordered(iid)
+                if model.size(child) > 0
+            )
+    return found

@@ -33,11 +33,12 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
 PAGE = ROOT / "docs" / "guide" / "examples.md"
-#: The bar graph examples are shown on their guide page instead.
+#: The bar graph, treemap and chart examples are on their guide pages instead.
 PAGES = (
     PAGE,
     ROOT / "docs" / "guide" / "bargraph.md",
     ROOT / "docs" / "guide" / "treemap.md",
+    ROOT / "docs" / "guide" / "xychart.md",
 )
 TIMES = "\N{MULTIPLICATION SIGN}"
 DIRECTIVE = re.compile(r"^```\{tkcurses-example\} (\S+)$", re.M)
@@ -62,7 +63,7 @@ def test_every_example_is_on_the_page_and_nothing_else_is():
     shown = [found for page in PAGES for found in DIRECTIVE.findall(page.read_text())]
     files = sorted(f"examples/{path.name}" for path in EXAMPLES.glob("*.py"))
     assert sorted(shown) == files
-    assert len(files) == 22
+    assert len(files) == 26
 
 
 def test_every_example_carries_the_notice():
@@ -920,3 +921,167 @@ def test_disk_usage_follows_the_disk_and_zooms(terminal, tmp_path):
         lambda t: t.contains("src \u203a .py"),
         message="zoomed into src, its kind focused",
     )
+
+
+@pytest.mark.tty
+def test_latency_follows_the_crosshair_and_the_legend(terminal, tmp_path):
+    term = start(terminal, tmp_path, "latency", cols=72, rows=20)
+    term.wait_for(
+        lambda t: t.contains("target") and t.contains("deploy") and t.contains("06:00"),
+        message="a day against the clock, with its references",
+    )
+    term.send_keys("<Home>")
+    term.wait_for(
+        lambda t: (
+            t.contains("00:00  p95 within target")
+            and t.contains("Nov 23 00:00  median")
+        ),
+        message="the crosshair's event, read by the program",
+    )
+    # From the last reading, 23:50, back 48 to 15:50: the deploy's hour.
+    term.send_keys("<End>", *["<Left>"] * 48)
+    term.wait_for_text("15:50  p95 over target")
+    row = next(r for r in range(20) if "██ p95" in term.row(r))
+    term.send_mouse(term.row(row).index("p95"), row)
+    term.send_mouse(term.row(row).index("p95"), row, action="release")
+    term.wait_for_text("p95 hidden")
+    term.send_keys("r")
+    term.wait_for(
+        lambda t: not t.contains("target") and not t.contains("deploy"),
+        message="the references gone",
+    )
+
+
+@pytest.mark.tty
+def test_traffic_moves_along_and_steps_its_stacking(terminal, tmp_path):
+    """The chart calls its source every refreshinterval; r steps that, p
+    takes the source away and gives it back."""
+    term = start(terminal, tmp_path, "traffic", cols=60, rows=16)
+    term.wait_for(
+        lambda t: (
+            "Requests a second" in t.display[0]
+            and t.display[0].startswith("\u250c")
+            and t.contains("every 500ms")
+        ),
+        message="the box, its label and the rate",
+    )
+    term.wait_for(
+        lambda t: any(f"{n} \u2013 {n + 59}" in t.display[13] for n in range(1, 50)),
+        message="new seconds coming in, the oldest dropped",
+    )
+    term.send_keys("r")
+    term.wait_for_text("every 2000ms")
+    term.send_keys("p")
+    term.wait_for_text("stacked  paused")
+    term.wait_for_idle(0.3)  # a second fetched just before p is drawn
+    paused = term.display[13]
+    term.send_keys("s")
+    term.wait_for(
+        lambda t: t.contains("percentage  paused") and t.contains("100%"),
+        message="each area its share",
+    )
+    term.wait_for_idle(2.5)  # longer than the rate: nothing is fetched
+    assert term.display[13] == paused
+    term.send_keys("p")
+    term.wait_for(
+        lambda t: t.contains("percentage  every 2000ms") and t.display[13] != paused,
+        message="fetching again",
+        timeout=10,
+    )
+
+
+@pytest.mark.tty
+def test_crosshair_is_followed_by_the_other_chart_the_panel_and_the_scale(
+    terminal, tmp_path
+):
+    """One <<XYChartCursor>> handler on the window keeps both charts, the
+    panel and the scale at one hour, whichever of them moved."""
+    term = start(terminal, tmp_path, "crosshair", cols=80, rows=24)
+    term.wait_for_text("no crosshair")
+
+    def at(hour, outdoor, humidity):
+        def check(t):
+            scale = t.row(21)
+            return (
+                t.contains(f"at {hour:02d}:00")
+                and t.contains(outdoor)
+                and t.contains(humidity)
+                and scale.startswith("hour")
+                and scale.split()[-1] == str(hour)
+            )
+
+        return check
+
+    term.send_keys("<End>")  # the temperature chart has the focus
+    term.wait_for(at(23, "outdoor    6.3°C", "humidity  76.9%"), message="all at 23:00")
+    term.send_keys("<Tab>")
+    term.send_keys("<Left>")  # now the humidity chart's crosshair
+    term.wait_for(at(22, "outdoor    7.5°C", "humidity  73.0%"), message="all at 22:00")
+    term.send_keys("<Tab>")
+    term.send_keys("<Left>")  # the scale moves the crosshairs
+    term.wait_for(at(21, "outdoor    8.7°C", "humidity  69.1%"), message="all at 21:00")
+    term.send_mouse(25, 4)  # on the temperature chart, at eight o'clock
+    term.send_mouse(25, 4, action="release")
+    term.wait_for(at(8, "outdoor    5.2°C", "humidity  80.5%"), message="all at 08:00")
+    term.send_keys("<Escape>")  # the clicked chart has the focus now
+    term.wait_for(
+        lambda t: t.contains("no crosshair") and t.contains("humidity -"),
+        message="both crosshairs gone, the panel empty",
+    )
+
+
+@pytest.mark.tty
+def test_crosshair_shows_which_chart_has_the_focus(terminal, tmp_path):
+    """Neither chart has a legend, so the box is what says which one the
+    arrows move: bold, with its label, on the chart with the focus."""
+    term = start(terminal, tmp_path, "crosshair", cols=80, rows=24)
+    term.wait_for_text("no crosshair")
+    lower = next(r for r, line in enumerate(term.display) if "Humidity" in line)
+    title = term.row(0).index("Temperature")
+
+    def focused(upper):
+        def check(t):
+            top, bottom = (0, lower) if upper else (lower, 0)
+            return all(
+                (
+                    t.attrs_at(top, 0)["bold"],
+                    t.attrs_at(top, title)["bold"],
+                    not t.attrs_at(bottom, 0)["bold"],
+                    not t.attrs_at(bottom, title)["bold"],
+                )
+            )
+
+        return check
+
+    term.wait_for(focused(True), message="the temperature chart's box bold")
+    term.send_keys("<Tab>")
+    term.wait_for(focused(False), message="the humidity chart's box bold")
+    term.send_keys("<Tab>")  # to the scale: neither box bold
+    term.wait_for(
+        lambda t: not t.attrs_at(0, 0)["bold"] and not t.attrs_at(lower, 0)["bold"],
+        message="neither box bold",
+    )
+
+
+@pytest.mark.tty
+def test_sensors_fill_their_gaps_and_count_what_they_draw(terminal, tmp_path):
+    term = start(terminal, tmp_path, "sensors", cols=60, rows=16)
+    term.wait_for(
+        lambda t: (
+            t.contains("missing=hide dotted=0")
+            and t.contains("count 44")
+            and t.contains("count 40")
+        ),
+        message="the readings sent",
+    )
+    term.send_keys("m", "m")
+    term.wait_for(
+        lambda t: (
+            t.contains("missing=linear")
+            and t.contains("count 48")
+            and t.contains("count 46")
+        ),
+        message="the gaps joined, the ends still left",
+    )
+    term.send_keys("d")
+    term.wait_for_text("dotted=1")

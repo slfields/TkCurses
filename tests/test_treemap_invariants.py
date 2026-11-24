@@ -415,9 +415,9 @@ def test_a_share_of_the_screen_follows_a_resize(root, screen, make):
 
 def test_cells_again_stop_following_the_screen(root, screen, make):
     widget = make(width="50%")
-    assert widget._screen_binding is not None
+    assert widget._size.binding is not None
     widget.configure(width=30)
-    assert widget._screen_binding is None
+    assert widget._size.binding is None
     resize(root, screen, 100, 30)
     assert pair(widget._requested) == (30, NATURAL_SIZE[1])
 
@@ -425,7 +425,7 @@ def test_cells_again_stop_following_the_screen(root, screen, make):
 def test_destroying_it_stops_following_the_screen(root, screen):
     widget = TreeMap(root, width="50%")
     widget.destroy()
-    assert widget._screen_binding is None
+    assert widget._size.binding is None
     resize(root, screen, 100, 30)  # nothing raised
 
 

@@ -270,3 +270,11 @@ Three more are about `TreeMap`, also a widget only TkCurses has: groups,
 values and the legend, acting on what is chosen, and a disk's usage
 that follows the disk. They are on
 [their own page](treemap.md).
+
+## Line and area charts
+
+Four more are about `XYChart`, also a widget only TkCurses has: a day
+of response times with a target and a crosshair, live traffic as
+stacked areas the chart fetches itself, two charts and the widgets
+around them following one crosshair, and sensors that miss readings. They are on
+[their own page](xychart.md).

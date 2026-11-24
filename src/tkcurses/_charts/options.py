@@ -29,9 +29,37 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from tkcurses._charts.numformat import (
+    PLACEMENTS,
+    ROUNDINGS,
+    UNIT_SCALES,
+    NumberFormat,
+)
 from tkcurses._core.colors import parse_color
 
-__all__ = ["choice", "color", "count", "flag", "items", "number", "optional_count"]
+__all__ = [
+    "NUMBER_OPTIONS",
+    "choice",
+    "color",
+    "count",
+    "flag",
+    "items",
+    "number",
+    "number_format",
+    "optional_count",
+]
+
+#: The number options every chart takes, with their defaults: how a value
+#: is written on an axis, in a readout or in a label.
+NUMBER_OPTIONS: dict[str, Any] = {
+    "units": "",
+    "unitplacement": "suffix",
+    "unitspace": False,
+    "digits": "",
+    "decimals": "",
+    "rounding": "nearest",
+    "unitscale": "si",
+}
 
 
 def count(value: Any, name: str, *, minimum: int = 1) -> int:
@@ -111,3 +139,16 @@ def items(value: Any) -> tuple[Any, ...]:
         # One word is a list of one, as Tcl reads it: colors=5 is the
         # colour "5", refused as a colour, not a TypeError.
         return (value,)
+
+
+def number_format(options: dict[str, Any]) -> NumberFormat:
+    """The :class:`NumberFormat` the number options describe, checked."""
+    return NumberFormat(
+        units=str(options["units"]),
+        placement=choice(options["unitplacement"], "unitplacement", PLACEMENTS),  # type: ignore[arg-type]
+        space=flag(options["unitspace"]),
+        digits=optional_count(options["digits"], "digits", minimum=1),
+        decimals=optional_count(options["decimals"], "decimals", minimum=0),
+        rounding=choice(options["rounding"], "rounding", ROUNDINGS),  # type: ignore[arg-type]
+        unitscale=choice(options["unitscale"], "unitscale", UNIT_SCALES),  # type: ignore[arg-type]
+    )

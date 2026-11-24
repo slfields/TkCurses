@@ -23,14 +23,12 @@ import itertools
 
 import pytest
 
+from tkcurses._charts.scale import ValueRange, auto_ticks, even_ticks, log_ticks
 from tkcurses.bargraph._decor import (
     Decor,
     PeakHold,
-    auto_ticks,
     compose,
-    even_ticks,
     level_cell,
-    log_ticks,
     readout_value,
     spaced,
 )
@@ -44,7 +42,6 @@ from tkcurses.bargraph._render import (
     render_bars,
     series,
 )
-from tkcurses.bargraph._scale import ValueRange
 
 # ---------------------------------------------------------------- ticks ----
 

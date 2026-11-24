@@ -90,6 +90,7 @@ EXTENSION_MODULES = (
     "tkcurses.constants",
     "tkcurses.bargraph",
     "tkcurses.treemap",
+    "tkcurses.xychart",
 )
 
 #: tkinter's API grew after Python 3.11, the oldest TkCurses supports, so

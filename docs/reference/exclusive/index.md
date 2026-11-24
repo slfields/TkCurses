@@ -8,6 +8,7 @@ imported from a module of its own rather than from `tkcurses`:
 import tkcurses as tk
 from tkcurses.bargraph import BarGraph
 from tkcurses.treemap import TreeMap
+from tkcurses.xychart import XYChart
 ```
 
 Each one is marked **TkCurses extension** throughout. Otherwise it is
@@ -20,4 +21,5 @@ documented, and behaves, as the classic widgets do: it is placed with
 
 bargraph
 treemap
+xychart
 ```

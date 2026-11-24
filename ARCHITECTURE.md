@@ -8395,11 +8395,11 @@ raise `ValueError`; the widget turns that into `TclError`.
 | Module | Does |
 |--------|------|
 | `_model` | segments × series values, validation; `AutoScale` |
-| `_scale` | `"64"` and `"75%"` scales, `ValueRange` (linear or log, from `minimum`), value to points, round numbers |
+| `_scale` | `"64"` and `"75%"` scales, value to points; `ValueRange` and the round numbers are in `_charts.scale`, shared since XYChart |
 | `_layout` | the frame's size to regions: bars, axis, readout, labels, box |
 | `_render` | values to runs and cells, with colour *roles* (series *i*, zone *j*, marker, background), never colours |
 | `_thresholds` | levels to colour zones along a bar |
-| `_decor` | baseline, ticks, gridlines, markers, peak hold, readout, the box's text; composes the window |
+| `_decor` | baseline, ticks, gridlines, markers, peak hold, readout, the box's text; composes the window. The tick choosers are `_charts.scale`'s |
 | `_gradient` | each series cell's shade by position |
 | `_glyphs` | the eighth-block ramps, monochrome patterns |
 
@@ -8494,7 +8494,7 @@ steps land between bursts. Peak hold and autoscale read
 
 Round numbers are the 1-2-5 series - times powers of ten, or of 1024 for
 `unitscale="binary"`, or steps a clock reads (15 s, 1 min, 1 h) for
-time units - from one generator, `_scale.round_steps`, which ticks and
+time units - from one generator, `_charts.scale.round_steps`, which ticks and
 autoscale share.
 
 ### Text is measured in cells
@@ -8615,7 +8615,7 @@ As BarGraph: pure modules know nothing of curses and raise `ValueError`;
 | `_shades` | the four shades, which each child takes so no two neighbours share one, and which levels are outlined |
 | `_outline` | the lines between outlined tiles, with their junctions |
 | `_labels` | what text fits in a tile, and where |
-| `_legend` | the entries, wrapped and truncated, flowed into the legend region |
+| `_charts.legend` | the entries, wrapped and truncated, flowed into the legend region; shared with XYChart since its `.2`, and the entries a treemap lists are `_model.legend_entries` |
 | `_navigate` | which tile an arrow key moves to |
 | `_compose` | all of that into rows of cells, with the focus reversed and the selection marked, each naming its colours as specs, `""` for the widget's own |
 
@@ -8841,7 +8841,7 @@ treemap binds the root's `<Configure>`, which `_handle_resize` sends
 after every resize, and asks again. The root's tag is on every widget's
 bindtags, so a child's `<Configure>` reaches it too; only the root's
 own counts. Setting both axes back to cells, or destroying the treemap,
-removes the binding. The layout pass that the resize runs comes first
+removes the binding. The rules are `_charts.size`'s, shared with XYChart. The layout pass that the resize runs comes first
 and uses the old request, so a resize lays out twice: once at once, and
 again when the new request is idle.
 
@@ -9023,6 +9023,615 @@ measurement, from the first commit that has the widget.
 - **More than two levels.** `_squarify` and `_layout` recurse already;
   the limit is the model's, and the navigation's "level" would need to
   become a depth.
+
+## XYChart
+
+`tkcurses.xychart.XYChart` is the third widget neither tkinter nor Tk
+has: line and area charts, after Kibana's Lens XY charts. BarGraph
+already draws bars, so this has no bar series. Like the other two it is
+an extension module, listed in `EXTENSION_MODULES` and documented with
+`TkCurses extension:`.
+
+**This section was the design, written before the code** for review,
+and is now the record of what was built: where the building changed a
+decision, or found something the design did not say, a note beside
+it - some headed **As built** - says what and why. Each heading names a decision and
+why. `Not yet` lists what was left out on purpose, and what version 2
+is to add.
+
+### What comes from Kibana, and what does not
+
+Kibana's line and area charts set the *behaviour*: the options, their
+defaults, and what a reader of the chart sees. No Kibana or
+elastic-charts *code* is used, by the same rule and for the same reasons
+as TreeMap's (see its section). Two published algorithms are implemented
+from their papers and credited beside the code:
+
+- the **monotone cubic** interpolation of Fritsch and Carlson, "Monotone
+  Piecewise Cubic Interpolation", *SIAM Journal on Numerical Analysis*
+  17(2), 1980, for `smooth`;
+- the **M4** reduction of Jugel, Jerzak, Hackenbroich and Markl, "M4: A
+  Visualization-Oriented Time Series Data Aggregation", *PVLDB* 7(10),
+  2014, for more points than columns.
+
+| Kibana | Here |
+|---|---|
+| Line and area layers, mixed on one chart | Each series is `line` or `area`; a chart holds both |
+| Stacked, percentage and unstacked areas | `stackmode`: `stacked`, `percentage`, `unstacked` |
+| Line interpolation: straight, smooth, step | `interpolation`: `straight`, `smooth`, `step` |
+| Point visibility: auto, show, hide | `points`: `auto`, `show`, `hide` |
+| Missing values: hide, zero, linear, last, next | `missing`, with the same five |
+| End values: hide, zero, nearest | `endvalues`, with the same three |
+| Show as dotted line | `dottedgaps` |
+| Left axis scale: linear, logarithmic, square root | `scaletype`: `linear`, `log`, `sqrt`, as BarGraph's names |
+| Bounds: full, data, custom; round to nice value | `bounds`: `full`, `data`, `custom` with `minimum` and `maximum`; `nicebounds` |
+| Axis title, gridlines, tick labels | `xlabel` and `ylabel`, `gridlines`, `ticklabels` |
+| Show current time marker | `nowmarker` |
+| Value format | BarGraph's number options, by the same names |
+| Legend: visibility, position, width, label truncation | TreeMap's options: `legend`, `legendposition`, `legendsize`, `legendlines` |
+| Legend statistics | `legendstats`: a list, drawn as a line under each name |
+| Reference lines, with an optional band | `reference_add`, `reference_delete` |
+| Hover tooltip | A **crosshair** moved by keys or a click, and the **readout** row |
+| Fill opacity | A **dimmed shade** of the line's colour (see Half-cells) |
+
+Not taken: bars (BarGraph has them), breakdown and top-values ranking
+(the program sends series, not queries), annotations as a layer, time
+shift, partial-data markers, gradient fill, and the legend's grid
+layout.
+
+### A Canvas, drawing with canvas items
+
+The user asked for a chart built on the Canvas, and settled on a
+subclass: `class XYChart(tkcurses.Canvas)`. Everything the chart draws
+is an ordinary canvas item: `create_line` for a series, `create_polygon`
+for an area, `create_rectangle` for a band or a point, and
+`create_text` for ticks, titles, the legend and the readout.
+
+That is the reason to use the Canvas rather than painting cells as
+BarGraph and TreeMap do. A program can draw on the chart with the same
+calls, `tag_bind` an item, and `find_closest` a point. The Canvas's
+options come with it. `scrollregion` and the view commands still work,
+but the chart draws only into the visible plane.
+
+**The chart's items carry its tags, and only those are its.** Every
+item it makes has the tag `xychart`, and another naming its part:
+`xychart.series.<name>`, `xychart.area.<name>`, `xychart.point.<name>`,
+`xychart.axis`, `xychart.grid`, `xychart.ref.<id>`, `xychart.legend`,
+`xychart.cursor` and `xychart.readout`. A redraw touches nothing else,
+so a program's own items survive every update. A new chart item is
+lowered below the first item that is not the chart's, so the program's
+drawing stays on top.
+
+**A redraw changes items in place.** The pure modules produce a
+*scene*: a list of item descriptions, each with a stable key, a kind,
+coordinates and options. The widget keeps a map from key to item id. An
+item whose key is still there gets `coords` and `itemconfigure`; a new
+key gets an item; a key that has gone is deleted. So item ids stay the
+same across updates, and a program holding one can rely on it. The
+crosshair and the focus are kept, which the user asked for with live
+data in mind (version 2). Changes are drawn once, when the program goes
+idle, however many came first.
+
+**New data can wait; nothing else does.** BarGraph repaints on a timer,
+`refreshinterval`, which it also uses to poll `source`. The chart was
+built without one - every change drawn when the program goes idle - and
+the user asked, on reviewing the examples, for BarGraph's three:
+`refreshinterval`, `refresh()` and `source`. They are added with the
+default `refreshinterval=0`, which is the behaviour before, so the
+crosshair and keys answer as fast as they did. A positive interval
+delays only `set_series` and `append`: the first arms
+`after(refreshinterval)`, and later ones ride on it. Anything else - a
+key, a click, a change of option, a reference - cancels the timer and
+draws at idle, the data with it, since holding a keypress back for new
+data's sake would make the chart feel slow. `source` is called every
+`refreshinterval`, or every 100 ms when that is 0: BarGraph's `after(0)`
+loop would keep a processor busy. A raised error stops the calls, as
+BarGraph's does. `None` given to `configure` is dropped, as in tkinter,
+so `source=""` is what takes a source away; BarGraph has no way to.
+
+**A focused chart's box is bold.** Tk shows the focus with a highlight
+ring, which a cell has no room for. The chart showed it only by marking
+an entry in its legend, so with `legend="hide"` nothing did: the user,
+tabbing between the two charts of `examples/crosshair.py`, could not
+tell which one the arrows would move. The box and its label are drawn
+bold while the chart has the focus, which is the rule a focused Entry
+already follows. A chart with neither a box nor a legend still shows
+nothing. BarGraph does not take the focus (`takefocus` is false and it
+has no keys), so it needs no sign of it.
+
+**The box is BarGraph's.** Canvas defaults `relief` to `flat`, so
+`borderwidth=1` drew nothing on the chart, while on BarGraph and TreeMap
+it draws a box. The recorder of visible options had measured
+`borderwidth` as invisible on the chart, and that was taken as true
+rather than looked at; the user noticed none of the examples had a
+border. The chart's `relief` now defaults to `solid`, as theirs do. The
+label goes in the box's top or bottom edge, written by the widget after
+the Canvas draws its border, since canvas items cannot reach the
+border. Without a box the scene gives the label a row of its own, so
+it is a canvas item tagged `xychart`. `place_text`, `LABEL_ANCHORS` and
+`TITLE_INSET` moved from BarGraph's layout to `_charts.text` for both.
+
+**Mouse bindings chain with the Canvas's.** The Canvas binds its class's
+mouse events to route them to items. The chart's class is `XYChart`,
+so it binds its own, and its click handler first calls the Canvas's
+routing, then places the crosshair. A program's `tag_bind` on a chart
+item therefore still fires.
+
+### Half-cells
+
+The Canvas is a plane of half-cells: one pixel is one cell wide and half
+a cell tall, and coordinates are rounded to whole pixels. The user chose
+this over adding braille. Braille would make lines four times smoother,
+but it gives each cell one colour where half-cells give two. What the
+plane cannot do, and what is done instead:
+
+- **A cell has two colours at most.** Where three series meet in one
+  cell, the one drawn last wins. Series draw in the order they were
+  added, and every line draws after every area's fill, so a line is
+  never hidden by a fill.
+- **There is no transparency.** In place of Kibana's fill opacity, an
+  area is filled with its line's colour mixed toward the background
+  (`_charts.color.mix`), at 256 colours and above. The line and its fill
+  then share a cell's two colours where they meet. Below 256 colours the
+  mix would round back to the line's own colour, so the fill is the
+  line's colour and the line shows only where it leaves the fill.
+- **A stacked area is drawn from the one below it**, not from zero, so
+  areas never overdraw each other. Unstacked areas do overlap. They
+  draw in order, and the lines on top keep every series visible.
+- **Lines cannot be dashed.** The Canvas refuses dashes, since they mean
+  nothing in a grid of characters. A dotted gap (`dottedgaps`) is drawn
+  by the chart as a run of short line items, two pixels on and two off.
+  The Canvas is not changed.
+- **Without colour, series look the same.** The user accepted this: the
+  legend, the readout and the crosshair name each series.
+- **Text takes whole cells.** A canvas text item clears the pixels under
+  it, so the axes, legend and readout sit outside the plot. The one
+  label inside it, a reference line's, covers whatever is in its cells.
+
+**Points.** A point is a one-pixel rectangle in the series' colour, a
+shade lighter so it shows on its own line. `points="auto"` shows them
+when neighbouring points are at least four pixels apart, so a sparse
+series shows where its data is and a dense one stays a line.
+
+**One pixel is `(x, y, x + 1, y + 1)`.** A rectangle with no outline is
+filled short of its far corner, as Tk's is (`(10, 10, 16, 14)` fills
+columns 10 to 15, measured on Tk 9.0 for the Canvas), so
+`(x, y, x, y)` paints nothing. The first build drew every point that
+way, and they were missing until the visible-options recorder measured
+`points` as changing nothing. A dash one pixel long is drawn the same
+way.
+
+**More points than columns.** A column of pixels can show one x. When
+two neighbouring points of a run fall in one column, each column of that
+run keeps the first, last, lowest and highest of the points in it (M4).
+The line through those four is the same set of pixels the full run would
+draw, so nothing is lost on screen and the canvas holds a few hundred
+coordinates rather than many thousands. A run that dense is drawn
+straight: steps and smoothing are finer than a pixel there.
+
+### The data: series
+
+A chart holds **series**, each a name and a list of points. A point is
+`(x, y)`, and `y` may be `None` for a missing value.
+
+- `add_series(name, points=(), kind="line", text=None, color=None,
+  description="")` adds one, last in the drawing order. `text` is the
+  name the legend and readout show, the name itself when not given.
+  `color` comes from `colors` in turn when not given.
+- `set_series(name, points)` replaces the points, `append(name, *points)`
+  adds to the end, and `delete_series(*names)` removes series.
+- `series_cget` and `series_configure` read and change one series'
+  `kind`, `text`, `color`, `description` and `hidden`. `series()` lists
+  the names in order.
+- `series_points(name)` gives the points back as `set_series` takes
+  them, so a program feeding live data can read, drop the oldest and set:
+  on a chart of times each x is a naive local `datetime`, whatever it was
+  given as. The first build gave epoch seconds, which `set_series` then
+  refused as a number on a time chart; UAT scenario 53's live feed found
+  it.
+- Errors are Treeview's words: `Series X not found`, `Series X already
+  exists`. `delete_series` checks every name before removing any, as
+  TreeMap's `delete` does.
+
+**x is a number or a time**, the same kind for every point of every
+series, or `TclError`. A time is a `datetime` (naive is local time) or a
+`date`, held as epoch seconds; numbers are any finite real. The first
+point decides which kind the chart has, until no series has a point; a
+series whose points are being replaced by `set_series` does not count.
+Every point of a call is checked before any is kept, so a refused call
+changes nothing.
+Points are kept sorted by x. An x given twice in one series keeps the
+last, as a re-sent bucket would.
+
+**y is a finite number or `None`.** NaN and infinity are refused. A log
+scale draws a value at or below zero as missing, as Kibana does.
+
+### Missing values
+
+`missing` fills a gap *between* two known points: `hide` leaves it, so
+the line breaks; `zero` drops to zero; `linear` joins the neighbours;
+`last` carries the one before forward; `next` brings the one after
+back. `linear` goes by x, not by position, so uneven buckets join in a
+straight line. `endvalues` covers the gaps at the ends, before the first
+known point and after the last: `hide`, `zero` or `nearest`. As in
+Kibana, where the end-values choice appears only once a fitting is
+chosen, it applies only while `missing` fills something: with `hide` the
+ends stay hidden too. With no known value at all, `endvalues="zero"`
+makes every value zero and anything else leaves them missing. Filled
+values are marked, and with `dottedgaps` the segments through them are
+dotted.
+
+A gap is a missing `y`. The chart does not make up x values a series
+lacks: the program sends one per bucket, with `None` where the bucket is
+empty, as Kibana's "include empty rows" does.
+
+### Stacking
+
+**Only areas stack** (`_stack`); a line is drawn at its own values in
+every mode, on the same axis. `stacked` puts each area on the ones
+before it, `percentage` does the same with each x's total made 100, and
+`unstacked` draws each from zero.
+
+- **Areas stack at every x any of them has.** At an x each adds its
+  value, after `missing` has filled what it fills. An area with no value
+  there adds nothing and has a gap, and the areas above close up over
+  it, as elastic-charts draws a missing value in a stack. With
+  `missing="hide"` that gap is the series' own; with any other rule its
+  value is filled first and it stacks.
+- **Negative values stack down from zero, positive ones up**, each side
+  on its own, as d3's diverging offset does, so a negative value never
+  hides a positive one.
+- **A percentage is of the values' sizes**, their absolute values, so a
+  stack of positive and negative values still spans 100. An x whose
+  total is zero is a gap in every area. Each value is divided by the
+  total before it is multiplied by 100: the other order overflowed to
+  infinity for a total near the smallest float, found by a property
+  test.
+
+### Joining points
+
+`_path` places values on the plot in float pixels and rounds once, at
+the end. `straight` joins each point to the next. `step` holds each
+value until the next x, a step *after* the point, as Kibana draws its
+step lines. `smooth` is Fritsch and Carlson's monotone cubic, sampled at
+every pixel column: it never rises above or dips below the two points it
+joins, so a smoothed chart shows no peak the data does not have. A
+slope under a billionth of a pixel per column counts as flat, since the
+method divides by it.
+
+A series' line is cut into **runs** at each value that cannot be placed,
+a gap, and each run into **pieces**, solid or dotted: a segment is dotted
+when either end was filled in. An area is one outline per run, along its
+top and back along the area below it, joined the same way so stacked
+areas share their edges, or along the axis's zero.
+
+**Clipping** happens after joining, in float pixels: a line by Liang and
+Barsky, an area's outline as a polygon by Sutherland and Hodgman, both
+implemented from their papers and credited beside the code. So a line
+through a value beyond custom bounds leaves the plot where it crosses
+the edge.
+
+### Modules
+
+As BarGraph's and TreeMap's: the pure modules know nothing of curses or
+the Canvas and raise `ValueError`; `__init__.py` holds only the widget.
+
+| Module | Does |
+|---|---|
+| `_model` | series, their points kept sorted, x's kind, the Treeview-style errors |
+| `_fit` | `missing` and `endvalues`, marking what was filled |
+| `_stack` | `stacked`, `percentage` and `unstacked` |
+| `_path` | values to pixel polylines and outlines: `straight`, `step`, `smooth`; M4 for dense runs; clipping; dotted pieces; when points show |
+| `_axes` | the value axis's range: Kibana's bounds, rounded to nice ends |
+| `_stats` | the legend statistics, in one pass over each series (Welford's variance) |
+| `_layout` | plot, axes and titles, in what the legend and readout leave; `_scene` places those two first |
+| `_scene` | all of that into the list of keyed item descriptions |
+
+**Shared, moved, not copied** (task `.2`), into `tkcurses/_charts/`:
+
+- `legend.py`: TreeMap's `_legend`. A statistics line is drawn as a
+  description is, plain under the bold name.
+- `scale.py`: BarGraph's `_scale`, its rounding to nice values, and its
+  tick choosers (`auto_ticks`, `log_ticks`). XYChart's `.4` adds the
+  square-root scale, unclamped `position`, and `fitted_ticks`, which
+  fits ticks to their labels.
+- `timeticks.py`: ticks on a time axis, new with XYChart.
+- `size.py`: TreeMap's size rules (below): the `width` and `height`
+  check, and `ScreenSize`, an object each widget holds that works out the
+  cells to ask for and keeps the root binding. One piece of code, so the
+  rules cannot drift apart.
+- `options.py`: `number_format` and `NUMBER_OPTIONS`, the seven number
+  options checked into a `NumberFormat`. BarGraph and TreeMap each built
+  it in a copy of their own until `.8`; all three call this now.
+
+BarGraph's and TreeMap's behaviour does not change, and their tests hold
+it.
+
+### Size
+
+**As TreeMap's, at the user's request, and by the same code.** `width`
+and `height` are independent, and each is cells (any Tk distance) or a
+percentage of the terminal, `"50%"`, which reads back as written. An
+axis not given asks for `NATURAL_SIZE`, 60 columns by 16 rows: wider
+than TreeMap's, since a time axis needs room for its labels. While
+either axis is a percentage the chart binds the root's `<Configure>`,
+counting only the root's own, and asks again; going back to cells or
+destroying the chart removes the binding.
+
+The Canvas needs two more changes for it. Its `width` and `height`
+checks are `_signed_distance`, which would refuse `"50%"`, so the chart
+uses `_charts.size.dimension` instead. And Canvas's `_apply_requested_size`
+and `_plane_size` read the options as whole cells, so the chart
+overrides both to use the cells `ScreenSize` works out. Canvas itself
+keeps Tk's rules. Its `width` and `height` default to 40 and 10, which
+`ScreenSize` would take as given; the chart's default to 0, as a
+Frame's do, which is what "not given" means to it.
+
+**Redrawing.** A change asks for one drawing once the program is idle.
+The drawing builds the scene, then for each key changes the item it
+made before with `coords` and `itemconfigure` where something differs,
+makes one where the key is new, and deletes the item of a key that went.
+Only when it made an item does it lower the chart's items, in scene
+order, beneath everything: the program's own stay on top. The canvas is
+repainted once at the end, not once per item. A resize changes the
+plot, so the paint that follows one rebuilds the scene first.
+
+### Scales, axes and ticks
+
+The **y axis** is on the left, with tick labels in the number options'
+format, ticks placed by the chosen scale (`linear`, `log` with
+`logbase`, or `sqrt`), and `ylabel` written above it.
+
+**Its range is Kibana's `bounds`** (`_axes.value_range`). `full`, the
+default, takes the axis to zero, so a value's height is its size;
+`data` spans only the values; `custom` takes `minimum` and `maximum` as
+given, an end not given falling back to `full`'s. Three rules follow
+from what each scale and kind can show:
+
+- **An area is measured from zero**, so with an area on the chart `data`
+  is `full`. Kibana offers only full and custom for areas.
+- **A log scale cannot reach zero**, so there `full` is `data`, and a
+  value at or below zero is not placed at all (`ValueRange.position`
+  says `None`): it draws as missing.
+- **A percentage stack's axis is 0 to 100**, whatever `bounds` says.
+
+`nicebounds` (on by default, Kibana's "Round to nice value") rounds the
+ends outward to a multiple of the largest round step that gives at most
+ten steps across the range, as d3's `nice` does; on a log scale, to
+powers of the base. Custom bounds are kept exactly. A range of one value
+is widened to half its size each way, and of no values is 0 to 1. At the
+ends of a float, where half of 5e-324 is 0 and 1.7e308 widened is
+infinite, the value goes at one end of a range from zero instead (on a
+log axis, one step of the base wide): a property test found the
+single-point range, which the axis refused.
+
+The **square-root scale** places a value by its square root, signed so a
+negative value mirrors a positive one, as d3's `scaleSqrt` does: a
+quarter of the top is half the height. Its ticks step evenly in value,
+as a d3 power scale's do, so they crowd toward the top and fewer fit.
+
+**Positions are not clamped.** `ValueRange.position` gives 0 at the
+bottom and 1 at the top and goes beyond them for a value outside custom
+bounds, so a line through it is clipped where it leaves the plot rather
+than flattened along the edge. BarGraph's `fraction` still clamps.
+Only at `REACH`, a million axis lengths beyond either end, is it held:
+1e308 on an axis to 10 would otherwise be an infinite pixel. A line to a
+point that far off crosses the plot as near vertically as whole pixels
+can tell.
+
+**The ends of what a float holds** were not reached by the property
+tests, whose values stayed within ±10,000, until a reference at 5e-324
+on a log axis came up by chance: `_nice` rounded the bottom to
+`10 ** -324`, which is 0, and the axis refused it. Probing from there
+(`TkCurses-j2ao.17`) found the rest, each now handled where it arises:
+
+- `_nice` keeps an end whose power of the base is 0 or overflows, and
+  leaves alone a range wider than a float, where no step fits and the
+  search for one never ended.
+- `fitted_ticks` skips a step whose count of ticks overflows, and stops
+  at a step that is itself infinite (where `0 * inf` is NaN and the
+  search never ended): no ticks, as when none fit.
+- `position` on an axis wider than a float works in halves.
+- A stacked area whose running total overflows is a gap there, as a
+  missing value is; a percentage of an infinite total is of the values
+  scaled down first.
+- A legend statistic that overflows - the sum or range of values near
+  the largest float - is `None`, shown as a missing figure.
+
+The property tests' values now include 5e-324, 1e-310 and ±1.7e308.
+
+**Ticks are as many as fit their labels.** `fitted_ticks` takes the
+smallest round step - 1, 2 or 5 times a power of ten - whose labels,
+each centred on its tick but kept on the axis, all stand at least two
+cells apart. A log axis takes powers, with 2 and 5 times each when those
+fit too. Too short for even one label, an axis has no ticks.
+
+The **x axis** is along the bottom, with `xlabel` under it. Numbers get
+the same ticks. **Times** (`_charts.timeticks`) take the smallest step
+whose labels fit, from these: 1, 2, 5, 10, 15 and 30 seconds and
+minutes; 1, 2, 3, 6 and 12 hours; 1 and 2 days; weeks from Monday; 1, 2,
+3 and 6 months; and 1, 2 and 5 times a power of ten years. Ticks fall on
+local time and are counted on the calendar, so midnight stays midnight
+through a change of clocks: measured with US Central time across
+1 November 2026, a 25-hour day. A label says only what changes at its
+step - `14:05`, `Nov 23`, `Nov`, `2026` - except where a larger unit
+turns over: midnight says `Nov 24` and January says `2027`. The
+*context*, written once at the left, names the larger unit the first
+tick is in: `Nov 23, 2026` for clock steps, the year for days to
+months. `nowmarker` draws a vertical line at the current time, when that
+time is on the axis.
+
+**Ticks and gridlines are text**, at the cell row or column of their
+value's pixel: `┤` and `┬` on the axes, and `┈` or `┊` across the plot for
+`gridlines`, as BarGraph draws them. They are made before the series, so
+a series drawn over a gridline takes those cells. Gridlines are drawn
+dimmed, mixed toward the background as a fill is, at 256 colours and
+above, and in the text's colour below.
+
+**Where the parts go** (`_layout`), from the top: a row for `ylabel`
+when there is one; the plot, with the value labels right-aligned to its
+left and the axis line between; the x axis's line; a row of its labels
+when `ticklabels` is on; and a row for `xlabel` and a time axis's
+context. The value labels' width depends on how many fit the plot's
+height, so the rows are settled first and the label width asked for
+after. A chart too small for a plot 8 columns by 2 rows with its axes is
+drawn without them, all plot: so small a chart is close to a
+sparkline, and labels would leave it nothing.
+
+Up the value axis, labels need **one blank row** between them; along
+the x axis, two blank columns. Two rows were tried first and left a
+ten-row chart with only `0` and `50`; one gives `0`, `20`, `40`, `60`.
+Labels are written in the number options' format, except on a
+percentage stack's axis, which is `%`. Numbers on the x axis are written
+plainly: the number options describe the values, not x.
+
+**Not quite Kibana's options.** Kibana has gridlines, tick labels and a
+title for each axis separately, gridlines on by default. Here `gridlines`
+and `ticklabels` are one flag each, for both axes, and gridlines are
+**off** by default, as BarGraph's are: dotted text across a plot of
+half-cells takes whole cells from the series, which costs more on a
+terminal than on a screen.
+
+`nowmarker` draws its line at the time the chart was last drawn. It
+moves only when something is redrawn: a chart fed live data moves it
+with every update, a still one does not.
+
+### Reference lines and bands
+
+`reference_add(value, *, text="", color="", band=None, axis="y")` returns
+an id, `ref1`, `ref2` and on. It draws a line across the plot at `value`
+(`axis="y"`) or down it at an x (`axis="x"`), its `text` at the
+right-hand end, or at the top - right of the line, or left of it when
+there is more room there. With `band=(low, high)` it also shades that
+range in the colour, dimmed as an area's fill is. A band draws under the
+series and a line over them, as Kibana's do. `reference_delete(*ids)`
+removes some, checking every id first, and `references()` lists them.
+Without a colour a reference is white.
+
+**A reference on the value axis takes part in its range**, as Kibana's
+do, so a limit above every value is still on the chart: its value and
+its band's ends count with the series' under `full` and `data`. Custom
+bounds are kept, and a reference outside them is not drawn. An x
+reference is a number or a time as the chart's x is, refused otherwise;
+it does not widen the x axis.
+
+### Legend
+
+TreeMap's legend, moved to `_charts`, with the same options: `legend`
+(`auto` shows it for two series or more), `legendposition`,
+`legendsize` and `legendlines`. Each entry is a swatch in the series'
+colour and its name in bold, drawn as canvas text. Under the name go the
+series' `description`, then its statistics.
+
+`legendstats` is a list of statistics, Kibana's names in Tk's style:
+`average`, `median`, `min`, `max`, `range`, `last`, `lastnonnull`,
+`first`, `firstnonnull`, `difference`, `differencepercent`, `sum`,
+`count`, `distinctcount`, `variance` and `stddev`. They are written in
+the number options' format, as `avg 41% · max 72%`, over the values
+drawn, after `missing` and before stacking: a series' own figures, not
+its place in a stack.
+
+**Clicking an entry hides or shows its series**, as elastic-charts'
+legend does. A hidden series is left out of the stack, the scale and the
+readout, and its entry stays, so it can be shown again: a hollow swatch
+`░░` and a dim name, not bold. **Up** and **Down** move along the
+entries, the one with the keyboard underlined while the chart has the
+focus, and **Space** hides or shows it.
+
+**As built** (`.9`):
+
+- The legend takes its side of the canvas first, after the readout's
+  row, and the axes and plot are laid out in what is left. If that
+  would leave less than a minimum plot, the legend is not drawn.
+- The figures are written to **three significant digits** when the
+  number options give neither `digits` nor `decimals`: the axis's six
+  would write `54.3333%`. `count` and `distinctcount` are whole numbers,
+  `differencepercent` is in `%`, and `variance` is written without the
+  units, which it has squared.
+- A figure with nothing to work out from is `–`. `last` and `first` are
+  the series' first and last values, gaps included; the `nonnull` ones
+  skip them.
+- An `auto` legend is at most a third of the chart, as TreeMap's, so
+  figures longer than that are cut with `…`: `legendlines` or a
+  `legendsize` gives them room.
+- The variance is Welford's, credited in `_stats`, not a sum of squares,
+  which loses its precision for large values close together.
+- **The legend stays when nothing is shown.** With every series hidden
+  the chart has no x to draw, and the first build returned an empty
+  drawing there, legend and all - so the last series hidden could never
+  be shown again. Found in UAT. The legend is now laid out before the
+  chart's ranges are worked out, and drawn alone when there are none.
+
+### Interaction
+
+The chart takes the focus. **Left** and **Right** move a crosshair to
+the previous or next x of any series, and **Home** and **End** to the
+first and last. A click puts it at the x nearest the mouse. **Escape**
+removes it. The crosshair is a vertical line drawn under the series,
+so it never hides one. Each series' point at that x is marked, a
+lighter pixel, and drawn over everything.
+
+The **readout** is the bottom row: the crosshair's x, then each visible
+series' text and value there, each in its colour: `14:05  cpu 72%
+mem 41%`. With no crosshair it names the x range shown. `readout`
+turns it off.
+
+`<<XYChartCursor>>` is sent whenever the crosshair moves or goes;
+`cursor()` reads its x, or `None`, and `cursor(x)` sets it. The
+crosshair stays at the same x across updates. If that x is gone, it
+moves to the nearest one left.
+
+**As built** (`.10`):
+
+- **Left** with no crosshair starts it at the last x, **Right** at the
+  first, as a reader looking for the latest value would want. At either
+  end it stays.
+- `cursor(x)` snaps to the x of a shown series nearest the one given,
+  and on a time chart reads back as a naive local `datetime`, as
+  `series_points` does.
+- The readout writes the crosshair's x, then each shown series that has
+  a point there, `name value`, in its colour, two spaces apart. A value
+  missing is `–`. A time is `Nov 23 23:57`, with seconds when the
+  chart's times have any. What does not fit ends in `…`: a series that
+  has no room at all cuts the one before it, so none is dropped without
+  a sign.
+- The crosshair is kept as part of the drawing: when new data moves it,
+  the drawing pass moves it and draws it there in the same pass, and
+  sends the event. Moving it with the usual path would have scheduled a
+  second drawing from inside the first.
+- `chart()` returns a `Drawing`: the items, and where the plot, the x
+  range and the legend went, which is what a click is measured against.
+- The click handler replaces the Canvas's class binding for `<Button-1>`
+  and calls its routing first. A test binds a program's handler to the
+  axis's tag and clicks it. It is bound to `<Double-Button-1>` too: a
+  second click soon after the first is delivered as that instead, and
+  the Canvas's class binding for it would have taken it, so two legend
+  entries clicked quickly toggled only the first.
+- **A key the chart uses goes no further**, and one it has no use for
+  does: TreeMap's rule. Escape with a crosshair or an underlined entry
+  is the chart's; with neither, it reaches the window, so an Escape that
+  closes a dialog or quits still does. Found writing UAT pass 2, where
+  the first build's Escape took the crosshair away and quit the
+  scenario in the same press.
+- **`<<XYChartLegend>>`** is sent after a click or Space on the legend
+  hides or shows a series, and `legend_focus()` names it: a virtual
+  event carries no data here, so the handler reads the widget, as a
+  `<<TreeviewSelect>>` handler reads `selection()`. The program's own
+  `series_configure(hidden=...)` sends nothing, as Tk reports no
+  configure a program makes itself. Without it, UAT scenario 53 had to
+  re-read the state after every key and click.
+
+### Not yet
+
+- **A right-hand axis**, Kibana's "axis side": version 2. It costs five
+  to eight columns, and in a terminal two charts one above the other are
+  easier to read.
+- **Live data**, a source called on a timer: version 2. Until then the
+  program owns the timer and calls `set_series` or `append`, which keep
+  the crosshair and draw once.
+- **Categories on the x axis**, Kibana's top values.
+- **Braille**, considered and set aside: see Half-cells.
+- **Annotations, trendlines, time shift**, and the legend's grid layout.
 
 ## Running Both Halves
 
